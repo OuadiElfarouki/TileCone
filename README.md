@@ -1,4 +1,6 @@
-# Tensor Provenance Explorer
+# TileCone
+
+*See what a tensor region depends on.*
 
 Takes a DAG of tensor operations plus input shapes, infers every intermediate and output shape, and
 lets you select any region of any tensor to see — highlighted in place — the exact set of upstream

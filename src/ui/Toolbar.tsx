@@ -67,7 +67,7 @@ export function Toolbar(): React.ReactElement {
 
   return (
     <div className="toolbar">
-      <span className="brand">Tensor Provenance Explorer</span>
+      <span className="brand">TileCone</span>
       <select value={exampleIndex} onChange={(e) => loadExample(Number(e.target.value))} title="built-in examples">
         {EXAMPLES.map((ex, i) => (
           <option key={ex.name} value={i}>{ex.name}</option>
