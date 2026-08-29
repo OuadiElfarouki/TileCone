@@ -1,0 +1,116 @@
+export type Example = {
+  name: string;
+  description: string;
+  dsl: string;
+  /** initial selection: tensor name + box as [lo, hi] pairs */
+  defaultSelection?: { tensor: string; box: [number, number][] };
+};
+
+export const EXAMPLES: Example[] = [
+  {
+    name: "Plain GEMM",
+    description: "C = A @ B. The canonical tile-dependency picture.",
+    dsl: `params M=256 N=256 K=512
+
+input A [M, K] f16
+input B [K, N] f16
+
+C = matmul(A, B)
+`,
+    defaultSelection: { tensor: "C", box: [[64, 128], [0, 64]] },
+  },
+  {
+    name: "Tiled GEMM (one CTA tile)",
+    description:
+      "Same GEMM, selecting a single output tile: read the input footprint and arithmetic intensity, then use the detail slider to change the tile size and watch the footprint follow.",
+    dsl: `params M=256 N=256 K=512
+
+input A [M, K] f16
+input B [K, N] f16
+
+C = matmul(A, B)
+`,
+    defaultSelection: { tensor: "C", box: [[0, 64], [0, 64]] },
+  },
+  {
+    name: "Multi-head attention",
+    description:
+      "Q/K/V projections, scores, softmax, value contraction, output projection. Select one output token row: the full K and V for that head light up — why attention is memory-bound at long context.",
+    dsl: `params B=1 H=4 S=128 D=32 E=128
+
+input X  [B, S, E] f16
+input Wq [E, E] f16
+input Wk [E, E] f16
+input Wv [E, E] f16
+input Wo [E, E] f16
+
+Qp = einsum("bse,ef->bsf", X, Wq)
+Kp = einsum("bse,ef->bsf", X, Wk)
+Vp = einsum("bse,ef->bsf", X, Wv)
+Q4 = reshape(Qp, shape=[B, S, H, D])
+K4 = reshape(Kp, shape=[B, S, H, D])
+V4 = reshape(Vp, shape=[B, S, H, D])
+Qh = transpose(Q4, perm=[0, 2, 1, 3])
+Kh = transpose(K4, perm=[0, 2, 1, 3])
+Vh = transpose(V4, perm=[0, 2, 1, 3])
+Scores = einsum("bhqd,bhkd->bhqk", Qh, Kh)
+P = softmax(Scores, axis=-1)
+Z = einsum("bhqk,bhkd->bhqd", P, Vh)
+Zt = transpose(Z, perm=[0, 2, 1, 3])
+Zm = reshape(Zt, shape=[B, S, E])
+Out = einsum("bse,ef->bsf", Zm, Wo)
+`,
+    defaultSelection: { tensor: "Out", box: [[0, 1], [17, 18], [0, 128]] },
+  },
+  {
+    name: "Conv2d 3x3 stride 2 (stacked)",
+    description: "Receptive-field cone, and how it dilates across two stacked conv layers.",
+    dsl: `params N=1 C=3 F1=8 F2=16 H=64 W=64
+
+input X  [N, C, H, W] f16
+input W1 [F1, C, 3, 3] f16
+input W2 [F2, F1, 3, 3] f16
+
+Y1 = conv(X, W1, stride=[2, 2], pads=[[1, 1], [1, 1]], dilation=[1, 1], groups=1)
+Y2 = conv(Y1, W2, stride=[2, 2], pads=[[1, 1], [1, 1]], dilation=[1, 1], groups=1)
+`,
+    defaultSelection: { tensor: "Y2", box: [[0, 1], [0, 1], [7, 9], [7, 9]] },
+  },
+  {
+    name: "Reshape trap",
+    description:
+      "(4,4) -> (16,) -> (2,8). Select a flat range that straddles rows to see the union-of-boxes preimage. This example exists so a reshape regression is visible immediately.",
+    dsl: `input X [4, 4] f32
+
+F = reshape(X, shape=[16])
+Y = reshape(F, shape=[2, 8])
+`,
+    defaultSelection: { tensor: "F", box: [[6, 10]] },
+  },
+  {
+    name: "Layernorm + residual",
+    description: "A diamond: X feeds both the normalization and the residual add. Demonstrates tensor-level region merging.",
+    dsl: `params S=64 E=64
+
+input X [S, E] f16
+input W [E] f16
+input Bb [E] f16
+
+H = layernorm(X, W, Bb, axes=[-1])
+Y = add(H, X)
+`,
+    defaultSelection: { tensor: "Y", box: [[10, 11], [20, 24]] },
+  },
+  {
+    name: "Cumsum",
+    description: "The triangular (non-symmetric) dependency cone. Try Upstream vs Downstream.",
+    dsl: `params S=48
+
+input X [S] f32
+
+Y = cumsum(X, axis=0, reverse=false)
+Z = cumsum(Y, axis=0, reverse=false)
+`,
+    defaultSelection: { tensor: "Z", box: [[20, 24]] },
+  },
+];
