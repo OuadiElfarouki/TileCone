@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.local
+.DS_Store
+*.log
+
+# Editor
+.vscode/
+.idea/
+scratchpad/
+screenshots/
