@@ -41,6 +41,7 @@ export function TensorCard({
   const perBox = useStore((s) => s.perBox);
   const focusedBox = useStore((s) => s.focusedBox);
   const tileScale = useStore((s) => s.tileScale);
+  const setDragging = useStore((s) => s.setDragging);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -132,6 +133,22 @@ export function TensorCard({
   });
 
   useEffect(() => {
+    if (!drag) return;
+    setDragging(true);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      setDrag(null); // abandon the rubber-band; the selection is left untouched
+      setDragging(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      setDragging(false);
+    };
+  }, [drag, setDragging]);
+
+  useEffect(() => {
     if (focusTensor === tensor.id)
       rootRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [focusTensor, tensor.id]);
@@ -148,7 +165,7 @@ export function TensorCard({
   }
 
   /** Modifier keys win; otherwise the toolbar's compose mode applies. */
-  function composeOf(e: React.MouseEvent): "replace" | "union" | "subtract" | undefined {
+  function composeOf(e: React.MouseEvent): "union" | "subtract" | undefined {
     if (e.altKey) return "subtract";
     if (e.shiftKey) return "union";
     return undefined;
@@ -232,7 +249,12 @@ export function TensorCard({
       <div className="tc-header">
         <span className="tc-name">{tensor.name}</span>
         <span className="tc-badges">
-          {isInput && <span className="badge input">in</span>}
+          {isInput &&
+            (tensor.role === "weight" ? (
+              <span className="badge weight" title="learned parameter">w</span>
+            ) : (
+              <span className="badge input" title="graph input">in</span>
+            ))}
           {region && !region.exact && (
             <span className="badge approx" title={region.reasons.join(", ")}>
               ≈

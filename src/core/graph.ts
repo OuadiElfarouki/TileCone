@@ -25,6 +25,8 @@ export type Tensor = {
   resolved?: number[]; // populated by resolveGraph
   dtype: DType;
   axisNames?: string[];
+  /** Display-only: distinguishes a learned parameter from an activation. */
+  role?: "activation" | "weight";
   producer?: { nodeId: string; slot: number }; // absent => graph input
 };
 

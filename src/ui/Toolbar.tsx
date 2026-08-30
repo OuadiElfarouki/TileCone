@@ -13,9 +13,8 @@ const MODES: [SelectMode, string, string][] = [
 ];
 
 const COMPOSE: [ComposeMode, string, string][] = [
-  ["replace", "replace", "a new drag replaces the selection"],
-  ["union", "∪ add", "a new drag adds to the selection — draw several disjoint regions (or hold Shift)"],
-  ["subtract", "∖ sub", "a new drag cuts out of the selection (or hold Alt)"],
+  ["union", "∪ add", "a drag adds a region to the selection (or hold Shift)"],
+  ["subtract", "∖ sub", "a drag cuts a region out of the selection (or hold Alt)"],
 ];
 
 const DIRS: [Direction, string, string][] = [
@@ -36,8 +35,6 @@ export function Toolbar(): React.ReactElement {
   const hideInert = useStore((s) => s.hideInert);
   const setHideInert = useStore((s) => s.setHideInert);
   const clearSelection = useStore((s) => s.clearSelection);
-  const setEditorOpen = useStore((s) => s.setEditorOpen);
-  const editorOpen = useStore((s) => s.editorOpen);
   const dslText = useStore((s) => s.dslText);
   const selection = useStore((s) => s.selection);
   const tileScale = useStore((s) => s.tileScale);
@@ -73,9 +70,6 @@ export function Toolbar(): React.ReactElement {
           <option key={ex.name} value={i}>{ex.name}</option>
         ))}
       </select>
-      <button className={editorOpen ? "on" : ""} onClick={() => setEditorOpen(!editorOpen)}>
-        edit graph
-      </button>
       <span className="sep" />
       <span className="group">
         {DIRS.map(([d, label, tip]) => (
@@ -93,7 +87,7 @@ export function Toolbar(): React.ReactElement {
         ))}
       </span>
       <span className="sep" />
-      <span className="group" title="how a new drag combines with the current selection">
+      <span className="group" title="how a drag combines with the current selection — use clear to start over">
         {COMPOSE.map(([m, label, tip]) => (
           <button key={m} className={composeMode === m ? "on" : ""} title={tip} onClick={() => setComposeMode(m)}>
             {label}

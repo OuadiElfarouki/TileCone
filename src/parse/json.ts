@@ -9,6 +9,7 @@ const tensorSchema = z.object({
   shape: z.array(symSchema),
   dtype: z.enum(["f32", "f16", "bf16", "f8", "i32", "i8", "bool"]),
   axisNames: z.array(z.string()).optional(),
+  role: z.enum(["activation", "weight"]).optional(),
 });
 
 const nodeSchema = z.object({
@@ -47,7 +48,14 @@ export function parseGraphJSON(text: string): Graph {
 export function graphToJSON(g: Graph): string {
   const tensors: Record<string, unknown> = {};
   for (const [id, t] of Object.entries(g.tensors))
-    tensors[id] = { id: t.id, name: t.name, shape: t.shape, dtype: t.dtype, ...(t.axisNames ? { axisNames: t.axisNames } : {}) };
+    tensors[id] = {
+      id: t.id,
+      name: t.name,
+      shape: t.shape,
+      dtype: t.dtype,
+      ...(t.axisNames ? { axisNames: t.axisNames } : {}),
+      ...(t.role ? { role: t.role } : {}),
+    };
   return JSON.stringify(
     { nodes: g.nodes.map((n) => ({ id: n.id, op: n.op, inputs: n.inputs, outputs: n.outputs, attrs: n.attrs, ...(n.label ? { label: n.label } : {}) })), tensors, params: g.params },
     null,

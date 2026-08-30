@@ -40,6 +40,42 @@ S = sum(C, axes=[1], keepdim=true)
     expect(rg.tensors["S"].resolved).toEqual([2, 1]);
   });
 
+  it("accepts weight/param as input declarations and tags them", () => {
+    const g = resolveGraph(parseDSL(`params M=4 K=6 N=8
+input A [M, K] f16
+weight B [K, N] f16
+param Bias [N] f16
+C = matmul(A, B)
+D = add(C, Bias)
+`));
+    expect(g.tensors["A"].role).toBeUndefined(); // plain activation
+    expect(g.tensors["B"].role).toBe("weight");
+    expect(g.tensors["Bias"].role).toBe("weight");
+    expect(g.tensors["D"].resolved).toEqual([4, 8]);
+    // a weight is still just a graph input to the analysis
+    expect(g.tensors["B"].producer).toBeUndefined();
+  });
+
+  it("reduce accepts the singular axis= spelling", () => {
+    const g = resolveGraph(parseDSL(`input X [4, 6] f32
+s = sum(X, axis=-1)
+m = mean(X, axes=[0])
+`));
+    expect(g.tensors["s"].resolved).toEqual([4]);
+    expect(g.tensors["m"].resolved).toEqual([6]);
+  });
+
+  it("names an unknown declaration keyword instead of demanding an =", () => {
+    const bad = () => parseDSL("input X [4] f32\ntensor Y [4] f32\n");
+    expect(bad).toThrow(/line 2/);
+    expect(bad).toThrow(/unknown statement starting with "tensor"/);
+    expect(bad).toThrow(/input\|weight\|param/);
+  });
+
+  it("says which axis attribute a reduce is missing", () => {
+    expect(() => parseDSL("input X [4, 6] f32\ns = sum(X)\n")).toThrow(/sum\(\) needs an axis/);
+  });
+
   it("reports line numbers on errors", () => {
     expect(() => parseDSL(`input X [4] f32\nY = bogus_op_name(X`)).toThrow(/line 2/);
   });

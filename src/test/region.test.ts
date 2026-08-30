@@ -13,10 +13,14 @@ import {
   intersect,
   iv,
   points,
-  removeBoxAt,
+  addPart,
+  partsOverlap,
+  removePart,
+  subtractFromParts,
+  translateAllParts,
+  translatePart,
   sortRegion,
   subtractBox,
-  translateRegion,
   union,
 } from "../core/region";
 import { rng, randInt } from "./harness";
@@ -152,47 +156,93 @@ describe("region algebra", () => {
   });
 });
 
-describe("region editing operations", () => {
+describe("selection parts (identity-stable, may overlap)", () => {
   const shape = [8, 8];
+  const P = (...bs: Box[]) => bs;
 
-  it("translate shifts and preserves element count", () => {
-    const r = fromBox(box([2, 4], [1, 3]));
-    const moved = translateRegion(r, 0, 2, shape);
-    expect(moved.boxes).toEqual([box([4, 6], [1, 3])]);
-    expect(count(moved)).toBe(count(r));
+  it("translateAllParts shifts every part rigidly", () => {
+    const parts = P(box([0, 2], [0, 2]), box([4, 6], [4, 6]));
+    const moved = translateAllParts(parts, 1, 2, shape);
+    expect(moved).toEqual(P(box([0, 2], [2, 4]), box([4, 6], [6, 8])));
   });
 
-  it("translate clamps at the edge instead of eroding", () => {
-    const r = fromBox(box([6, 8], [0, 2]));
-    const moved = translateRegion(r, 0, 5, shape);
-    expect(moved.boxes).toEqual([box([6, 8], [0, 2])]); // already flush against the edge
-    const partial = translateRegion(fromBox(box([5, 7], [0, 2])), 0, 5, shape);
-    expect(partial.boxes).toEqual([box([6, 8], [0, 2])]); // moved as far as it fits
-    expect(count(partial)).toBe(4);
+  it("translateAllParts clamps at the edge instead of eroding", () => {
+    const parts = P(box([5, 7], [0, 2]));
+    expect(translateAllParts(parts, 0, 5, shape)).toEqual(P(box([6, 8], [0, 2])));
+    // already flush: no movement, no shrink
+    expect(translateAllParts(P(box([6, 8], [0, 2])), 0, 5, shape)).toEqual(P(box([6, 8], [0, 2])));
   });
 
-  it("translate moves a multi-box region rigidly", () => {
-    const r = union(fromBox(box([0, 2], [0, 2])), fromBox(box([4, 6], [4, 6])));
-    const moved = translateRegion(r, 1, 2, shape);
-    expect(count(moved)).toBe(count(r));
-    expect(sortRegion(moved).boxes).toEqual([box([0, 2], [2, 4]), box([4, 6], [6, 8])]);
+  it("translatePart moves one part and leaves the others identical", () => {
+    const a = box([0, 2], [0, 2]);
+    const b = box([4, 6], [4, 6]);
+    const moved = translatePart(P(a, b), 1, 0, -2, shape);
+    expect(moved[0]).toBe(a); // untouched, same object
+    expect(moved[1]).toEqual(box([2, 4], [4, 6]));
+    expect(moved).toHaveLength(2);
   });
 
-  it("removeBoxAt drops exactly one box", () => {
-    const r = union(fromBox(box([0, 2], [0, 2])), fromBox(box([5, 7], [5, 7])));
-    expect(r.boxes).toHaveLength(2);
-    const left = removeBoxAt(r, 0);
-    expect(left.boxes).toHaveLength(1);
-    expect(count(left)).toBe(4);
+  it("translatePart clamps only the part it moves", () => {
+    const parts = P(box([0, 2], [0, 2]), box([6, 8], [0, 2]));
+    const moved = translatePart(parts, 1, 0, 5, shape);
+    expect(moved[1]).toEqual(box([6, 8], [0, 2])); // already at the edge
+    expect(moved[0]).toEqual(box([0, 2], [0, 2]));
   });
 
-  it("editing operations keep regions canonical (disjoint boxes)", () => {
+  it("a part may be moved onto another; both keep their identity", () => {
+    const parts = translatePart(P(box([0, 4], [0, 4]), box([4, 8], [0, 4])), 1, 0, -2, shape);
+    expect(parts).toHaveLength(2); // NOT merged, unlike a canonical Region
+    expect(parts[0]).toEqual(box([0, 4], [0, 4]));
+    expect(parts[1]).toEqual(box([2, 6], [0, 4]));
+  });
+
+  it("overlap is counted once as a set, and reported", () => {
+    const parts = P(box([0, 4], [0, 4]), box([2, 6], [0, 4]));
+    const { unique, summed } = partsOverlap(parts);
+    expect(summed).toBe(16 + 16); // each part's own volume
+    expect(unique).toBe(24); // union: 6x4 minus nothing double counted
+    expect(count({ boxes: parts, exact: true, reasons: [] })).toBe(unique);
+  });
+
+  it("addPart appends but ignores an exact duplicate", () => {
+    const a = box([0, 2], [0, 2]);
+    expect(addPart(P(a), box([4, 6], [4, 6]))).toHaveLength(2);
+    expect(addPart(P(a), box([0, 2], [0, 2]))).toHaveLength(1);
+  });
+
+  it("removePart drops exactly one, preserving order of the rest", () => {
+    const parts = P(box([0, 1], [0, 1]), box([2, 3], [2, 3]), box([4, 5], [4, 5]));
+    const left = removePart(parts, 1);
+    expect(left).toEqual(P(box([0, 1], [0, 1]), box([4, 5], [4, 5])));
+  });
+
+  it("subtractFromParts can split a part into several", () => {
+    const parts = P(box([0, 8], [0, 2]));
+    const cut = subtractFromParts(parts, box([3, 5], [0, 2]));
+    expect(cut).toHaveLength(2);
+    expect(count({ boxes: cut, exact: true, reasons: [] })).toBe(8 * 2 - 2 * 2);
+  });
+
+  it("parts operations never invent or lose elements (randomized)", () => {
     const r = rng(9);
-    for (let t = 0; t < 60; t++) {
-      let reg = union(fromBox(randBox(r, shape)), fromBox(randBox(r, shape)));
-      reg = translateRegion(reg, 0, randInt(r, -3, 4), shape);
-      reg = removeBoxAt(reg, 0);
-      expect(count(reg)).toBe(flatSet(reg, shape).size);
+    const asSet = (parts: Box[]) => flatSet({ boxes: parts, exact: true, reasons: [] }, shape);
+    for (let t = 0; t < 80; t++) {
+      let parts: Box[] = [randBox(r, shape), randBox(r, shape)];
+      const before = asSet(parts);
+      // a move of one part changes the set, but never breaks part count
+      const n = parts.length;
+      parts = translatePart(parts, randInt(r, 0, n), randInt(r, 0, 2), randInt(r, -3, 4), shape);
+      expect(parts).toHaveLength(n);
+      // every part stays inside the tensor
+      for (const p of parts)
+        p.forEach((I, ax) => {
+          expect(I.lo).toBeGreaterThanOrEqual(0);
+          expect(I.hi).toBeLessThanOrEqual(shape[ax]);
+          expect(I.hi).toBeGreaterThan(I.lo);
+        });
+      // counting the parts as a set never double counts
+      expect(count({ boxes: parts, exact: true, reasons: [] })).toBe(asSet(parts).size);
+      void before;
     }
   });
 });

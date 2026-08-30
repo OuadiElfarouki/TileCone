@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { GraphOutline } from "./ui/GraphOutline";
+import React, { useEffect } from "react";
+import { SidePanel } from "./ui/SidePanel";
 import { GraphView } from "./ui/GraphView";
 import { Inspector } from "./ui/Inspector";
 import { Toolbar } from "./ui/Toolbar";
@@ -7,50 +7,11 @@ import { useStore } from "./ui/store";
 import { useKeyboard } from "./ui/useKeyboard";
 import { fromBox } from "./core/region";
 
-function EditorDrawer(): React.ReactElement | null {
-  const editorOpen = useStore((s) => s.editorOpen);
-  const dslText = useStore((s) => s.dslText);
-  const applyDSL = useStore((s) => s.applyDSL);
-  const applyJSON = useStore((s) => s.applyJSON);
-  const loadError = useStore((s) => s.loadError);
-  const [text, setText] = useState(dslText);
-
-  useEffect(() => setText(dslText), [dslText]);
-  if (!editorOpen) return null;
-  return (
-    <div className="editor-drawer">
-      <textarea value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} />
-      <div className="editor-actions">
-        <button onClick={() => applyDSL(text)}>apply DSL</button>
-        <button onClick={() => applyJSON(text)}>apply JSON</button>
-        <label className="file-btn">
-          load file
-          <input
-            type="file"
-            accept=".json,.txt,.dsl"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (!f) return;
-              f.text().then((s) => {
-                setText(s);
-                if (f.name.endsWith(".json")) applyJSON(s);
-                else applyDSL(s);
-              });
-            }}
-          />
-        </label>
-        {loadError && <span className="error">{loadError}</span>}
-      </div>
-    </div>
-  );
-}
-
 export default function App(): React.ReactElement {
   const loadExample = useStore((s) => s.loadExample);
   const applyDSL = useStore((s) => s.applyDSL);
   const setSelection = useStore((s) => s.setSelection);
   const setDirection = useStore((s) => s.setDirection);
-  const loadError = useStore((s) => s.loadError);
   const resolved = useStore((s) => s.resolved);
 
   useKeyboard();
@@ -85,10 +46,8 @@ export default function App(): React.ReactElement {
   return (
     <div className="app">
       <Toolbar />
-      <EditorDrawer />
-      {loadError && !useStore.getState().editorOpen && <div className="error banner">{loadError}</div>}
       <div className="main">
-        <GraphOutline />
+        <SidePanel />
         {resolved ? <GraphView /> : <div className="canvas-empty">loading…</div>}
         <Inspector />
       </div>

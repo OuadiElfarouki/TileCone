@@ -17,6 +17,17 @@ export class DSLError extends Error {
 
 const DTYPES = new Set(["f32", "f16", "bf16", "f8", "i32", "i8", "bool"]);
 
+/**
+ * Keywords that declare a graph input. `weight` and `param` are the same thing
+ * to the analysis — a tensor with no producer — but are tagged so the UI can
+ * tell a learned parameter apart from an activation.
+ */
+const DECLARATIONS: Record<string, "activation" | "weight"> = {
+  input: "activation",
+  weight: "weight",
+  param: "weight",
+};
+
 /** fn-name sugar -> op + fixed attrs */
 const ELEMENTWISE_FNS = new Set([
   "add", "sub", "mul", "div", "pow", "maximum", "minimum",
@@ -133,8 +144,10 @@ export function parseDSL(text: string): Graph {
       continue;
     }
 
-    if (raw.startsWith("input ")) {
-      p.expect("input");
+    const leading = /^([A-Za-z_]\w*)\s/.exec(raw)?.[1];
+    if (leading && leading in DECLARATIONS) {
+      p.expect(leading);
+      const role = DECLARATIONS[leading];
       const name = p.identReq("tensor name");
       p.expect("[");
       const shape: Sym[] = [];
@@ -153,7 +166,7 @@ export function parseDSL(text: string): Graph {
         dtype = dt as DType;
       }
       if (tensors[name]) p.error(`tensor "${name}" redefined`);
-      tensors[name] = { id: name, name, shape, dtype };
+      tensors[name] = { id: name, name, shape, dtype, ...(role === "weight" ? { role } : {}) };
       continue;
     }
 
@@ -161,7 +174,15 @@ export function parseDSL(text: string): Graph {
     const outs: string[] = [];
     outs.push(p.identReq("statement"));
     while (p.eat(",")) outs.push(p.identReq("output name"));
-    p.expect("=");
+    if (!p.eat("=")) {
+      // The most common cause is a declaration keyword we do not know, e.g.
+      // "tensor A [M, K]" — say so instead of demanding an "=".
+      throw new DSLError(
+        `unknown statement starting with "${outs[0]}". Expected either an assignment ` +
+          `\`NAME = op(...)\`, or a declaration \`${Object.keys(DECLARATIONS).join("|")} NAME [dims] dtype\``,
+        ln + 1
+      );
+    }
     const callee = p.identReq("op name");
     p.expect("(");
     const positional: Value[] = [];
@@ -200,6 +221,13 @@ export function parseDSL(text: string): Graph {
       op = "reduce";
       attrs.fn = callee === "amax" ? "max" : callee === "amin" ? "min" : callee;
       if (attrs.keepdim === undefined) attrs.keepdim = false;
+      // accept the singular spelling, which is what softmax/cumsum take
+      if (attrs.axes === undefined && attrs.axis !== undefined) {
+        attrs.axes = [attrs.axis];
+        delete attrs.axis;
+      }
+      if (attrs.axes === undefined)
+        throw new DSLError(`${callee}() needs an axis, e.g. ${callee}(X, axis=-1)`, ln + 1);
     } else if (callee === "layernorm" || callee === "rmsnorm") {
       op = "normalize";
       attrs.kind = callee;
@@ -236,7 +264,8 @@ export function toDSL(g: Graph): string {
     lines.push("params " + paramKeys.map((k) => `${k}=${g.params[k]}`).join(" "));
   for (const t of Object.values(g.tensors)) {
     if (t.producer || g.nodes.some((n) => n.outputs.includes(t.id))) continue;
-    lines.push(`input ${t.name} [${t.shape.map(String).join(", ")}] ${t.dtype}`);
+    const kw = t.role === "weight" ? "weight" : "input";
+    lines.push(`${kw} ${t.name} [${t.shape.map(String).join(", ")}] ${t.dtype}`);
   }
   for (const n of g.nodes) {
     const outNames = n.outputs.map((o) => g.tensors[o].name);

@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { computeMetrics } from "../core/metrics";
 import { propagateBackward } from "../core/propagate";
-import { count, fromBox, intersect, isEmpty } from "../core/region";
+import { count, fromBox, intersect, isEmpty, partsOverlap } from "../core/region";
 import { formatBytes } from "./TensorCard";
 import { boxColor, isDarkTheme, MAX_DISTINCT_HUES, rgbCss } from "./palette";
 import { MAX_PER_BOX_PROPS, useStore, viewAxes } from "./store";
@@ -29,8 +29,9 @@ function RegionEditor(): React.ReactElement | null {
   const undoSelection = useStore((s) => s.undoSelection);
   const perBox = useStore((s) => s.perBox);
   const focusedBox = useStore((s) => s.focusedBox);
-  const setFocusedBox = useStore((s) => s.setFocusedBox);
-  const [pinned, setPinned] = useState<number | null>(null);
+  const pinned = useStore((s) => s.pinnedBox);
+  const hoverBox = useStore((s) => s.hoverBox);
+  const togglePinBox = useStore((s) => s.togglePinBox);
 
   if (!resolved || !selection) return null;
   const t = resolved.tensors[selection.tensorId];
@@ -39,21 +40,8 @@ function RegionEditor(): React.ReactElement | null {
   const tile = tileOf(shape, tileScale); // the nudge pad moves by whole tiles
   const axisLabel = (ax: number) => t.axisNames?.[ax] ?? `ax${ax}`;
   const boxes = selection.region.boxes;
+  const overlap = partsOverlap(boxes);
   const dark = isDarkTheme();
-
-  const focus = (i: number | null) => {
-    if (pinned !== null) return; // a pinned row wins over hover
-    setFocusedBox(i);
-  };
-  const togglePin = (i: number) => {
-    if (pinned === i) {
-      setPinned(null);
-      setFocusedBox(null);
-    } else {
-      setPinned(i);
-      setFocusedBox(i);
-    }
-  };
 
   return (
     <div className="ins-section">
@@ -61,10 +49,19 @@ function RegionEditor(): React.ReactElement | null {
         Region <span className="muted">{boxes.length} box{boxes.length === 1 ? "" : "es"}</span>
       </div>
 
-      <div className="nudge-pad" title={`move the selection by one ${tile}-element tile (arrow keys; Shift = 8 tiles)`}>
+      <div
+        className="nudge-pad"
+        title={
+          focusedBox !== null
+            ? `move box ${focusedBox + 1} alone by one ${tile}-element tile (arrow keys; Shift = 8 tiles)`
+            : `move the whole selection by one ${tile}-element tile — pin a box below to move it alone`
+        }
+      >
         <button onClick={() => moveSelection(rowAx, -tile)} disabled={rowAx < 0} style={{ gridArea: "up" }}>↑</button>
         <button onClick={() => moveSelection(colAx, -tile)} disabled={colAx < 0} style={{ gridArea: "left" }}>←</button>
-        <span className="nudge-mid" style={{ gridArea: "mid" }}>move</span>
+        <span className="nudge-mid" style={{ gridArea: "mid" }}>
+          {focusedBox !== null ? `#${focusedBox + 1}` : "all"}
+        </span>
         <button onClick={() => moveSelection(colAx, tile)} disabled={colAx < 0} style={{ gridArea: "right" }}>→</button>
         <button onClick={() => moveSelection(rowAx, tile)} disabled={rowAx < 0} style={{ gridArea: "down" }}>↓</button>
         <button className="undo-btn" style={{ gridArea: "undo" }} onClick={undoSelection} title="undo the last selection change (ctrl+z)">undo</button>
@@ -73,21 +70,28 @@ function RegionEditor(): React.ReactElement | null {
       {boxes.length > 1 && (
         <p className="hint">
           {perBox
-            ? "hover a box to isolate its cone; click to pin it"
+            ? "hover a box to isolate its cone; click to pin it, then the arrows move that box alone"
             : `too many boxes to trace individually (over ${MAX_PER_BOX_PROPS}) — showing the merged cone`}
         </p>
       )}
+      {overlap.summed > overlap.unique && (
+        <p className="hint overlap">
+          boxes overlap: {fmt(overlap.summed)} counted across parts,{" "}
+          <b>{fmt(overlap.unique)}</b> distinct elements — upstream and downstream use the
+          deduplicated set
+        </p>
+      )}
 
-      <div className="box-list" onMouseLeave={() => focus(null)}>
+      <div className="box-list" onMouseLeave={() => hoverBox(null)}>
         {boxes.map((b, i) => {
           const active = focusedBox === i;
           return (
             <div
               className={`box-row${active ? " active" : ""}${pinned === i ? " pinned" : ""}`}
               key={i}
-              onMouseEnter={() => focus(i)}
-              onClick={() => perBox && togglePin(i)}
-              title={perBox ? "hover to isolate this box's dependencies; click to pin" : undefined}
+              onMouseEnter={() => hoverBox(i)}
+              onClick={() => perBox && togglePinBox(i)}
+              title={perBox ? "hover to isolate this box's dependencies; click to pin (esc unpins)" : undefined}
             >
               <i className="swatch" style={{ background: rgbCss(boxColor(i, dark)) }} />
               <code>
@@ -99,7 +103,6 @@ function RegionEditor(): React.ReactElement | null {
                 title="remove this box from the selection"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setPinned(null);
                   deleteBox(i);
                 }}
               >
@@ -126,7 +129,8 @@ function RegionEditor(): React.ReactElement | null {
           <span>[ / ]</span><span>scrub hidden axis</span>
           <span>ctrl+z</span><span>undo selection</span>
           <span>u / d / b</span><span>up / down / both</span>
-          <span>f · esc</span><span>fit · clear</span>
+          <span>f</span><span>fit to view</span>
+          <span>esc</span><span>unpin / leave editing</span>
         </div>
       </details>
     </div>

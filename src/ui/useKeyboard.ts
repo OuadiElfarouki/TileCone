@@ -15,8 +15,28 @@ const isTyping = (el: EventTarget | null) => {
 export function useKeyboard(): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (isTyping(e.target)) return;
       const s = useStore.getState();
+
+      /**
+       * Escape backs out of the innermost active mode. It never destroys the
+       * selection — clearing the tiles is the toolbar's "clear" button, an
+       * explicit act, not a side effect of pressing cancel.
+       */
+      if (e.key === "Escape") {
+        const el = e.target as HTMLElement | null;
+        if (isTyping(el)) {
+          el?.blur(); // leave text editing, keeping what was typed
+          return;
+        }
+        if (s.dragging) return; // the card cancels its own rubber-band
+        if (s.pinnedBox !== null || s.focusedBox !== null) {
+          s.clearFocus();
+          return;
+        }
+        return; // nothing active: do nothing
+      }
+
+      if (isTyping(e.target)) return;
       const sel = s.selection;
       const cfg = sel ? s.viewCfgs[sel.tensorId] : null;
       const shape = sel ? s.resolved?.tensors[sel.tensorId].resolved : null;
@@ -25,7 +45,6 @@ export function useKeyboard(): void {
       if (e.key === "u") return s.setDirection("backward");
       if (e.key === "d") return s.setDirection("forward");
       if (e.key === "b") return s.setDirection("both");
-      if (e.key === "Escape") return s.clearSelection();
       if (e.key === "z" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         return s.undoSelection();

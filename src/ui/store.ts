@@ -2,17 +2,31 @@ import { create } from "zustand";
 import { Graph, ResolvedGraph, resolveGraph } from "../core/graph";
 import { expandNode, isExpandable } from "../core/expand";
 import { PropResult, propagateBackward, propagateForward } from "../core/propagate";
-import { Region, empty, removeBoxAt, subtract, translateRegion, union } from "../core/region";
+import {
+  Box,
+  Region,
+  addPart,
+  empty,
+  removePart,
+  subtractFromParts,
+  translateAllParts,
+  translatePart,
+} from "../core/region";
 import { EXAMPLES } from "../examples/index";
-import { parseDSL, toDSL } from "../parse/dsl";
-import { parseGraphJSON } from "../parse/json";
+import { parseDSL } from "../parse/dsl";
 import { TILE_SCALE_MAX, TILE_SCALE_MIN } from "./tiling";
 
 export type Direction = "backward" | "forward" | "both";
 /** Everything snaps to the tile grid, which is also the render grid. */
 export type SelectMode = "cell" | "box" | "row" | "col" | "all";
-/** How a new drag combines with the existing selection. Modifier keys override it. */
-export type ComposeMode = "replace" | "union" | "subtract";
+/**
+ * How a new drag combines with the existing selection. Modifier keys override it.
+ * There is deliberately no "replace" mode: it is `clear` followed by a draw, so
+ * offering it as a third button would be a second way to do one thing.
+ * "replace" survives only as an internal operation, for restoring a shared link.
+ */
+export type ComposeMode = "union" | "subtract";
+type Compose = ComposeMode | "replace";
 
 export type ViewCfg = {
   sliders: number[]; // index per hidden axis (full rank length; row/col entries ignored)
@@ -42,6 +56,8 @@ type State = {
   resolved: ResolvedGraph | null;
   loadError: string | null;
 
+  /** `region.boxes` are the user's ordered PARTS (identity-stable, may overlap),
+   * never a canonicalized set. See the note in core/region.ts. */
   selection: { tensorId: string; region: Region } | null;
   selectionHistory: { tensorId: string; region: Region }[];
   direction: Direction;
@@ -52,7 +68,12 @@ type State = {
   /** One propagation per selection box, so a highlighted region can be traced
    * back to the box that produced it. Null when there are too many boxes. */
   perBox: BoxProp[] | null;
+  /** The part currently highlighted: the pinned one, else the hovered one. */
   focusedBox: number | null;
+  /** Sticky focus set by clicking a part; survives the pointer leaving the row. */
+  pinnedBox: number | null;
+  /** True while a drag is being rubber-banded on a card, so Escape can cancel it. */
+  dragging: boolean;
   preview: PropResult | null; // hover preview (backward only)
 
   viewCfgs: Record<string, ViewCfg>;
@@ -61,19 +82,22 @@ type State = {
   hideInert: boolean;
   countIntermediates: boolean;
   focusTensor: string | null;
-  editorOpen: boolean;
 
   loadExample: (i: number) => void;
   applyDSL: (text: string) => void;
-  applyJSON: (text: string) => void;
-  setSelection: (tensorId: string, region: Region, compose?: ComposeMode) => void;
+  setSelection: (tensorId: string, region: Region, compose?: Compose) => void;
   clearSelection: () => void;
   undoSelection: () => void;
   /** Move the whole selection along one axis, clamped to the tensor. */
   moveSelection: (axis: number, delta: number) => void;
   deleteBox: (index: number) => void;
-  /** Isolate one selection box's dependency cone (hover/click in the inspector). */
-  setFocusedBox: (index: number | null) => void;
+  /** Transient hover focus; ignored while a part is pinned. */
+  hoverBox: (index: number | null) => void;
+  /** Click a part to pin it, or the same part again to unpin. */
+  togglePinBox: (index: number) => void;
+  /** Drop both hover and pin. What Escape does. */
+  clearFocus: () => void;
+  setDragging: (v: boolean) => void;
   setDirection: (d: Direction) => void;
   setSelectMode: (m: SelectMode) => void;
   setComposeMode: (m: ComposeMode) => void;
@@ -82,7 +106,6 @@ type State = {
   setHideInert: (v: boolean) => void;
   setCountIntermediates: (v: boolean) => void;
   setFocusTensor: (id: string | null) => void;
-  setEditorOpen: (v: boolean) => void;
   setPreviewCell: (tensorId: string | null, cell?: number[]) => void;
   expandNodeInPlace: (nodeId: string) => void;
 };
@@ -97,9 +120,9 @@ function recompute(
   resolved: ResolvedGraph | null,
   selection: State["selection"],
   direction: Direction
-): Pick<State, "backwardRes" | "forwardRes" | "perBox" | "focusedBox"> {
+): Pick<State, "backwardRes" | "forwardRes" | "perBox"> {
   if (!resolved || !selection || selection.region.boxes.length === 0)
-    return { backwardRes: null, forwardRes: null, perBox: null, focusedBox: null };
+    return { backwardRes: null, forwardRes: null, perBox: null };
   const backwardRes = direction !== "forward" ? propagateBackward(resolved, selection) : null;
   const forwardRes = direction !== "backward" ? propagateForward(resolved, selection) : null;
 
@@ -120,23 +143,33 @@ function recompute(
       };
     });
   }
-  return { backwardRes, forwardRes, perBox, focusedBox: null };
+  return { backwardRes, forwardRes, perBox };
 }
 
-/** Apply a transform to the current selection's region and repropagate. */
+/**
+ * Apply a transform to the selection's parts and repropagate.
+ * `keepFocus` holds the focused part across edits that preserve indices (a move);
+ * edits that reorder or remove parts drop it so a stale index can never be used.
+ */
 function editSelection(
   get: () => State,
   set: (partial: Partial<State>) => void,
-  fn: (region: Region, shape: number[]) => Region
+  fn: (parts: Box[], shape: number[]) => Box[],
+  keepFocus = false
 ): void {
-  const { selection, resolved, direction, selectionHistory } = get();
+  const { selection, resolved, direction, selectionHistory, focusedBox } = get();
   if (!selection || !resolved) return;
   const shape = resolved.tensors[selection.tensorId].resolved!;
-  const region = fn(selection.region, shape);
-  const sel = region.boxes.length === 0 ? null : { tensorId: selection.tensorId, region };
+  const parts = fn(selection.region.boxes, shape);
+  const region: Region = { boxes: parts, exact: true, reasons: [] };
+  const sel = parts.length === 0 ? null : { tensorId: selection.tensorId, region };
+  const nextFocus =
+    keepFocus && sel && focusedBox !== null && focusedBox < parts.length ? focusedBox : null;
   set({
     selection: sel,
     selectionHistory: [...selectionHistory, selection].slice(-40),
+    focusedBox: nextFocus,
+    pinnedBox: nextFocus === null ? null : get().pinnedBox,
     preview: null,
     ...recompute(resolved, sel, direction),
   });
@@ -145,7 +178,7 @@ function editSelection(
 function loadGraph(graph: Graph): Pick<
   State,
   | "graph" | "resolved" | "loadError" | "selection" | "backwardRes" | "forwardRes"
-  | "perBox" | "focusedBox" | "viewCfgs" | "preview"
+  | "perBox" | "focusedBox" | "pinnedBox" | "viewCfgs" | "preview"
 > {
   const resolved = resolveGraph(JSON.parse(JSON.stringify(graph)) as Graph);
   const viewCfgs: Record<string, ViewCfg> = {};
@@ -159,6 +192,7 @@ function loadGraph(graph: Graph): Pick<
     forwardRes: null,
     perBox: null,
     focusedBox: null,
+    pinnedBox: null,
     preview: null,
     viewCfgs,
   };
@@ -174,18 +208,19 @@ export const useStore = create<State>((set, get) => ({
   selectionHistory: [],
   direction: "backward",
   selectMode: "box",
-  composeMode: "replace",
+  composeMode: "union",
   backwardRes: null,
   forwardRes: null,
   perBox: null,
   focusedBox: null,
+  pinnedBox: null,
+  dragging: false,
   preview: null,
   viewCfgs: {},
   tileScale: 0,
   hideInert: false,
   countIntermediates: false,
   focusTensor: null,
-  editorOpen: false,
 
   loadExample: (i) => {
     const ex = EXAMPLES[i];
@@ -200,6 +235,8 @@ export const useStore = create<State>((set, get) => ({
           reasons: [],
         };
         st.selection = { tensorId: ex.defaultSelection.tensor, region };
+        st.focusedBox = null;
+        st.pinnedBox = null;
         Object.assign(st, recompute(base.resolved, st.selection!, get().direction));
       }
       set(st as State);
@@ -217,26 +254,25 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
-  applyJSON: (text) => {
-    try {
-      const graph = parseGraphJSON(text);
-      set({ ...loadGraph(graph), dslText: toDSL(graph) });
-    } catch (e) {
-      set({ loadError: (e as Error).message });
-    }
-  },
-
   setSelection: (tensorId, region, compose) => {
     const { selection, resolved, direction, composeMode, selectionHistory } = get();
     const mode = compose ?? composeMode;
-    let next: Region = region;
+    const drawn = region.boxes;
+    let parts: Box[] = drawn;
     if (selection && selection.tensorId === tensorId && mode !== "replace") {
-      next = mode === "union" ? union(selection.region, region) : subtract(selection.region, region);
+      parts = selection.region.boxes;
+      for (const b of drawn)
+        parts = mode === "union" ? addPart(parts, b) : subtractFromParts(parts, b);
     }
-    const sel = next.boxes.length === 0 ? null : { tensorId, region: next };
+    const sel =
+      parts.length === 0
+        ? null
+        : { tensorId, region: { boxes: parts, exact: true, reasons: [] } };
     set({
       selection: sel,
       selectionHistory: selection ? [...selectionHistory, selection].slice(-40) : selectionHistory,
+      focusedBox: null,
+      pinnedBox: null,
       preview: null,
       ...recompute(resolved, sel, direction),
     });
@@ -251,6 +287,7 @@ export const useStore = create<State>((set, get) => ({
       forwardRes: null,
       perBox: null,
       focusedBox: null,
+      pinnedBox: null,
       preview: null,
     });
   },
@@ -262,17 +299,42 @@ export const useStore = create<State>((set, get) => ({
     set({
       selection: prev,
       selectionHistory: selectionHistory.slice(0, -1),
+      focusedBox: null,
+      pinnedBox: null,
       preview: null,
       ...recompute(resolved, prev, direction),
     });
   },
 
-  moveSelection: (axis, delta) =>
-    editSelection(get, set, (r, shape) => translateRegion(r, axis, delta, shape)),
+  /** Moves only the focused part when one is focused, otherwise the whole selection. */
+  moveSelection: (axis, delta) => {
+    const focused = get().focusedBox;
+    editSelection(
+      get,
+      set,
+      (parts, shape) =>
+        focused !== null && focused < parts.length
+          ? translatePart(parts, focused, axis, delta, shape)
+          : translateAllParts(parts, axis, delta, shape),
+      true
+    );
+  },
 
-  deleteBox: (index) => editSelection(get, set, (r) => removeBoxAt(r, index)),
+  deleteBox: (index) => editSelection(get, set, (parts) => removePart(parts, index)),
 
-  setFocusedBox: (index) => set({ focusedBox: index }),
+  hoverBox: (index) => {
+    if (get().pinnedBox !== null) return; // a pinned part outranks hovering
+    set({ focusedBox: index });
+  },
+
+  togglePinBox: (index) => {
+    const pinned = get().pinnedBox === index ? null : index;
+    set({ pinnedBox: pinned, focusedBox: pinned });
+  },
+
+  clearFocus: () => set({ pinnedBox: null, focusedBox: null }),
+
+  setDragging: (v) => set({ dragging: v }),
 
   setDirection: (d) => {
     const { resolved, selection } = get();
@@ -291,7 +353,6 @@ export const useStore = create<State>((set, get) => ({
   setHideInert: (v) => set({ hideInert: v }),
   setCountIntermediates: (v) => set({ countIntermediates: v }),
   setFocusTensor: (id) => set({ focusTensor: id }),
-  setEditorOpen: (v) => set({ editorOpen: v }),
 
   setPreviewCell: (tensorId, cell) => {
     const { resolved } = get();

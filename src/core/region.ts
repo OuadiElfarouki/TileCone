@@ -265,41 +265,91 @@ export function markInexact(r: Region, reason: string): Region {
   return { boxes: r.boxes, exact: false, reasons: mergeReasons(r.reasons, [reason]) };
 }
 
-// -------------------------------------------------------- editing operations
-// Used by the UI to manipulate a selection directly. All clamp to `shape` and
-// preserve the region's shape where possible rather than clipping it away.
+// ------------------------------------------------------ selections vs regions
+//
+// A Region is a SET. canonicalize() splits overlaps, merges adjacent boxes and
+// reorders them, so an individual box has no stable identity — two boxes that
+// are nudged until they touch become one.
+//
+// A user's selection is a different thing: an ordered list of PARTS, each with
+// its own identity — its hue, its row in the inspector, its own dependency
+// cone, and the ability to be moved or deleted on its own. Parts are therefore
+// never canonicalized, and two parts may overlap.
+//
+// The two views stay consistent because every *set* question goes through
+// canonicalize() or count() first: element totals, propagation seeds and slice
+// expressions all deduplicate overlap, while only the drawn identity is kept
+// here. Nothing downstream sees a double-counted element.
+
+/** Append a drawn box as a new part, ignoring an exact duplicate. */
+export function addPart(parts: Box[], b: Box): Box[] {
+  if (isEmptyBox(b)) return parts;
+  const same = (x: Box, y: Box) =>
+    x.length === y.length && x.every((I, i) => I.lo === y[i].lo && I.hi === y[i].hi);
+  return parts.some((p) => same(p, b)) ? parts : [...parts, b];
+}
+
+/** Drop one part by index. */
+export function removePart(parts: Box[], index: number): Box[] {
+  return parts.filter((_, i) => i !== index);
+}
 
 /**
- * Shift the whole region along `axis`. The delta is clamped so the region's
- * bounding box stays inside the tensor — moving into the edge stops there
- * rather than eroding boxes.
+ * Cut a box out of every part. A part may vanish or split into several; a split
+ * necessarily loses that part's identity, since one region becomes many.
  */
-export function translateRegion(
-  r: Region,
+export function subtractFromParts(parts: Box[], b: Box): Box[] {
+  const out: Box[] = [];
+  for (const p of parts) out.push(...subtractBox(p, b));
+  return out.filter((p) => !isEmptyBox(p));
+}
+
+/**
+ * Move a single part along one axis, leaving every other part untouched. The
+ * delta is clamped so the moved part stays inside the tensor — pushing into an
+ * edge stops there rather than eroding it. Parts may overlap after the move;
+ * that is legal and is resolved by canonicalize() wherever a set is needed.
+ */
+export function translatePart(
+  parts: Box[],
+  index: number,
   axis: number,
   delta: number,
   shape: number[]
-): Region {
-  const bb = boundingBox(r);
-  if (!bb || delta === 0) return r;
-  const d = Math.max(-bb[axis].lo, Math.min(delta, shape[axis] - bb[axis].hi));
-  if (d === 0) return r;
-  return canonicalize({
-    boxes: r.boxes.map((b) =>
-      b.map((I, ax) => (ax === axis ? iv(I.lo + d, I.hi + d) : { ...I }))
-    ),
-    exact: r.exact,
-    reasons: r.reasons,
-  });
+): Box[] {
+  const p = parts[index];
+  if (!p || delta === 0) return parts;
+  const d = Math.max(-p[axis].lo, Math.min(delta, shape[axis] - p[axis].hi));
+  if (d === 0) return parts;
+  const moved = p.map((I, ax) => (ax === axis ? iv(I.lo + d, I.hi + d) : { ...I }));
+  return parts.map((q, i) => (i === index ? moved : q));
 }
 
-/** Drop one box by index (used by the inspector's per-box delete). */
-export function removeBoxAt(r: Region, index: number): Region {
-  return canonicalize({
-    boxes: r.boxes.filter((_, i) => i !== index),
-    exact: r.exact,
-    reasons: r.reasons,
-  });
+/** Move every part together, clamped so the whole selection stays in bounds. */
+export function translateAllParts(
+  parts: Box[],
+  axis: number,
+  delta: number,
+  shape: number[]
+): Box[] {
+  if (!parts.length || delta === 0) return parts;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const p of parts) {
+    lo = Math.min(lo, p[axis].lo);
+    hi = Math.max(hi, p[axis].hi);
+  }
+  const d = Math.max(-lo, Math.min(delta, shape[axis] - hi));
+  if (d === 0) return parts;
+  return parts.map((p) =>
+    p.map((I, ax) => (ax === axis ? iv(I.lo + d, I.hi + d) : { ...I }))
+  );
+}
+
+/** Elements counted once, versus the sum of the parts' own volumes. */
+export function partsOverlap(parts: Box[]): { unique: number; summed: number } {
+  const summed = parts.reduce((a, p) => a + boxVolume(p), 0);
+  return { unique: count({ boxes: parts, exact: true, reasons: [] }), summed };
 }
 
 /** Deterministic ordering, used for byte-identical output & tests. */
@@ -311,5 +361,5 @@ export function sortRegion(r: Region): Region {
     }
     return 0;
   });
-  return { boxes, exact: r.exact, reasons: r.reasons.slice().sort() };
+  return { boxes, exact: r.exact, reasons: r.reasons.slice() };
 }
