@@ -6,7 +6,8 @@
  * One statement per line, `#` comments. Round-trips losslessly via toDSL.
  */
 
-import { DType, Graph, Node, Tensor } from "../core/graph";
+import { Graph, Node, Tensor } from "../core/graph";
+import { DTYPES, DType } from "../core/dtypes";
 import { Sym } from "../core/shapes";
 import { documentSpan, DSLSourceMap, lineSpan, SourceSpan } from "./source";
 
@@ -29,7 +30,7 @@ export class DSLError extends Error {
   }
 }
 
-const DTYPES = new Set(["f32", "f16", "bf16", "f8", "i32", "i8", "bool"]);
+const DTYPE_SET = new Set<string>(DTYPES);
 
 /**
  * Keywords that declare a graph input. `weight` and `param` are the same thing
@@ -247,7 +248,7 @@ export function parseDSLWithSource(text: string): ParsedDSL {
       let dtype: DType = "f32";
       const dt = p.ident();
       if (dt) {
-        if (!DTYPES.has(dt)) p.error(`unknown dtype "${dt}"`);
+        if (!DTYPE_SET.has(dt)) p.error(`unknown dtype "${dt}"`);
         dtype = dt as DType;
       }
       if (tensors[name])

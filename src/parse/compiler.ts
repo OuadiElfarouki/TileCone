@@ -52,6 +52,8 @@ function semanticCode(error: GraphError): string {
     case "GRAPH_SHAPE":
     case "GRAPH_UNBOUND_SYMBOL":
       return "SEM_SHAPE";
+    case "GRAPH_DTYPE":
+      return "SEM_DTYPE";
     case "GRAPH_DEFINITION":
       return "SEM_DEFINITION";
     case "GRAPH_INVALID":

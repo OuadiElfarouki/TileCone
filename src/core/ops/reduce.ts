@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Box, fromBox, iv } from "../region";
-import { OpCtx, OpSpec } from "./types";
+import { OpCtx, OpSpec, uniformDTypeOutputs } from "./types";
 
 /** Normalize one Python-style axis and reject anything outside the tensor rank. */
 export const normAxis = (a: number, rank: number): number => {
@@ -27,6 +27,7 @@ export const reduceOp: OpSpec = {
     keepdim: z.boolean().default(false),
   }),
   arity: { inputs: 1, outputs: 1 },
+  inferDTypes: uniformDTypeOutputs("reduce"),
   inferShapes: (inShapes, a) => {
     const sh = inShapes[0];
     const axes = normAxes((a as RAttrs).axes, sh.length);

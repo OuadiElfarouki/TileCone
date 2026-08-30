@@ -2,27 +2,19 @@
 
 import { getOp } from "./ops/index";
 import { GraphError, resolveDim, resolveShape, Shape, Sym } from "./shapes";
+import { DTYPES, DType } from "./dtypes";
 
 export { GraphError, resolveDim, resolveShape };
 export type { Shape, Sym };
-
-export type DType = "f32" | "f16" | "bf16" | "f8" | "i32" | "i8" | "bool";
-
-export const DTYPE_BYTES: Record<DType, number> = {
-  f32: 4,
-  f16: 2,
-  bf16: 2,
-  f8: 1,
-  i32: 4,
-  i8: 1,
-  bool: 1,
-};
+export { DTYPES, DTYPE_BYTES } from "./dtypes";
+export type { DType } from "./dtypes";
 
 export type Tensor = {
   id: string;
   name: string;
   shape: Shape;
   resolved?: number[]; // populated by resolveGraph
+  /** Inputs declare this; produced tensors are canonicalized by `inferDTypes` during resolution. */
   dtype: DType;
   axisNames?: string[];
   /** Display-only: distinguishes a learned parameter from an activation. */
@@ -165,6 +157,11 @@ export function resolveGraph(source: Graph): ResolvedGraph {
         id,
       });
     t.producer = producers.get(id);
+    if (!DTYPES.includes(t.dtype))
+      throw new GraphError(`tensor "${id}": invalid dtype "${String(t.dtype)}"`, "GRAPH_DTYPE", {
+        kind: "tensor",
+        id,
+      });
   }
 
   // Topo sort (Kahn) over nodes via tensor producer edges.
@@ -258,6 +255,33 @@ export function resolveGraph(source: Graph): ResolvedGraph {
           );
       }
     }
+    let outDTypes: DType[];
+    try {
+      outDTypes = spec.inferDTypes(
+        n.inputs.map((id) => g.tensors[id].dtype),
+        n.attrs,
+        outShapes
+      );
+    } catch (e) {
+      throw new GraphError(
+        `node "${n.id}" (${n.op}): dtype inference failed: ${(e as Error).message}`,
+        "GRAPH_DTYPE",
+        { kind: "node", id: n.id }
+      );
+    }
+    if (outDTypes.length !== n.outputs.length)
+      throw new GraphError(
+        `node "${n.id}" (${n.op}): inferDTypes returned ${outDTypes.length} dtypes for ${n.outputs.length} outputs`,
+        "GRAPH_DTYPE",
+        { kind: "node", id: n.id }
+      );
+    for (let slot = 0; slot < outDTypes.length; slot++)
+      if (!DTYPES.includes(outDTypes[slot]))
+        throw new GraphError(
+          `node "${n.id}" (${n.op}): inferred output ${slot} has invalid dtype "${String(outDTypes[slot])}"`,
+          "GRAPH_DTYPE",
+          { kind: "node", id: n.id }
+        );
     for (let s = 0; s < n.outputs.length; s++) {
       const t = g.tensors[n.outputs[s]];
       const inferred = outShapes[s];
@@ -278,6 +302,7 @@ export function resolveGraph(source: Graph): ResolvedGraph {
         }
       }
       t.resolved = inferred;
+      t.dtype = outDTypes[s];
     }
   }
 

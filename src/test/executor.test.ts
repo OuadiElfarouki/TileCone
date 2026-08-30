@@ -67,6 +67,25 @@ Y = cumsum(X, axis=0)
     expect(executor.metrics("Y", region).flops).toBe(128);
   });
 
+  it("uses inferred cast dtypes for output and intermediate byte metrics", () => {
+    const { executor } = compileDSL(`input X [4] f32
+Y = cast(X, dtype=f8)
+Z = cast(Y, dtype=f16)
+`);
+    const region = fromBox(box([0, 4]));
+
+    expect(executor.metrics("Y", region)).toMatchObject({
+      inputBytes: 16,
+      intermediateBytes: 0,
+      outputBytes: 4,
+    });
+    expect(executor.metrics("Z", region, true)).toMatchObject({
+      inputBytes: 16,
+      intermediateBytes: 4,
+      outputBytes: 8,
+    });
+  });
+
   it("rejects unknown tensors with a stable error code", () => {
     const { executor } = gemm();
     expect(() => executor.upstream("Missing", fromBox(box([0, 1])))).toThrowError(

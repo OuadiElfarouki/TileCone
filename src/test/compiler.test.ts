@@ -97,6 +97,64 @@ C = matmul(A, B)
     });
   });
 
+  it("infers cast dtypes through subsequent preserving operations", () => {
+    const program = compileDSL(`input X [4] f32
+Y = cast(X, dtype=f16)
+Z = contiguous(Y)
+`);
+
+    expect(program.resolved.tensors.X.dtype).toBe("f32");
+    expect(program.resolved.tensors.Y.dtype).toBe("f16");
+    expect(program.resolved.tensors.Z.dtype).toBe("f16");
+  });
+
+  it("infers gather output dtype from data and requires i32 indices", () => {
+    const valid = compileDSL(`input D [8, 4] f16
+input I [3] i32
+Y = gather(D, I, axis=0, indexValues=[1, 5, 2])
+`);
+    expect(valid.resolved.tensors.Y.dtype).toBe("f16");
+
+    const invalid = tryCompileDSL(`input D [8, 4] f16
+input I [3] f32
+Y = gather(D, I, axis=0)
+`);
+    expect(invalid.ok).toBe(false);
+    if (invalid.ok) return;
+    expect(invalid.diagnostics[0]).toMatchObject({
+      phase: "semantic",
+      code: "SEM_DTYPE",
+      span: { start: { line: 3 } },
+    });
+    expect(invalid.diagnostics[0].message).toMatch(/indices must be i32/);
+  });
+
+  it("rejects ambiguous mixed-dtype compute inputs", () => {
+    const result = tryCompileDSL(`input A [4] f16
+input B [4] f32
+Y = add(A, B)
+`);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0]).toMatchObject({
+      phase: "semantic",
+      code: "SEM_DTYPE",
+      span: { start: { line: 3 } },
+    });
+    expect(result.diagnostics[0].message).toMatch(/input dtypes must match.*f16, f32/);
+  });
+
+  it("rejects an unknown cast target as an invalid attribute", () => {
+    const result = tryCompileDSL("input X [4] f32\nY = cast(X, dtype=f64)\n");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0]).toMatchObject({
+      phase: "semantic",
+      code: "SEM_INVALID_ATTRIBUTES",
+      span: { start: { line: 2 } },
+    });
+  });
+
   it.each([
     ["softmax", "Y = softmax(X, axis=2)"],
     ["cumsum", "Y = cumsum(X, axis=-3)"],

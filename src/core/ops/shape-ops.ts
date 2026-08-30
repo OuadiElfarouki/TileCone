@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DTYPES, DType } from "../dtypes";
 import { Box, Interval, Region, canonicalize, empty, fromBox, iv } from "../region";
 import { resolveShape } from "../shapes";
 import {
@@ -7,7 +8,7 @@ import {
   broadcastOracleIndex,
 } from "./elementwise";
 import { normAxis } from "./reduce";
-import { OpSpec, STRIDED_ENUM_CAP } from "./types";
+import { OpSpec, STRIDED_ENUM_CAP, uniformDTypeOutputs } from "./types";
 
 const zero = () => 0;
 
@@ -39,6 +40,7 @@ export const transposeOp: OpSpec = {
   name: "transpose",
   attrSchema: z.object({ perm: z.array(z.number().int()) }),
   arity: { inputs: 1, outputs: 1 },
+  inferDTypes: uniformDTypeOutputs("transpose"),
   inferShapes: (inShapes, attrs) => {
     const perm = attrs.perm as number[];
     const sh = inShapes[0];
@@ -77,6 +79,7 @@ export const sliceOp: OpSpec = {
     steps: z.array(z.number().int().min(1)),
   }),
   arity: { inputs: 1, outputs: 1 },
+  inferDTypes: uniformDTypeOutputs("slice"),
   inferShapes: (inShapes, attrs) => {
     const { starts, stops, steps } = attrs as SliceAttrs;
     const sh = inShapes[0];
@@ -165,6 +168,7 @@ export const padOp: OpSpec = {
     mode: z.enum(["constant", "reflect", "replicate"]).default("constant"),
   }),
   arity: { inputs: 1, outputs: 1 },
+  inferDTypes: uniformDTypeOutputs("pad"),
   inferShapes: (inShapes, attrs) => {
     const { pads, mode } = attrs as PadAttrs;
     const sh = inShapes[0];
@@ -254,6 +258,7 @@ export const concatOp: OpSpec = {
   name: "concat",
   attrSchema: z.object({ axis: z.number().int() }),
   arity: { inputs: "variadic", outputs: 1 },
+  inferDTypes: uniformDTypeOutputs("concat"),
   inferShapes: (inShapes, attrs) => {
     const ax = normAxis(attrs.axis as number, inShapes[0].length);
     const out = inShapes[0].slice();
@@ -311,6 +316,7 @@ export const splitOp: OpSpec = {
   name: "split",
   attrSchema: z.object({ axis: z.number().int(), sizes: z.array(z.number().int().min(1)) }),
   arity: { inputs: 1, outputs: "variadic" },
+  inferDTypes: uniformDTypeOutputs("split"),
   inferShapes: (inShapes, attrs) => {
     const sh = inShapes[0];
     const ax = normAxis(attrs.axis as number, sh.length);
@@ -357,6 +363,7 @@ export const expandOp: OpSpec = {
   name: "expand",
   attrSchema: z.object({ shape: z.array(z.union([z.string(), z.number().int().min(1)])) }),
   arity: { inputs: 1, outputs: 1 },
+  inferDTypes: uniformDTypeOutputs("expand"),
   inferShapes: (inShapes, attrs, params) => {
     const target = resolveShape(attrs.shape as (string | number)[], params ?? {});
     const inSh = inShapes[0];
@@ -383,6 +390,7 @@ export function identityLike(name: string): OpSpec {
     name,
     attrSchema: z.object({}).passthrough(),
     arity: { inputs: 1, outputs: 1 },
+    inferDTypes: uniformDTypeOutputs(name),
     inferShapes: (inShapes) => [inShapes[0].slice()],
     backward: (_s, outBox) => [fromBox(outBox.map((I) => ({ ...I })))],
     forward: (_s, inBox) => [fromBox(inBox.map((I) => ({ ...I })))],
@@ -390,3 +398,10 @@ export function identityLike(name: string): OpSpec {
     flopsFor: zero,
   };
 }
+
+export const castOp: OpSpec = {
+  ...identityLike("cast"),
+  attrSchema: z.object({ dtype: z.enum(DTYPES) }),
+  inferDTypes: (_inDTypes, attrs, outShapes) =>
+    outShapes.map(() => attrs.dtype as DType),
+};

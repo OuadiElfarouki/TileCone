@@ -34,6 +34,12 @@ export const gatherOp: OpSpec = {
     indexValues: z.array(z.number().int().min(0)).optional(),
   }),
   arity: { inputs: 2, outputs: 1 },
+  inferDTypes: (inDTypes, _attrs, outShapes) => {
+    const [data, indices] = inDTypes;
+    if (indices !== "i32")
+      throw new Error(`gather: indices must be i32, got ${indices}`);
+    return outShapes.map(() => data);
+  },
   inferShapes: (inShapes, attrs) => {
     const [dataSh, idxSh] = inShapes;
     if (idxSh.length !== 1) throw new Error("gather: indices must be rank-1");

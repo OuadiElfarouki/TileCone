@@ -1,5 +1,6 @@
 import type { ZodType } from "zod";
 import type { Box, Region } from "../region";
+import type { DType } from "../dtypes";
 
 export type Attrs = Record<string, unknown>;
 
@@ -15,6 +16,9 @@ export interface OpSpec {
   arity: { inputs: number | "variadic"; outputs: number | "variadic" };
 
   inferShapes(inShapes: number[][], attrs: Attrs, params?: Record<string, number>): number[][];
+
+  /** Infer canonical output dtypes and validate input dtype compatibility. */
+  inferDTypes(inDTypes: DType[], attrs: Attrs, outShapes: number[][]): DType[];
 
   /** Which parts of each input does this single output box depend on? One Region per input. */
   backward(outSlot: number, outBox: Box, ctx: OpCtx): Region[];
@@ -43,3 +47,15 @@ export interface OpSpec {
 /** Thresholds for emitting enumerated boxes before falling back to inexact bounds. */
 export const STRIDED_ENUM_CAP = 512;
 export const DIAG_ENUM_CAP = 256;
+
+/** Require all inputs to share one dtype and apply it to every inferred output. */
+export function uniformDTypeOutputs(op: string) {
+  return (inDTypes: DType[], _attrs: Attrs, outShapes: number[][]): DType[] => {
+    const dtype = inDTypes[0];
+    if (!dtype) throw new Error(`${op}: expected at least one input dtype`);
+    const mismatch = inDTypes.find((candidate) => candidate !== dtype);
+    if (mismatch)
+      throw new Error(`${op}: input dtypes must match, got [${inDTypes.join(", ")}]`);
+    return outShapes.map(() => dtype);
+  };
+}

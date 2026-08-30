@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Box, fromBox, iv } from "../region";
-import { OpSpec } from "./types";
+import { OpSpec, uniformDTypeOutputs } from "./types";
 
 export function broadcastShapes(shapes: number[][]): number[] {
   const rank = Math.max(...shapes.map((s) => s.length));
@@ -43,6 +43,7 @@ export const elementwiseOp: OpSpec = {
   name: "elementwise",
   attrSchema: z.object({ fn: z.string(), nary: z.number().int().min(1) }),
   arity: { inputs: "variadic", outputs: 1 },
+  inferDTypes: uniformDTypeOutputs("elementwise"),
   inferShapes: (inShapes) => [broadcastShapes(inShapes)],
   backward: (_slot, outBox, ctx) =>
     ctx.inShapes.map((sh) => fromBox(broadcastBackwardBox(outBox, sh))),

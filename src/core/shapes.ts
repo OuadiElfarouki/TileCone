@@ -10,6 +10,7 @@ export type GraphErrorCode =
   | "GRAPH_ARITY"
   | "GRAPH_CYCLE"
   | "GRAPH_SHAPE"
+  | "GRAPH_DTYPE"
   | "GRAPH_UNBOUND_SYMBOL"
   | "GRAPH_DEFINITION";
 

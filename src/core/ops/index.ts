@@ -12,6 +12,7 @@ import {
   splitOp,
   expandOp,
   identityLike,
+  castOp,
 } from "./shape-ops";
 import { reshapeOp } from "./reshape";
 import { convOp, poolOp } from "./conv";
@@ -50,6 +51,6 @@ export function getOp(name: string): OpSpec | undefined {
   cumsumOp,
   gatherOp,
   identityLike("identity"),
-  identityLike("cast"),
+  castOp,
   identityLike("contiguous"),
 ].forEach(registerOp);

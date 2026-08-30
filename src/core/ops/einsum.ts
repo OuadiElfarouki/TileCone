@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Box, Region, empty, fromBox, iv, canonicalize } from "../region";
-import { Attrs, DIAG_ENUM_CAP, OpCtx, OpSpec } from "./types";
+import { Attrs, DIAG_ENUM_CAP, OpCtx, OpSpec, uniformDTypeOutputs } from "./types";
 
 export type ParsedEquation = { operands: string[][]; output: string[] };
 
@@ -165,6 +165,7 @@ export const einsumOp: OpSpec = {
   name: "einsum",
   attrSchema: z.object({ equation: z.string() }),
   arity: { inputs: "variadic", outputs: 1 },
+  inferDTypes: uniformDTypeOutputs("einsum"),
   inferShapes: (inShapes, attrs) => einsumInferShapes(eqOf(attrs), inShapes),
   backward: (_slot, outBox, ctx) => einsumBackward(eqOf(ctx.attrs), outBox, ctx),
   forward: (inSlot, inBox, ctx) => einsumForward(eqOf(ctx.attrs), inSlot, inBox, ctx),
@@ -183,6 +184,7 @@ export function einsumSugar(
     name,
     attrSchema: z.object({}).passthrough(),
     arity: { inputs: nInputs, outputs: 1 },
+    inferDTypes: uniformDTypeOutputs(name),
     inferShapes: (inShapes) => einsumInferShapes(makeEq(inShapes), inShapes),
     backward: (_s, outBox, ctx) => einsumBackward(eqFor(ctx), outBox, ctx),
     forward: (inSlot, inBox, ctx) => einsumForward(eqFor(ctx), inSlot, inBox, ctx),

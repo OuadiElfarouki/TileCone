@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Box, Interval, Region, boundingBox, canonicalize, iv, MAX_BOXES } from "../region";
 import { resolveShape } from "../shapes";
-import { OpSpec } from "./types";
+import { OpSpec, uniformDTypeOutputs } from "./types";
 
 export const MAX_RESHAPE_RUNS = 4096;
 
@@ -191,6 +191,7 @@ export const reshapeOp: OpSpec = {
   name: "reshape",
   attrSchema: z.object({ shape: z.array(z.union([z.string(), z.number().int().min(1)])) }),
   arity: { inputs: 1, outputs: 1 },
+  inferDTypes: uniformDTypeOutputs("reshape"),
   inferShapes: (inShapes, attrs, params) => {
     const target = resolveShape((attrs as ReshapeAttrs).shape, params ?? {});
     const inN = inShapes[0].reduce((a, b) => a * b, 1);

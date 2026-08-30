@@ -195,21 +195,22 @@ describe("oracle corpus: single ops", () => {
   });
 
   it("gather with concrete indices", () => {
-    checkGraph(
-      G({ D: [6, 3], I: [4] }, [
-        ["n", "gather", ["D", "I"], ["Y"], { axis: 0, indexValues: [5, 0, 2, 2] }],
-      ])
-    );
-    checkGraph(
-      G({ D: [2, 5], I: [3] }, [
-        ["n", "gather", ["D", "I"], ["Y"], { axis: 1, indexValues: [4, 4, 1] }],
-      ])
-    );
+    const axis0 = G({ D: [6, 3], I: [4] }, [
+      ["n", "gather", ["D", "I"], ["Y"], { axis: 0, indexValues: [5, 0, 2, 2] }],
+    ]);
+    axis0.tensors.I.dtype = "i32";
+    checkGraph(axis0);
+
+    const axis1 = G({ D: [2, 5], I: [3] }, [
+      ["n", "gather", ["D", "I"], ["Y"], { axis: 1, indexValues: [4, 4, 1] }],
+    ]);
+    axis1.tensors.I.dtype = "i32";
+    checkGraph(axis1);
   });
 
   it("identity family", () => {
     checkGraph(G({ X: [3, 4] }, [["n", "identity", ["X"], ["Y"]]]));
-    checkGraph(G({ X: [3, 4] }, [["n", "cast", ["X"], ["Y"]]]));
+    checkGraph(G({ X: [3, 4] }, [["n", "cast", ["X"], ["Y"], { dtype: "f16" }]]));
   });
 });
 
@@ -228,9 +229,12 @@ describe("inexact fallbacks are marked and are supersets", () => {
   });
 
   it("data-dependent gather is full + inexact", () => {
-    const g = resolveGraph(
-      G({ D: [6, 3], I: [4] }, [["n", "gather", ["D", "I"], ["Y"], { axis: 0 }]])
+    const graph = G(
+      { D: [6, 3], I: [4] },
+      [["n", "gather", ["D", "I"], ["Y"], { axis: 0 }]]
     );
+    graph.tensors.I.dtype = "i32";
+    const g = resolveGraph(graph);
     const res = propagateBackward(g, { tensorId: "Y", region: fromBox(box([0, 1], [0, 1])) });
     const d = res.tensors.get("D")!;
     expect(d.region.exact).toBe(false);

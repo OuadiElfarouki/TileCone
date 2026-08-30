@@ -1,4 +1,5 @@
-import { DTYPE_BYTES, ResolvedGraph } from "./graph";
+import { ResolvedGraph } from "./graph";
+import { DTYPE_BYTES } from "./dtypes";
 import { getOp } from "./ops/index";
 import { OpCtx } from "./ops/types";
 import { PropResult } from "./propagate";

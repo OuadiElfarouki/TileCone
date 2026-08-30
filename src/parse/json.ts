@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Graph } from "../core/graph";
+import { DTYPES } from "../core/dtypes";
 
 const symSchema = z.union([z.string(), z.number().int().min(0)]);
 
@@ -7,7 +8,7 @@ const tensorSchema = z.object({
   id: z.string(),
   name: z.string(),
   shape: z.array(symSchema),
-  dtype: z.enum(["f32", "f16", "bf16", "f8", "i32", "i8", "bool"]),
+  dtype: z.enum(DTYPES),
   axisNames: z.array(z.string()).optional(),
   role: z.enum(["activation", "weight"]).optional(),
 });

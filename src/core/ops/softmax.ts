@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Box, Region, canonicalize, count, fromBox, iv } from "../region";
 import { normAxis } from "./reduce";
-import { OpCtx, OpSpec } from "./types";
+import { OpCtx, OpSpec, uniformDTypeOutputs } from "./types";
 
 const axisOf = (ctx: OpCtx) => normAxis(ctx.attrs.axis as number, ctx.inShapes[0].length);
 
@@ -24,6 +24,7 @@ export const softmaxOp: OpSpec = {
   name: "softmax",
   attrSchema: z.object({ axis: z.number().int() }),
   arity: { inputs: 1, outputs: 1 },
+  inferDTypes: uniformDTypeOutputs("softmax"),
   inferShapes: (inShapes, attrs) => {
     normAxis(attrs.axis as number, inShapes[0].length);
     return [inShapes[0].slice()];

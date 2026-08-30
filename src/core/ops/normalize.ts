@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Box, Region, canonicalize, count, fromBox, iv } from "../region";
 import { normAxes } from "./reduce";
-import { OpCtx, OpSpec } from "./types";
+import { OpCtx, OpSpec, uniformDTypeOutputs } from "./types";
 
 type NAttrs = { kind: "layernorm" | "rmsnorm"; axes: number[]; hasWeight: boolean; hasBias: boolean };
 
@@ -50,6 +50,7 @@ export const normalizeOp: OpSpec = {
     hasBias: z.boolean().default(false),
   }),
   arity: { inputs: "variadic", outputs: 1 },
+  inferDTypes: uniformDTypeOutputs("normalize"),
   inferShapes: (inShapes, a) => {
     const attrs = a as NAttrs;
     const sh = inShapes[0];

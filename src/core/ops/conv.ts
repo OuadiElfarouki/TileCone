@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Box, Interval, Region, canonicalize, empty, fromBox, iv } from "../region";
 import { productBoxes } from "./shape-ops";
-import { OpCtx, OpSpec, STRIDED_ENUM_CAP } from "./types";
+import { OpCtx, OpSpec, STRIDED_ENUM_CAP, uniformDTypeOutputs } from "./types";
 
 /**
  * Layout: NC* (batch, channels, spatial...). Weight: [Cout, Cin/groups, *kernel].
@@ -136,6 +136,7 @@ export const convOp: OpSpec = {
     groups: z.number().int().min(1).default(1),
   }),
   arity: { inputs: 2, outputs: 1 },
+  inferDTypes: uniformDTypeOutputs("conv"),
   inferShapes: (inShapes, attrs) => {
     const a = attrs as ConvAttrs;
     const [xSh, wSh] = inShapes;
@@ -262,6 +263,7 @@ export const poolOp: OpSpec = {
     dilation: z.array(z.number().int().min(1)).optional(),
   }),
   arity: { inputs: 1, outputs: 1 },
+  inferDTypes: uniformDTypeOutputs("pool"),
   inferShapes: (inShapes, attrs) => {
     const a = attrs as PoolAttrs;
     const sh = inShapes[0];

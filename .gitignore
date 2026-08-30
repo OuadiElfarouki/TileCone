@@ -9,3 +9,4 @@ dist/
 .idea/
 scratchpad/
 screenshots/
+docs/design*

@@ -29,7 +29,7 @@ D = softmax(C, axis=-1)
   });
 
   it("supports multi-output split and sugar names", () => {
-    const g = parseDSL(`input X [6, 4] f32
+    const g = parseDSL(`input X [6, 4] f16
 A, B = split(X, axis=0, sizes=[2, 4])
 C = add(A, A)
 S = sum(C, axes=[1], keepdim=true)
@@ -38,6 +38,9 @@ S = sum(C, axes=[1], keepdim=true)
     expect(rg.tensors["A"].resolved).toEqual([2, 4]);
     expect(rg.tensors["B"].resolved).toEqual([4, 4]);
     expect(rg.tensors["S"].resolved).toEqual([2, 1]);
+    expect(rg.tensors["A"].dtype).toBe("f16");
+    expect(rg.tensors["B"].dtype).toBe("f16");
+    expect(rg.tensors["S"].dtype).toBe("f16");
   });
 
   it("accepts weight/param as input declarations and tags them", () => {
