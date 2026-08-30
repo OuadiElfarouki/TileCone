@@ -52,7 +52,8 @@ export function computeMetrics(
     node.outputs.forEach((tid, slot) => {
       const tr = back.tensors.get(tid);
       if (!tr) return;
-      for (const b of tr.region.boxes) flops += spec.flopsFor(slot, b, ctx);
+      if (spec.flopsForRegion) flops += spec.flopsForRegion(slot, tr.region, ctx);
+      else for (const b of tr.region.boxes) flops += spec.flopsFor(slot, b, ctx);
     });
   }
 

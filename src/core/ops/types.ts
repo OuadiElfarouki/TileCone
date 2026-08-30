@@ -31,6 +31,13 @@ export interface OpSpec {
 
   /** Approximate FLOPs to compute the given output box. Data movement ops return 0. */
   flopsFor(outSlot: number, outBox: Box, ctx: OpCtx): number;
+
+  /**
+   * Region-aware override for operations whose outputs share nonlocal work
+   * (reductions behind softmax/normalization, scans, and similar kernels).
+   * When absent, metrics sum `flopsFor` over the region's disjoint boxes.
+   */
+  flopsForRegion?(outSlot: number, outRegion: Region, ctx: OpCtx): number;
 }
 
 /** Thresholds for emitting enumerated boxes before falling back to inexact bounds. */

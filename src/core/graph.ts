@@ -97,7 +97,7 @@ export function cloneGraph(source: Graph): Graph {
 export function resolveGraph(source: Graph): ResolvedGraph {
   const g = cloneGraph(source);
   for (const [name, value] of Object.entries(g.params))
-    if (!Number.isInteger(value) || value <= 0)
+    if (!Number.isSafeInteger(value) || value <= 0)
       throw new GraphError(
         `parameter "${name}": bad binding ${name}=${value}`,
         "GRAPH_SHAPE",
@@ -240,6 +240,24 @@ export function resolveGraph(source: Graph): ResolvedGraph {
         "GRAPH_SHAPE",
         { kind: "node", id: n.id }
       );
+    for (let slot = 0; slot < outShapes.length; slot++) {
+      const inferred = outShapes[slot];
+      if (!Array.isArray(inferred))
+        throw new GraphError(
+          `node "${n.id}" (${n.op}): inferred output ${slot} is not a shape`,
+          "GRAPH_SHAPE",
+          { kind: "node", id: n.id }
+        );
+      for (let axis = 0; axis < inferred.length; axis++) {
+        const extent = inferred[axis];
+        if (!Number.isSafeInteger(extent) || extent < 0)
+          throw new GraphError(
+            `node "${n.id}" (${n.op}): inferred output ${slot}, axis ${axis} has invalid extent ${String(extent)}`,
+            "GRAPH_SHAPE",
+            { kind: "node", id: n.id }
+          );
+      }
+    }
     for (let s = 0; s < n.outputs.length; s++) {
       const t = g.tensors[n.outputs[s]];
       const inferred = outShapes[s];

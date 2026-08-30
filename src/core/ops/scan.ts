@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Box, fromBox, iv } from "../region";
+import { Box, Region, canonicalize, count, fromBox, iv } from "../region";
 import { normAxis } from "./reduce";
 import { OpCtx, OpSpec } from "./types";
 
@@ -10,12 +10,34 @@ function cfg(ctx: OpCtx) {
   return { axis: normAxis(a.axis, ctx.inShapes[0].length), reverse: a.reverse };
 }
 
+function scanFlops(outRegion: Region, ctx: OpCtx): number {
+  const { axis, reverse } = cfg(ctx);
+  const extent = ctx.inShapes[0][axis];
+  const prefix = canonicalize({
+    boxes: outRegion.boxes.map((box) =>
+      box.map((interval, i) =>
+        i === axis
+          ? reverse
+            ? iv(interval.lo, extent)
+            : iv(0, interval.hi)
+          : { ...interval }
+      )
+    ),
+    exact: outRegion.exact,
+    reasons: outRegion.reasons,
+  });
+  return count(prefix);
+}
+
 /** Triangular dependency cone: output o depends on inputs [0, o] (or [o, n) reversed). */
 export const cumsumOp: OpSpec = {
   name: "cumsum",
   attrSchema: z.object({ axis: z.number().int(), reverse: z.boolean().default(false) }),
   arity: { inputs: 1, outputs: 1 },
-  inferShapes: (inShapes) => [inShapes[0].slice()],
+  inferShapes: (inShapes, attrs) => {
+    normAxis(attrs.axis as number, inShapes[0].length);
+    return [inShapes[0].slice()];
+  },
   backward: (_s, outBox, ctx) => {
     const { axis, reverse } = cfg(ctx);
     const n = ctx.inShapes[0][axis];
@@ -44,10 +66,6 @@ export const cumsumOp: OpSpec = {
     }
     return [deps];
   },
-  flopsFor: (_s, outBox, ctx) => {
-    let vol = 1;
-    for (const I of outBox) vol *= Math.max(0, I.hi - I.lo);
-    void ctx;
-    return vol;
-  },
+  flopsFor: (_s, outBox, ctx) => scanFlops(fromBox(outBox), ctx),
+  flopsForRegion: (_s, outRegion, ctx) => scanFlops(outRegion, ctx),
 };

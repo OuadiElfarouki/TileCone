@@ -97,6 +97,44 @@ C = matmul(A, B)
     });
   });
 
+  it.each([
+    ["softmax", "Y = softmax(X, axis=2)"],
+    ["cumsum", "Y = cumsum(X, axis=-3)"],
+    ["reduce", "Y = sum(X, axes=[9])"],
+    ["concat", "Y = concat(X, X, axis=9)"],
+  ])("rejects an out-of-range %s axis during compilation", (_name, statement) => {
+    const result = tryCompileDSL(`input X [2, 8] f32\n${statement}\n`);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0]).toMatchObject({
+      phase: "semantic",
+      code: "SEM_SHAPE",
+      span: { start: { line: 2 } },
+    });
+    expect(result.diagnostics[0].message).toMatch(/axis .* out of range for rank 2/);
+  });
+
+  it("rejects mismatched slice attribute ranks", () => {
+    const result = tryCompileDSL(`input X [2, 8] f32
+Y = slice(X, starts=[0, 0], stops=[2], steps=[1, 1])
+`);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0]).toMatchObject({ phase: "semantic", code: "SEM_SHAPE" });
+    expect(result.diagnostics[0].message).toMatch(/stops has length 1, expected rank 2/);
+  });
+
+  it("rejects non-representable inferred extents at the graph boundary", () => {
+    const extent = Number.MAX_SAFE_INTEGER;
+    const result = tryCompileDSL(`input X [${extent}] f32
+Y = concat(X, X, axis=0)
+`);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0]).toMatchObject({ phase: "semantic", code: "SEM_SHAPE" });
+    expect(result.diagnostics[0].message).toMatch(/inferred output 0, axis 0 has invalid extent/);
+  });
+
   it("maps unresolved input dimensions back to the declaration", () => {
     const result = tryCompileDSL(`input X [Missing, 4] f32
 Y = softmax(X, axis=-1)

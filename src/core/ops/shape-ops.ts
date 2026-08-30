@@ -80,7 +80,9 @@ export const sliceOp: OpSpec = {
   inferShapes: (inShapes, attrs) => {
     const { starts, stops, steps } = attrs as SliceAttrs;
     const sh = inShapes[0];
-    if (starts.length !== sh.length) throw new Error("slice: starts rank mismatch");
+    for (const [name, values] of Object.entries({ starts, stops, steps }))
+      if (values.length !== sh.length)
+        throw new Error(`slice: ${name} has length ${values.length}, expected rank ${sh.length}`);
     return [
       sh.map((e, ax) => {
         const stop = Math.min(stops[ax], e);

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Box, Region, fromBox, iv } from "../region";
+import { Box, Region, canonicalize, count, fromBox, iv } from "../region";
 import { normAxes } from "./reduce";
 import { OpCtx, OpSpec } from "./types";
 
@@ -8,6 +8,32 @@ type NAttrs = { kind: "layernorm" | "rmsnorm"; axes: number[]; hasWeight: boolea
 function cfg(ctx: OpCtx) {
   const a = ctx.attrs as NAttrs;
   return { ...a, axes: normAxes(a.axes, ctx.inShapes[0].length) };
+}
+
+function normalizeFlops(outRegion: Region, ctx: OpCtx): number {
+  const { kind, axes, hasWeight, hasBias } = cfg(ctx);
+  const axisSet = new Set(axes);
+  const expanded = canonicalize({
+    boxes: outRegion.boxes.map((box) =>
+      box.map((interval, axis) =>
+        axisSet.has(axis) ? iv(0, ctx.inShapes[0][axis]) : { ...interval }
+      )
+    ),
+    exact: outRegion.exact,
+    reasons: outRegion.reasons,
+  });
+  const statistics = canonicalize({
+    boxes: outRegion.boxes.map((box) =>
+      box.map((interval, axis) => (axisSet.has(axis) ? iv(0, 1) : { ...interval }))
+    ),
+    exact: outRegion.exact,
+    reasons: outRegion.reasons,
+  });
+  const selected = count(outRegion);
+  const affineOps = Number(hasWeight) + Number(hasBias);
+  if (kind === "layernorm")
+    return 4 * count(expanded) + 4 * count(statistics) + (1 + affineOps) * selected;
+  return 2 * count(expanded) + 4 * count(statistics) + (1 + affineOps) * selected;
 }
 
 /**
@@ -89,9 +115,6 @@ export const normalizeOp: OpSpec = {
     if (hasBias) deps.push(paramIdx.map((p) => p.slice()));
     return deps;
   },
-  flopsFor: (_s, outBox, ctx) => {
-    let vol = 1;
-    for (const I of outBox) vol *= Math.max(0, I.hi - I.lo);
-    return ((ctx.attrs as NAttrs).kind === "layernorm" ? 8 : 5) * vol;
-  },
+  flopsFor: (_s, outBox, ctx) => normalizeFlops(fromBox(outBox), ctx),
+  flopsForRegion: (_s, outRegion, ctx) => normalizeFlops(outRegion, ctx),
 };

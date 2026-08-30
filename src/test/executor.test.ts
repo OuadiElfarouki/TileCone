@@ -54,6 +54,19 @@ describe("headless symbolic executor", () => {
     });
   });
 
+  it("counts the shared prefix work required by a partial scan selection", () => {
+    const { executor } = compileDSL(`input X [128] f32
+Y = cumsum(X, axis=0)
+`);
+    const region = {
+      boxes: [box([3, 4]), box([127, 128])],
+      exact: true,
+      reasons: [],
+    };
+
+    expect(executor.metrics("Y", region).flops).toBe(128);
+  });
+
   it("rejects unknown tensors with a stable error code", () => {
     const { executor } = gemm();
     expect(() => executor.upstream("Missing", fromBox(box([0, 1])))).toThrowError(

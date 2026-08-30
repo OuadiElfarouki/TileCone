@@ -2,7 +2,13 @@ import { z } from "zod";
 import { Box, fromBox, iv } from "../region";
 import { OpCtx, OpSpec } from "./types";
 
-export const normAxis = (a: number, rank: number) => (a < 0 ? a + rank : a);
+/** Normalize one Python-style axis and reject anything outside the tensor rank. */
+export const normAxis = (a: number, rank: number): number => {
+  const axis = a < 0 ? a + rank : a;
+  if (axis < 0 || axis >= rank)
+    throw new Error(`axis ${a} is out of range for rank ${rank}`);
+  return axis;
+};
 export const normAxes = (axes: number[], rank: number) =>
   [...new Set(axes.map((a) => normAxis(a, rank)))].sort((x, y) => x - y);
 

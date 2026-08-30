@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { expandNode } from "../core/expand";
 import { resolveGraph } from "../core/graph";
+import { computeMetrics } from "../core/metrics";
 import { propagateBackward, propagateForward } from "../core/propagate";
-import { fromBox, points, Region } from "../core/region";
+import { box, fromBox, points, Region } from "../core/region";
 import { flatIndex } from "./oracle";
 import { G } from "./harness";
 
@@ -30,6 +31,9 @@ function assertEquivalent(graph: ReturnType<typeof G>, nodeId: string, selTensor
     const sel = { tensorId: selTensor, region: fromBox(idx.map((v) => ({ lo: v, hi: v + 1 }))) };
     const r1 = propagateBackward(g1, sel);
     const r2 = propagateBackward(g2, sel);
+    expect(computeMetrics(g2, r2).flops, `metric FLOPs @${f}`).toBe(
+      computeMetrics(g1, r1).flops
+    );
     for (const tid of Object.keys(g1.tensors)) {
       const sh = g1.tensors[tid].resolved!;
       expect(flat(r2.tensors.get(tid)?.region, sh), `backward ${tid} @${f}`).toEqual(
@@ -81,5 +85,51 @@ describe("composite expansion equivalence", () => {
     const g2 = resolveGraph(expandNode(graph, "sm"));
     expect(g2.tensors["Y"].resolved).toEqual([4, 8]);
     expect(g2.nodes.length).toBe(5);
+  });
+
+  it("shares softmax reduction work across disjoint selections before and after expansion", () => {
+    const graph = G({ X: [2, 128] }, [["sm", "softmax", ["X"], ["Y"], { axis: -1 }]]);
+    const primitive = resolveGraph(graph);
+    const expanded = resolveGraph(expandNode(graph, "sm"));
+    const selection = {
+      tensorId: "Y",
+      region: {
+        boxes: [box([0, 1], [0, 1]), box([0, 1], [64, 65])],
+        exact: true,
+        reasons: [],
+      },
+    };
+    const primitiveMetrics = computeMetrics(primitive, propagateBackward(primitive, selection));
+    const expandedMetrics = computeMetrics(expanded, propagateBackward(expanded, selection));
+
+    expect(primitiveMetrics.flops).toBe(898);
+    expect(expandedMetrics.flops).toBe(primitiveMetrics.flops);
+  });
+
+  it("shares normalization statistics across disjoint selections before and after expansion", () => {
+    const graph = G({ X: [2, 128], W: [128], B: [128] }, [
+      [
+        "ln",
+        "normalize",
+        ["X", "W", "B"],
+        ["Y"],
+        { kind: "layernorm", axes: [-1], hasWeight: true, hasBias: true },
+      ],
+    ]);
+    const primitive = resolveGraph(graph);
+    const expanded = resolveGraph(expandNode(graph, "ln"));
+    const selection = {
+      tensorId: "Y",
+      region: {
+        boxes: [box([0, 1], [0, 1]), box([0, 1], [64, 65])],
+        exact: true,
+        reasons: [],
+      },
+    };
+    const primitiveMetrics = computeMetrics(primitive, propagateBackward(primitive, selection));
+    const expandedMetrics = computeMetrics(expanded, propagateBackward(expanded, selection));
+
+    expect(primitiveMetrics.flops).toBe(522);
+    expect(expandedMetrics.flops).toBe(primitiveMetrics.flops);
   });
 });
