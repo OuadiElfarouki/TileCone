@@ -14,7 +14,7 @@ No values are ever computed. The whole engine is integer interval arithmetic ove
 ```bash
 npm install
 npm run dev      # http://localhost:5173
-npm test         # 117 tests
+npm test         # 165 tests
 npm run build    # typecheck + production bundle
 ```
 
@@ -51,10 +51,11 @@ src/
     region.ts    the box algebra everything rests on
     graph.ts     IR, validation, topo sort, shape inference
     propagate.ts the backward/forward driver
+    executor.ts  checked headless query API
     ops/         the op registry — einsum is the heart of it
     metrics.ts   flops, bytes, intensity, reuse
     expand.ts    composite ops -> primitive subgraphs
-  parse/         DSL and JSON front ends
+  parse/         DSL/JSON front ends + source-aware compiler facade
   ui/            React + canvas; store.ts holds all view state
   examples/      the seven built-in demo graphs
   test/          oracle + suites
@@ -62,6 +63,31 @@ docs/IDEA.md     the full design spec, kept in sync with the code
 ```
 
 `core/` is strictly headless so the oracle and any future CLI can run without a DOM.
+
+## Headless compiler and executor
+
+`compileDSL` is the checked boundary for user-authored programs. It preserves an unresolved source
+graph, produces a separately resolved graph, retains statement spans for line-aware parse and
+semantic diagnostics, and exposes the symbolic executor:
+
+```ts
+import { compileDSL } from "./src/parse/compiler";
+import { box, fromBox } from "./src/core/region";
+
+const program = compileDSL(`
+  input A [256, 512] f16
+  input B [512, 256] f16
+  C = matmul(A, B)
+`);
+
+const cone = program.executor.upstream(
+  "C",
+  fromBox(box([64, 128], [0, 64]))
+);
+```
+
+Use `tryCompileDSL` when diagnostics should be returned as data instead of thrown. The lower-level
+`parseDSL`, `resolveGraph`, and propagation functions remain available for tests and tooling.
 
 ## Notes on the UI
 

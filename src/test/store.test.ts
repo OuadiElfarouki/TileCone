@@ -6,6 +6,27 @@ const S = () => useStore.getState();
 const sel = () => S().selection;
 const regionOf = (tensorId: string) => S().backwardRes?.tensors.get(tensorId)?.region;
 
+describe("DSL compiler integration", () => {
+  beforeEach(() => S().loadExample(0));
+
+  it("loads a compiled program through the UI boundary", () => {
+    S().applyDSL(`input X [2, 3] f32
+Y = softmax(X, axis=-1)
+`);
+    expect(S().loadError).toBeNull();
+    expect(S().graph?.tensors.Y.resolved).toBeUndefined();
+    expect(S().resolved?.tensors.Y.resolved).toEqual([2, 3]);
+  });
+
+  it("surfaces semantic failures with the originating DSL line", () => {
+    S().applyDSL(`input A [2, 3] f32
+input B [4, 5] f32
+C = matmul(A, B)
+`);
+    expect(S().loadError).toMatch(/^line 3: node "matmul_C".*shape inference failed/);
+  });
+});
+
 /** Drives the store exactly as the UI does, to cover the selection-editing actions. */
 describe("selection editing through the store", () => {
   beforeEach(() => {

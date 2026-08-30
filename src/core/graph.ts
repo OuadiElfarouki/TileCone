@@ -51,36 +51,119 @@ export type ResolvedGraph = Graph & {
   shapesOf: (ids: string[]) => number[][];
 };
 
+/**
+ * Clone the canonical, serializable portion of a graph.
+ *
+ * Graph resolution annotates tensors and normalizes attrs. Keeping that work on
+ * a private copy makes compilation referentially transparent: callers may cache,
+ * diff, or recompile their source graph without resolution leaking state into it.
+ */
+export function cloneGraph(source: Graph): Graph {
+  const cloneValue = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(cloneValue);
+    if (value && typeof value === "object")
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, cloneValue(item)])
+      );
+    return value;
+  };
+
+  const tensors: Record<string, Tensor> = {};
+  for (const [id, tensor] of Object.entries(source.tensors)) {
+    tensors[id] = {
+      id: tensor.id,
+      name: tensor.name,
+      shape: tensor.shape.slice(),
+      dtype: tensor.dtype,
+      ...(tensor.axisNames ? { axisNames: tensor.axisNames.slice() } : {}),
+      ...(tensor.role ? { role: tensor.role } : {}),
+    };
+  }
+  return {
+    nodes: source.nodes.map((node) => ({
+      id: node.id,
+      op: node.op,
+      inputs: node.inputs.slice(),
+      outputs: node.outputs.slice(),
+      attrs: cloneValue(node.attrs) as Record<string, unknown>,
+      ...(node.label !== undefined ? { label: node.label } : {}),
+    })),
+    tensors,
+    params: { ...source.params },
+  };
+}
+
 /** Validate structure, resolve shapes, infer intermediate/output shapes, topo sort. */
-export function resolveGraph(g: Graph): ResolvedGraph {
+export function resolveGraph(source: Graph): ResolvedGraph {
+  const g = cloneGraph(source);
+  for (const [name, value] of Object.entries(g.params))
+    if (!Number.isInteger(value) || value <= 0)
+      throw new GraphError(
+        `parameter "${name}": bad binding ${name}=${value}`,
+        "GRAPH_SHAPE",
+        { kind: "parameter", id: name }
+      );
   const tensorIds = new Set(Object.keys(g.tensors));
   const producers = new Map<string, { nodeId: string; slot: number }>();
   const nodeIds = new Set<string>();
 
   for (const n of g.nodes) {
-    if (nodeIds.has(n.id)) throw new GraphError(`duplicate node id "${n.id}"`);
+    if (nodeIds.has(n.id))
+      throw new GraphError(`duplicate node id "${n.id}"`, "GRAPH_DEFINITION", {
+        kind: "node",
+        id: n.id,
+      });
     nodeIds.add(n.id);
     const spec = getOp(n.op);
-    if (!spec) throw new GraphError(`node "${n.id}": unknown op "${n.op}"`);
+    if (!spec)
+      throw new GraphError(`node "${n.id}": unknown op "${n.op}"`, "GRAPH_UNKNOWN_OP", {
+        kind: "node",
+        id: n.id,
+      });
     for (const t of [...n.inputs, ...n.outputs])
-      if (!tensorIds.has(t)) throw new GraphError(`node "${n.id}" references missing tensor "${t}"`);
+      if (!tensorIds.has(t))
+        throw new GraphError(
+          `node "${n.id}" references missing tensor "${t}"`,
+          "GRAPH_DEFINITION",
+          { kind: "node", id: n.id }
+        );
     if (spec.arity.inputs !== "variadic" && n.inputs.length !== spec.arity.inputs)
-      throw new GraphError(`node "${n.id}" (${n.op}): expected ${spec.arity.inputs} inputs, got ${n.inputs.length}`);
+      throw new GraphError(
+        `node "${n.id}" (${n.op}): expected ${spec.arity.inputs} inputs, got ${n.inputs.length}`,
+        "GRAPH_ARITY",
+        { kind: "node", id: n.id }
+      );
     if (spec.arity.outputs !== "variadic" && n.outputs.length !== spec.arity.outputs)
-      throw new GraphError(`node "${n.id}" (${n.op}): expected ${spec.arity.outputs} outputs, got ${n.outputs.length}`);
+      throw new GraphError(
+        `node "${n.id}" (${n.op}): expected ${spec.arity.outputs} outputs, got ${n.outputs.length}`,
+        "GRAPH_ARITY",
+        { kind: "node", id: n.id }
+      );
     const parsed = spec.attrSchema.safeParse(n.attrs ?? {});
     if (!parsed.success)
-      throw new GraphError(`node "${n.id}" (${n.op}): bad attrs: ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`);
+      throw new GraphError(
+        `node "${n.id}" (${n.op}): bad attrs: ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
+        "GRAPH_INVALID_ATTRIBUTES",
+        { kind: "node", id: n.id }
+      );
     n.attrs = parsed.data as Record<string, unknown>;
     for (let s = 0; s < n.outputs.length; s++) {
       const t = n.outputs[s];
-      if (producers.has(t)) throw new GraphError(`tensor "${t}" has multiple producers`);
+      if (producers.has(t))
+        throw new GraphError(`tensor "${t}" has multiple producers`, "GRAPH_DEFINITION", {
+          kind: "tensor",
+          id: t,
+        });
       producers.set(t, { nodeId: n.id, slot: s });
     }
   }
 
   for (const [id, t] of Object.entries(g.tensors)) {
-    if (t.id !== id) throw new GraphError(`tensor key "${id}" != id "${t.id}"`);
+    if (t.id !== id)
+      throw new GraphError(`tensor key "${id}" != id "${t.id}"`, "GRAPH_DEFINITION", {
+        kind: "tensor",
+        id,
+      });
     t.producer = producers.get(id);
   }
 
@@ -113,27 +196,50 @@ export function resolveGraph(g: Graph): ResolvedGraph {
       if (d === 0) queue.push(dep);
     }
   }
-  if (topo.length !== g.nodes.length) throw new GraphError("graph has a cycle");
+  if (topo.length !== g.nodes.length) throw new GraphError("graph has a cycle", "GRAPH_CYCLE");
 
   // Resolve declared shapes, then infer through the DAG.
-  for (const t of Object.values(g.tensors))
-    if (!t.producer) t.resolved = resolveShape(t.shape, g.params);
+  for (const t of Object.values(g.tensors)) {
+    if (t.producer) continue;
+    try {
+      t.resolved = resolveShape(t.shape, g.params);
+    } catch (e) {
+      throw new GraphError(
+        `tensor "${t.id}": shape resolution failed: ${(e as Error).message}`,
+        "GRAPH_SHAPE",
+        { kind: "tensor", id: t.id }
+      );
+    }
+  }
 
   for (const n of topo) {
     const spec = getOp(n.op)!;
     const inShapes = n.inputs.map((t) => {
       const r = g.tensors[t].resolved;
-      if (!r) throw new GraphError(`node "${n.id}": input "${t}" has unresolved shape`);
+      if (!r)
+        throw new GraphError(
+          `node "${n.id}": input "${t}" has unresolved shape`,
+          "GRAPH_SHAPE",
+          { kind: "node", id: n.id }
+        );
       return r;
     });
     let outShapes: number[][];
     try {
       outShapes = spec.inferShapes(inShapes, n.attrs, g.params);
     } catch (e) {
-      throw new GraphError(`node "${n.id}" (${n.op}): shape inference failed: ${(e as Error).message}`);
+      throw new GraphError(
+        `node "${n.id}" (${n.op}): shape inference failed: ${(e as Error).message}`,
+        "GRAPH_SHAPE",
+        { kind: "node", id: n.id }
+      );
     }
     if (outShapes.length !== n.outputs.length)
-      throw new GraphError(`node "${n.id}": inferShapes returned ${outShapes.length} shapes for ${n.outputs.length} outputs`);
+      throw new GraphError(
+        `node "${n.id}": inferShapes returned ${outShapes.length} shapes for ${n.outputs.length} outputs`,
+        "GRAPH_SHAPE",
+        { kind: "node", id: n.id }
+      );
     for (let s = 0; s < n.outputs.length; s++) {
       const t = g.tensors[n.outputs[s]];
       const inferred = outShapes[s];
@@ -143,10 +249,12 @@ export function resolveGraph(g: Graph): ResolvedGraph {
           const declared = resolveShape(t.shape, g.params);
           if (declared.length !== inferred.length || declared.some((d, i) => d !== inferred[i]))
             throw new GraphError(
-              `tensor "${t.id}": declared shape [${declared}] != inferred [${inferred}]`
+              `tensor "${t.id}": declared shape [${declared}] != inferred [${inferred}]`,
+              "GRAPH_SHAPE",
+              { kind: "tensor", id: t.id }
             );
         } catch (e) {
-          if (e instanceof GraphError && /unbound/.test(e.message)) {
+          if (e instanceof GraphError && e.code === "GRAPH_UNBOUND_SYMBOL") {
             /* declared with unbound syms: accept inferred */
           } else throw e;
         }

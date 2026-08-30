@@ -8,10 +8,24 @@
 
 import { DType, Graph, Node, Tensor } from "../core/graph";
 import { Sym } from "../core/shapes";
+import { documentSpan, DSLSourceMap, lineSpan, SourceSpan } from "./source";
 
 export class DSLError extends Error {
-  constructor(message: string, public line: number) {
-    super(`line ${line}: ${message}`);
+  constructor(
+    public detail: string,
+    public span: SourceSpan,
+    public code = "DSL_SYNTAX"
+  ) {
+    super(`line ${span.start.line}: ${detail}`);
+    this.name = "DSLError";
+  }
+
+  get line(): number {
+    return this.span.start.line;
+  }
+
+  get column(): number {
+    return this.span.start.column;
   }
 }
 
@@ -39,9 +53,17 @@ type Value = number | string | boolean | Value[] | { ident: string };
 
 class LineParser {
   pos = 0;
-  constructor(public src: string, public line: number) {}
+  constructor(
+    public src: string,
+    public line: number,
+    public lineOffset: number,
+    public columnOffset: number
+  ) {}
+  span(pos = this.pos, length = 1): SourceSpan {
+    return lineSpan(this.line, this.lineOffset, this.columnOffset + pos + 1, length);
+  }
   error(msg: string): never {
-    throw new DSLError(`${msg} (at "${this.src.slice(this.pos, this.pos + 12)}...")`, this.line);
+    throw new DSLError(`${msg} (at "${this.src.slice(this.pos, this.pos + 12)}...")`, this.span());
   }
   ws() {
     while (this.pos < this.src.length && /\s/.test(this.src[this.pos])) this.pos++;
@@ -66,12 +88,12 @@ class LineParser {
   }
   identReq(what: string): string {
     const v = this.ident();
-    if (v === null) throw new DSLError(`expected ${what}`, this.line);
+    if (v === null) throw new DSLError(`expected ${what}`, this.span());
     return v;
   }
   numberReq(what: string): number {
     const v = this.number();
-    if (v === null) throw new DSLError(`expected ${what}`, this.line);
+    if (v === null) throw new DSLError(`expected ${what}`, this.span());
     return v;
   }
   number(): number | null {
@@ -84,11 +106,29 @@ class LineParser {
   string(): string | null {
     this.ws();
     if (this.src[this.pos] !== '"') return null;
-    const end = this.src.indexOf('"', this.pos + 1);
-    if (end < 0) this.error("unterminated string");
-    const s = this.src.slice(this.pos + 1, end);
-    this.pos = end + 1;
-    return s;
+    const start = this.pos;
+    this.pos++;
+    let escaped = false;
+    while (this.pos < this.src.length) {
+      const ch = this.src[this.pos++];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        const literal = this.src.slice(start, this.pos);
+        try {
+          return JSON.parse(literal) as string;
+        } catch {
+          throw new DSLError("invalid string escape", this.span(start, this.pos - start));
+        }
+      }
+    }
+    throw new DSLError("unterminated string", this.span(start, this.pos - start));
   }
   value(): Value {
     this.ws();
@@ -123,24 +163,69 @@ function valueToAttr(v: Value): unknown {
   return v;
 }
 
+/** Remove a line comment without treating a # inside a string as a comment. */
+function stripComment(line: string): string {
+  let quoted = false;
+  let escaped = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (quoted && ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') quoted = !quoted;
+    else if (ch === "#" && !quoted) return line.slice(0, i);
+  }
+  return line;
+}
+
 export function parseDSL(text: string): Graph {
+  return parseDSLWithSource(text).graph;
+}
+
+export type ParsedDSL = { graph: Graph; sourceMap: DSLSourceMap };
+
+/** Parse DSL text while retaining statement spans for later semantic diagnostics. */
+export function parseDSLWithSource(text: string): ParsedDSL {
   const params: Record<string, number> = {};
   const tensors: Record<string, Tensor> = {};
   const nodes: Node[] = [];
+  const sourceMap: DSLSourceMap = {
+    document: documentSpan(text),
+    params: {},
+    tensors: {},
+    nodes: {},
+  };
   const lines = text.split("\n");
+  let lineOffset = 0;
 
   for (let ln = 0; ln < lines.length; ln++) {
-    const raw = lines[ln].replace(/#.*$/, "").trim();
-    if (!raw) continue;
-    const p = new LineParser(raw, ln + 1);
+    const physicalLine = lines[ln];
+    const code = stripComment(physicalLine);
+    const raw = code.trim();
+    const columnOffset = raw ? code.indexOf(raw) : 0;
+    const statementSpan = lineSpan(ln + 1, lineOffset, columnOffset + 1, raw.length);
+    if (!raw) {
+      lineOffset += physicalLine.length + (ln < lines.length - 1 ? 1 : 0);
+      continue;
+    }
+    const p = new LineParser(raw, ln + 1, lineOffset, columnOffset);
 
-    if (raw.startsWith("params")) {
+    if (/^params(?:\s|$)/.test(raw)) {
       p.expect("params");
       while (!p.atEnd()) {
         const name = p.identReq("param name");
         p.expect("=");
+        if (params[name] !== undefined)
+          throw new DSLError(`parameter "${name}" redefined`, p.span(), "DSL_DUPLICATE_PARAM");
         params[name] = p.numberReq("number");
+        sourceMap.params[name] = statementSpan;
       }
+      lineOffset += physicalLine.length + (ln < lines.length - 1 ? 1 : 0);
       continue;
     }
 
@@ -165,8 +250,11 @@ export function parseDSL(text: string): Graph {
         if (!DTYPES.has(dt)) p.error(`unknown dtype "${dt}"`);
         dtype = dt as DType;
       }
-      if (tensors[name]) p.error(`tensor "${name}" redefined`);
+      if (tensors[name])
+        throw new DSLError(`tensor "${name}" redefined`, statementSpan, "DSL_DUPLICATE_TENSOR");
       tensors[name] = { id: name, name, shape, dtype, ...(role === "weight" ? { role } : {}) };
+      sourceMap.tensors[name] = statementSpan;
+      lineOffset += physicalLine.length + (ln < lines.length - 1 ? 1 : 0);
       continue;
     }
 
@@ -180,7 +268,8 @@ export function parseDSL(text: string): Graph {
       throw new DSLError(
         `unknown statement starting with "${outs[0]}". Expected either an assignment ` +
           `\`NAME = op(...)\`, or a declaration \`${Object.keys(DECLARATIONS).join("|")} NAME [dims] dtype\``,
-        ln + 1
+        statementSpan,
+        "DSL_UNKNOWN_STATEMENT"
       );
     }
     const callee = p.identReq("op name");
@@ -191,7 +280,15 @@ export function parseDSL(text: string): Graph {
       do {
         const save = p.pos;
         const id = p.ident();
-        if (id && p.eat("=")) named[id] = valueToAttr(p.value());
+        if (id && p.eat("=")) {
+          if (Object.prototype.hasOwnProperty.call(named, id))
+            throw new DSLError(
+              `attribute "${id}" specified more than once`,
+              statementSpan,
+              "DSL_DUPLICATE_ATTRIBUTE"
+            );
+          named[id] = valueToAttr(p.value());
+        }
         else {
           p.pos = save;
           positional.push(p.value());
@@ -227,7 +324,11 @@ export function parseDSL(text: string): Graph {
         delete attrs.axis;
       }
       if (attrs.axes === undefined)
-        throw new DSLError(`${callee}() needs an axis, e.g. ${callee}(X, axis=-1)`, ln + 1);
+        throw new DSLError(
+          `${callee}() needs an axis, e.g. ${callee}(X, axis=-1)`,
+          statementSpan,
+          "DSL_MISSING_ATTRIBUTE"
+        );
     } else if (callee === "layernorm" || callee === "rmsnorm") {
       op = "normalize";
       attrs.kind = callee;
@@ -237,21 +338,27 @@ export function parseDSL(text: string): Graph {
     }
 
     for (const t of inputs)
-      if (!tensors[t]) throw new DSLError(`unknown tensor "${t}"`, ln + 1);
+      if (!tensors[t])
+        throw new DSLError(`unknown tensor "${t}"`, statementSpan, "DSL_UNKNOWN_TENSOR");
     for (const o of outs) {
-      if (tensors[o]) throw new DSLError(`tensor "${o}" redefined`, ln + 1);
+      if (tensors[o])
+        throw new DSLError(`tensor "${o}" redefined`, statementSpan, "DSL_DUPLICATE_TENSOR");
       tensors[o] = { id: o, name: o, shape: [], dtype: tensors[inputs[0]]?.dtype ?? "f32" };
+      sourceMap.tensors[o] = statementSpan;
     }
-    nodes.push({ id: `${op}_${outs[0]}`, op, inputs, outputs: outs, attrs });
+    const node = { id: `${op}_${outs[0]}`, op, inputs, outputs: outs, attrs };
+    nodes.push(node);
+    sourceMap.nodes[node.id] = statementSpan;
+    lineOffset += physicalLine.length + (ln < lines.length - 1 ? 1 : 0);
   }
-  return { nodes, tensors, params };
+  return { graph: { nodes, tensors, params }, sourceMap };
 }
 
 // ------------------------------------------------------------------- toDSL
 
 function attrValueToDSL(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(attrValueToDSL).join(", ")}]`;
-  if (typeof v === "string") return /^[A-Za-z_][A-Za-z0-9_]*$/.test(v) ? v : `"${v}"`;
+  if (typeof v === "string") return /^[A-Za-z_][A-Za-z0-9_]*$/.test(v) ? v : JSON.stringify(v);
   return String(v);
 }
 

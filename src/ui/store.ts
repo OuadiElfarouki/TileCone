@@ -1,7 +1,8 @@
 import { create } from "zustand";
+import { executeQuery } from "../core/executor";
 import { Graph, ResolvedGraph, resolveGraph } from "../core/graph";
 import { expandNode, isExpandable } from "../core/expand";
-import { PropResult, propagateBackward, propagateForward } from "../core/propagate";
+import { PropResult } from "../core/propagate";
 import {
   Box,
   Region,
@@ -13,7 +14,7 @@ import {
   translatePart,
 } from "../core/region";
 import { EXAMPLES } from "../examples/index";
-import { parseDSL } from "../parse/dsl";
+import { compileDSL } from "../parse/compiler";
 import { TILE_SCALE_MAX, TILE_SCALE_MIN } from "./tiling";
 
 export type Direction = "backward" | "forward" | "both";
@@ -123,8 +124,8 @@ function recompute(
 ): Pick<State, "backwardRes" | "forwardRes" | "perBox"> {
   if (!resolved || !selection || selection.region.boxes.length === 0)
     return { backwardRes: null, forwardRes: null, perBox: null };
-  const backwardRes = direction !== "forward" ? propagateBackward(resolved, selection) : null;
-  const forwardRes = direction !== "backward" ? propagateForward(resolved, selection) : null;
+  const aggregate = executeQuery(resolved, { ...selection, direction });
+  const { backward: backwardRes, forward: forwardRes } = aggregate;
 
   const boxes = selection.region.boxes;
   let perBox: BoxProp[] | null = null;
@@ -137,10 +138,8 @@ function recompute(
         tensorId: selection.tensorId,
         region: { boxes: [b], exact: selection.region.exact, reasons: selection.region.reasons },
       };
-      return {
-        backward: direction !== "forward" ? propagateBackward(resolved, one) : null,
-        forward: direction !== "backward" ? propagateForward(resolved, one) : null,
-      };
+      const result = executeQuery(resolved, { ...one, direction });
+      return { backward: result.backward, forward: result.forward };
     });
   }
   return { backwardRes, forwardRes, perBox };
@@ -175,12 +174,11 @@ function editSelection(
   });
 }
 
-function loadGraph(graph: Graph): Pick<
+function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
   State,
   | "graph" | "resolved" | "loadError" | "selection" | "backwardRes" | "forwardRes"
   | "perBox" | "focusedBox" | "pinnedBox" | "viewCfgs" | "preview"
 > {
-  const resolved = resolveGraph(JSON.parse(JSON.stringify(graph)) as Graph);
   const viewCfgs: Record<string, ViewCfg> = {};
   for (const t of Object.values(resolved.tensors)) viewCfgs[t.id] = defaultViewCfg(t.resolved!);
   return {
@@ -196,6 +194,10 @@ function loadGraph(graph: Graph): Pick<
     preview: null,
     viewCfgs,
   };
+}
+
+function loadGraph(graph: Graph): ReturnType<typeof loadResolvedGraph> {
+  return loadResolvedGraph(graph, resolveGraph(graph));
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -225,8 +227,8 @@ export const useStore = create<State>((set, get) => ({
   loadExample: (i) => {
     const ex = EXAMPLES[i];
     try {
-      const graph = parseDSL(ex.dsl);
-      const base = loadGraph(graph);
+      const program = compileDSL(ex.dsl);
+      const base = loadResolvedGraph(program.graph, program.resolved);
       const st: Partial<State> = { ...base, dslText: ex.dsl, exampleIndex: i, focusTensor: null };
       if (ex.defaultSelection && base.resolved) {
         const region: Region = {
@@ -247,8 +249,8 @@ export const useStore = create<State>((set, get) => ({
 
   applyDSL: (text) => {
     try {
-      const graph = parseDSL(text);
-      set({ ...loadGraph(graph), dslText: text });
+      const program = compileDSL(text);
+      set({ ...loadResolvedGraph(program.graph, program.resolved), dslText: text });
     } catch (e) {
       set({ loadError: (e as Error).message });
     }
@@ -366,7 +368,9 @@ export const useStore = create<State>((set, get) => ({
         exact: true,
         reasons: [],
       };
-      set({ preview: propagateBackward(resolved, { tensorId, region }) });
+      set({
+        preview: executeQuery(resolved, { tensorId, region, direction: "backward" }).backward,
+      });
     } catch {
       set({ preview: null });
     }
