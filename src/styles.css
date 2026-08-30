@@ -4,28 +4,52 @@
   --ink: #1b1e24;
   --muted: #6b7280;
   --line: #d9dce1;
-  --accent: #2563eb;
+  /* Chrome is magenta in light mode, amber in dark, and neither is a taste
+     call: hue carries selection-box identity on the cards, so chrome must not
+     land in a data hue. The previous #2563eb sat at normal ΔE 6.5 / CVD ΔE 4.8
+     from categorical blue #2a78d6 — a hot edge and a box-1 cone read the same.
+     Amber cannot be reused here: against the deepened light orange #e56532 every
+     amber step falls under the normal-vision floor (#a16207 → 13.2,
+     #b45309 → 10.8). Magenta is the one hue clearing all four checks against the
+     light trio (CVD ΔE 8.6, normal ΔE 17.9, contrast ≥ 3:1), and it carries
+     white at 6.04:1 for `button.on`. */
+  --accent: #be185d;
+  --accent-ink: #ffffff;
   --card: #ffffff;
   --card-line: #c9cdd4;
-  --hot: #2563eb;
+  --hot: #be185d;
   --dim-op: 0.25;
   --warn-bg: #fef3c7;
   --warn-ink: #92400e;
+  --accent-hi: #9d174d;
+  --accent-ring: rgba(190,24,93,0.32);
+  --err: #dc2626;
 }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #0f1115;
-    --panel: #171a20;
-    --ink: #e6e8ee;
-    --muted: #8b93a3;
-    --line: #2a2f39;
-    --accent: #5b8def;
-    --card: #1b1f27;
-    --card-line: #333a47;
-    --hot: #5b8def;
-    --warn-bg: #3a2f10;
-    --warn-ink: #fbbf24;
-  }
+:root[data-theme="dark"] {
+    --bg: #15171b;
+    --panel: #1c1f24;
+    --ink: #dde1e8;
+    --muted: #96a0ae;
+    --line: #2e333b;
+    /* Chrome is amber, not blue, and that is a correctness constraint rather
+       than a taste call: hue carries selection-box identity on the cards, so
+       chrome must not land in a data hue. The previous #5b8def sat at normal
+       ΔE 3.9 / CVD ΔE 2.6 from categorical blue #3987e5 — a hot edge and a
+       box-1 cone were the same color. Amber clears both floors against all
+       three data hues (worst: normal ΔE 15.2, CVD ΔE 9.0, vs orange) and
+       matches the amber already used for selected cards and outline rows. */
+    --accent: #e39c3d;
+    /* Amber is light enough that white text is only 2.31:1. Dark ink clears
+       7.77:1 and keeps active controls readable at normal UI text sizes. */
+    --accent-ink: #15171b;
+    --accent-hi: #f0ad50;
+    --accent-ring: rgba(227,156,61,0.35);
+    --card: #1c1f24; /* == CARD_SURFACE.dark in ui/palette.ts */
+    --card-line: #303540;
+    --hot: #e39c3d;
+    --warn-bg: #3d2d19;
+    --warn-ink: #f6c073;
+    --err: #ef7a54;
 }
 
 * { box-sizing: border-box; }
@@ -41,106 +65,171 @@ button, select, input {
   color: inherit;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 5px;
+  border-radius: 2px;
   padding: 2px 8px;
 }
 button { cursor: pointer; }
 button:hover { border-color: var(--accent); }
-button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 button.mini { padding: 0 6px; font-size: 11px; }
 .muted { color: var(--muted); }
 
 .app { display: flex; flex-direction: column; height: 100%; }
 .main { display: flex; flex: 1; min-height: 0; }
 
-/* ---------------- toolbar ---------------- */
-.toolbar {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--panel);
+/* ---------------- product header ---------------- */
+.workspace-header {
+  display: flex; align-items: baseline; gap: 10px; min-height: 38px;
+  padding: 10px 16px; border-bottom: 1px solid var(--line); flex: none;
+  background: var(--panel);
 }
-.brand { font-weight: 700; margin-right: 6px; }
-.toolbar .sep { width: 1px; height: 20px; background: var(--line); }
-.toolbar .group { display: inline-flex; gap: 2px; }
+.brand {
+  font: 600 19px/1 ui-monospace, "Cascadia Code", Menlo, monospace;
+  letter-spacing: -0.01em;
+}
+.brand span { color: var(--accent); }
+.product-tag {
+  border: 1px solid var(--line); padding: 1px 5px; color: var(--muted);
+  font: 10px/1.45 ui-monospace, "Cascadia Code", Menlo, monospace;
+  letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap;
+}
+.product-copy { color: var(--muted); font-size: 11.5px; }
+.theme-toggle { margin-left: auto; flex: none; font-size: 11px; }
 .chk { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
-.detail { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
-.detail input[type="range"] { width: 96px; padding: 0; }
-.detail-val { min-width: 30px; font-variant-numeric: tabular-nums; font-size: 11px; }
-.legend { margin-left: auto; color: var(--muted); display: inline-flex; align-items: center; gap: 4px; }
 .swatch { display: inline-block; width: 11px; height: 11px; border-radius: 2px; }
-.swatch.hatched {
-  background: repeating-linear-gradient(45deg, var(--muted) 0 2px, transparent 2px 5px);
-  border: 1px solid var(--muted);
+
+@media (max-width: 980px) {
+  .product-copy { display: none; }
 }
-.swatch.outlined { background: transparent; border: 2px solid var(--muted); }
+
+/* ---------------- panel frame ---------------- */
+/* The frame owns width and the drag strip; the panel inside just fills it. */
+.panel-frame {
+  position: relative; flex: none; height: 100%; min-width: 0; display: flex;
+}
+.panel-content { flex: 1; min-width: 0; height: 100%; }
+.panel-frame.collapsed .panel-content {
+  position: absolute; inset: 0; visibility: hidden; pointer-events: none;
+}
+.panel-resize {
+  position: absolute; top: 0; bottom: 0; width: 4px; z-index: 10;
+  cursor: col-resize; touch-action: none;
+}
+.panel-frame.left .panel-resize { right: -2px; }
+.panel-frame.right .panel-resize { left: -2px; }
+.panel-resize:hover, .panel-resize:active { background: var(--accent); }
+.panel-collapse {
+  position: absolute; top: 5px; right: 7px; z-index: 12;
+  width: 24px; height: 21px; padding: 0; font-size: 13px; line-height: 1;
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+}
+.panel-rail {
+  flex: none; width: 100%; height: 100%; padding: 8px 0; border: none; border-radius: 0;
+  background: var(--panel); color: var(--muted); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.panel-rail.left { border-right: 1px solid var(--line); }
+.panel-rail.right { border-left: 1px solid var(--line); }
+.panel-rail:hover { color: var(--ink); background: var(--bg); }
+.panel-rail span {
+  writing-mode: vertical-rl; font-size: 10px; letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
 
 /* ---------------- side panel ---------------- */
 .side-panel {
-  display: flex; flex-direction: column; width: 330px; min-width: 260px;
+  display: flex; flex-direction: column; width: 100%; min-width: 0; height: 100%;
   border-right: 1px solid var(--line); background: var(--panel); overflow: hidden;
 }
-.panel-section { display: flex; flex-direction: column; min-height: 0; border-bottom: 1px solid var(--line); }
-.panel-section.grow { flex: 1 1 0; }
-.panel-section > header {
-  display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;
-  padding: 6px 10px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em;
-  text-transform: uppercase; color: var(--muted); flex: none;
+.side-panel-scroll { min-height: 0; overflow-y: auto; padding-bottom: 18px; }
+.source-heading { padding: 10px 12px 7px; }
+.source-heading h2, .operations-heading {
+  margin: 0; font: 600 17px/1.3 ui-monospace, "Cascadia Code", Menlo, monospace;
 }
-.panel-section > header:hover { color: var(--ink); background: var(--bg); }
-.panel-section .chevron { font-size: 9px; width: 9px; }
-.panel-head-right { margin-left: auto; cursor: default; font-size: 10px; text-transform: none; letter-spacing: 0; }
-.panel-body { display: flex; flex-direction: column; min-height: 0; flex: 1; padding: 0 10px 8px; gap: 6px; }
+.source-heading p { margin: 3px 24px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.source-heading code { font-size: 10.5px; }
+.source-workspace { display: flex; flex-direction: column; gap: 7px; padding: 0 12px; }
+.side-control-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin-top: 12px; padding: 11px 12px 0; border-top: 1px solid var(--line);
+}
+.side-control-row > span, .side-kicker {
+  font-size: 10px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted);
+}
+.side-control-row > span { width: 34px; }
+.side-control-row button { padding: 3px 10px; font-size: 12px; }
+.side-kicker { padding: 13px 12px 0; }
+.example-list { display: flex; flex-wrap: wrap; gap: 5px; padding: 5px 12px 0; }
+.example-list button { padding: 3px 8px; font-size: 10.5px; }
+.side-divider { height: 1px; margin: 14px 12px 0; background: var(--line); }
+.operations-heading { padding: 11px 12px 4px; font-size: 15px; }
+.operation-list { padding: 0 12px; }
+.operation-row {
+  display: grid; grid-template-columns: 7px 1fr; gap: 8px; width: 100%;
+  align-items: start; padding: 7px 0; border: 0; border-bottom: 1px solid var(--line);
+  border-radius: 0; background: transparent; text-align: left;
+}
+.operation-row > i { width: 7px; height: 7px; border-radius: 50%; margin-top: 5px; background: var(--line); }
+.operation-row.hot > i { background: var(--accent); }
+.operation-row.dim { opacity: .45; }
+.operation-row:hover { background: color-mix(in srgb, var(--bg) 70%, transparent); }
+.operation-row code { display: block; color: var(--ink); font-size: 11px; white-space: normal; overflow-wrap: anywhere; }
+.operation-row small { display: block; margin-top: 2px; color: var(--muted); font-size: 10.5px; font-variant-numeric: tabular-nums; }
 
 /* source editor */
 textarea.source {
-  flex: 1; min-height: 120px; resize: none; width: 100%;
+  flex: none; height: 250px; min-height: 120px; resize: vertical; width: 100%;
   font: 12px/1.55 ui-monospace, "Cascadia Code", Menlo, monospace;
   tab-size: 2;
   background: var(--bg); color: var(--ink);
   border: 1px solid var(--line); border-radius: 7px; padding: 8px 9px;
 }
 textarea.source:focus { outline: none; border-color: var(--accent); }
-textarea.source.error-state { border-color: #dc2626; }
+textarea.source.error-state { border-color: var(--err); }
 .source-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .run-btn { font-weight: 600; padding: 3px 12px; }
-.run-btn:not(:disabled) { background: var(--accent); color: #fff; border-color: var(--accent); }
+.run-btn:not(:disabled) { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .run-btn:disabled { opacity: 0.45; cursor: default; }
 .source-status { font-size: 11px; min-width: 0; overflow: hidden; }
 .source-status .ok { color: #059669; }
 .source-status .error { white-space: normal; }
 
-/* outline */
-.outline-search { flex: none; width: 100%; }
-.outline-list { list-style: none; margin: 0; padding: 0; overflow: auto; flex: 1; min-height: 0; }
-.outline-list ul { list-style: none; margin: 0 0 4px; padding-left: 9px; }
-.node-label {
-  display: block; color: var(--muted); font-size: 10px; text-transform: uppercase;
-  letter-spacing: 0.04em; margin-top: 5px;
-}
-.tensor-link {
-  display: flex; gap: 6px; width: 100%; text-align: left; border: none; background: none;
-  padding: 2px 5px; border-radius: 4px; font-size: 12px;
-}
-.tensor-link .muted { margin-left: auto; font-size: 10.5px; font-variant-numeric: tabular-nums; }
-.tensor-link:hover { background: var(--bg); }
-.tensor-link.hot { color: var(--hot); }
-.tensor-link.sel { color: #d97706; font-weight: 600; }
-.count { font-variant-numeric: tabular-nums; }
 
 /* ---------------- canvas ---------------- */
 .graph-canvas {
   position: relative; flex: 1; overflow: hidden; min-width: 0;
-  background:
-    radial-gradient(var(--line) 1px, transparent 1px) 0 0 / 22px 22px,
-    var(--bg);
+  /* Flat, one step darker than the panels. The cards carry their own tile
+     lattice, so a second grid behind them is noise competing with the data. */
+  background: color-mix(in srgb, var(--bg) 92%, #000);
+  background-image: none;
   touch-action: none;
 }
 .canvas-empty { flex: 1; display: grid; place-items: center; color: var(--muted); }
 .graph-inner { position: absolute; transform-origin: 0 0; }
 .edges { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
-.edge { stroke: var(--muted); stroke-width: 1.4; fill: none; opacity: 0.7; }
+.edge {
+  stroke: var(--muted); stroke-width: 1.4; fill: none; opacity: 0.7;
+  stroke-linecap: round; stroke-linejoin: round;
+}
 .edge.hot { stroke: var(--hot); stroke-width: 2.2; opacity: 1; }
 .edge.dim { opacity: 0.18; }
-.fit-btn { position: absolute; right: 10px; top: 10px; z-index: 5; }
+.graph-hud {
+  position: absolute; left: 10px; right: 10px; bottom: 9px; z-index: 20;
+  display: flex; align-items: flex-end; gap: 12px; pointer-events: none;
+}
+.zoom-controls {
+  display: inline-flex; align-items: center; gap: 4px; flex: none; pointer-events: auto;
+}
+.zoom-controls button { min-width: 28px; padding: 2px 8px; background: var(--panel); }
+.zoom-controls span {
+  min-width: 42px; padding-left: 3px; color: var(--muted);
+  font: 10.5px/1.4 ui-monospace, "Cascadia Code", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.graph-help {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; text-align: right; color: var(--muted); font-size: 10.5px;
+}
 
 .op-node {
   position: absolute; display: flex; align-items: center; justify-content: center; gap: 4px;
@@ -152,51 +241,65 @@ textarea.source.error-state { border-color: #dc2626; }
 
 .card-slot { position: absolute; }
 .card-slot.dim { opacity: var(--dim-op); }
+.card-slot.moving { z-index: 40; opacity: 1; }
+.tensor-grab {
+  position: absolute; left: -18px; top: 3px; z-index: 4;
+  width: 15px; height: 15px; padding: 0; border: 0; border-radius: 2px;
+  color: var(--muted); opacity: 0.24; cursor: grab; touch-action: none;
+  background-color: transparent;
+  background-image: radial-gradient(currentColor 1px, transparent 1.25px);
+  background-size: 5px 5px; background-position: 1px 1px;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+.tensor-grab:hover, .tensor-grab:focus-visible { opacity: 1; color: var(--accent); }
+.tensor-grab:active { cursor: grabbing; }
 
 /* ---------------- tensor card ---------------- */
 .tensor-card {
-  position: relative;
-  background: var(--card); border: 1px solid var(--card-line); border-radius: 10px;
-  padding: 6px 8px 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+  position: relative; width: 100%;
+  background: transparent; border: 0; padding: 0; box-shadow: none;
 }
-.tensor-card.selected { border-color: #d97706; box-shadow: 0 0 0 2px rgba(217,119,6,0.35); }
-.tc-header { position: relative; display: flex; align-items: baseline; gap: 6px; }
-.tc-name { font-weight: 700; }
+.tc-header {
+  position: relative; display: flex; align-items: baseline; justify-content: center;
+  gap: 6px; min-height: 20px; padding-bottom: 3px; white-space: nowrap;
+  background: transparent;
+}
+.tc-name-wrap { position: relative; display: inline-flex; }
+.tc-name { font-size: 14px; font-weight: 700; line-height: 1; cursor: help; outline: none; }
+.tc-name:focus-visible { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.tc-shape { color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 
-/* Details on demand: shape, dtype and size appear only on hover. */
+/* Compact details belong to the name, not the whole tensor plate. */
 .tc-info {
-  display: none; position: absolute; left: -6px; top: calc(100% + 4px); z-index: 30;
-  min-width: 150px; padding: 6px 8px; border-radius: 7px;
+  display: none; position: absolute; left: 50%; top: calc(100% + 7px); z-index: 50;
+  transform: translateX(-50%); min-width: 150px; padding: 6px 8px; border-radius: 7px;
   background: var(--panel); border: 1px solid var(--card-line);
   box-shadow: 0 4px 14px rgba(0,0,0,0.28); pointer-events: none;
-}
-.tc-header:hover .tc-info { display: block; }
-.tc-info-name { font-weight: 700; margin-bottom: 3px; }
-.tc-info dl {
-  display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; margin: 0;
+  grid-template-columns: auto 1fr; gap: 1px 12px;
   font-size: 11px; white-space: nowrap;
 }
-.tc-info dt { color: var(--muted); }
-.tc-info dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
-.tc-badges { margin-left: auto; display: inline-flex; gap: 3px; align-items: center; }
+.tc-name-wrap:hover .tc-info, .tc-name-wrap:focus-within .tc-info { display: grid; }
+.tc-info > span { color: var(--muted); }
+.tc-info > b { text-align: right; font-weight: 500; font-variant-numeric: tabular-nums; }
 .badge {
   font-size: 9.5px; padding: 0 4px; border-radius: 3px; border: 1px solid currentColor;
 }
 .badge.input { color: #059669; }
-.badge.weight { color: #7c3aed; }
-.badge.lod { color: var(--muted); }
 .badge.approx { color: #d97706; }
-.badge.tile { color: var(--muted); font-variant-numeric: tabular-nums; }
 .tc-axes { display: flex; gap: 6px; align-items: center; margin: 3px 0; font-size: 11px; color: var(--muted); }
 /* a hovered card floats above its neighbours so the info panel is not clipped */
 .card-slot:hover { z-index: 30; }
-.tc-axes select { padding: 0 2px; font-size: 11px; }
-.tc-tile { font-variant-numeric: tabular-nums; }
 .tc-slider { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
 .tc-slider input { flex: 1; padding: 0; }
 .tc-slider-val { min-width: 18px; text-align: right; }
-.tc-canvas-wrap { position: relative; margin-top: 4px; }
-.tc-canvas-wrap canvas { display: block; image-rendering: pixelated; }
+.tc-canvas-wrap { position: relative; width: max-content; margin: 4px auto 0; }
+.tc-canvas-wrap canvas {
+  display: block; image-rendering: pixelated;
+  outline: 1px solid var(--card-line); outline-offset: 0;
+}
+.tensor-card.selected .tc-canvas-wrap canvas {
+  outline: 2px solid var(--accent); box-shadow: 0 0 0 3px var(--accent-ring);
+}
 .tc-tooltip {
   position: absolute; right: 2px; top: -16px; font-size: 10px; color: var(--muted);
   background: var(--card); padding: 0 3px; border-radius: 3px; pointer-events: none;
@@ -204,10 +307,53 @@ textarea.source.error-state { border-color: #dc2626; }
 
 /* ---------------- inspector ---------------- */
 .inspector {
-  width: 300px; min-width: 240px; overflow: auto; border-left: 1px solid var(--line);
-  background: var(--panel); padding: 8px 10px;
+  width: 100%; min-width: 0; height: 100%; overflow: auto;
+  border-left: 1px solid var(--line);
+  background: var(--panel); padding: 0 12px 20px;
 }
-.inspector h3 { margin: 2px 0 8px; font-size: 13px; }
+.tile-grid-control { margin: 0 -12px; padding: 11px 12px 10px; border-bottom: 1px solid var(--line); }
+.tile-grid-head { display: flex; align-items: baseline; gap: 8px; }
+.tile-grid-head > span {
+  color: var(--muted); font-size: 10px; letter-spacing: .09em; text-transform: uppercase;
+}
+.tile-grid-head > b {
+  font: 500 11.5px/1.4 ui-monospace, "Cascadia Code", Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.tile-grid-control input[type="range"] {
+  appearance: none; -webkit-appearance: none; width: 100%; height: 16px; margin: 8px 0 0; padding: 0;
+  border: 0; background: transparent; accent-color: var(--accent);
+}
+.tile-grid-control input[type="range"]::-webkit-slider-runnable-track { height: 1px; background: var(--muted); }
+.tile-grid-control input[type="range"]::-webkit-slider-thumb {
+  appearance: none; -webkit-appearance: none; width: 13px; height: 13px; margin-top: -6px;
+  border: 0; border-radius: 50%; background: var(--accent); cursor: grab;
+  box-shadow: 0 0 0 3px var(--panel);
+}
+.tile-grid-control input[type="range"]::-moz-range-track { height: 1px; background: var(--muted); }
+.tile-grid-control input[type="range"]::-moz-range-thumb {
+  width: 13px; height: 13px; border: 0; border-radius: 50%; background: var(--accent); cursor: grab;
+}
+.tile-grid-stops {
+  display: flex; justify-content: space-between; color: color-mix(in srgb, var(--muted) 80%, transparent);
+  font: 9px/1.3 ui-monospace, "Cascadia Code", Menlo, monospace; font-variant-numeric: tabular-nums;
+}
+.tiles-heading { display: flex; align-items: baseline; gap: 8px; padding: 11px 0 6px; }
+.tiles-heading h2 {
+  margin: 0; font: 600 17px/1.3 ui-monospace, "Cascadia Code", Menlo, monospace;
+}
+.tiles-heading h2 small { color: var(--muted); font: 11px/1.3 ui-sans-serif, system-ui, sans-serif; }
+.tiles-heading button { margin-left: auto; }
+.tiles-heading button:disabled { opacity: .4; cursor: default; }
+.tile-legend { display: flex; flex-wrap: wrap; gap: 5px 12px; padding-bottom: 8px; color: var(--muted); font-size: 10.5px; }
+.tile-legend span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.tile-legend i { display: block; width: 12px; height: 12px; border: 1px solid var(--card-line); }
+.tile-legend i.selected { border: 1.5px solid var(--ink); opacity: .9; }
+.tile-legend i.required { opacity: .3; }
+.tile-legend i.approx {
+  border-style: dashed;
+  background: repeating-linear-gradient(45deg, var(--muted) 0 2px, transparent 2px 5px);
+}
 .ins-section { border-top: 1px solid var(--line); padding: 7px 0; }
 .ins-section.warn { background: var(--warn-bg); color: var(--warn-ink); padding: 6px; border-radius: 6px; font-size: 12px; }
 .ins-title { font-weight: 600; margin-bottom: 4px; }
@@ -217,6 +363,14 @@ textarea.source.error-state { border-color: #dc2626; }
 .hint { color: var(--muted); font-size: 11.5px; }
 .tensor-row summary { cursor: pointer; display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; padding: 2px 0; }
 .tensor-row .row-stats { margin-left: auto; color: var(--muted); font-size: 11px; }
+.footprint-bar {
+  display: flex; flex: 1 0 100%; height: 8px; overflow: hidden;
+  border: 1px solid var(--line); border-radius: 2px; background: var(--bg);
+}
+.footprint-bar i { display: block; height: 100%; }
+.footprint-bar i.shared {
+  background: repeating-linear-gradient(45deg, var(--muted) 0 2px, var(--line) 2px 5px);
+}
 .slice-exprs { display: flex; flex-direction: column; gap: 1px; padding: 3px 0 5px 12px; }
 .slice-exprs code { background: var(--bg); padding: 1px 5px; border-radius: 3px; overflow-x: auto; white-space: pre; }
 /* ---------------- region editor ---------------- */
@@ -232,8 +386,6 @@ textarea.source.error-state { border-color: #dc2626; }
   color: var(--muted); font-variant-numeric: tabular-nums; min-width: 26px;
 }
 .hint.overlap { color: var(--warn-ink); background: var(--warn-bg); padding: 4px 6px; border-radius: 5px; }
-.btn-row { display: flex; gap: 4px; margin-bottom: 4px; }
-.btn-row button { flex: 1; padding: 1px 4px; font-size: 11.5px; }
 .box-list { display: flex; flex-direction: column; gap: 2px; max-height: 160px; overflow-y: auto; margin: 4px 0; }
 .box-row {
   display: flex; align-items: center; gap: 5px; padding: 1px 3px; border-radius: 4px;
@@ -243,10 +395,39 @@ textarea.source.error-state { border-color: #dc2626; }
 .box-row.active { background: var(--bg); border-color: var(--muted); }
 .box-row.pinned { border-color: var(--accent); }
 .box-row .swatch { flex: none; width: 10px; height: 10px; border-radius: 2px; }
-.box-row code { flex: 1; background: var(--bg); padding: 1px 5px; border-radius: 3px; overflow-x: auto; white-space: pre; }
+/* Visibility is a separate control from focus: it removes the cone's paint
+   while the box keeps its row, its numbers and its rectangle on the card. */
+.box-row .vis-toggle {
+  flex: none; width: 16px; padding: 0; border: none; background: none;
+  color: var(--muted); font-size: 9px; line-height: 1; cursor: pointer;
+}
+.box-row .vis-toggle:hover:not(:disabled) { color: var(--ink); }
+.box-row .vis-toggle:disabled { opacity: 0.3; cursor: default; }
+.box-row.hidden-cone .box-range,
+.box-row.hidden-cone .swatch { opacity: 0.45; }
+.box-range {
+  flex: 1; min-width: 0; padding: 1px 5px; border-radius: 3px;
+  background: var(--bg); font: 11px/1.5 ui-monospace, "Cascadia Code", Menlo, monospace;
+}
+.box-range.invalid { border-color: var(--err); outline-color: var(--err); }
 .box-row .muted { font-size: 10.5px; font-variant-numeric: tabular-nums; }
 .keys summary { cursor: pointer; }
 .keys .kv { margin-top: 3px; font-size: 11px; }
 .keys .kv span:nth-child(even) { text-align: left; color: var(--muted); }
 
-.error { color: #dc2626; font-size: 11.5px; white-space: pre-wrap; }
+.error { color: var(--err); font-size: 11.5px; white-space: pre-wrap; }
+
+/* ---------------- dependency notes ---------------- */
+.notes-section { padding-bottom: 18px; }
+.notes-list { list-style: none; margin: 0; padding: 0; }
+.notes-list li {
+  margin: 0 0 8px; font-size: 11.5px; line-height: 1.62; color: var(--ink);
+  text-wrap: pretty;
+}
+.notes-list li b {
+  display: inline-block; margin-right: 6px; padding: 0 5px;
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Menlo, Consolas, monospace;
+  font-size: 9.5px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--muted); border: 1px solid var(--line); border-radius: 2px;
+  vertical-align: 1px;
+}

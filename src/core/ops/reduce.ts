@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Box, fromBox, iv } from "../region";
-import { OpCtx, OpSpec, uniformDTypeOutputs } from "./types";
+import { DependencyNoteDraft, OpCtx, OpSpec, uniformDTypeOutputs, NoteCtx } from "./types";
 
 /** Normalize one Python-style axis and reject anything outside the tensor rank. */
 export const normAxis = (a: number, rank: number): number => {
@@ -19,8 +19,33 @@ function attrs(ctx: OpCtx): { axes: number[]; keepdim: boolean; fn: string } {
   return { axes: normAxes(a.axes, ctx.inShapes[0].length), keepdim: a.keepdim, fn: a.fn };
 }
 
+/** A reduction collapses its axes, so an output tile spans them entirely. */
+function reduceDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
+  const region = ctx.inRegions[0];
+  if (!region) return null;
+  const shape = ctx.inShapes[0];
+  const attrs = ctx.attrs as RAttrs;
+  const axes = normAxes(attrs.axes, shape.length);
+  const full = axes.filter((axis) =>
+    region.boxes.some((box) => box[axis].hi - box[axis].lo === shape[axis])
+  );
+  if (!full.length) return null;
+  const list = full.map((axis) => `${axis} (${shape[axis]} wide)`).join(", ");
+  const one = full.length === 1;
+  return {
+    key: `reduce:${attrs.fn}:${full.join(",")}`,
+    subject: ctx.outNames[0],
+    text:
+      `${attrs.fn} reduces ${ctx.inNames[0]} over ${one ? "axis" : "axes"} ${list}, so one ` +
+      `element of ${ctx.outNames[0]} depends on every element along ${one ? "it" : "them"}. ` +
+      `Tiling ${ctx.inNames[0]} across ${one ? "that axis" : "those axes"} requires a ` +
+      `partial-result accumulator.`,
+  };
+}
+
 export const reduceOp: OpSpec = {
   name: "reduce",
+  dependencyNote: reduceDependencyNote,
   attrSchema: z.object({
     fn: z.enum(["sum", "max", "min", "mean", "prod", "logsumexp"]),
     axes: z.array(z.number().int()),

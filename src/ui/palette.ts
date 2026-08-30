@@ -5,23 +5,37 @@
  * categorical slots below are the only ones used, because these regions are
  * compared all-pairs (any two can land side by side in one grid) and three is
  * the largest set that clears the all-pairs CVD and normal-vision floors on
- * both canvas surfaces — verified with the dataviz validator:
+ * both canvas surfaces — verified with the dataviz validator, all-pairs:
  *
- *   light (surface #f3f4f6): CVD ΔE 9.2, normal ΔE 24.0 — PASS
- *   dark  (surface #16181d): CVD ΔE 9.4, normal ΔE 20.9 — PASS
+ *   light (surface #f3f4f6): CVD ΔE 9.4, normal ΔE 22.0, contrast >= 3:1 — PASS
+ *   dark  (surface #1c1f24): CVD ΔE 9.4, normal ΔE 20.9, contrast >= 3:1 — PASS
+ *
+ * Separation is measured between the marks, so both ΔE figures are independent
+ * of the surface. A surface move needs only the contrast check re-run; a *hue*
+ * move needs the whole validator.
+ *
+ * The light hues are deeper than their dark counterparts rather than mirroring
+ * them. At the original values orange and aqua sat at 2.91:1 and 2.56:1 against
+ * the light surface — under the 3:1 floor. That was a relief condition, not a
+ * pass, and it could not be discharged the way relief usually is: a cone drawn
+ * on a card carries no label, so out there hue *is* the identifier, and the
+ * inspector's swatch-plus-index sits on a different surface entirely. Deepening
+ * them (scaling linear RGB, which holds chromaticity exactly, so the hue is
+ * unchanged) clears the floor and costs nothing elsewhere — the two palettes are
+ * independent, and light's CVD separation improved 9.2 -> 9.4 in the process.
  *
  * A 4th hue fails in dark mode (violet↔blue ΔE 1.9), so boxes past the third
  * render in a neutral instead of an invented hue. Identity is never carried by
  * color alone: the inspector lists every box with its index, and hovering a row
- * isolates that box's cone regardless of how many boxes there are.
+ * emphasises that box's cone when per-box attribution is available.
  */
 
 export type RGB = [number, number, number];
 
 const CATEGORICAL_LIGHT: RGB[] = [
-  [42, 120, 214], // blue   #2a78d6
-  [235, 104, 52], // orange #eb6834
-  [27, 175, 122], // aqua   #1baf7a
+  [42, 120, 214], // blue   #2a78d6  4.01:1
+  [229, 101, 50], // orange #e56532  3.06:1
+  [24, 159, 111], // aqua   #189f6f  3.06:1
 ];
 
 const CATEGORICAL_DARK: RGB[] = [
@@ -37,12 +51,13 @@ const NEUTRAL_DARK: RGB = [139, 147, 163];
 const AGGREGATE_LIGHT = { upstream: [42, 120, 214] as RGB, downstream: [124, 58, 237] as RGB };
 const AGGREGATE_DARK = { upstream: [57, 135, 229] as RGB, downstream: [167, 139, 250] as RGB };
 
-export function isDarkTheme(): boolean {
-  const t = document.documentElement.dataset.theme;
-  if (t === "light") return false;
-  if (t === "dark") return true;
-  return window.matchMedia("(prefers-color-scheme: dark)").matches;
-}
+/**
+ * The surface a tensor card's canvas is painted on. Exported because the
+ * validation figures above are recorded against these exact values, and because
+ * `styles.css` must keep `--card` in step: the canvas is drawn by `drawGrid`
+ * while the plate around it is drawn by CSS, and a mismatch shows as a seam.
+ */
+export const CARD_SURFACE = { light: "#f3f4f6", dark: "#1c1f24" } as const;
 
 export function boxColor(index: number, dark: boolean): RGB {
   const pal = dark ? CATEGORICAL_DARK : CATEGORICAL_LIGHT;

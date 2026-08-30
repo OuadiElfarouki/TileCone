@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Box, Interval, Region, canonicalize, empty, fromBox, iv } from "../region";
 import { productBoxes } from "./shape-ops";
-import { OpCtx, OpSpec, STRIDED_ENUM_CAP, uniformDTypeOutputs } from "./types";
+import { DependencyNoteDraft, NoteCtx, OpCtx, OpSpec, STRIDED_ENUM_CAP, uniformDTypeOutputs } from "./types";
 
 /**
  * Layout: NC* (batch, channels, spatial...). Weight: [Cout, Cin/groups, *kernel].
@@ -134,6 +134,34 @@ function regionFromPerAxis(perAxis: Interval[][], exact: boolean, reason: string
   });
 }
 
+/**
+ * The halo is the whole story for convolution: neighbouring output tiles read
+ * overlapping input windows, so tiling is not free the way it is for pointwise
+ * work, and stacking layers compounds the overlap.
+ */
+function convDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
+  if (!ctx.inRegions[0]) return null;
+  const a = ctx.attrs as ConvAttrs;
+  const kernel = ctx.inShapes[1].slice(2);
+  if (!kernel.length) return null;
+  const stride = a.stride ?? [];
+  const dilation = a.dilation ?? [];
+  // effective window per spatial axis, accounting for dilation
+  const reach = kernel.map((k, i) => (k - 1) * (dilation[i] ?? 1) + 1);
+  const slack = reach.map((r, i) => r - (stride[i] ?? 1));
+  // stride >= reach tiles cleanly; there is no halo to warn about
+  if (!slack.some((v) => v > 0)) return null;
+  return {
+    key: `conv:${kernel.join("x")}:${stride.join("x")}:${dilation.join("x")}`,
+    subject: ctx.outNames[0],
+    text:
+      `conv reads a ${reach.join("×")} window of ${ctx.inNames[0]} per output element at ` +
+      `stride ${stride.join("×")}, so adjacent tiles of ${ctx.outNames[0]} overlap by ` +
+      `${slack.map((v) => Math.max(0, v)).join("×")} on ${ctx.inNames[0]}. That halo is ` +
+      `re-read by every neighbouring tile, and stacking layers widens it further.`,
+  };
+}
+
 export const convOp: OpSpec = {
   name: "conv",
   attrSchema: z.object({
@@ -143,6 +171,7 @@ export const convOp: OpSpec = {
     groups: z.number().int().min(1).default(1),
   }),
   arity: { inputs: 2, outputs: 1 },
+  dependencyNote: convDependencyNote,
   inferDTypes: uniformDTypeOutputs("conv"),
   inferShapes: (inShapes, attrs) => {
     const a = attrs as ConvAttrs;

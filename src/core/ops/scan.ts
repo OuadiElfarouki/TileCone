@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Box, Region, canonicalize, count, fromBox, iv } from "../region";
 import { normAxis } from "./reduce";
-import { OpCtx, OpSpec, uniformDTypeOutputs } from "./types";
+import { DependencyNoteDraft, NoteCtx, OpCtx, OpSpec, uniformDTypeOutputs } from "./types";
 
 type ScanAttrs = { axis: number; reverse: boolean };
 
@@ -30,10 +30,32 @@ function scanFlops(outRegion: Region, ctx: OpCtx): number {
 }
 
 /** Triangular dependency cone: output o depends on inputs [0, o] (or [o, n) reversed). */
+/**
+ * A scan is neither pointwise nor a clean reduction: the dependency is
+ * triangular, so tiles along the scan axis are ordered rather than independent.
+ */
+function cumsumDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
+  if (!ctx.inRegions[0]) return null;
+  const rank = ctx.inShapes[0].length;
+  const axis = normAxis(ctx.attrs.axis as number, rank);
+  const reverse = Boolean(ctx.attrs.reverse);
+  const extent = ctx.inShapes[0][axis];
+  return {
+    key: `scan:${axis}:${reverse}`,
+    subject: ctx.outNames[0],
+    text:
+      `cumsum is a prefix scan along axis ${axis} (${extent} wide), so element i of ` +
+      `${ctx.outNames[0]} depends on ${reverse ? "every later" : "every earlier"} element ` +
+      `of ${ctx.inNames[0]} — the cone is triangular, not rectangular. Tiles along axis ` +
+      `${axis} must run in order and carry the running value across the boundary.`,
+  };
+}
+
 export const cumsumOp: OpSpec = {
   name: "cumsum",
   attrSchema: z.object({ axis: z.number().int(), reverse: z.boolean().default(false) }),
   arity: { inputs: 1, outputs: 1 },
+  dependencyNote: cumsumDependencyNote,
   inferDTypes: uniformDTypeOutputs("cumsum"),
   inferShapes: (inShapes, attrs) => {
     normAxis(attrs.axis as number, inShapes[0].length);

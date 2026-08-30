@@ -15,19 +15,31 @@ import {
 } from "../core/region";
 import { EXAMPLES } from "../examples/index";
 import { compileDSL } from "../parse/compiler";
-import { TILE_SCALE_MAX, TILE_SCALE_MIN } from "./tiling";
+import { graphScale, MAX_ELEM_PX, planeExtents, TILE_SCALE_MAX, TILE_SCALE_MIN } from "./tiling";
 
-export type Direction = "backward" | "forward" | "both";
-/** Everything snaps to the tile grid, which is also the render grid. */
-export type SelectMode = "cell" | "box" | "row" | "col" | "all";
-/**
- * How a new drag combines with the existing selection. Modifier keys override it.
- * There is deliberately no "replace" mode: it is `clear` followed by a draw, so
- * offering it as a third button would be a second way to do one thing.
- * "replace" survives only as an internal operation, for restoring a shared link.
- */
-export type ComposeMode = "union" | "subtract";
-type Compose = ComposeMode | "replace";
+/** Which independently toggled cones are active in the workspace. `both` and
+ * `none` are UI combinations; the checked executor keeps its smaller query API. */
+export type Direction = "none" | "backward" | "forward" | "both";
+export type ConeDirection = "backward" | "forward";
+export type PanelSide = "left" | "right";
+export type Theme = "light" | "dark";
+export type TensorOffset = { dx: number; dy: number };
+export type TensorOffsets = Record<string, TensorOffset>;
+type Selection = { tensorId: string; region: Region } | null;
+type WorkspaceSnapshot = { selection: Selection; tensorOffsets: TensorOffsets };
+
+/** Panel geometry. VS Code semantics: drag to resize between the bounds, drag
+ * far enough inward to collapse, click the rail to bring it back. */
+export const PANEL_MIN = 232;
+export const PANEL_MAX = 560;
+/** Release below this and the panel collapses rather than clamping to the min. */
+export const PANEL_COLLAPSE_AT = 168;
+/** Width of the collapsed rail. */
+export const PANEL_RAIL = 30;
+
+/** Direct canvas gestures add by default; Alt subtracts. "replace" is internal
+ * for examples, restored URL state, and operation-list probes. */
+type Compose = "union" | "subtract" | "replace";
 
 export type ViewCfg = {
   sliders: number[]; // index per hidden axis (full rank length; row/col entries ignored)
@@ -59,11 +71,11 @@ type State = {
 
   /** `region.boxes` are the user's ordered PARTS (identity-stable, may overlap),
    * never a canonicalized set. See the note in core/region.ts. */
-  selection: { tensorId: string; region: Region } | null;
-  selectionHistory: { tensorId: string; region: Region }[];
+  selection: Selection;
+  /** Chronological snapshots shared by selection edits and tensor moves. */
+  workspaceHistory: WorkspaceSnapshot[];
   direction: Direction;
-  selectMode: SelectMode;
-  composeMode: ComposeMode;
+  theme: Theme;
   backwardRes: PropResult | null;
   forwardRes: PropResult | null;
   /** One propagation per selection box, so a highlighted region can be traced
@@ -73,24 +85,51 @@ type State = {
   focusedBox: number | null;
   /** Sticky focus set by clicking a part; survives the pointer leaving the row. */
   pinnedBox: number | null;
-  /** True while a drag is being rubber-banded on a card, so Escape can cancel it. */
+  /**
+   * Parts whose dependency cone is not painted. Visibility is a separate concern
+   * from focus: focus is *which row is emphasised* (one at a time, transient),
+   * while this is *which cones contribute paint* (any number, sticky). Keeping
+   * them apart lets a probe be parked — its numbers stay live in the footprint
+   * table — without its cone competing for the canvas.
+   *
+   * Indexes into `selection.region.boxes`, so it is cleared by every edit that
+   * can renumber the parts, exactly where `focusedBox` is cleared. Only a move
+   * preserves it, because a move preserves order and length.
+   */
+  hiddenBoxes: Set<number>;
+  /** True while any drag is in progress — a card rubber-band or a canvas pan —
+   * so Escape can cancel the band and text selection can be suppressed. */
   dragging: boolean;
   preview: PropResult | null; // hover preview (backward only)
 
   viewCfgs: Record<string, ViewCfg>;
+  /** Px per element for every card in this graph. A property of the resolved
+   * graph, not of the view: derived once at load, so equal dimensions render at
+   * equal lengths and no card resizes as a side effect of a view setting.
+   * View controls never recompute this value. */
+  graphPx: number;
   /** Global detail setting: shifts every tensor's tile by 2^tileScale. */
   tileScale: number;
-  hideInert: boolean;
   countIntermediates: boolean;
   focusTensor: string | null;
+  /** Width in px of each side panel when open, and whether it is collapsed to a
+   * rail. Collapsing keeps the remembered width so reopening restores it. */
+  panelW: { left: number; right: number };
+  panelCollapsed: { left: boolean; right: boolean };
+  /** User displacement from dagre's collision-free base placement. */
+  tensorOffsets: TensorOffsets;
 
   loadExample: (i: number) => void;
   applyDSL: (text: string) => void;
   setSelection: (tensorId: string, region: Region, compose?: Compose) => void;
   clearSelection: () => void;
-  undoSelection: () => void;
-  /** Move the whole selection along one axis, clamped to the tensor. */
-  moveSelection: (axis: number, delta: number) => void;
+  undoWorkspace: () => void;
+  /** Move the whole selection along one axis, clamped to the tensor.
+   * `record` false appends no undo entry — used for auto-repeat, so holding an
+   * arrow key is one undo step rather than forty. */
+  moveSelection: (axis: number, delta: number, record?: boolean) => void;
+  /** Replace one ordered selection part without renumbering its peers. */
+  replaceBox: (index: number, box: Box) => void;
   deleteBox: (index: number) => void;
   /** Transient hover focus; ignored while a part is pinned. */
   hoverBox: (index: number | null) => void;
@@ -98,15 +137,26 @@ type State = {
   togglePinBox: (index: number) => void;
   /** Drop both hover and pin. What Escape does. */
   clearFocus: () => void;
+  /** Show/hide one part's cone, leaving its metrics untouched. */
+  toggleBoxHidden: (index: number) => void;
   setDragging: (v: boolean) => void;
   setDirection: (d: Direction) => void;
-  setSelectMode: (m: SelectMode) => void;
-  setComposeMode: (m: ComposeMode) => void;
+  toggleDirection: (d: ConeDirection) => void;
+  setTheme: (theme: Theme) => void;
   setViewCfg: (tensorId: string, cfg: Partial<ViewCfg>) => void;
   setTileScale: (v: number) => void;
-  setHideInert: (v: boolean) => void;
   setCountIntermediates: (v: boolean) => void;
   setFocusTensor: (id: string | null) => void;
+  /** Preview a panel resize, clamped to the usable open range. */
+  setPanelWidth: (side: PanelSide, w: number) => void;
+  /** Commit a resize. A raw width under `PANEL_COLLAPSE_AT` collapses here,
+   * after pointer capture has delivered the release event. */
+  finishPanelResize: (side: PanelSide, w: number) => void;
+  togglePanel: (side: PanelSide) => void;
+  /** Live, unrecorded movement used while a drag owns pointer capture. */
+  setTensorOffset: (tensorId: string, offset: TensorOffset) => void;
+  /** Record one completed drag, restoring `before` when workspace undo runs. */
+  commitTensorMove: (tensorId: string, before: TensorOffset) => void;
   setPreviewCell: (tensorId: string | null, cell?: number[]) => void;
   expandNodeInPlace: (nodeId: string) => void;
 };
@@ -117,12 +167,25 @@ export type BoxProp = { backward: PropResult | null; forward: PropResult | null 
 /** Above this many boxes, per-box attribution costs more than it is worth. */
 export const MAX_PER_BOX_PROPS = 12;
 
+function initialTheme(): Theme {
+  if (typeof window === "undefined") return "light";
+  try {
+    const saved = window.localStorage.getItem("tilecone.theme");
+    if (saved === "light" || saved === "dark") return saved;
+  } catch {
+    // Storage is optional; the OS preference remains a complete fallback.
+  }
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
 function recompute(
   resolved: ResolvedGraph | null,
-  selection: State["selection"],
+  selection: Selection,
   direction: Direction
 ): Pick<State, "backwardRes" | "forwardRes" | "perBox"> {
   if (!resolved || !selection || selection.region.boxes.length === 0)
+    return { backwardRes: null, forwardRes: null, perBox: null };
+  if (direction === "none")
     return { backwardRes: null, forwardRes: null, perBox: null };
   const aggregate = executeQuery(resolved, { ...selection, direction });
   const { backward: backwardRes, forward: forwardRes } = aggregate;
@@ -154,9 +217,10 @@ function editSelection(
   get: () => State,
   set: (partial: Partial<State>) => void,
   fn: (parts: Box[], shape: number[]) => Box[],
-  keepFocus = false
+  keepFocus = false,
+  record = true
 ): void {
-  const { selection, resolved, direction, selectionHistory, focusedBox } = get();
+  const { selection, resolved, direction, workspaceHistory, tensorOffsets, focusedBox } = get();
   if (!selection || !resolved) return;
   const shape = resolved.tensors[selection.tensorId].resolved!;
   const parts = fn(selection.region.boxes, shape);
@@ -166,18 +230,34 @@ function editSelection(
     keepFocus && sel && focusedBox !== null && focusedBox < parts.length ? focusedBox : null;
   set({
     selection: sel,
-    selectionHistory: [...selectionHistory, selection].slice(-40),
+    workspaceHistory: record
+      ? [...workspaceHistory, { selection, tensorOffsets }].slice(-40)
+      : workspaceHistory,
     focusedBox: nextFocus,
     pinnedBox: nextFocus === null ? null : get().pinnedBox,
+    // `keepFocus` marks the edits that preserve part order and length (a move).
+    // Anything else can renumber the parts, which would leave these indexes
+    // pointing at the wrong cone.
+    hiddenBoxes: keepFocus ? get().hiddenBoxes : new Set<number>(),
     preview: null,
     ...recompute(resolved, sel, direction),
+  });
+}
+
+/** The 2-D planes every card will draw, in the fixed row-major projection. */
+export function planesOf(resolved: ResolvedGraph): { rows: number; cols: number }[] {
+  return Object.values(resolved.tensors).map((t) => {
+    const shape = t.resolved!;
+    const { rowAxis, colAxis } = viewAxes(shape);
+    return planeExtents(shape, rowAxis, colAxis);
   });
 }
 
 function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
   State,
   | "graph" | "resolved" | "loadError" | "selection" | "backwardRes" | "forwardRes"
-  | "perBox" | "focusedBox" | "pinnedBox" | "viewCfgs" | "preview"
+  | "perBox" | "focusedBox" | "pinnedBox" | "viewCfgs" | "preview" | "graphPx"
+  | "hiddenBoxes" | "workspaceHistory" | "tensorOffsets"
 > {
   const viewCfgs: Record<string, ViewCfg> = {};
   for (const t of Object.values(resolved.tensors)) viewCfgs[t.id] = defaultViewCfg(t.resolved!);
@@ -186,13 +266,19 @@ function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
     resolved,
     loadError: null,
     selection: null,
+    // Undo entries refer to tensor IDs and coordinates in one resolved graph.
+    // They must never survive a graph replacement or composite rewrite.
+    workspaceHistory: [],
+    tensorOffsets: {},
     backwardRes: null,
     forwardRes: null,
     perBox: null,
     focusedBox: null,
     pinnedBox: null,
+    hiddenBoxes: new Set<number>(),
     preview: null,
     viewCfgs,
+    graphPx: graphScale(planesOf(resolved)),
   };
 }
 
@@ -207,22 +293,25 @@ export const useStore = create<State>((set, get) => ({
   resolved: null,
   loadError: null,
   selection: null,
-  selectionHistory: [],
-  direction: "backward",
-  selectMode: "box",
-  composeMode: "union",
+  workspaceHistory: [],
+  direction: "both",
+  theme: initialTheme(),
   backwardRes: null,
   forwardRes: null,
   perBox: null,
   focusedBox: null,
   pinnedBox: null,
+  hiddenBoxes: new Set<number>(),
   dragging: false,
   preview: null,
   viewCfgs: {},
+  graphPx: MAX_ELEM_PX,
   tileScale: 0,
-  hideInert: false,
   countIntermediates: false,
   focusTensor: null,
+  panelW: { left: 330, right: 300 },
+  panelCollapsed: { left: false, right: false },
+  tensorOffsets: {},
 
   loadExample: (i) => {
     const ex = EXAMPLES[i];
@@ -257,8 +346,8 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setSelection: (tensorId, region, compose) => {
-    const { selection, resolved, direction, composeMode, selectionHistory } = get();
-    const mode = compose ?? composeMode;
+    const { selection, resolved, direction, workspaceHistory, tensorOffsets } = get();
+    const mode = compose ?? "union";
     const drawn = region.boxes;
     let parts: Box[] = drawn;
     if (selection && selection.tensorId === tensorId && mode !== "replace") {
@@ -272,44 +361,52 @@ export const useStore = create<State>((set, get) => ({
         : { tensorId, region: { boxes: parts, exact: true, reasons: [] } };
     set({
       selection: sel,
-      selectionHistory: selection ? [...selectionHistory, selection].slice(-40) : selectionHistory,
+      // Null is a real workspace state: the first selection must be undoable
+      // without also rewinding an earlier tensor move.
+      workspaceHistory: [...workspaceHistory, { selection, tensorOffsets }].slice(-40),
       focusedBox: null,
       pinnedBox: null,
+      hiddenBoxes: new Set<number>(),
       preview: null,
       ...recompute(resolved, sel, direction),
     });
   },
 
   clearSelection: () => {
-    const { selection, selectionHistory } = get();
+    const { selection, workspaceHistory, tensorOffsets } = get();
     set({
       selection: null,
-      selectionHistory: selection ? [...selectionHistory, selection].slice(-40) : selectionHistory,
+      workspaceHistory: selection
+        ? [...workspaceHistory, { selection, tensorOffsets }].slice(-40)
+        : workspaceHistory,
       backwardRes: null,
       forwardRes: null,
       perBox: null,
       focusedBox: null,
       pinnedBox: null,
+      hiddenBoxes: new Set<number>(),
       preview: null,
     });
   },
 
-  undoSelection: () => {
-    const { selectionHistory, resolved, direction } = get();
-    if (!selectionHistory.length) return;
-    const prev = selectionHistory[selectionHistory.length - 1];
+  undoWorkspace: () => {
+    const { workspaceHistory, resolved, direction } = get();
+    if (!workspaceHistory.length) return;
+    const prev = workspaceHistory[workspaceHistory.length - 1];
     set({
-      selection: prev,
-      selectionHistory: selectionHistory.slice(0, -1),
+      selection: prev.selection,
+      tensorOffsets: prev.tensorOffsets,
+      workspaceHistory: workspaceHistory.slice(0, -1),
       focusedBox: null,
       pinnedBox: null,
+      hiddenBoxes: new Set<number>(),
       preview: null,
-      ...recompute(resolved, prev, direction),
+      ...recompute(resolved, prev.selection, direction),
     });
   },
 
   /** Moves only the focused part when one is focused, otherwise the whole selection. */
-  moveSelection: (axis, delta) => {
+  moveSelection: (axis, delta, record = true) => {
     const focused = get().focusedBox;
     editSelection(
       get,
@@ -318,9 +415,18 @@ export const useStore = create<State>((set, get) => ({
         focused !== null && focused < parts.length
           ? translatePart(parts, focused, axis, delta, shape)
           : translateAllParts(parts, axis, delta, shape),
-      true
+      true,
+      record
     );
   },
+
+  replaceBox: (index, box) =>
+    editSelection(
+      get,
+      set,
+      (parts) => parts.map((part, i) => (i === index ? box : part)),
+      true
+    ),
 
   deleteBox: (index) => editSelection(get, set, (parts) => removePart(parts, index)),
 
@@ -336,6 +442,12 @@ export const useStore = create<State>((set, get) => ({
 
   clearFocus: () => set({ pinnedBox: null, focusedBox: null }),
 
+  toggleBoxHidden: (index) => {
+    const next = new Set(get().hiddenBoxes);
+    if (!next.delete(index)) next.add(index);
+    set({ hiddenBoxes: next });
+  },
+
   setDragging: (v) => set({ dragging: v }),
 
   setDirection: (d) => {
@@ -343,8 +455,19 @@ export const useStore = create<State>((set, get) => ({
     set({ direction: d, ...recompute(resolved, selection, d) });
   },
 
-  setSelectMode: (m) => set({ selectMode: m }),
-  setComposeMode: (m) => set({ composeMode: m }),
+  toggleDirection: (axis) => {
+    const { direction, resolved, selection } = get();
+    const backward = direction === "backward" || direction === "both";
+    const forward = direction === "forward" || direction === "both";
+    const nextBackward = axis === "backward" ? !backward : backward;
+    const nextForward = axis === "forward" ? !forward : forward;
+    const next: Direction = nextBackward
+      ? nextForward ? "both" : "backward"
+      : nextForward ? "forward" : "none";
+    set({ direction: next, ...recompute(resolved, selection, next) });
+  },
+
+  setTheme: (theme) => set({ theme }),
 
   setViewCfg: (tensorId, cfg) =>
     set((s) => ({ viewCfgs: { ...s.viewCfgs, [tensorId]: { ...s.viewCfgs[tensorId], ...cfg } } })),
@@ -352,9 +475,61 @@ export const useStore = create<State>((set, get) => ({
   setTileScale: (v) =>
     set({ tileScale: Math.max(TILE_SCALE_MIN, Math.min(TILE_SCALE_MAX, Math.round(v))) }),
 
-  setHideInert: (v) => set({ hideInert: v }),
   setCountIntermediates: (v) => set({ countIntermediates: v }),
   setFocusTensor: (id) => set({ focusTensor: id }),
+
+  setPanelWidth: (side, w) => {
+    const { panelW, panelCollapsed } = get();
+    const clamped = Math.round(Math.max(PANEL_MIN, Math.min(PANEL_MAX, w)));
+    set({
+      panelW: { ...panelW, [side]: clamped },
+      panelCollapsed: { ...panelCollapsed, [side]: false },
+    });
+  },
+
+  finishPanelResize: (side, w) => {
+    const { panelW, panelCollapsed } = get();
+    if (w < PANEL_COLLAPSE_AT) {
+      // The preview never wrote an unusably narrow width, so the last open
+      // width remains available when the rail is reopened.
+      set({ panelCollapsed: { ...panelCollapsed, [side]: true } });
+      return;
+    }
+    const clamped = Math.round(Math.max(PANEL_MIN, Math.min(PANEL_MAX, w)));
+    set({
+      panelW: { ...panelW, [side]: clamped },
+      panelCollapsed: { ...panelCollapsed, [side]: false },
+    });
+  },
+
+  togglePanel: (side) => {
+    const { panelW, panelCollapsed } = get();
+    const collapsed = !panelCollapsed[side];
+    set({
+      panelCollapsed: { ...panelCollapsed, [side]: collapsed },
+      // reopening a panel that was dragged very narrow must still be usable
+      panelW: collapsed ? panelW : { ...panelW, [side]: Math.max(PANEL_MIN, panelW[side]) },
+    });
+  },
+
+  setTensorOffset: (tensorId, offset) => {
+    const tensorOffsets = { ...get().tensorOffsets };
+    if (Math.abs(offset.dx) < 1e-6 && Math.abs(offset.dy) < 1e-6) delete tensorOffsets[tensorId];
+    else tensorOffsets[tensorId] = offset;
+    set({ tensorOffsets });
+  },
+
+  commitTensorMove: (tensorId, before) => {
+    const { selection, tensorOffsets, workspaceHistory } = get();
+    const after = tensorOffsets[tensorId] ?? { dx: 0, dy: 0 };
+    if (Math.abs(after.dx - before.dx) < 1e-6 && Math.abs(after.dy - before.dy) < 1e-6) return;
+    const previousOffsets = { ...tensorOffsets };
+    if (Math.abs(before.dx) < 1e-6 && Math.abs(before.dy) < 1e-6) delete previousOffsets[tensorId];
+    else previousOffsets[tensorId] = before;
+    set({
+      workspaceHistory: [...workspaceHistory, { selection, tensorOffsets: previousOffsets }].slice(-40),
+    });
+  },
 
   setPreviewCell: (tensorId, cell) => {
     const { resolved } = get();

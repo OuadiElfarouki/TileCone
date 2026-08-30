@@ -9,6 +9,7 @@
  */
 
 import { Box, Region } from "../core/region";
+import { CARD_SURFACE } from "./palette";
 import { cardPx, planeExtents, tileFor } from "./tiling";
 import { viewAxes, ViewCfg } from "./store";
 
@@ -26,12 +27,18 @@ export type GridGeom = {
   colAxis: number;
 };
 
-export function gridGeometry(shape: number[], _cfg: ViewCfg, tileScale: number): GridGeom {
+export function gridGeometry(
+  shape: number[],
+  _cfg: ViewCfg,
+  tileScale: number,
+  px: number
+): GridGeom {
   const { rowAxis, colAxis } = viewAxes(shape);
   const { rows, cols } = planeExtents(shape, rowAxis, colAxis);
-  // The card is sized by the shape alone; the tile only sets the lattice inside it.
-  const { w: canvasW, h: canvasH } = cardPx(rows, cols);
-  const tile = tileFor(rows, cols, tileScale);
+  // The card is sized by the shape and the graph's scale; the tile only sets the
+  // lattice inside it.
+  const { w: canvasW, h: canvasH } = cardPx(rows, cols, px);
+  const tile = tileFor(rows, cols, tileScale, px);
   const tileRows = Math.ceil(rows / tile);
   const tileCols = Math.ceil(cols / tile);
   return {
@@ -68,9 +75,8 @@ export type Layer = {
   alpha: number; // base alpha (depth shading already applied by caller)
   hatch: boolean; // over-approximation -> diagonal hatching
   outline?: boolean; // strong border (selection)
-  /** Draw only a border, no fill. Marks downstream regions in "both" mode, so
-   * direction stays readable when hue is already carrying box identity. */
-  strokeOnly?: boolean;
+  /** Outline weight. Emphasis uses a heavier stroke than the 1.5 default. */
+  lineWidth?: number;
 };
 
 /** Fraction of a box's hidden-axis volume that is currently visible. */
@@ -136,6 +142,9 @@ export function tileCoverage(
   }
   return acc;
 }
+
+/** Conservative cross-browser ceiling on a canvas backing-store side. */
+const MAX_CANVAS_DIM = 8192;
 
 const hatchCache = new Map<string, CanvasPattern | null>();
 
@@ -209,14 +218,22 @@ export function drawGrid(
 ): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
-  // Supersample by the current graph zoom so cards stay sharp when zoomed in.
-  const res = (window.devicePixelRatio || 1) * renderScale;
+  // Supersample by the current graph zoom so cards stay sharp when zoomed in,
+  // but never past the backing-store limit: since the card scale became a
+  // property of the graph, a very wide tensor can exceed what the old per-card
+  // cap used to make impossible, and a canvas over the limit renders blank
+  // rather than clipped. Softening is the acceptable failure here.
+  const res = Math.min(
+    (window.devicePixelRatio || 1) * renderScale,
+    MAX_CANVAS_DIM / Math.max(1, geom.canvasW),
+    MAX_CANVAS_DIM / Math.max(1, geom.canvasH)
+  );
   canvas.width = Math.ceil(geom.canvasW * res);
   canvas.height = Math.ceil(geom.canvasH * res);
   ctx.setTransform(res, 0, 0, res, 0, 0);
   ctx.clearRect(0, 0, geom.canvasW, geom.canvasH);
 
-  ctx.fillStyle = dark ? "#16181d" : "#f3f4f6";
+  ctx.fillStyle = dark ? CARD_SURFACE.dark : CARD_SURFACE.light;
   ctx.fillRect(0, 0, geom.canvasW, geom.canvasH);
 
   const { tileRows, tileCols } = geom;
@@ -224,13 +241,6 @@ export function drawGrid(
   for (const layer of layers) {
     const [r, g, b] = layer.color;
     const cov = tileCoverage(layer.region, shape, cfg, geom);
-
-    if (layer.strokeOnly) {
-      ctx.strokeStyle = `rgba(${r},${g},${b},${Math.min(1, layer.alpha + 0.25)})`;
-      ctx.lineWidth = 2;
-      strokeCoveredEdges(ctx, cov, geom, 1);
-      continue;
-    }
 
     for (let tr = 0; tr < tileRows; tr++) {
       for (let tc = 0; tc < tileCols; tc++) {
@@ -262,7 +272,7 @@ export function drawGrid(
 
     if (layer.outline) {
       ctx.strokeStyle = `rgba(${r},${g},${b},0.95)`;
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = layer.lineWidth ?? 1.5;
       strokeCoveredEdges(ctx, cov, geom, 0.75);
     }
   }
@@ -291,10 +301,10 @@ export function drawGrid(
 }
 
 /** The tile size a tensor renders at, without building full geometry. */
-export function tileOf(shape: number[], tileScale: number): number {
+export function tileOf(shape: number[], tileScale: number, px: number): number {
   const { rowAxis, colAxis } = viewAxes(shape);
   const { rows, cols } = planeExtents(shape, rowAxis, colAxis);
-  return tileFor(rows, cols, tileScale);
+  return tileFor(rows, cols, tileScale, px);
 }
 
 /** Pixel position -> tile cell. */

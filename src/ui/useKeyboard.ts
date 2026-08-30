@@ -19,7 +19,7 @@ export function useKeyboard(): void {
 
       /**
        * Escape backs out of the innermost active mode. It never destroys the
-       * selection — clearing the tiles is the toolbar's "clear" button, an
+       * selection — clearing the tiles is the right panel's "clear all", an
        * explicit act, not a side effect of pressing cancel.
        */
       if (e.key === "Escape") {
@@ -36,18 +36,24 @@ export function useKeyboard(): void {
         return; // nothing active: do nothing
       }
 
+      // Panel shortcuts remain global even while focus is inside the source or
+      // an inspector control. They do not modify the field's contents.
+      if (e.altKey && (e.key === "1" || e.key === "2")) {
+        e.preventDefault();
+        return s.togglePanel(e.key === "1" ? "left" : "right");
+      }
+
       if (isTyping(e.target)) return;
       const sel = s.selection;
       const cfg = sel ? s.viewCfgs[sel.tensorId] : null;
       const shape = sel ? s.resolved?.tensors[sel.tensorId].resolved : null;
 
       // direction / view
-      if (e.key === "u") return s.setDirection("backward");
-      if (e.key === "d") return s.setDirection("forward");
-      if (e.key === "b") return s.setDirection("both");
+      if (e.key === "u") return s.toggleDirection("backward");
+      if (e.key === "d") return s.toggleDirection("forward");
       if (e.key === "z" && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
-        return s.undoSelection();
+        return s.undoWorkspace();
       }
 
       if (!sel || !cfg || !shape) return;
@@ -55,7 +61,7 @@ export function useKeyboard(): void {
       const { rowAxis: rowAx, colAxis: colAx } = viewAxes(shape);
       const visible = [rowAx, colAx].filter((a) => a >= 0);
       // one tile is the visible unit, so that is what an arrow key moves
-      const tile = tileOf(shape, s.tileScale);
+      const tile = tileOf(shape, s.tileScale, s.graphPx);
       const step = e.shiftKey ? tile * 8 : tile;
 
       const arrows: Record<string, [number, number]> = {
@@ -69,7 +75,17 @@ export function useKeyboard(): void {
         const [axis, sign] = hit;
         if (axis < 0) return;
         e.preventDefault();
-        s.moveSelection(axis, sign * step);
+        // Auto-repeat records no undo entry, so holding an arrow is one step to
+        // undo rather than forty — which would also evict the real history,
+        // since it is capped at 40 entries.
+        s.moveSelection(axis, sign * step, !e.repeat);
+        return;
+      }
+
+      // hide/show the focused part's cone; its metrics stay live either way
+      if (e.key === "h" && s.focusedBox !== null && s.perBox) {
+        e.preventDefault();
+        s.toggleBoxHidden(s.focusedBox);
         return;
       }
 

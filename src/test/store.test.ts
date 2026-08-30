@@ -1,10 +1,49 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { count, fromBox, box } from "../core/region";
-import { MAX_PER_BOX_PROPS, useStore } from "../ui/store";
+import { EXAMPLES } from "../examples";
+import {
+  MAX_PER_BOX_PROPS, PANEL_COLLAPSE_AT, PANEL_MAX, PANEL_MIN,
+  planesOf, useStore, viewAxes,
+} from "../ui/store";
+import { cardPx, graphScale, MAX_ELEM_PX, planeExtents } from "../ui/tiling";
 
 const S = () => useStore.getState();
 const sel = () => S().selection;
 const regionOf = (tensorId: string) => S().backwardRes?.tensors.get(tensorId)?.region;
+const loadExampleNamed = (name: string) => {
+  const index = EXAMPLES.findIndex((example) => example.name === name);
+  if (index < 0) throw new Error(`missing built-in example "${name}"`);
+  S().loadExample(index);
+};
+
+describe("independent cone toggles", () => {
+  beforeEach(() => {
+    S().setDirection("both");
+    S().loadExample(0);
+  });
+
+  it("represents all four upstream/downstream combinations", () => {
+    expect(S().direction).toBe("both");
+    expect(S().backwardRes).not.toBeNull();
+    expect(S().forwardRes).not.toBeNull();
+
+    S().toggleDirection("backward");
+    expect(S().direction).toBe("forward");
+    expect(S().backwardRes).toBeNull();
+    expect(S().forwardRes).not.toBeNull();
+
+    S().toggleDirection("forward");
+    expect(S().direction).toBe("none");
+    expect(S().backwardRes).toBeNull();
+    expect(S().forwardRes).toBeNull();
+    expect(S().perBox).toBeNull();
+
+    S().toggleDirection("backward");
+    expect(S().direction).toBe("backward");
+    S().toggleDirection("forward");
+    expect(S().direction).toBe("both");
+  });
+});
 
 describe("DSL compiler integration", () => {
   beforeEach(() => S().loadExample(0));
@@ -25,15 +64,197 @@ C = matmul(A, B)
 `);
     expect(S().loadError).toMatch(/^line 3: node "matmul_C".*shape inference failed/);
   });
+
+  it("starts a fresh undo history when the graph is replaced", () => {
+    S().moveSelection(0, 8);
+    expect(S().workspaceHistory.length).toBeGreaterThan(0);
+
+    loadExampleNamed("Multi-head attention"); // different tensor IDs from Plain GEMM
+    expect(S().workspaceHistory).toEqual([]);
+    expect(() => S().undoWorkspace()).not.toThrow();
+    expect(S().selection?.tensorId).toBe("Out");
+
+    S().moveSelection(0, 1);
+    expect(S().workspaceHistory.length).toBeGreaterThan(0);
+    S().applyDSL("input X [2, 3] f32\nY = identity(X)\n");
+    expect(S().workspaceHistory).toEqual([]);
+    expect(S().selection).toBeNull();
+    expect(() => S().undoWorkspace()).not.toThrow();
+  });
+
+  it("drops graph-specific tensor positions when the graph is replaced", () => {
+    S().setTensorOffset("A", { dx: 80, dy: 25 });
+    S().commitTensorMove("A", { dx: 0, dy: 0 });
+    expect(S().tensorOffsets.A).toEqual({ dx: 80, dy: 25 });
+
+    S().applyDSL("input X [2, 3] f32\nY = identity(X)\n");
+    expect(S().tensorOffsets).toEqual({});
+    expect(S().workspaceHistory).toEqual([]);
+  });
+});
+
+describe("tensor layout transactions", () => {
+  beforeEach(() => S().loadExample(0));
+
+  it("records a complete drag as one undo step", () => {
+    const depth = S().workspaceHistory.length;
+    S().setTensorOffset("A", { dx: 25, dy: 10 });
+    S().setTensorOffset("A", { dx: 60, dy: 30 });
+    expect(S().workspaceHistory).toHaveLength(depth); // live drag previews are unrecorded
+
+    S().commitTensorMove("A", { dx: 0, dy: 0 });
+    expect(S().workspaceHistory).toHaveLength(depth + 1);
+    S().undoWorkspace();
+    expect(S().tensorOffsets.A).toBeUndefined();
+  });
+
+  it("does not record a pointer gesture that produced no displacement", () => {
+    const depth = S().workspaceHistory.length;
+    S().commitTensorMove("A", { dx: 0, dy: 0 });
+    expect(S().workspaceHistory).toHaveLength(depth);
+  });
+
+  it("undoes layout and selection changes in chronological order", () => {
+    const initial = S().selection!.region.boxes;
+    S().moveSelection(0, 64);
+    const afterSelectionMove = S().selection!.region.boxes;
+
+    S().setTensorOffset("A", { dx: 90, dy: 35 });
+    S().commitTensorMove("A", { dx: 0, dy: 0 });
+    S().moveSelection(1, 64);
+
+    S().undoWorkspace(); // selection edit after the tensor drag
+    expect(S().selection!.region.boxes).toEqual(afterSelectionMove);
+    expect(S().tensorOffsets.A).toEqual({ dx: 90, dy: 35 });
+
+    S().undoWorkspace(); // tensor drag itself
+    expect(S().selection!.region.boxes).toEqual(afterSelectionMove);
+    expect(S().tensorOffsets.A).toBeUndefined();
+
+    S().undoWorkspace(); // selection edit before the tensor drag
+    expect(S().selection!.region.boxes).toEqual(initial);
+  });
+
+  it("can undo the first selection without disturbing tensor placement", () => {
+    S().applyDSL("input X [8, 8] f32\nY = identity(X)\n");
+    S().setTensorOffset("X", { dx: 45, dy: 20 });
+    S().commitTensorMove("X", { dx: 0, dy: 0 });
+    S().setSelection("Y", fromBox(box([0, 2], [0, 2])), "replace");
+
+    S().undoWorkspace();
+    expect(S().selection).toBeNull();
+    expect(S().tensorOffsets.X).toEqual({ dx: 45, dy: 20 });
+  });
 });
 
 /** Drives the store exactly as the UI does, to cover the selection-editing actions. */
+describe("side panel geometry", () => {
+  beforeEach(() => {
+    useStore.setState({
+      panelW: { left: 330, right: 300 },
+      panelCollapsed: { left: false, right: false },
+    });
+  });
+
+  it("clamps a drag to the allowed range", () => {
+    S().setPanelWidth("left", 999);
+    expect(S().panelW.left).toBe(PANEL_MAX);
+    S().setPanelWidth("left", PANEL_COLLAPSE_AT + 1);
+    expect(S().panelW.left).toBe(PANEL_MIN);
+    expect(S().panelCollapsed.left).toBe(false);
+  });
+
+  it("keeps a sub-threshold resize preview open until release", () => {
+    S().setPanelWidth("right", PANEL_COLLAPSE_AT - 1);
+    expect(S().panelW.right).toBe(PANEL_MIN);
+    expect(S().panelCollapsed.right).toBe(false);
+  });
+
+  it("collapses when a sub-threshold resize is committed", () => {
+    S().setPanelWidth("right", PANEL_COLLAPSE_AT - 1);
+    S().finishPanelResize("right", PANEL_COLLAPSE_AT - 1);
+    expect(S().panelCollapsed.right).toBe(true);
+  });
+
+  it("remembers the open width across a collapse", () => {
+    S().setPanelWidth("left", 420);
+    S().togglePanel("left");
+    expect(S().panelCollapsed.left).toBe(true);
+    expect(S().panelW.left).toBe(420); // width survives being hidden
+    S().togglePanel("left");
+    expect(S().panelCollapsed.left).toBe(false);
+    expect(S().panelW.left).toBe(420);
+  });
+
+  it("reopens at a usable width even if it was collapsed from a drag", () => {
+    S().finishPanelResize("right", PANEL_COLLAPSE_AT - 1); // collapse by drag release
+    S().togglePanel("right");
+    expect(S().panelW.right).toBeGreaterThanOrEqual(PANEL_MIN);
+  });
+
+  it("the two panels are independent", () => {
+    S().togglePanel("left");
+    expect(S().panelCollapsed.left).toBe(true);
+    expect(S().panelCollapsed.right).toBe(false);
+    S().setPanelWidth("right", 400);
+    expect(S().panelW.left).toBe(330);
+    expect(S().panelCollapsed.left).toBe(true);
+  });
+});
+
+describe("the graph's render scale", () => {
+  /** Card width/height for a tensor at the store's current scale. */
+  const cardOf = (name: string) => {
+    const shape = S().resolved!.tensors[name].resolved!;
+    const { rowAxis, colAxis } = viewAxes(shape);
+    const { rows, cols } = planeExtents(shape, rowAxis, colAxis);
+    return cardPx(rows, cols, S().graphPx);
+  };
+
+  it("is derived from the resolved graph at load", () => {
+    S().loadExample(0);
+    expect(S().graphPx).toBe(graphScale(planesOf(S().resolved!)));
+  });
+
+  it("draws a shared dimension at the same length in both tensors", () => {
+    // Plain GEMM: A[256,512] @ B[512,256]. K=512 runs along A's columns and down
+    // B's rows; if those differ, the contraction stops reading as one axis.
+    S().loadExample(0);
+    expect(cardOf("A").w).toBe(cardOf("B").h);
+    expect(cardOf("A").h).toBe(cardOf("C").h);
+    expect(cardOf("B").w).toBe(cardOf("C").w);
+  });
+
+  it("survives view settings: tile detail must not resize the graph", () => {
+    S().loadExample(0);
+    const before = S().graphPx;
+    S().setTileScale(3);
+    expect(S().graphPx).toBe(before);
+    S().setTileScale(0);
+  });
+
+  it("is recomputed for a different graph", () => {
+    S().applyDSL("input X [4, 4] f32\nY = reshape(X, shape=[16])\n");
+    const small = S().graphPx;
+    S().applyDSL("input X [1024, 1024] f16\ninput W [1024, 1024] f16\nZ = matmul(X, W)\n");
+    expect(S().graphPx).toBeLessThan(small);
+  });
+
+  it("a rank-1 tensor does not peg the whole graph at the cap", () => {
+    // W and Bb are [E]: their row extent is 1. Letting a degenerate axis count as
+    // "the smallest side" would demand 14px for it and blow every card up.
+    loadExampleNamed("Layernorm + residual");
+    expect(S().resolved!.tensors.W.resolved).toEqual([64]);
+    expect(S().graphPx).toBeLessThan(MAX_ELEM_PX);
+    expect(cardOf("X").w).toBe(cardOf("W").w); // both span E = 64
+  });
+});
+
 describe("selection editing through the store", () => {
   beforeEach(() => {
     // the store is a module singleton, so reset every axis the tests vary
     S().loadExample(0); // Plain GEMM: A[256,512] @ B[512,256] -> C[256,256]
     S().setDirection("backward");
-    S().setComposeMode("union");
     S().setSelection("C", fromBox(box([64, 128], [0, 64])), "replace");
   });
 
@@ -51,6 +272,15 @@ describe("selection editing through the store", () => {
     expect(regionOf("B")!.boxes).toEqual([box([0, 512], [0, 64])]);
   });
 
+  it("replaceBox edits one stable part and repropagates", () => {
+    const depth = S().workspaceHistory.length;
+    S().replaceBox(0, box([16, 48], [32, 96]));
+    expect(sel()!.region.boxes).toEqual([box([16, 48], [32, 96])]);
+    expect(regionOf("A")!.boxes).toEqual([box([16, 48], [0, 512])]);
+    expect(regionOf("B")!.boxes).toEqual([box([0, 512], [32, 96])]);
+    expect(S().workspaceHistory.length).toBe(depth + 1);
+  });
+
   it("moveSelection clamps at the tensor edge without shrinking", () => {
     const before = count(sel()!.region);
     for (let i = 0; i < 10; i++) S().moveSelection(0, 64);
@@ -58,8 +288,7 @@ describe("selection editing through the store", () => {
     expect(sel()!.region.boxes).toEqual([box([192, 256], [0, 64])]);
   });
 
-  it("union compose mode builds a multi-box selection", () => {
-    S().setComposeMode("union");
+  it("direct drawing adds a multi-box selection by default", () => {
     S().setSelection("C", fromBox(box([0, 32], [200, 232])));
     expect(sel()!.region.boxes).toHaveLength(2);
     expect(count(sel()!.region)).toBe(64 * 64 + 32 * 32);
@@ -67,34 +296,31 @@ describe("selection editing through the store", () => {
     expect(regionOf("A")!.boxes).toEqual([box([0, 32], [0, 512]), box([64, 128], [0, 512])]);
   });
 
-  it("subtract compose mode cuts a hole", () => {
-    S().setComposeMode("subtract");
-    S().setSelection("C", fromBox(box([80, 96], [0, 64])));
+  it("an explicit subtract gesture cuts a hole", () => {
+    S().setSelection("C", fromBox(box([80, 96], [0, 64])), "subtract");
     expect(count(sel()!.region)).toBe(64 * 64 - 16 * 64);
     expect(sel()!.region.boxes).toHaveLength(2);
   });
 
-  it("explicit compose argument overrides the mode (modifier keys)", () => {
-    S().setComposeMode("subtract"); // toolbar says cut...
-    S().setSelection("C", fromBox(box([0, 32], [0, 32])), "union"); // ...Shift says add
+  it("an explicit union gesture adds a part", () => {
+    S().setSelection("C", fromBox(box([0, 32], [0, 32])), "union");
     expect(sel()!.region.boxes).toHaveLength(2);
   });
 
   it("deleteBox removes exactly one box", () => {
-    S().setComposeMode("union");
     S().setSelection("C", fromBox(box([0, 32], [200, 232])));
     expect(sel()!.region.boxes).toHaveLength(2);
     S().deleteBox(0);
     expect(sel()!.region.boxes).toHaveLength(1);
   });
 
-  it("undoSelection walks back through edits", () => {
+  it("workspace undo walks back through selection edits", () => {
     S().moveSelection(0, 64);
     S().moveSelection(0, 64);
     expect(sel()!.region.boxes).toEqual([box([192, 256], [0, 64])]);
-    S().undoSelection();
+    S().undoWorkspace();
     expect(sel()!.region.boxes).toEqual([box([128, 192], [0, 64])]);
-    S().undoSelection();
+    S().undoWorkspace();
     expect(sel()!.region.boxes).toEqual([box([64, 128], [0, 64])]);
     expect(regionOf("A")!.boxes).toEqual([box([64, 128], [0, 512])]);
   });
@@ -102,7 +328,7 @@ describe("selection editing through the store", () => {
   it("clearing then undoing restores the selection", () => {
     S().clearSelection();
     expect(sel()).toBeNull();
-    S().undoSelection();
+    S().undoWorkspace();
     expect(sel()!.region.boxes).toEqual([box([64, 128], [0, 64])]);
   });
 
@@ -131,7 +357,6 @@ describe("per-box dependency attribution", () => {
   beforeEach(() => {
     S().loadExample(0);
     S().setDirection("backward");
-    S().setComposeMode("union");
     S().clearSelection(); // loadExample seeds a default selection
   });
 
@@ -223,7 +448,6 @@ describe("moving a single selected part", () => {
   const twoParts = () => {
     S().loadExample(0); // A[256,512] @ B[512,256] -> C[256,256]
     S().setDirection("backward");
-    S().setComposeMode("union");
     S().setSelection("C", fromBox(box([0, 64], [0, 64])), "replace");
     S().setSelection("C", fromBox(box([128, 192], [128, 192])), "union");
   };
@@ -308,13 +532,112 @@ describe("moving a single selected part", () => {
 
 /**
  * Escape backs out of the innermost active mode. It must never destroy the
- * selection — clearing tiles is the toolbar's explicit "clear" button.
+ * selection — clearing tiles is the right panel's explicit "clear all" button.
  */
+describe("cone visibility is independent of focus", () => {
+  beforeEach(() => {
+    S().loadExample(0);
+    S().setDirection("backward");
+    S().setSelection("C", fromBox(box([0, 64], [0, 64])), "replace");
+    S().setSelection("C", fromBox(box([128, 192], [128, 192])), "union");
+    S().setSelection("C", fromBox(box([192, 256], [0, 64])), "union");
+  });
+
+  it("hiding a box leaves its metrics live", () => {
+    // The whole point of parking a probe: it stops painting, it does not stop
+    // being measured.
+    const before = S().perBox![1].backward!.tensors.get("A")!.region;
+    S().toggleBoxHidden(1);
+    expect(S().hiddenBoxes.has(1)).toBe(true);
+    expect(S().perBox![1].backward!.tensors.get("A")!.region).toEqual(before);
+    expect(S().selection!.region.boxes.length).toBe(3);
+  });
+
+  it("toggles independently of focus, in both directions", () => {
+    S().toggleBoxHidden(0);
+    S().hoverBox(2);
+    expect(S().focusedBox).toBe(2);
+    expect(S().hiddenBoxes.has(0)).toBe(true); // focusing did not unhide
+    S().toggleBoxHidden(0);
+    expect(S().hiddenBoxes.has(0)).toBe(false);
+    expect(S().focusedBox).toBe(2); // unhiding did not steal focus
+  });
+
+  it("more than one box can be hidden at once", () => {
+    S().toggleBoxHidden(0);
+    S().toggleBoxHidden(2);
+    expect([...S().hiddenBoxes].sort()).toEqual([0, 2]);
+  });
+
+  it("survives a move, which preserves part order", () => {
+    S().toggleBoxHidden(1);
+    S().hoverBox(1);
+    S().moveSelection(0, 8);
+    expect(S().hiddenBoxes.has(1)).toBe(true);
+  });
+
+  it("is dropped when parts are renumbered", () => {
+    // deleteBox shifts every higher index down by one, so a retained set would
+    // silently point at a different box than the user hid.
+    S().toggleBoxHidden(2);
+    S().deleteBox(0);
+    expect(S().selection!.region.boxes.length).toBe(2);
+    expect(S().hiddenBoxes.size).toBe(0);
+  });
+
+  it("is dropped by a new selection, by clear and by undo", () => {
+    S().toggleBoxHidden(1);
+    S().setSelection("C", fromBox(box([0, 8], [0, 8])), "union");
+    expect(S().hiddenBoxes.size).toBe(0);
+
+    S().toggleBoxHidden(0);
+    S().undoWorkspace();
+    expect(S().hiddenBoxes.size).toBe(0);
+
+    S().toggleBoxHidden(0);
+    S().clearSelection();
+    expect(S().hiddenBoxes.size).toBe(0);
+  });
+});
+
+describe("an arrow-key burst is one undo step", () => {
+  beforeEach(() => {
+    S().loadExample(0);
+    S().setSelection("C", fromBox(box([64, 128], [0, 64])), "replace");
+    // Loading the graph starts a fresh history, but replacing its seeded default
+    // selection records that replacement. Reset it to isolate this key burst.
+    useStore.setState({ workspaceHistory: [] });
+  });
+
+  it("repeats append no history, so the cap is not evicted", () => {
+    const depth = S().workspaceHistory.length;
+    S().moveSelection(0, 8); // first key of the burst
+    expect(S().workspaceHistory.length).toBe(depth + 1);
+    for (let i = 0; i < 30; i++) S().moveSelection(0, 8, false); // auto-repeat
+    expect(S().workspaceHistory.length).toBe(depth + 1);
+  });
+
+  it("undo returns to where the burst began, not one tile back", () => {
+    const start = S().selection!.region.boxes[0][0].lo;
+    S().moveSelection(0, 8);
+    for (let i = 0; i < 5; i++) S().moveSelection(0, 8, false);
+    expect(S().selection!.region.boxes[0][0].lo).toBe(start + 48);
+    S().undoWorkspace();
+    expect(S().selection!.region.boxes[0][0].lo).toBe(start);
+  });
+
+  it("the nudge buttons still record every press", () => {
+    const depth = S().workspaceHistory.length;
+    S().moveSelection(0, 8);
+    S().moveSelection(0, 8);
+    expect(S().workspaceHistory.length).toBe(depth + 2);
+  });
+});
+
 describe("escape cancels the current mode, never the selection", () => {
   beforeEach(() => {
     S().loadExample(0);
     S().setDirection("backward");
-    S().setComposeMode("union");
     S().setSelection("C", fromBox(box([0, 64], [0, 64])), "replace");
     S().setSelection("C", fromBox(box([128, 192], [128, 192])), "union");
   });

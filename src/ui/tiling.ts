@@ -13,6 +13,14 @@
  *   4. fit   — raise the tile until the grid fits the card at >= MIN_CELL_PX per
  *              cell. This is the "minimum elementary tile" that keeps very large
  *              tensors crisp instead of collapsing them into sub-pixel mush.
+ *
+ * Card size is a separate axis from tile size, and it is a property of the
+ * *graph*, not of the tensor: `graphScale` picks one px-per-element for every
+ * card, so a dimension two tensors share is drawn at the same physical length in
+ * both. That is what makes a matmul's contraction dimension readable as one
+ * axis. Sizing each card to its own budget instead — the obvious thing — renders
+ * A[M,K] and B[K,N] with two different lengths for K, and the user reads
+ * "different granularity" where the truth is "same axis".
  */
 
 export const AUTO_TILE_FRACTION = 0.05;
@@ -21,10 +29,20 @@ export const TILE_SCALE_MAX = 5;
 
 /** Rendering budget. */
 export const MIN_CELL_PX = 3;
-export const MAX_CARD_W = 360;
-export const MAX_CARD_H = 300;
-/** Cap on pixels per element, so a tiny tensor does not fill the whole card. */
-export const MAX_ELEM_PX = 22;
+/** Px budget for the widest / tallest tensor in the graph. Soft: the floors
+ * below may override them, because a tensor nobody can see is worse than a
+ * tensor that needs a pan. */
+export const MAX_GRAPH_W = 300;
+export const MAX_GRAPH_H = 430;
+/** The smallest tensor side must stay at least this tall/wide. */
+export const MIN_SIDE_PX = 14;
+/** Cap on pixels per element, so a tiny graph does not blow up to fill the view. */
+export const MAX_ELEM_PX = 15;
+/** Absolute floor on px per element, so a huge graph still draws something. */
+export const MIN_ELEM_PX = 0.18;
+/** A degenerate axis (extent 1) is drawn at a fixed size: it has no length to
+ * scale, and letting it vote on the global scale would peg `minD` at 1. */
+export const DEGENERATE_SIDE_PX = 14;
 
 /** Nearest power of two (in log space), at least 1. */
 export function pow2Round(x: number): number {
@@ -71,22 +89,60 @@ function clampTile(tile: number, rows: number, cols: number): number {
 }
 
 /**
- * On-screen size of a tensor's grid, in CSS pixels. Depends **only on the
- * tensor's shape** — never on the tile size — so changing detail re-lattices the
- * card in place instead of resizing it. Aspect ratio follows the tensor.
+ * Px per element for the ENTIRE graph, so equal dimensions render at equal
+ * lengths wherever they appear. O(#tensors), computed once per resolved graph.
+ *
+ * The largest tensor sets the budget; the smallest *non-degenerate* side then
+ * raises the scale if the budget would make it invisible. Degenerate axes are
+ * excluded deliberately: they are drawn at a fixed `DEGENERATE_SIDE_PX` and have
+ * no length to preserve, so counting them would peg `minD` at 1 and force the
+ * whole graph to the `MAX_ELEM_PX` cap — one bias vector would blow every card
+ * up by an order of magnitude.
  */
-export function cardPx(rows: number, cols: number): { w: number; h: number } {
-  const scale = Math.min(MAX_CARD_W / cols, MAX_CARD_H / rows, MAX_ELEM_PX);
-  return { w: Math.max(8, Math.round(cols * scale)), h: Math.max(8, Math.round(rows * scale)) };
+export function graphScale(planes: { rows: number; cols: number }[]): number {
+  let maxR = 1;
+  let maxC = 1;
+  let minD = Infinity;
+  for (const { rows, cols } of planes) {
+    maxR = Math.max(maxR, rows);
+    maxC = Math.max(maxC, cols);
+    if (rows > 1) minD = Math.min(minD, rows);
+    if (cols > 1) minD = Math.min(minD, cols);
+  }
+  const fit = Math.min(MAX_GRAPH_W / maxC, MAX_GRAPH_H / maxR);
+  // no non-degenerate axis anywhere: nothing to keep visible, so the budget wins
+  const need = Number.isFinite(minD) ? MIN_SIDE_PX / minD : 0;
+  return Math.min(MAX_ELEM_PX, Math.max(fit, need, MIN_ELEM_PX));
+}
+
+/**
+ * On-screen size of a tensor's grid, in CSS pixels, at the graph's scale `px`.
+ * Depends **only on the tensor's shape and `px`** — never on the tile size — so
+ * changing detail re-lattices the card in place instead of resizing it. Aspect
+ * ratio follows the tensor.
+ */
+export function cardPx(rows: number, cols: number, px: number): { w: number; h: number } {
+  return {
+    w: cols === 1 ? DEGENERATE_SIDE_PX : Math.max(3, Math.round(cols * px)),
+    h: rows === 1 ? DEGENERATE_SIDE_PX : Math.max(3, Math.round(rows * px)),
+  };
 }
 
 /** The tile actually used for this tensor, given the global detail setting. */
-export function tileFor(rows: number, cols: number, tileScale: number): number {
+export function tileFor(rows: number, cols: number, tileScale: number, px: number): number {
   const base = pow2Round(AUTO_TILE_FRACTION * governingAxis(rows, cols));
   let tile = clampTile(base * 2 ** tileScale, rows, cols);
   // fit: the card is a fixed size, so refuse tiles that would draw cells below
   // MIN_CELL_PX inside it. This is the minimum elementary tile.
-  const { w, h } = cardPx(rows, cols);
+  //
+  // NOTE: clamping here is the common case, not the exception — a typical tensor
+  // has ~5 distinct tiles across the slider's 11 stops, so roughly half the
+  // travel is inert. That predates the graph scale (measured: mean 4.69 distinct
+  // stops before, 5.02 after) and is a property of snapping tiles to powers of
+  // two inside a bounded card. `isTileClamped` reports it but nothing in the UI
+  // consumes that yet; see docs/UI_REFACTOR.md §1.10 before wiring it to a
+  // warning, because a warning that is always on says nothing.
+  const { w, h } = cardPx(rows, cols, px);
   const maxCols = Math.max(1, Math.floor(w / MIN_CELL_PX));
   const maxRows = Math.max(1, Math.floor(h / MIN_CELL_PX));
   while (Math.ceil(cols / tile) > maxCols || Math.ceil(rows / tile) > maxRows) tile *= 2;
@@ -94,8 +150,64 @@ export function tileFor(rows: number, cols: number, tileScale: number): number {
 }
 
 /** True when `tileFor` had to override the requested scale to keep cells legible. */
-export function isTileClamped(rows: number, cols: number, tileScale: number): boolean {
+export function isTileClamped(
+  rows: number,
+  cols: number,
+  tileScale: number,
+  px: number
+): boolean {
   const base = pow2Round(AUTO_TILE_FRACTION * governingAxis(rows, cols));
-  return tileFor(rows, cols, tileScale) !== base * 2 ** tileScale;
+  return tileFor(rows, cols, tileScale, px) !== base * 2 ** tileScale;
 }
 
+function tileState(planes: { rows: number; cols: number }[], scale: number, px: number): number[] {
+  return planes.map(({ rows, cols }) => tileFor(rows, cols, scale, px));
+}
+
+function sameTileState(a: number[], b: number[]): boolean {
+  return a.length === b.length && a.every((tile, index) => tile === b[index]);
+}
+
+/**
+ * Slider stops that produce distinct graph-wide tile lattices.
+ *
+ * `tileScale` remains the serialized power-of-two shift; this only removes UI
+ * positions whose complete per-tensor tile vector is identical to a neighbour.
+ * For a plateau, the representative closest to auto (zero) is retained, so old
+ * share links preserve their meaning and display at the equivalent live stop.
+ */
+export function effectiveTileScaleStops(
+  planes: { rows: number; cols: number }[],
+  px: number
+): number[] {
+  const runs: { lo: number; hi: number }[] = [];
+  let runLo = TILE_SCALE_MIN;
+  let previous = tileState(planes, TILE_SCALE_MIN, px);
+  for (let scale = TILE_SCALE_MIN + 1; scale <= TILE_SCALE_MAX; scale++) {
+    const current = tileState(planes, scale, px);
+    if (!sameTileState(previous, current)) {
+      runs.push({ lo: runLo, hi: scale - 1 });
+      runLo = scale;
+    }
+    previous = current;
+  }
+  runs.push({ lo: runLo, hi: TILE_SCALE_MAX });
+  return runs.map(({ lo, hi }) => Math.max(lo, Math.min(hi, 0)));
+}
+
+/** Find which effective stop renders the same graph-wide lattice as `scale`. */
+export function effectiveTileScaleIndex(
+  planes: { rows: number; cols: number }[],
+  px: number,
+  stops: number[],
+  scale: number
+): number {
+  const wanted = tileState(planes, scale, px);
+  const found = stops.findIndex((stop) => sameTileState(tileState(planes, stop, px), wanted));
+  if (found >= 0) return found;
+  // Defensive fallback for a future non-monotone tiling policy.
+  let best = 0;
+  for (let i = 1; i < stops.length; i++)
+    if (Math.abs(stops[i] - scale) < Math.abs(stops[best] - scale)) best = i;
+  return best;
+}

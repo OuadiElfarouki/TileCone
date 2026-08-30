@@ -1,11 +1,24 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { computeMetrics } from "../core/metrics";
+import { coneIsFullyElementwise, dependencyNotes } from "../core/notes";
 import { propagateBackward } from "../core/propagate";
-import { count, fromBox, intersect, isEmpty, partsOverlap } from "../core/region";
+import {
+  Box,
+  Region,
+  count,
+  fromBox,
+  intersect,
+  isEmpty,
+  partsOverlap,
+  subtract,
+  union,
+} from "../core/region";
 import { formatBytes } from "./TensorCard";
-import { boxColor, isDarkTheme, MAX_DISTINCT_HUES, rgbCss } from "./palette";
-import { MAX_PER_BOX_PROPS, useStore, viewAxes } from "./store";
+import { boxColor, MAX_DISTINCT_HUES, rgbCss } from "./palette";
+import { MAX_PER_BOX_PROPS, planesOf, useStore, viewAxes } from "./store";
 import { tileOf } from "./grid";
+import { formatSelectionBox, parseSelectionBox } from "./selection-range";
+import { effectiveTileScaleIndex, effectiveTileScaleStops } from "./tiling";
 
 function fmt(n: number): string {
   if (n === 0) return "0";
@@ -16,32 +29,267 @@ function fmt(n: number): string {
   return n.toFixed(n < 10 && !Number.isInteger(n) ? 2 : 0);
 }
 
+const scaleLabel = (scale: number) =>
+  scale === 0 ? "auto" : `${scale > 0 ? "×" : "÷"}${2 ** Math.abs(scale)}`;
+
+function TileGridControl(): React.ReactElement {
+  const resolved = useStore((s) => s.resolved)!;
+  const graphPx = useStore((s) => s.graphPx);
+  const tileScale = useStore((s) => s.tileScale);
+  const setTileScale = useStore((s) => s.setTileScale);
+  const detail = useMemo(() => {
+    const planes = planesOf(resolved);
+    const stops = effectiveTileScaleStops(planes, graphPx);
+    return { stops, index: effectiveTileScaleIndex(planes, graphPx, stops, tileScale) };
+  }, [resolved, graphPx, tileScale]);
+
+  return (
+    <section className="tile-grid-control">
+      <div className="tile-grid-head">
+        <span>tile grid</span>
+        <b>{scaleLabel(detail.stops[detail.index])}</b>
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={Math.max(0, detail.stops.length - 1)}
+        step={1}
+        value={detail.index}
+        onChange={(event) => setTileScale(detail.stops[Number(event.target.value)])}
+        aria-label="tile grid detail"
+        aria-valuetext={scaleLabel(detail.stops[detail.index])}
+        title="global tile detail; every stop changes the rendered lattice"
+      />
+      <div className="tile-grid-stops">
+        {detail.stops.map((stop) => <span key={stop}>{scaleLabel(stop)}</span>)}
+      </div>
+    </section>
+  );
+}
+
+function SelectionRangeInput({
+  box,
+  shape,
+  onCommit,
+}: {
+  box: Box;
+  shape: number[];
+  onCommit: (box: Box) => void;
+}): React.ReactElement {
+  const formatted = formatSelectionBox(box);
+  const [draft, setDraft] = useState(formatted);
+  const [invalid, setInvalid] = useState(false);
+
+  useEffect(() => {
+    setDraft(formatted);
+    setInvalid(false);
+  }, [formatted]);
+
+  const commit = () => {
+    const parsed = parseSelectionBox(draft, shape);
+    if (!parsed) {
+      setInvalid(true);
+      return;
+    }
+    setInvalid(false);
+    const unchanged = parsed.every(
+      (interval, axis) => interval.lo === box[axis].lo && interval.hi === box[axis].hi
+    );
+    if (!unchanged) onCommit(parsed);
+  };
+
+  return (
+    <input
+      className={`box-range${invalid ? " invalid" : ""}`}
+      value={draft}
+      aria-label="selection range"
+      aria-invalid={invalid}
+      title={invalid ? `expected ${shape.length} in-bounds index or lo:hi fields` : "edit range; Enter or blur applies"}
+      spellCheck={false}
+      onClick={(event) => event.stopPropagation()}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        setInvalid(false);
+      }}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        event.stopPropagation();
+        if (event.key === "Enter") commit();
+        if (event.key === "Escape") {
+          setDraft(formatted);
+          setInvalid(false);
+        }
+      }}
+    />
+  );
+}
+
 /**
- * The selection's boxes, one row each. Hovering a row isolates that box's
- * dependency cone across the whole graph; clicking pins the isolation.
+ * Why the footprint has the shape it has. The numbers above say how much; this
+ * says what constrains it, which is the part that transfers to writing a kernel.
+ */
+function DependencyNotes(): React.ReactElement {
+  const resolved = useStore((s) => s.resolved);
+  const selection = useStore((s) => s.selection);
+  const backwardRes = useStore((s) => s.backwardRes);
+  const perBox = useStore((s) => s.perBox);
+  const focusedBox = useStore((s) => s.focusedBox);
+
+  const scoped = focusedBox !== null ? perBox?.[focusedBox]?.backward ?? backwardRes : backwardRes;
+
+  const result = useMemo(() => {
+    if (!resolved || !scoped) return null;
+    return {
+      notes: dependencyNotes(resolved, scoped),
+      elementwise: coneIsFullyElementwise(resolved, scoped),
+    };
+  }, [resolved, scoped]);
+
+  return (
+    <section className="ins-section notes-section">
+      <div className="ins-title">
+        Dependency notes
+        {focusedBox !== null && perBox && <span className="muted"> · box {focusedBox + 1}</span>}
+      </div>
+      {!selection || !result ? (
+        <p className="hint">
+          Draw a tile to read its cone. Notes here call out the reductions and contractions
+          that constrain a fused kernel.
+        </p>
+      ) : result.notes.length ? (
+        <ul className="notes-list">
+          {result.notes.map((note) => (
+            <li key={`${note.nodeId}:${note.text}`}>
+              <b>{note.op}</b>
+              {note.text}
+            </li>
+          ))}
+        </ul>
+      ) : result.elementwise ? (
+        <p className="hint">
+          This cone is elementwise all the way through: any tiling of the selection fuses
+          without cross-tile traffic.
+        </p>
+      ) : (
+        <p className="hint">
+          Nothing upstream of this selection — it reaches no operation, so no dependency
+          constrains it.
+        </p>
+      )}
+    </section>
+  );
+}
+
+const EMPTY_REGION: Region = { boxes: [], exact: true, reasons: [] };
+
+function FootprintBar({
+  tensorId,
+  elements,
+  totalElements,
+  perBox,
+  focusedBox,
+  dark,
+}: {
+  tensorId: string;
+  elements: number;
+  totalElements: number;
+  perBox: ReturnType<typeof useStore.getState>["perBox"];
+  focusedBox: number | null;
+  dark: boolean;
+}): React.ReactElement {
+  if (totalElements <= 0) return <span className="footprint-bar" />;
+
+  const regions = perBox?.map(
+    (prop) => prop.backward?.tensors.get(tensorId)?.region ?? EMPTY_REGION
+  );
+  const segments: { elements: number; color: string; title: string; shared?: boolean }[] = [];
+
+  if (regions && focusedBox !== null && regions[focusedBox]) {
+    segments.push({
+      elements,
+      color: rgbCss(boxColor(focusedBox, dark)),
+      title: `box ${focusedBox + 1}: ${fmt(elements)} elements`,
+    });
+  } else if (regions) {
+    let exclusiveTotal = 0;
+    regions.forEach((region, index) => {
+      let others = EMPTY_REGION;
+      regions.forEach((other, otherIndex) => {
+        if (otherIndex !== index) others = union(others, other);
+      });
+      const exclusive = count(subtract(region, others));
+      exclusiveTotal += exclusive;
+      if (exclusive > 0)
+        segments.push({
+          elements: exclusive,
+          color: rgbCss(boxColor(index, dark)),
+          title: `box ${index + 1} only: ${fmt(exclusive)} elements`,
+        });
+    });
+    const shared = Math.max(0, elements - exclusiveTotal);
+    if (shared > 0)
+      segments.push({
+        elements: shared,
+        color: "",
+        title: `shared by multiple boxes: ${fmt(shared)} elements`,
+        shared: true,
+      });
+  } else if (elements > 0) {
+    segments.push({ elements, color: "var(--muted)", title: `${fmt(elements)} elements touched` });
+  }
+
+  return (
+    <span
+      className="footprint-bar"
+      title={`whole bar = ${fmt(totalElements)} tensor elements`}
+      aria-label={`${fmt(elements)} of ${fmt(totalElements)} elements touched`}
+    >
+      {segments.map((segment, index) => (
+        <i
+          key={index}
+          className={segment.shared ? "shared" : ""}
+          title={segment.title}
+          style={{
+            width: `${Math.min(100, (segment.elements / totalElements) * 100)}%`,
+            background: segment.color || undefined,
+          }}
+        />
+      ))}
+    </span>
+  );
+}
+
+/**
+ * The selection's boxes, one row each. Hovering a row emphasises that box's
+ * dependency cone across the whole graph; clicking pins the emphasis.
  */
 function RegionEditor(): React.ReactElement | null {
   const resolved = useStore((s) => s.resolved);
   const selection = useStore((s) => s.selection);
   const moveSelection = useStore((s) => s.moveSelection);
+  const replaceBox = useStore((s) => s.replaceBox);
   const tileScale = useStore((s) => s.tileScale);
+  const graphPx = useStore((s) => s.graphPx);
   const deleteBox = useStore((s) => s.deleteBox);
-  const undoSelection = useStore((s) => s.undoSelection);
+  const undoWorkspace = useStore((s) => s.undoWorkspace);
   const perBox = useStore((s) => s.perBox);
   const focusedBox = useStore((s) => s.focusedBox);
   const pinned = useStore((s) => s.pinnedBox);
   const hoverBox = useStore((s) => s.hoverBox);
   const togglePinBox = useStore((s) => s.togglePinBox);
+  const hiddenBoxes = useStore((s) => s.hiddenBoxes);
+  const toggleBoxHidden = useStore((s) => s.toggleBoxHidden);
+  const theme = useStore((s) => s.theme);
 
   if (!resolved || !selection) return null;
   const t = resolved.tensors[selection.tensorId];
   const shape = t.resolved!;
   const { rowAxis: rowAx, colAxis: colAx } = viewAxes(shape);
-  const tile = tileOf(shape, tileScale); // the nudge pad moves by whole tiles
+  const tile = tileOf(shape, tileScale, graphPx); // the nudge pad moves by whole tiles
   const axisLabel = (ax: number) => t.axisNames?.[ax] ?? `ax${ax}`;
   const boxes = selection.region.boxes;
   const overlap = partsOverlap(boxes);
-  const dark = isDarkTheme();
+  const dark = theme === "dark";
 
   return (
     <div className="ins-section">
@@ -64,13 +312,13 @@ function RegionEditor(): React.ReactElement | null {
         </span>
         <button onClick={() => moveSelection(colAx, tile)} disabled={colAx < 0} style={{ gridArea: "right" }}>→</button>
         <button onClick={() => moveSelection(rowAx, tile)} disabled={rowAx < 0} style={{ gridArea: "down" }}>↓</button>
-        <button className="undo-btn" style={{ gridArea: "undo" }} onClick={undoSelection} title="undo the last selection change (ctrl+z)">undo</button>
+        <button className="undo-btn" style={{ gridArea: "undo" }} onClick={undoWorkspace} title="undo the last selection or layout change (ctrl+z)">undo</button>
       </div>
 
       {boxes.length > 1 && (
         <p className="hint">
           {perBox
-            ? "hover a box to isolate its cone; click to pin it, then the arrows move that box alone"
+            ? "hover a box to emphasise its cone; click to pin it, then the arrows move that box alone"
             : `too many boxes to trace individually (over ${MAX_PER_BOX_PROPS}) — showing the merged cone`}
         </p>
       )}
@@ -85,18 +333,36 @@ function RegionEditor(): React.ReactElement | null {
       <div className="box-list" onMouseLeave={() => hoverBox(null)}>
         {boxes.map((b, i) => {
           const active = focusedBox === i;
+          const hidden = hiddenBoxes.has(i);
           return (
             <div
-              className={`box-row${active ? " active" : ""}${pinned === i ? " pinned" : ""}`}
+              className={`box-row${active ? " active" : ""}${pinned === i ? " pinned" : ""}${hidden ? " hidden-cone" : ""}`}
               key={i}
               onMouseEnter={() => hoverBox(i)}
               onClick={() => perBox && togglePinBox(i)}
-              title={perBox ? "hover to isolate this box's dependencies; click to pin (esc unpins)" : undefined}
+              title={perBox ? "hover to emphasise this box's dependencies; click to pin (esc unpins)" : undefined}
             >
+              <button
+                className="vis-toggle"
+                disabled={!perBox}
+                title={
+                  perBox
+                    ? `${hidden ? "show" : "hide"} this box's cone (h) — its numbers stay in the table either way`
+                    : "per-box cones are not traced at this many boxes"
+                }
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleBoxHidden(i);
+                }}
+              >
+                {hidden ? "○" : "●"}
+              </button>
               <i className="swatch" style={{ background: rgbCss(boxColor(i, dark)) }} />
-              <code>
-                [{b.map((I) => (I.hi - I.lo === 1 ? `${I.lo}` : `${I.lo}:${I.hi}`)).join(", ")}]
-              </code>
+              <SelectionRangeInput
+                box={b}
+                shape={shape}
+                onCommit={(next) => replaceBox(i, next)}
+              />
               <span className="muted">{fmt(b.reduce((a, I) => a * (I.hi - I.lo), 1))}</span>
               <button
                 className="mini"
@@ -127,8 +393,9 @@ function RegionEditor(): React.ReactElement | null {
           <span>arrows</span><span>move by one tile</span>
           <span>shift+arrows</span><span>move by 8 tiles</span>
           <span>[ / ]</span><span>scrub hidden axis</span>
-          <span>ctrl+z</span><span>undo selection</span>
-          <span>u / d / b</span><span>up / down / both</span>
+          <span>h</span><span>hide/show focused cone</span>
+          <span>ctrl+z</span><span>undo selection / layout</span>
+          <span>u / d</span><span>toggle upstream / downstream</span>
           <span>f</span><span>fit to view</span>
           <span>esc</span><span>unpin / leave editing</span>
         </div>
@@ -139,11 +406,13 @@ function RegionEditor(): React.ReactElement | null {
 
 export function Inspector(): React.ReactElement {
   const resolved = useStore((s) => s.resolved);
+  const theme = useStore((s) => s.theme);
   const selection = useStore((s) => s.selection);
   const backwardRes = useStore((s) => s.backwardRes);
   const direction = useStore((s) => s.direction);
   const countIntermediates = useStore((s) => s.countIntermediates);
   const setCountIntermediates = useStore((s) => s.setCountIntermediates);
+  const clearSelection = useStore((s) => s.clearSelection);
   const perBox = useStore((s) => s.perBox);
   const focusedBox = useStore((s) => s.focusedBox);
 
@@ -216,7 +485,16 @@ export function Inspector(): React.ReactElement {
 
   return (
     <aside className="inspector">
-      <h3>Inspector</h3>
+      <TileGridControl />
+      <div className="tiles-heading">
+        <h2>Tiles <small>{selBoxes ? `${selBoxes} selected` : "none selected"}</small></h2>
+        <button className="mini" onClick={clearSelection} disabled={!selection}>clear all</button>
+      </div>
+      <div className="tile-legend">
+        <span><i className="selected" style={{ background: rgbCss(boxColor(0, theme === "dark")) }} /> selected tile</span>
+        <span><i className="required" style={{ background: rgbCss(boxColor(0, theme === "dark")) }} /> dependency</span>
+        <span><i className="approx" /> approximate</span>
+      </div>
       {!selection && <p className="hint">Click or drag on any tensor grid to select a region. Shift adds, Alt subtracts.</p>}
       {selection && (
         <div className="ins-section">
@@ -240,6 +518,9 @@ export function Inspector(): React.ReactElement {
               <span>FLOPs</span><span>{fmt(metrics.flops)}</span>
               <span>input bytes</span><span>{formatBytes(metrics.inputBytes)}</span>
               <span>intermediate</span><span>{formatBytes(metrics.intermediateBytes)}</span>
+              <span>output bytes</span><span>{formatBytes(metrics.outputBytes)}</span>
+              <span>cone working set</span>
+              <span>{formatBytes(metrics.inputBytes + metrics.intermediateBytes + metrics.outputBytes)}</span>
               <span>intensity</span><span>{metrics.intensity.toFixed(2)} FLOP/B</span>
             </div>
             <label className="chk">
@@ -282,6 +563,14 @@ export function Inspector(): React.ReactElement {
                   <span className="row-stats">
                     {fmt(t.elements)} el ({((t.elements / t.totalElements) * 100).toFixed(1)}%) · {formatBytes(t.bytes)} · {t.boxCount} box{t.boxCount === 1 ? "" : "es"}
                   </span>
+                  <FootprintBar
+                    tensorId={t.tensorId}
+                    elements={t.elements}
+                    totalElements={t.totalElements}
+                    perBox={perBox}
+                    focusedBox={focusedBox}
+                    dark={theme === "dark"}
+                  />
                 </summary>
                 <div className="slice-exprs">
                   {t.sliceExprsNumpy.slice(0, 12).map((line, i) => (
@@ -300,8 +589,12 @@ export function Inspector(): React.ReactElement {
           </div>
         </>
       )}
+      <DependencyNotes />
       {direction === "forward" && selection && (
-        <p className="hint">Forward mode shows downstream influence; switch to Upstream/Both for cost metrics.</p>
+        <p className="hint">Downstream mode shows influence; switch to Upstream for cost metrics.</p>
+      )}
+      {direction === "none" && selection && (
+        <p className="hint">Enable Upstream or Downstream to show this selection's cone.</p>
       )}
     </aside>
   );

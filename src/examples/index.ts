@@ -20,19 +20,6 @@ C = matmul(A, B)
     defaultSelection: { tensor: "C", box: [[64, 128], [0, 64]] },
   },
   {
-    name: "Tiled GEMM (one CTA tile)",
-    description:
-      "Same GEMM, selecting a single output tile: read the input footprint and arithmetic intensity, then use the detail slider to change the tile size and watch the footprint follow.",
-    dsl: `params M=256 N=256 K=512
-
-input A [M, K] f16
-input B [K, N] f16
-
-C = matmul(A, B)
-`,
-    defaultSelection: { tensor: "C", box: [[0, 64], [0, 64]] },
-  },
-  {
     name: "Multi-head attention",
     description:
       "Q/K/V projections, scores, softmax, value contraction, output projection. Select one output token row: the full K and V for that head light up — why attention is memory-bound at long context.",

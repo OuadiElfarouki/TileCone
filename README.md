@@ -14,7 +14,7 @@ No values are ever computed. The whole engine is integer interval arithmetic ove
 ```bash
 npm install
 npm run dev      # http://localhost:5173
-npm test         # 165 tests
+npm test         # 256 tests
 npm run build    # typecheck + production bundle
 ```
 
@@ -96,10 +96,24 @@ Use `tryCompileDSL` when diagnostics should be returned as data instead of throw
   of the computation being explained.
 - **Tiles are the rendering unit.** One drawn cell is one tile, shaded by the fraction of its
   elements in the region. One global detail slider sets the tile for every tensor (default ~5% of
-  the smallest axis, snapped to a power of two). Card size depends only on the tensor's shape, so
-  changing detail re-lattices cards in place without resizing them.
+  the smallest axis, snapped to a power of two). Card size depends only on the tensor's shape and
+  the graph's scale, never on the tile, so changing detail re-lattices cards in place without
+  resizing them.
+- **One px-per-element for the whole graph.** The scale is a property of the graph, not of each
+  card, so a dimension two tensors share is drawn at the same physical length in both: in
+  `C[M,N] = A[M,K] @ B[K,N]`, `A`'s width and `B`'s height are equal because both are `K`. Sizing
+  each card to its own budget instead makes the contraction axis read as two different lengths.
 - **Hue identifies which selected box a highlight came from**, capped at three validated
   categorical colors — the largest set clearing all-pairs contrast floors on both canvas surfaces.
-  Hovering a box in the inspector isolates its cone, which works for any number of boxes.
+  Chrome deliberately sits outside those hues (amber in dark, magenta in light) so a hot edge is
+  never mistaken for a cone.
+- **Hovering a box in the inspector emphasises its cone; it never hides the others.** The peers fade
+  but stay legible, because comparing cones is the point of a multi-box selection. Removing a cone
+  from the canvas is a separate, explicit toggle (`h`), and a parked box keeps its numbers in the
+  footprint table.
+- **Tensor placement is editable without weakening the layout.** Drag the dotted handle outside a
+  card's top-left corner to reposition it. Curved connectors follow live; tensor cards and operation
+  nodes remain hard collision boundaries. A completed drag is one chronological workspace undo
+  step, and Escape cancels an in-progress move.
 
 See `docs/IDEA.md` for the full specification, including the exactness rules for every op.

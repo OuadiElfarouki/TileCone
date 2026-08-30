@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Box, Region, empty, fromBox, iv, canonicalize } from "../region";
-import { Attrs, DIAG_ENUM_CAP, OpCtx, OpSpec, uniformDTypeOutputs } from "./types";
+import { Attrs, DependencyNoteDraft, DIAG_ENUM_CAP, OpCtx, OpSpec, uniformDTypeOutputs, NoteCtx } from "./types";
 
 export type ParsedEquation = { operands: string[][]; output: string[] };
 
@@ -159,6 +159,69 @@ export function einsumFlops(eq: string, outBox: Box, ctx: OpCtx): number {
   return contr > 1 ? vol * contr : 0;
 }
 
+
+/**
+ * Contraction notes. A contracted label is one that appears in the operands but
+ * not the output, so every element of the output sums over its whole extent.
+ *
+ * The note is only emitted when the cone *demonstrably* pulled that whole
+ * extent: `backward` is free to return something narrower for a degenerate
+ * selection, and claiming a full contraction that did not happen would be a
+ * statement the picture does not support.
+ */
+export function einsumDependencyNote(eq: string, ctx: NoteCtx): DependencyNoteDraft | null {
+  let pe: ParsedEquation;
+  try {
+    pe = parseEquation(eq, ctx.inShapes.length);
+  } catch {
+    return null; // a malformed equation is diagnosed elsewhere; say nothing here
+  }
+  const outLabels = new Set(pe.output);
+  const contracted: string[] = [];
+  for (const operand of pe.operands)
+    for (const label of operand)
+      if (!outLabels.has(label) && !contracted.includes(label)) contracted.push(label);
+  if (!contracted.length) return null;
+
+  for (const label of contracted) {
+    // every input slot carrying this label, with the axis it sits on
+    const carriers: { slot: number; axis: number; extent: number }[] = [];
+    pe.operands.forEach((operand, slot) => {
+      const axis = operand.indexOf(label);
+      if (axis >= 0) carriers.push({ slot, axis, extent: ctx.inShapes[slot][axis] });
+    });
+    if (!carriers.length) continue;
+    const extent = carriers[0].extent;
+
+    const pulledInFull = carriers.filter(({ slot, axis }) => {
+      const region = ctx.inRegions[slot];
+      return region?.boxes.some((box) => box[axis].hi - box[axis].lo === ctx.inShapes[slot][axis]);
+    });
+    if (pulledInFull.length !== carriers.length) continue;
+
+    // Prefer the name the source used for this axis over the einsum label.
+    const declared = carriers
+      .map(({ slot, axis }) => ctx.inDims[slot]?.[axis])
+      .find((dim) => typeof dim === "string") as string | undefined;
+    const axisLabel = declared ?? label;
+
+    const names = carriers.map(({ slot }) => ctx.inNames[slot]);
+    const listed =
+      names.length === 2 ? `${names[0]} and ${names[1]}` : names.join(", ");
+    return {
+      key: `contract:${axisLabel}:${extent}`,
+      subject: ctx.outNames[0],
+      // Phrased without an article before the axis name on purpose: the label
+      // is user-supplied, so "a K" / "an E" cannot be chosen ahead of time.
+      text:
+        `${ctx.outNames[0]} contracts ${axisLabel}=${extent} in full — one tile of ` +
+        `${ctx.outNames[0]} pulls the complete ${axisLabel} extent of ${listed}. A fused ` +
+        `kernel must either stage ${axisLabel} or accumulate across it.`,
+    };
+  }
+  return null;
+}
+
 const eqOf = (attrs: Attrs) => attrs.equation as string;
 
 export const einsumOp: OpSpec = {
@@ -180,6 +243,7 @@ export const einsumOp: OpSpec = {
   forward: (inSlot, inBox, ctx) => einsumForward(eqOf(ctx.attrs), inSlot, inBox, ctx),
   oracleDeps: (_slot, outIndex, ctx) => einsumOracleDeps(eqOf(ctx.attrs), outIndex, ctx),
   flopsFor: (_slot, outBox, ctx) => einsumFlops(eqOf(ctx.attrs), outBox, ctx),
+  dependencyNote: (ctx) => einsumDependencyNote(eqOf(ctx.attrs), ctx),
 };
 
 /** Sugar: build an OpSpec that lowers to a fixed-arity einsum with a shape-derived equation. */
@@ -199,6 +263,7 @@ export function einsumSugar(
     forward: (inSlot, inBox, ctx) => einsumForward(eqFor(ctx), inSlot, inBox, ctx),
     oracleDeps: (_s, outIndex, ctx) => einsumOracleDeps(eqFor(ctx), outIndex, ctx),
     flopsFor: (_s, outBox, ctx) => einsumFlops(eqFor(ctx), outBox, ctx),
+    dependencyNote: (ctx) => einsumDependencyNote(eqFor(ctx), ctx),
   };
 }
 

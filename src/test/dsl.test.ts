@@ -7,6 +7,12 @@ import { propagateBackward } from "../core/propagate";
 import { box, fromBox } from "../core/region";
 import { checkGraph } from "./harness";
 
+const exampleNamed = (name: string) => {
+  const example = EXAMPLES.find((candidate) => candidate.name === name);
+  if (!example) throw new Error(`missing built-in example "${name}"`);
+  return example;
+};
+
 function strip(g: Graph) {
   return JSON.parse(graphToJSON(g));
 }
@@ -95,7 +101,7 @@ m = mean(X, axes=[0])
   it("JSON loader validates schema", () => {
     expect(() => parseGraphJSON("{ not json")).toThrow(/invalid JSON/);
     expect(() => parseGraphJSON(`{"nodes": [{"id": 5}], "tensors": {}}`)).toThrow(/schema errors/);
-    const g = parseGraphJSON(graphToJSON(parseDSL(EXAMPLES[0].dsl)));
+    const g = parseGraphJSON(graphToJSON(parseDSL(exampleNamed("Plain GEMM").dsl)));
     expect(resolveGraph(g).tensors["C"].resolved).toEqual([256, 256]);
   });
 });
@@ -113,7 +119,7 @@ describe("built-in examples", () => {
   });
 
   it("attention: one output token row pulls full K and V for every head", () => {
-    const g = resolveGraph(parseDSL(EXAMPLES[2].dsl));
+    const g = resolveGraph(parseDSL(exampleNamed("Multi-head attention").dsl));
     const res = propagateBackward(g, {
       tensorId: "Out",
       region: fromBox(box([0, 1], [17, 18], [0, 128])),
@@ -130,7 +136,7 @@ describe("built-in examples", () => {
 
   it("examples validate against the oracle at miniature shapes", () => {
     // reshape trap + layernorm residual + cumsum are cheap enough to brute force as-is
-    checkGraph(parseDSL(EXAMPLES[4].dsl), { perTensorElementCap: 16 });
+    checkGraph(parseDSL(exampleNamed("Reshape trap").dsl), { perTensorElementCap: 16 });
     const miniLN = parseDSL(`params S=4 E=6
 input X [S, E] f32
 input W [E] f32

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Box, Region, canonicalize, count, fromBox, iv } from "../region";
 import { normAxes } from "./reduce";
-import { OpCtx, OpSpec, uniformDTypeOutputs } from "./types";
+import { DependencyNoteDraft, OpCtx, OpSpec, uniformDTypeOutputs, NoteCtx } from "./types";
 
 type NAttrs = { kind: "layernorm" | "rmsnorm"; axes: number[]; hasWeight: boolean; hasBias: boolean };
 
@@ -41,8 +41,41 @@ function normalizeFlops(outRegion: Region, ctx: OpCtx): number {
  * Backward on data: full extent along `axes`, identity elsewhere.
  * Backward on weight/bias: the OUTPUT BOX's intervals restricted to `axes`.
  */
+/**
+ * Normalization is the interesting middle case: it needs a whole axis like a
+ * reduction, but the rows over that axis stay independent of each other, so it
+ * is safe to fuse along every *other* axis. Saying only the first half would
+ * make it look less fusable than it is.
+ */
+function normalizeDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
+  const region = ctx.inRegions[0];
+  if (!region) return null;
+  const shape = ctx.inShapes[0];
+  const attrs = ctx.attrs as NAttrs;
+  const axes = normAxes(attrs.axes, shape.length);
+  const full = axes.filter((axis) =>
+    region.boxes.some((box) => box[axis].hi - box[axis].lo === shape[axis])
+  );
+  if (!full.length) return null;
+  const free = shape.map((_, axis) => axis).filter((axis) => !axes.includes(axis));
+  const one = full.length === 1;
+  const tail = free.length
+    ? `but ${free.length === 1 ? `axis ${free[0]} stays` : `axes ${free.join(", ")} stay`} ` +
+      `independent — safe to fuse there.`
+    : "and no free axis is left to fuse along.";
+  return {
+    key: `normalize:${attrs.kind}:${full.join(",")}`,
+    subject: ctx.outNames[0],
+    text:
+      `${attrs.kind} takes statistics over ${one ? "axis" : "axes"} ${full.join(", ")} of ` +
+      `${ctx.inNames[0]}, so a tile of ${ctx.outNames[0]} needs ` +
+      `${one ? "that axis" : "those axes"} complete, ${tail}`,
+  };
+}
+
 export const normalizeOp: OpSpec = {
   name: "normalize",
+  dependencyNote: normalizeDependencyNote,
   attrSchema: z.object({
     kind: z.enum(["layernorm", "rmsnorm"]),
     axes: z.array(z.number().int()),
