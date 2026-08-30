@@ -118,4 +118,4 @@ Use `tryCompileDSL` when diagnostics should be returned as data instead of throw
   nodes remain hard collision boundaries. A completed drag is one chronological workspace undo
   step, and Escape cancels an in-progress move.
 
-See `docs/IDEA.md` for the full specification, including the exactness rules for every op.
+See `SYSTEM.md` for the full specification & architecture/implementation details.
