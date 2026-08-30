@@ -83,6 +83,103 @@ Y = softmax(X, axiz=-1)
     });
   });
 
+  it.each([
+    ["elementwise", "Y = elementwise(fn=relu, nary=1)", "at least 1 input"],
+    ["concat", "Y = concat(axis=0)", "at least 1 input"],
+    ["einsum", 'Y = einsum("->")', "at least 1 input"],
+    [
+      "normalize",
+      "Y = normalize(kind=layernorm, axes=[0], hasWeight=false, hasBias=false)",
+      "1 to 3 inputs",
+    ],
+  ])("requires at least one input for variadic %s", (_op, statement, expected) => {
+    const result = tryCompileDSL(`${statement}\n`);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0]).toMatchObject({
+      phase: "semantic",
+      code: "SEM_ARITY",
+      span: { start: { line: 1 } },
+    });
+    expect(result.diagnostics[0].message).toContain(`expected ${expected}, got 0`);
+  });
+
+  it("enforces the maximum normalize input count", () => {
+    const result = tryCompileDSL(`input X [4] f32
+input W [4] f32
+input B [4] f32
+input Extra [4] f32
+Y = normalize(X, W, B, Extra, kind=layernorm, axes=[0], hasWeight=true, hasBias=true)
+`);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0]).toMatchObject({
+      phase: "semantic",
+      code: "SEM_ARITY",
+      span: { start: { line: 5 } },
+    });
+    expect(result.diagnostics[0].message).toMatch(/expected 1 to 3 inputs, got 4/);
+  });
+
+  it("checks elementwise nary against its actual input count", () => {
+    const result = tryCompileDSL(`input X [4] f32
+Y = elementwise(X, fn=relu, nary=2)
+`);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0]).toMatchObject({
+      phase: "semantic",
+      code: "SEM_ARITY",
+      span: { start: { line: 2 } },
+    });
+    expect(result.diagnostics[0].message).toMatch(/nary=2 does not match 1 input/);
+  });
+
+  it("checks einsum equation operands against its actual input count", () => {
+    const result = tryCompileDSL(`input A [2, 3] f32
+Y = einsum("ij,jk->ik", A)
+`);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0]).toMatchObject({
+      phase: "semantic",
+      code: "SEM_ARITY",
+      span: { start: { line: 2 } },
+    });
+    expect(result.diagnostics[0].message).toMatch(
+      /equation declares 2 operands, got 1 input/
+    );
+  });
+
+  it("checks normalize flags against its actual input count", () => {
+    const result = tryCompileDSL(`input X [4] f32
+input W [4] f32
+Y = normalize(X, W, kind=layernorm, axes=[0], hasWeight=false, hasBias=false)
+`);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0]).toMatchObject({
+      phase: "semantic",
+      code: "SEM_ARITY",
+      span: { start: { line: 3 } },
+    });
+    expect(result.diagnostics[0].message).toMatch(/flags require 1 input, got 2/);
+  });
+
+  it("checks split output count against sizes", () => {
+    const result = tryCompileDSL(`input X [4] f32
+A, B = split(X, axis=0, sizes=[4])
+`);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0]).toMatchObject({
+      phase: "semantic",
+      code: "SEM_ARITY",
+      span: { start: { line: 2 } },
+    });
+    expect(result.diagnostics[0].message).toMatch(/sizes declares 1 outputs, got 2/);
+  });
+
   it("maps shape-inference failures back to the operation statement", () => {
     const result = tryCompileDSL(`input A [2, 3] f32
 input B [4, 5] f32
@@ -95,6 +192,55 @@ C = matmul(A, B)
       code: "SEM_SHAPE",
       span: { start: { line: 3 } },
     });
+  });
+
+  it.each([
+    [
+      "conv",
+      `input X [2, 3] f32
+input W [4, 3] f32
+Y = conv(X, W, stride=[], pads=[], dilation=[], groups=1)
+`,
+      2,
+      3,
+    ],
+    [
+      "pool",
+      `input X [1, 2, 3, 4, 5, 6] f32
+Y = pool(X, kind=max, kernelShape=[1,1,1,1], stride=[1,1,1,1], pads=[[0,0],[0,0],[0,0],[0,0]])
+`,
+      6,
+      2,
+    ],
+  ])("rejects unsupported %s activation ranks", (op, source, rank, line) => {
+    const result = tryCompileDSL(source);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0]).toMatchObject({
+      phase: "semantic",
+      code: "SEM_SHAPE",
+      span: { start: { line } },
+    });
+    expect(result.diagnostics[0].message).toContain(
+      `${op}: activation rank ${rank} is unsupported`
+    );
+  });
+
+  it("requires convolution weight rank to match activation rank", () => {
+    const result = tryCompileDSL(`input X [1, 3, 8, 8] f32
+input W [4, 3, 3] f32
+Y = conv(X, W, stride=[1,1], pads=[[1,1],[1,1]], dilation=[1,1], groups=1)
+`);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0]).toMatchObject({
+      phase: "semantic",
+      code: "SEM_SHAPE",
+      span: { start: { line: 3 } },
+    });
+    expect(result.diagnostics[0].message).toMatch(
+      /weight rank 3 must match activation rank 4/
+    );
   });
 
   it("infers cast dtypes through subsequent preserving operations", () => {

@@ -257,7 +257,7 @@ export const padOp: OpSpec = {
 export const concatOp: OpSpec = {
   name: "concat",
   attrSchema: z.object({ axis: z.number().int() }),
-  arity: { inputs: "variadic", outputs: 1 },
+  arity: { inputs: { min: 1 }, outputs: 1 },
   inferDTypes: uniformDTypeOutputs("concat"),
   inferShapes: (inShapes, attrs) => {
     const ax = normAxis(attrs.axis as number, inShapes[0].length);
@@ -314,8 +314,15 @@ export const concatOp: OpSpec = {
 
 export const splitOp: OpSpec = {
   name: "split",
-  attrSchema: z.object({ axis: z.number().int(), sizes: z.array(z.number().int().min(1)) }),
-  arity: { inputs: 1, outputs: "variadic" },
+  attrSchema: z.object({ axis: z.number().int(), sizes: z.array(z.number().int().min(1)).min(1) }),
+  arity: { inputs: 1, outputs: { min: 1 } },
+  validateArity: (_inputCount, outputCount, attrs) => {
+    const sizeCount = (attrs.sizes as number[]).length;
+    if (outputCount !== sizeCount)
+      throw new Error(
+        `sizes declares ${sizeCount} outputs, got ${outputCount}`
+      );
+  },
   inferDTypes: uniformDTypeOutputs("split"),
   inferShapes: (inShapes, attrs) => {
     const sh = inShapes[0];

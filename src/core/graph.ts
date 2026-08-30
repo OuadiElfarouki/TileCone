@@ -3,6 +3,7 @@
 import { getOp } from "./ops/index";
 import { GraphError, resolveDim, resolveShape, Shape, Sym } from "./shapes";
 import { DTYPES, DType } from "./dtypes";
+import type { Cardinality } from "./ops/types";
 
 export { GraphError, resolveDim, resolveShape };
 export type { Shape, Sym };
@@ -42,6 +43,32 @@ export type ResolvedGraph = Graph & {
   consumers: Record<string, { nodeId: string; slot: number }[]>;
   shapesOf: (ids: string[]) => number[][];
 };
+
+function validateCardinality(
+  node: Node,
+  side: "input" | "output",
+  count: number,
+  contract: Cardinality
+): void {
+  const min = typeof contract === "number" ? contract : contract.min;
+  const max = typeof contract === "number" ? contract : contract.max;
+  if (count >= min && (max === undefined || count <= max)) return;
+  const expected =
+    typeof contract === "number"
+      ? `${contract}`
+      : max === undefined
+        ? `at least ${min}`
+        : `${min} to ${max}`;
+  const singular =
+    typeof contract === "number"
+      ? contract === 1
+      : contract.max === undefined && contract.min === 1;
+  throw new GraphError(
+    `node "${node.id}" (${node.op}): expected ${expected} ${side}${singular ? "" : "s"}, got ${count}`,
+    "GRAPH_ARITY",
+    { kind: "node", id: node.id }
+  );
+}
 
 /**
  * Clone the canonical, serializable portion of a graph.
@@ -119,18 +146,8 @@ export function resolveGraph(source: Graph): ResolvedGraph {
           "GRAPH_DEFINITION",
           { kind: "node", id: n.id }
         );
-    if (spec.arity.inputs !== "variadic" && n.inputs.length !== spec.arity.inputs)
-      throw new GraphError(
-        `node "${n.id}" (${n.op}): expected ${spec.arity.inputs} inputs, got ${n.inputs.length}`,
-        "GRAPH_ARITY",
-        { kind: "node", id: n.id }
-      );
-    if (spec.arity.outputs !== "variadic" && n.outputs.length !== spec.arity.outputs)
-      throw new GraphError(
-        `node "${n.id}" (${n.op}): expected ${spec.arity.outputs} outputs, got ${n.outputs.length}`,
-        "GRAPH_ARITY",
-        { kind: "node", id: n.id }
-      );
+    validateCardinality(n, "input", n.inputs.length, spec.arity.inputs);
+    validateCardinality(n, "output", n.outputs.length, spec.arity.outputs);
     const parsed = spec.attrSchema.safeParse(n.attrs ?? {});
     if (!parsed.success)
       throw new GraphError(
@@ -139,6 +156,15 @@ export function resolveGraph(source: Graph): ResolvedGraph {
         { kind: "node", id: n.id }
       );
     n.attrs = parsed.data as Record<string, unknown>;
+    try {
+      spec.validateArity?.(n.inputs.length, n.outputs.length, n.attrs);
+    } catch (e) {
+      throw new GraphError(
+        `node "${n.id}" (${n.op}): ${(e as Error).message}`,
+        "GRAPH_ARITY",
+        { kind: "node", id: n.id }
+      );
+    }
     for (let s = 0; s < n.outputs.length; s++) {
       const t = n.outputs[s];
       if (producers.has(t))

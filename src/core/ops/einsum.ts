@@ -164,7 +164,16 @@ const eqOf = (attrs: Attrs) => attrs.equation as string;
 export const einsumOp: OpSpec = {
   name: "einsum",
   attrSchema: z.object({ equation: z.string() }),
-  arity: { inputs: "variadic", outputs: 1 },
+  arity: { inputs: { min: 1 }, outputs: 1 },
+  validateArity: (inputCount, _outputCount, attrs) => {
+    const parts = eqOf(attrs).replace(/\s+/g, "").split("->");
+    if (parts.length !== 2) return; // equation syntax is diagnosed by shape inference
+    const operandCount = parts[0].split(",").length;
+    if (operandCount !== inputCount)
+      throw new Error(
+        `equation declares ${operandCount} operand${operandCount === 1 ? "" : "s"}, got ${inputCount} input${inputCount === 1 ? "" : "s"}`
+      );
+  },
   inferDTypes: uniformDTypeOutputs("einsum"),
   inferShapes: (inShapes, attrs) => einsumInferShapes(eqOf(attrs), inShapes),
   backward: (_slot, outBox, ctx) => einsumBackward(eqOf(ctx.attrs), outBox, ctx),

@@ -3,6 +3,7 @@ import type { Box, Region } from "../region";
 import type { DType } from "../dtypes";
 
 export type Attrs = Record<string, unknown>;
+export type Cardinality = number | { min: number; max?: number };
 
 export type OpCtx = {
   inShapes: number[][];
@@ -13,7 +14,10 @@ export type OpCtx = {
 export interface OpSpec {
   name: string;
   attrSchema: ZodType<unknown>;
-  arity: { inputs: number | "variadic"; outputs: number | "variadic" };
+  arity: { inputs: Cardinality; outputs: Cardinality };
+
+  /** Validate counts that depend on parsed attributes rather than static ranges. */
+  validateArity?(inputCount: number, outputCount: number, attrs: Attrs): void;
 
   inferShapes(inShapes: number[][], attrs: Attrs, params?: Record<string, number>): number[][];
 

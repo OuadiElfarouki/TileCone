@@ -22,6 +22,13 @@ function outSpatial(n: number, k: number, s: number, d: number, p: [number, numb
   return Math.floor((n + p[0] + p[1] - (k - 1) * d - 1) / s) + 1;
 }
 
+function validateSpatialActivationRank(op: "conv" | "pool", rank: number): void {
+  if (rank < 3 || rank > 5)
+    throw new Error(
+      `${op}: activation rank ${rank} is unsupported; expected 3, 4, or 5 (NCW, NCHW, or NCDHW)`
+    );
+}
+
 /**
  * Preimage of output interval [o0,o1) on one spatial axis.
  * Exact single interval when dilation == 1 && stride <= kernel (windows union
@@ -140,8 +147,11 @@ export const convOp: OpSpec = {
   inferShapes: (inShapes, attrs) => {
     const a = attrs as ConvAttrs;
     const [xSh, wSh] = inShapes;
-    const nSp = xSh.length - 2;
-    if (wSh.length !== nSp + 2) throw new Error("conv: weight rank mismatch");
+    validateSpatialActivationRank("conv", xSh.length);
+    if (wSh.length !== xSh.length)
+      throw new Error(
+        `conv: weight rank ${wSh.length} must match activation rank ${xSh.length}`
+      );
     if (xSh[1] % a.groups || wSh[0] % a.groups) throw new Error("conv: channels not divisible by groups");
     if (wSh[1] !== xSh[1] / a.groups)
       throw new Error(`conv: weight Cin ${wSh[1]} != ${xSh[1]}/${a.groups}`);
@@ -267,6 +277,7 @@ export const poolOp: OpSpec = {
   inferShapes: (inShapes, attrs) => {
     const a = attrs as PoolAttrs;
     const sh = inShapes[0];
+    validateSpatialActivationRank("pool", sh.length);
     const d = a.dilation ?? a.kernelShape.map(() => 1);
     const sp = sh.slice(2).map((n, i) => outSpatial(n, a.kernelShape[i], a.stride[i], d[i], a.pads[i]));
     if (sp.some((e) => e <= 0)) throw new Error("pool: non-positive output spatial extent");

@@ -49,16 +49,21 @@ export const normalizeOp: OpSpec = {
     hasWeight: z.boolean().default(false),
     hasBias: z.boolean().default(false),
   }),
-  arity: { inputs: "variadic", outputs: 1 },
+  arity: { inputs: { min: 1, max: 3 }, outputs: 1 },
+  validateArity: (inputCount, _outputCount, attrs) => {
+    const typed = attrs as NAttrs;
+    const expected = 1 + Number(typed.hasWeight) + Number(typed.hasBias);
+    if (inputCount !== expected)
+      throw new Error(
+        `flags require ${expected} input${expected === 1 ? "" : "s"}, got ${inputCount}`
+      );
+  },
   inferDTypes: uniformDTypeOutputs("normalize"),
   inferShapes: (inShapes, a) => {
     const attrs = a as NAttrs;
     const sh = inShapes[0];
     const axes = normAxes(attrs.axes, sh.length);
     const paramShape = axes.map((ax) => sh[ax]);
-    const expected = 1 + (attrs.hasWeight ? 1 : 0) + (attrs.hasBias ? 1 : 0);
-    if (inShapes.length !== expected)
-      throw new Error(`normalize: expected ${expected} inputs, got ${inShapes.length}`);
     let slot = 1;
     for (const flag of [attrs.hasWeight, attrs.hasBias]) {
       if (!flag) continue;

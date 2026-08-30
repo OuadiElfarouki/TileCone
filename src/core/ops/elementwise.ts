@@ -42,7 +42,12 @@ export function broadcastOracleIndex(outIndex: number[], inShape: number[]): num
 export const elementwiseOp: OpSpec = {
   name: "elementwise",
   attrSchema: z.object({ fn: z.string(), nary: z.number().int().min(1) }),
-  arity: { inputs: "variadic", outputs: 1 },
+  arity: { inputs: { min: 1 }, outputs: 1 },
+  validateArity: (inputCount, _outputCount, attrs) => {
+    const nary = attrs.nary as number;
+    if (nary !== inputCount)
+      throw new Error(`nary=${nary} does not match ${inputCount} input${inputCount === 1 ? "" : "s"}`);
+  },
   inferDTypes: uniformDTypeOutputs("elementwise"),
   inferShapes: (inShapes) => [broadcastShapes(inShapes)],
   backward: (_slot, outBox, ctx) =>
