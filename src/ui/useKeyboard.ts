@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useStore, viewAxes } from "./store";
-import { tileOf } from "./grid";
+import { nudgeUnit } from "./grid";
 
 const isTyping = (el: EventTarget | null) => {
   const t = el as HTMLElement | null;
@@ -60,9 +60,8 @@ export function useKeyboard(): void {
 
       const { rowAxis: rowAx, colAxis: colAx } = viewAxes(shape);
       const visible = [rowAx, colAx].filter((a) => a >= 0);
-      // one tile is the visible unit, so that is what an arrow key moves
-      const tile = tileOf(shape, s.tileScale, s.graphPx);
-      const step = e.shiftKey ? tile * 8 : tile;
+      const unit = nudgeUnit(shape, s.tileScale, s.graphPx, s.snapToGrid);
+      const step = e.shiftKey ? unit * 8 : unit;
 
       const arrows: Record<string, [number, number]> = {
         ArrowLeft: [colAx, -1],

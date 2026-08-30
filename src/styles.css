@@ -187,6 +187,7 @@ textarea.source {
 textarea.source:focus { outline: none; border-color: var(--accent); }
 textarea.source.error-state { border-color: var(--err); }
 .source-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.share-btn { flex: none; }
 .run-btn { font-weight: 600; padding: 3px 12px; }
 .run-btn:not(:disabled) { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .run-btn:disabled { opacity: 0.45; cursor: default; }
@@ -312,8 +313,10 @@ textarea.source.error-state { border-color: var(--err); }
   background: var(--panel); padding: 0 12px 20px;
 }
 .tile-grid-control { margin: 0 -12px; padding: 11px 12px 10px; border-bottom: 1px solid var(--line); }
-.tile-grid-head { display: flex; align-items: baseline; gap: 8px; }
-.tile-grid-head > span {
+/* Right padding keeps the row clear of the absolutely-positioned panel
+   collapse control, which floats over this corner. */
+.tile-grid-head { display: flex; align-items: baseline; gap: 8px; padding-right: 30px; }
+.tile-grid-head > span:first-child {
   color: var(--muted); font-size: 10px; letter-spacing: .09em; text-transform: uppercase;
 }
 .tile-grid-head > b {
@@ -350,6 +353,7 @@ textarea.source.error-state { border-color: var(--err); }
 .tile-legend i { display: block; width: 12px; height: 12px; border: 1px solid var(--card-line); }
 .tile-legend i.selected { border: 1.5px solid var(--ink); opacity: .9; }
 .tile-legend i.required { opacity: .3; }
+.tile-legend i.produced { background: transparent; border-width: 2px; border-style: solid; }
 .tile-legend i.approx {
   border-style: dashed;
   background: repeating-linear-gradient(45deg, var(--muted) 0 2px, transparent 2px 5px);
@@ -361,8 +365,13 @@ textarea.source.error-state { border-color: var(--err); }
 .kv span:nth-child(odd) { color: var(--muted); }
 .kv span:nth-child(even) { text-align: right; font-variant-numeric: tabular-nums; }
 .hint { color: var(--muted); font-size: 11.5px; }
-.tensor-row summary { cursor: pointer; display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; padding: 2px 0; }
+.tensor-row { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.tensor-row-head { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; }
 .tensor-row .row-stats { margin-left: auto; color: var(--muted); font-size: 11px; }
+/* The copy action only appears on the row being read; twenty standing buttons
+   would sit between the reader and the expressions they came for. */
+.tensor-row .copy-exprs { align-self: flex-start; opacity: 0; transition: opacity .12s; }
+.tensor-row:hover .copy-exprs, .tensor-row .copy-exprs:focus-visible { opacity: 1; }
 .footprint-bar {
   display: flex; flex: 1 0 100%; height: 8px; overflow: hidden;
   border: 1px solid var(--line); border-radius: 2px; background: var(--bg);
@@ -371,49 +380,33 @@ textarea.source.error-state { border-color: var(--err); }
 .footprint-bar i.shared {
   background: repeating-linear-gradient(45deg, var(--muted) 0 2px, var(--line) 2px 5px);
 }
-.slice-exprs { display: flex; flex-direction: column; gap: 1px; padding: 3px 0 5px 12px; }
+.slice-exprs { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 4px 0 0; }
 .slice-exprs code { background: var(--bg); padding: 1px 5px; border-radius: 3px; overflow-x: auto; white-space: pre; }
-/* ---------------- region editor ---------------- */
-.nudge-pad {
-  display: grid; gap: 2px; justify-content: start; align-items: center; margin-bottom: 5px;
-  grid-template-areas: ". up . undo" "left mid right undo" ". down . undo";
-}
-.nudge-pad button { width: 26px; padding: 1px 0; }
-.nudge-pad button:disabled { opacity: 0.3; cursor: default; }
-.nudge-pad button.undo-btn { width: auto; margin-left: 10px; height: 22px; padding: 1px 8px; }
-.nudge-mid {
-  display: grid; place-items: center; font-size: 10px; padding: 0 4px;
-  color: var(--muted); font-variant-numeric: tabular-nums; min-width: 26px;
-}
 .hint.overlap { color: var(--warn-ink); background: var(--warn-bg); padding: 4px 6px; border-radius: 5px; }
 .box-list { display: flex; flex-direction: column; gap: 2px; max-height: 160px; overflow-y: auto; margin: 4px 0; }
 .box-row {
-  display: flex; align-items: center; gap: 5px; padding: 1px 3px; border-radius: 4px;
-  border: 1px solid transparent; cursor: pointer;
+  display: flex; align-items: flex-start; gap: 8px; padding: 6px 3px; border-radius: 4px;
+  border: 1px solid transparent; border-bottom: 1px solid var(--line); cursor: pointer;
 }
 .box-row:hover { background: var(--bg); }
 .box-row.active { background: var(--bg); border-color: var(--muted); }
 .box-row.pinned { border-color: var(--accent); }
-.box-row .swatch { flex: none; width: 10px; height: 10px; border-radius: 2px; }
-/* Visibility is a separate control from focus: it removes the cone's paint
-   while the box keeps its row, its numbers and its rectangle on the card. */
+/* The swatch and the visibility control are one element: it shows the box's hue
+   when the cone is painted and goes hollow when it is parked. */
 .box-row .vis-toggle {
-  flex: none; width: 16px; padding: 0; border: none; background: none;
-  color: var(--muted); font-size: 9px; line-height: 1; cursor: pointer;
+  flex: none; width: 12px; height: 12px; margin-top: 2px; padding: 0;
+  border: 1px solid var(--muted); border-radius: 2px; cursor: pointer;
 }
-.box-row .vis-toggle:hover:not(:disabled) { color: var(--ink); }
-.box-row .vis-toggle:disabled { opacity: 0.3; cursor: default; }
-.box-row.hidden-cone .box-range,
-.box-row.hidden-cone .swatch { opacity: 0.45; }
+.box-row .vis-toggle:disabled { opacity: 0.4; cursor: default; }
+.box-row .box-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.box-row .box-label { font-size: 11px; color: var(--muted); }
+.box-row .box-label b { font-size: 12.5px; color: var(--ink); }
+.box-row.hidden-cone .box-body { opacity: 0.55; }
 .box-range {
-  flex: 1; min-width: 0; padding: 1px 5px; border-radius: 3px;
+  width: 100%; min-width: 0; padding: 2px 6px; border-radius: 3px;
   background: var(--bg); font: 11px/1.5 ui-monospace, "Cascadia Code", Menlo, monospace;
 }
 .box-range.invalid { border-color: var(--err); outline-color: var(--err); }
-.box-row .muted { font-size: 10.5px; font-variant-numeric: tabular-nums; }
-.keys summary { cursor: pointer; }
-.keys .kv { margin-top: 3px; font-size: 11px; }
-.keys .kv span:nth-child(even) { text-align: left; color: var(--muted); }
 
 .error { color: var(--err); font-size: 11.5px; white-space: pre-wrap; }
 
@@ -431,3 +424,28 @@ textarea.source.error-state { border-color: var(--err); }
   color: var(--muted); border: 1px solid var(--line); border-radius: 2px;
   vertical-align: 1px;
 }
+
+/* Card header cues: provenance, and whether the highlight can be trusted. */
+.tc-role {
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Menlo, Consolas, monospace;
+  font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--muted);
+}
+.tc-approx {
+  font-size: 11px; line-height: 1; color: var(--warn-ink);
+  background: var(--warn-bg); border-radius: 2px; padding: 0 3px;
+}
+
+/* Footprint rows lead with the role, matching how the cone is described. */
+.role-tag {
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Menlo, Consolas, monospace;
+  font-size: 9px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted);
+}
+
+/* The slider states the request; this states what the graph settled on. */
+.tile-settled {
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Menlo, Consolas, monospace;
+  font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.tile-settled.overridden { color: var(--warn-ink); }
+.tile-grid-head .snap-btn { margin-left: auto; align-self: center; }

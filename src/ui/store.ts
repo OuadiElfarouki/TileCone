@@ -110,6 +110,14 @@ type State = {
   graphPx: number;
   /** Global detail setting: shifts every tensor's tile by 2^tileScale. */
   tileScale: number;
+  /**
+   * Whether a drawn box is expanded to whole tiles. On, a drag reads as "these
+   * cells", which is what the drawn lattice invites. Off, it cuts an arbitrary
+   * element range — the same reach the inspector's range field already has, but
+   * from the gesture. Analysis is unaffected either way: regions have always
+   * been element-precise, only the gesture rounded.
+   */
+  snapToGrid: boolean;
   countIntermediates: boolean;
   focusTensor: string | null;
   /** Width in px of each side panel when open, and whether it is collapsed to a
@@ -145,6 +153,7 @@ type State = {
   setTheme: (theme: Theme) => void;
   setViewCfg: (tensorId: string, cfg: Partial<ViewCfg>) => void;
   setTileScale: (v: number) => void;
+  setSnapToGrid: (v: boolean) => void;
   setCountIntermediates: (v: boolean) => void;
   setFocusTensor: (id: string | null) => void;
   /** Preview a panel resize, clamped to the usable open range. */
@@ -307,6 +316,7 @@ export const useStore = create<State>((set, get) => ({
   viewCfgs: {},
   graphPx: MAX_ELEM_PX,
   tileScale: 0,
+  snapToGrid: true,
   countIntermediates: false,
   focusTensor: null,
   panelW: { left: 330, right: 300 },
@@ -471,6 +481,8 @@ export const useStore = create<State>((set, get) => ({
 
   setViewCfg: (tensorId, cfg) =>
     set((s) => ({ viewCfgs: { ...s.viewCfgs, [tensorId]: { ...s.viewCfgs[tensorId], ...cfg } } })),
+
+  setSnapToGrid: (v) => set({ snapToGrid: v }),
 
   setTileScale: (v) =>
     set({ tileScale: Math.max(TILE_SCALE_MIN, Math.min(TILE_SCALE_MAX, Math.round(v))) }),

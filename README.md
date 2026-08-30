@@ -14,7 +14,7 @@ No values are ever computed. The whole engine is integer interval arithmetic ove
 ```bash
 npm install
 npm run dev      # http://localhost:5173
-npm test         # 256 tests
+npm test         # 292 tests
 npm run build    # typecheck + production bundle
 ```
 
@@ -94,8 +94,10 @@ Use `tryCompileDSL` when diagnostics should be returned as data instead of throw
 - **Row-major everywhere.** Rows are the second-to-last axis, columns the last. There is no per-card
   axis remapping: a different view of a tensor is a `transpose` node in the graph, where it is part
   of the computation being explained.
-- **Tiles are the rendering unit.** One drawn cell is one tile, shaded by the fraction of its
-  elements in the region. One global detail slider sets the tile for every tensor (default ~5% of
+- **Tiles are the reading lattice, not the resolution.** One drawn cell is one tile, but a region is
+  painted at element precision as an exact rectangle — a selection that ends mid-tile shows a crisp
+  edge there, not a half-lit cell. Quantising the fill would read as "partly selected" when the
+  truth is "these exact elements". One global detail slider sets the tile for every tensor (default ~5% of
   the smallest axis, snapped to a power of two). Card size depends only on the tensor's shape and
   the graph's scale, never on the tile, so changing detail re-lattices cards in place without
   resizing them.

@@ -202,6 +202,34 @@ Y = cumsum(X, axis=0, reverse=true)
   });
 });
 
+describe("reshape, the op that looks free and is not", () => {
+  const TRAP = `input X [4, 4] f32
+F = reshape(X, shape=[16])
+`;
+
+  it("warns when a contiguous tile lands on several runs of the input", () => {
+    // F[2:6] straddles two rows of X
+    const { notes } = notesFor(TRAP, "F", [[2, 6]]);
+    const reshape = notes.find((n) => n.op === "reshape");
+    expect(reshape).toBeDefined();
+    expect(reshape!.text).toContain("2 disjoint runs");
+    expect(reshape!.text).toContain("strided in memory");
+  });
+
+  it("stays silent when the tile happens to split cleanly", () => {
+    // F[0:4] is exactly row 0 of X — one run in, one run out
+    const { notes } = notesFor(TRAP, "F", [[0, 4]]);
+    expect(notes.filter((n) => n.op === "reshape")).toEqual([]);
+  });
+
+  it("counts the runs it actually found", () => {
+    // spanning three rows yields three runs, not a generic "several"
+    const { notes } = notesFor(TRAP, "F", [[2, 10]]);
+    const reshape = notes.find((n) => n.op === "reshape");
+    expect(reshape!.text).toContain("3 disjoint runs");
+  });
+});
+
 describe("look-alike notes are merged, not repeated", () => {
   const QKV = `params S=16 E=32
 input X [S, E] f16

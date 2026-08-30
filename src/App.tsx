@@ -7,7 +7,7 @@ import { WorkspaceHeader } from "./ui/WorkspaceHeader";
 import { useStore } from "./ui/store";
 import { useDragGuard } from "./ui/useDragGuard";
 import { useKeyboard } from "./ui/useKeyboard";
-import { fromBox } from "./core/region";
+import { decodeWorkspace } from "./ui/share";
 
 export default function App(): React.ReactElement {
   const loadExample = useStore((s) => s.loadExample);
@@ -30,26 +30,26 @@ export default function App(): React.ReactElement {
   }, [theme]);
 
   useEffect(() => {
-    const m = /^#s=(.+)$/.exec(location.hash);
-    if (m) {
+    const link = decodeWorkspace(location.hash);
+    if (link) {
       try {
-        const state = JSON.parse(decodeURIComponent(escape(atob(m[1]))));
-        applyDSL(state.dsl);
-        if (["none", "backward", "forward", "both"].includes(state.dir)) setDirection(state.dir);
-        if (typeof state.tile === "number") useStore.getState().setTileScale(state.tile);
-        if (state.sel) {
-          const boxes = state.sel.boxes as [number, number][][];
+        applyDSL(link.dsl);
+        setDirection(link.dir);
+        useStore.getState().setTileScale(link.tile);
+        useStore.getState().setSnapToGrid(link.snap !== false);
+        if (link.sel)
           setSelection(
-            state.sel.t,
-            boxes
-              .map((b) => fromBox(b.map(([lo, hi]) => ({ lo, hi }))))
-              .reduce((a, r) => ({ boxes: [...a.boxes, ...r.boxes], exact: true, reasons: [] })),
+            link.sel.t,
+            {
+              boxes: link.sel.boxes.map((b) => b.map(([lo, hi]) => ({ lo, hi }))),
+              exact: true,
+              reasons: [],
+            },
             "replace"
           );
-        }
         return;
       } catch {
-        /* fall through to default example */
+        /* a link naming a tensor this graph lacks: fall back to the example */
       }
     }
     loadExample(0);

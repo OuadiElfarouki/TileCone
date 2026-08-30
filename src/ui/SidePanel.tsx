@@ -2,10 +2,49 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { fromBox } from "../core/region";
 import { EXAMPLES } from "../examples";
 import { tileOf } from "./grid";
+import { selectionToLink, shareTarget } from "./share";
 import { ConeDirection, Direction, useStore, viewAxes } from "./store";
 
 const coneEnabled = (direction: Direction, cone: ConeDirection) =>
   direction === cone || direction === "both";
+
+/**
+ * Copies a link that restores this workspace — source, selection, cone direction
+ * and tile detail. It sits with the source actions rather than in the header
+ * because the source is most of what it encodes.
+ */
+function ShareButton(): React.ReactElement {
+  const dslText = useStore((s) => s.dslText);
+  const selection = useStore((s) => s.selection);
+  const direction = useStore((s) => s.direction);
+  const tileScale = useStore((s) => s.tileScale);
+  const snapToGrid = useStore((s) => s.snapToGrid);
+  const [copied, setCopied] = useState(false);
+
+  const copy = () => {
+    const target = shareTarget(location.origin, location.pathname, {
+      dsl: dslText,
+      dir: direction,
+      tile: tileScale,
+      snap: snapToGrid,
+      sel: selectionToLink(selection),
+    });
+    navigator.clipboard?.writeText(target).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    });
+  };
+
+  return (
+    <button
+      className="mini share-btn"
+      onClick={copy}
+      title="copy a link that restores this source, selection and view"
+    >
+      {copied ? "copied ✓" : "share"}
+    </button>
+  );
+}
 
 /** The graph source, editable in place. Ctrl/Cmd+Enter runs it. */
 function SourceEditor(): React.ReactElement {
@@ -51,6 +90,7 @@ function SourceEditor(): React.ReactElement {
         <button className="run-btn" onClick={run} disabled={!dirty && !loadError}>
           ▶ run
         </button>
+        <ShareButton />
         <span className="source-status">
           {loadError ? (
             <span className="error">

@@ -6,6 +6,7 @@ import {
   planesOf, useStore, viewAxes,
 } from "../ui/store";
 import { cardPx, graphScale, MAX_ELEM_PX, planeExtents } from "../ui/tiling";
+import { nudgeUnit, tileOf } from "../ui/grid";
 
 const S = () => useStore.getState();
 const sel = () => S().selection;
@@ -148,6 +149,52 @@ describe("tensor layout transactions", () => {
 });
 
 /** Drives the store exactly as the UI does, to cover the selection-editing actions. */
+describe("snapping is a gesture setting, not an analysis one", () => {
+  beforeEach(() => {
+    S().loadExample(0);
+    useStore.setState({ snapToGrid: true });
+  });
+
+  it("defaults to on", () => {
+    expect(S().snapToGrid).toBe(true);
+  });
+
+  it("toggles without disturbing the selection or its cone", () => {
+    S().setSelection("C", fromBox(box([0, 64], [0, 64])), "replace");
+    const before = regionOf("A")!.boxes;
+    S().setSnapToGrid(false);
+    expect(S().selection!.region.boxes).toEqual([box([0, 64], [0, 64])]);
+    expect(regionOf("A")!.boxes).toEqual(before);
+  });
+
+  it("a nudge steps by one element when snapping is off, one tile when on", () => {
+    // The keyboard must not reach offsets the mouse cannot: with snapping off a
+    // drag cuts an exact range, so a nudge has to step by one element too.
+    const shape = S().resolved!.tensors.C.resolved!;
+    const tile = tileOf(shape, S().tileScale, S().graphPx);
+    expect(tile).toBeGreaterThan(1); // otherwise the two cases are the same
+    expect(nudgeUnit(shape, S().tileScale, S().graphPx, false)).toBe(1);
+    expect(nudgeUnit(shape, S().tileScale, S().graphPx, true)).toBe(tile);
+  });
+
+  it("applies that step verbatim, so an odd offset survives", () => {
+    S().setSnapToGrid(false);
+    S().setSelection("C", fromBox(box([64, 128], [0, 64])), "replace");
+    S().moveSelection(0, nudgeUnit(S().resolved!.tensors.C.resolved!, S().tileScale, S().graphPx, false));
+    expect(S().selection!.region.boxes[0][0]).toEqual({ lo: 65, hi: 129 });
+  });
+
+  it("an unsnapped range propagates exactly like any other", () => {
+    // Regions were always element-precise; only the drag gesture rounded, so an
+    // odd range must be as ordinary to the engine as an aligned one.
+    S().setSnapToGrid(false);
+    S().setSelection("C", fromBox(box([3, 7], [1, 2])), "replace");
+    expect(S().selection!.region.boxes).toEqual([box([3, 7], [1, 2])]);
+    expect(regionOf("A")!.boxes).toEqual([box([3, 7], [0, 512])]);
+    expect(regionOf("B")!.boxes).toEqual([box([0, 512], [1, 2])]);
+  });
+});
+
 describe("side panel geometry", () => {
   beforeEach(() => {
     useStore.setState({

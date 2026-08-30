@@ -77,6 +77,13 @@ export type Layer = {
   outline?: boolean; // strong border (selection)
   /** Outline weight. Emphasis uses a heavier stroke than the 1.5 default. */
   lineWidth?: number;
+  /**
+   * Draw only a border, no fill. This is how *direction* stays readable once
+   * hue is spoken for by box identity: in "both" mode the upstream cone is
+   * filled and the downstream cone is outlined, so a region that is each can be
+   * told apart without a second hue.
+   */
+  strokeOnly?: boolean;
 };
 
 /** Fraction of a box's hidden-axis volume that is currently visible. */
@@ -95,52 +102,54 @@ function hiddenFraction(box: Box, shape: number[], cfg: ViewCfg, geom: GridGeom)
   return frac;
 }
 
+/** Never let a thin region vanish. Over-stating extent is the safe direction. */
+export const MIN_MARK_PX = 1;
+
+export type RegionRect = { x: number; y: number; w: number; h: number; alpha: number };
+
 /**
- * Per-cell coverage in [0,1], row-major over the tile grid. Pure and DOM-free so
- * it can be unit-tested. Region boxes are disjoint after canonicalize, so the
- * per-box contributions sum without double counting.
+ * A region as exact rectangles in canvas pixels.
+ *
+ * Regions are drawn at *element* precision, not quantised to the tile lattice.
+ * The lattice is a reading aid drawn on top; the canvas itself maps elements to
+ * pixels linearly, so the true rectangle is always drawable. Quantising instead
+ * would show a half-lit cell wherever a region ended mid-tile, which reads as
+ * "partly selected" when the truth is "these exact elements".
+ *
+ * The one genuinely fractional quantity survives as `alpha`: in projection mode
+ * a box covering part of a hidden axis really does represent a fraction of what
+ * the drawn cell stands for. That is about axes not on screen, so it cannot be
+ * expressed geometrically here.
+ *
+ * Pure and DOM-free so the geometry can be tested directly.
  */
-export function tileCoverage(
+export function regionRects(
   region: Region,
   shape: number[],
   cfg: ViewCfg,
   geom: GridGeom
-): Float32Array {
-  const acc = new Float32Array(geom.tileRows * geom.tileCols);
-  const { tile, tileRows, tileCols, rowAxis, colAxis, rows, cols } = geom;
+): RegionRect[] {
+  const { rowAxis, colAxis, rows, cols, canvasW, canvasH } = geom;
+  const rects: RegionRect[] = [];
   for (const box of region.boxes) {
-    const hf = hiddenFraction(box, shape, cfg, geom);
-    if (hf <= 0) continue;
+    const alpha = hiddenFraction(box, shape, cfg, geom);
+    if (alpha <= 0) continue;
     const rI = rowAxis >= 0 ? box[rowAxis] : { lo: 0, hi: 1 };
     const cI = colAxis >= 0 ? box[colAxis] : { lo: 0, hi: 1 };
-    const tr0 = Math.max(0, Math.floor(rI.lo / tile));
-    const tr1 = Math.min(tileRows - 1, Math.floor((rI.hi - 1) / tile));
-    const tc0 = Math.max(0, Math.floor(cI.lo / tile));
-    const tc1 = Math.min(tileCols - 1, Math.floor((cI.hi - 1) / tile));
-    for (let tr = tr0; tr <= tr1; tr++) {
-      const rOverlap =
-        Math.min(rI.hi, (tr + 1) * tile) - Math.max(rI.lo, tr * tile);
-      if (rOverlap <= 0) continue;
-      for (let tc = tc0; tc <= tc1; tc++) {
-        const cOverlap =
-          Math.min(cI.hi, (tc + 1) * tile) - Math.max(cI.lo, tc * tile);
-        if (cOverlap <= 0) continue;
-        acc[tr * tileCols + tc] += rOverlap * cOverlap * hf;
-      }
-    }
+    const x = (Math.max(0, cI.lo) / cols) * canvasW;
+    const y = (Math.max(0, rI.lo) / rows) * canvasH;
+    const x1 = (Math.min(cols, cI.hi) / cols) * canvasW;
+    const y1 = (Math.min(rows, rI.hi) / rows) * canvasH;
+    if (x1 <= x || y1 <= y) continue;
+    rects.push({
+      x,
+      y,
+      w: Math.min(Math.max(MIN_MARK_PX, x1 - x), canvasW - x),
+      h: Math.min(Math.max(MIN_MARK_PX, y1 - y), canvasH - y),
+      alpha,
+    });
   }
-  // Normalise by each tile's true element count. Edge tiles are clipped by the
-  // tensor bounds, so a fully-selected partial tile must still read as 1.0.
-  for (let tr = 0; tr < tileRows; tr++) {
-    const rExt = Math.min((tr + 1) * tile, rows) - tr * tile;
-    for (let tc = 0; tc < tileCols; tc++) {
-      const cExt = Math.min((tc + 1) * tile, cols) - tc * tile;
-      const i = tr * tileCols + tc;
-      const vol = rExt * cExt;
-      acc[i] = vol > 0 ? Math.min(1, acc[i] / vol) : 0;
-    }
-  }
-  return acc;
+  return rects;
 }
 
 /** Conservative cross-browser ceiling on a canvas backing-store side. */
@@ -169,42 +178,6 @@ function hatchPattern(
   const p = ctx.createPattern(c, "repeat");
   hatchCache.set(key, p);
   return p;
-}
-
-/** Outer boundary of the covered cells, so a region reads as one shape. */
-function strokeCoveredEdges(
-  ctx: CanvasRenderingContext2D,
-  cov: Float32Array,
-  geom: GridGeom,
-  inset: number
-): void {
-  const { tileRows, tileCols } = geom;
-  const on = (r: number, c: number) =>
-    r >= 0 && c >= 0 && r < tileRows && c < tileCols && cov[r * tileCols + c] > 0;
-  ctx.beginPath();
-  for (let r = 0; r < tileRows; r++) {
-    for (let c = 0; c < tileCols; c++) {
-      if (!on(r, c)) continue;
-      const { x, y, w, h } = cellRect(geom, r, c);
-      if (!on(r - 1, c)) {
-        ctx.moveTo(x, y + inset);
-        ctx.lineTo(x + w, y + inset);
-      }
-      if (!on(r + 1, c)) {
-        ctx.moveTo(x, y + h - inset);
-        ctx.lineTo(x + w, y + h - inset);
-      }
-      if (!on(r, c - 1)) {
-        ctx.moveTo(x + inset, y);
-        ctx.lineTo(x + inset, y + h);
-      }
-      if (!on(r, c + 1)) {
-        ctx.moveTo(x + w - inset, y);
-        ctx.lineTo(x + w - inset, y + h);
-      }
-    }
-  }
-  ctx.stroke();
 }
 
 export function drawGrid(
@@ -240,16 +213,18 @@ export function drawGrid(
 
   for (const layer of layers) {
     const [r, g, b] = layer.color;
-    const cov = tileCoverage(layer.region, shape, cfg, geom);
+    const rects = regionRects(layer.region, shape, cfg, geom);
 
-    for (let tr = 0; tr < tileRows; tr++) {
-      for (let tc = 0; tc < tileCols; tc++) {
-        const f = cov[tr * tileCols + tc];
-        if (f <= 0) continue;
-        ctx.fillStyle = `rgba(${r},${g},${b},${Math.min(1, layer.alpha * f)})`;
-        const q = cellRect(geom, tr, tc);
-        ctx.fillRect(q.x, q.y, q.w, q.h);
-      }
+    if (layer.strokeOnly) {
+      ctx.strokeStyle = `rgba(${r},${g},${b},${Math.min(1, layer.alpha + 0.25)})`;
+      ctx.lineWidth = layer.lineWidth ?? 2;
+      for (const q of rects) ctx.strokeRect(q.x + 0.5, q.y + 0.5, q.w - 1, q.h - 1);
+      continue;
+    }
+
+    for (const q of rects) {
+      ctx.fillStyle = `rgba(${r},${g},${b},${Math.min(1, layer.alpha * q.alpha)})`;
+      ctx.fillRect(q.x, q.y, q.w, q.h);
     }
 
     if (layer.hatch) {
@@ -257,14 +232,9 @@ export function drawGrid(
       if (p) {
         ctx.save();
         ctx.fillStyle = p;
-        for (let tr = 0; tr < tileRows; tr++) {
-          for (let tc = 0; tc < tileCols; tc++) {
-            const f = cov[tr * tileCols + tc];
-            if (f <= 0) continue;
-            ctx.globalAlpha = Math.min(1, layer.alpha * f);
-            const q = cellRect(geom, tr, tc);
-            ctx.fillRect(q.x, q.y, q.w, q.h);
-          }
+        for (const q of rects) {
+          ctx.globalAlpha = Math.min(1, layer.alpha * q.alpha);
+          ctx.fillRect(q.x, q.y, q.w, q.h);
         }
         ctx.restore();
       }
@@ -273,7 +243,7 @@ export function drawGrid(
     if (layer.outline) {
       ctx.strokeStyle = `rgba(${r},${g},${b},0.95)`;
       ctx.lineWidth = layer.lineWidth ?? 1.5;
-      strokeCoveredEdges(ctx, cov, geom, 0.75);
+      for (const q of rects) ctx.strokeRect(q.x + 0.5, q.y + 0.5, q.w - 1, q.h - 1);
     }
   }
 
@@ -307,6 +277,22 @@ export function tileOf(shape: number[], tileScale: number, px: number): number {
   return tileFor(rows, cols, tileScale, px);
 }
 
+/**
+ * How far one arrow-key nudge moves the selection.
+ *
+ * It is whatever unit the pointer works in: a whole tile while snapping, a
+ * single element when not. Stepping by a tile with snapping off would let the
+ * keyboard place a box at offsets a drag cannot reach.
+ */
+export function nudgeUnit(
+  shape: number[],
+  tileScale: number,
+  px: number,
+  snapToGrid: boolean
+): number {
+  return snapToGrid ? tileOf(shape, tileScale, px) : 1;
+}
+
 /** Pixel position -> tile cell. */
 export function cellFromEvent(
   e: { clientX: number; clientY: number },
@@ -320,6 +306,36 @@ export function cellFromEvent(
   const row = Math.floor(y / geom.cellH);
   if (col < 0 || col >= geom.tileCols || row < 0 || row >= geom.tileRows) return null;
   return { row, col };
+}
+
+/**
+ * Pixel position -> element index. The canvas always spans the tensor's full
+ * extent, so element resolution is available regardless of the tile lattice
+ * drawn on top of it; this is what lets a drag cut an unsnapped range.
+ */
+export function elementFromEvent(
+  e: { clientX: number; clientY: number },
+  canvas: HTMLCanvasElement,
+  geom: GridGeom
+): { row: number; col: number } | null {
+  const rect = canvas.getBoundingClientRect();
+  const x = ((e.clientX - rect.left) / rect.width) * geom.canvasW;
+  const y = ((e.clientY - rect.top) / rect.height) * geom.canvasH;
+  if (x < 0 || y < 0 || x >= geom.canvasW || y >= geom.canvasH) return null;
+  return {
+    row: Math.min(geom.rows - 1, Math.max(0, Math.floor((y / geom.canvasH) * geom.rows))),
+    col: Math.min(geom.cols - 1, Math.max(0, Math.floor((x / geom.canvasW) * geom.cols))),
+  };
+}
+
+/** Element range -> the interval covering it, snapped out to whole tiles. */
+export function snapSpan(e0: number, e1: number, tile: number, extent: number): [number, number] {
+  const lo = Math.min(e0, e1);
+  const hi = Math.max(e0, e1);
+  return [
+    Math.max(0, Math.floor(lo / tile) * tile),
+    Math.min(extent, (Math.floor(hi / tile) + 1) * tile),
+  ];
 }
 
 /** Tile-cell range -> element interval on that axis, clamped to the extent. */

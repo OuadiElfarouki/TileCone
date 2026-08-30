@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Box, Interval, Region, boundingBox, canonicalize, iv, MAX_BOXES } from "../region";
 import { resolveShape } from "../shapes";
-import { OpSpec, uniformDTypeOutputs } from "./types";
+import { DependencyNoteDraft, NoteCtx, OpSpec, uniformDTypeOutputs } from "./types";
 
 export const MAX_RESHAPE_RUNS = 4096;
 
@@ -187,8 +187,45 @@ export function reshapeMapBox(b: Box, fromShape: number[], toShape: number[]): R
 
 type ReshapeAttrs = { shape: (string | number)[] };
 
+/**
+ * Reshape is the op most likely to surprise: it moves no data and costs no
+ * FLOPs, so it looks free, but a range that is contiguous after the reshape is
+ * usually not contiguous before it. The note fires only when this actually bit
+ * — when the preimage came back as several runs, or when it had to be widened —
+ * because a reshape that happens to split cleanly really is a relabel.
+ */
+function reshapeDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
+  const region = ctx.inRegions[0];
+  if (!region) return null;
+  const from = `[${ctx.inShapes[0].join(" × ")}]`;
+  const to = `[${ctx.outShapes[0].join(" × ")}]`;
+
+  if (!region.exact) {
+    return {
+      key: "reshape:inexact",
+      subject: ctx.outNames[0],
+      text:
+        `reshape ${from} → ${to} fragmented this tile's preimage past the box cap, so the ` +
+        `highlight on ${ctx.inNames[0]} is a conservative superset — it is hatched for that ` +
+        `reason. Read it as "no more than this", not as the exact set.`,
+    };
+  }
+  if (region.boxes.length > 1) {
+    return {
+      key: "reshape:split",
+      subject: ctx.outNames[0],
+      text:
+        `reshape ${from} → ${to} costs nothing to compute but is not free to tile: this ` +
+        `contiguous tile of ${ctx.outNames[0]} lands on ${region.boxes.length} disjoint runs ` +
+        `of ${ctx.inNames[0]}. A tile that straddles a reshaped axis is strided in memory.`,
+    };
+  }
+  return null; // one run in, one run out — the reshape really is a relabel here
+}
+
 export const reshapeOp: OpSpec = {
   name: "reshape",
+  dependencyNote: reshapeDependencyNote,
   attrSchema: z.object({ shape: z.array(z.union([z.string(), z.number().int().min(1)])) }),
   arity: { inputs: 1, outputs: 1 },
   inferDTypes: uniformDTypeOutputs("reshape"),

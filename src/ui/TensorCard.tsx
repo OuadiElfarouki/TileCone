@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { DTYPE_BYTES, Tensor } from "../core/graph";
-import { empty, fromBox } from "../core/region";
-import { cellFromEvent, drawGrid, gridGeometry, Layer, tileSpan } from "./grid";
+import { Box, empty, fromBox, Region } from "../core/region";
+import { drawGrid, elementFromEvent, gridGeometry, Layer, snapSpan, tileSpan } from "./grid";
 import { aggregateColors, boxColor } from "./palette";
-import { useStore, viewAxes, ViewCfg } from "./store";
+import { BoxProp, Direction, useStore, viewAxes, ViewCfg } from "./store";
 
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -19,6 +19,131 @@ const depthAlpha = (depth: number, base = 0.72) => base / (1 + 0.35 * Math.max(0
 const PEER_FADE = 0.4;
 /** Outline weight on the focused box's cone. */
 const EMPHASIS_LINE_PX = 2.7;
+
+/** Everything the canvas needs to decide what to paint, as plain data. */
+export type LayerInputs = {
+  tensorId: string;
+  dark: boolean;
+  direction: Direction;
+  isSelected: boolean;
+  selection: { tensorId: string; region: Region } | null;
+  perBox: BoxProp[] | null;
+  hiddenBoxes: Set<number>;
+  focusedBox: number | null;
+  back?: { region: Region; depth: number };
+  fwd?: { region: Region; depth: number };
+  prev?: { region: Region; depth: number };
+  /** The in-progress rubber band, already in element space. */
+  dragRegion: Region | null;
+};
+
+/**
+ * Decide the paint stack for one tensor. Pure so the encoding rules — which
+ * cone is filled, which is outlined, what fades, what is hidden — can be
+ * asserted directly instead of inferred from pixels.
+ */
+export function buildLayers({
+  tensorId,
+  dark,
+  direction,
+  isSelected,
+  selection,
+  perBox,
+  hiddenBoxes,
+  focusedBox,
+  back,
+  fwd,
+  prev,
+  dragRegion,
+}: LayerInputs): Layer[] {
+const layers: Layer[] = [];
+  const agg = aggregateColors(dark);
+
+  // Transient hover preview, drawn faintly under everything else.
+  if (prev && !isSelected)
+    layers.push({ region: prev.region, color: agg.upstream, alpha: 0.22 * depthAlpha(prev.depth), hatch: false });
+
+  if (perBox) {
+    // Hue identifies which selected box produced this region.
+    // Focusing a box fades its peers rather than hiding them: this feature
+    // exists to compare cones, and blanking every other cone destroys the
+    // comparison being made. Only the explicit visibility toggle removes paint.
+    const plain: Layer[] = [];
+    const emphasised: Layer[] = [];
+    perBox.forEach((bp, i) => {
+      if (hiddenBoxes.has(i)) return; // parked by the user; metrics stay live
+      const emph = focusedBox === i;
+      const alphaScale = focusedBox !== null && !emph ? PEER_FADE : 1;
+      const color = boxColor(i, dark);
+      const bTr = bp.backward?.tensors.get(tensorId);
+      const fTr = bp.forward?.tensors.get(tensorId);
+      const into = emph ? emphasised : plain;
+      // With both cones on screen at once, hue already means "which box", so
+      // fill vs outline is what is left to carry up- versus downstream. With a
+      // single direction there is nothing to disambiguate, so it stays filled.
+      const outlineDownstream = direction === "both";
+      if (bTr && !(isSelected && bTr.depth === 0))
+        into.push({
+          region: bTr.region,
+          color,
+          alpha: depthAlpha(bTr.depth) * alphaScale,
+          hatch: !bTr.region.exact,
+          outline: emph,
+          lineWidth: emph ? EMPHASIS_LINE_PX : undefined,
+        });
+      if (fTr && !(isSelected && fTr.depth === 0))
+        into.push({
+          region: fTr.region,
+          color,
+          alpha: depthAlpha(fTr.depth) * alphaScale,
+          hatch: !fTr.region.exact,
+          strokeOnly: outlineDownstream,
+          // a stroke-only layer never reaches drawGrid's outline branch, so
+          // emphasis rides on the stroke width instead
+          outline: emph && !outlineDownstream,
+          lineWidth: emph ? EMPHASIS_LINE_PX : undefined,
+        });
+    });
+    // The emphasised cone draws last so it sits over its faded peers. Scoped
+    // to this group on purpose: sorting all layers would also lift it over the
+    // selection outline, which is meant to stay on top.
+    layers.push(...plain, ...emphasised);
+  } else {
+    // Too many boxes to attribute: fall back to one hue per direction.
+    if (back && !(isSelected && back.depth === 0))
+      layers.push({ region: back.region, color: agg.upstream, alpha: depthAlpha(back.depth), hatch: !back.region.exact });
+    if (fwd && !(isSelected && fwd.depth === 0))
+      layers.push({ region: fwd.region, color: agg.downstream, alpha: depthAlpha(fwd.depth), hatch: !fwd.region.exact });
+  }
+
+  // The selection itself: each box in its own hue, dimmed when another is
+  // focused. A hidden box keeps its rectangle — hiding removes the *cone*, and
+  // a probe you cannot see is a probe you cannot move back.
+  if (isSelected && selection)
+    selection.region.boxes.forEach((b: Box, i: number) => {
+      const isFocused = focusedBox === null || focusedBox === i;
+      const hidden = hiddenBoxes.has(i);
+      layers.push({
+        region: { boxes: [b], exact: selection.region.exact, reasons: [] },
+        color: boxColor(i, dark),
+        alpha: hidden ? 0.18 : isFocused ? 0.9 : 0.35,
+        hatch: false,
+        outline: isFocused && !hidden,
+      });
+    });
+
+  // The in-progress rubber band, drawn on top of everything it will replace.
+  if (dragRegion)
+    layers.push({
+      region: dragRegion,
+      color: boxColor(selection && isSelected ? selection.region.boxes.length : 0, dark),
+      alpha: 0.4,
+      hatch: false,
+      outline: true,
+    });
+
+  return layers;
+}
 
 export function TensorCard({
   tensor,
@@ -41,6 +166,8 @@ export function TensorCard({
   const perBox = useStore((s) => s.perBox);
   const focusedBox = useStore((s) => s.focusedBox);
   const hiddenBoxes = useStore((s) => s.hiddenBoxes);
+  const direction = useStore((s) => s.direction);
+  const snapToGrid = useStore((s) => s.snapToGrid);
   const tileScale = useStore((s) => s.tileScale);
   const graphPx = useStore((s) => s.graphPx);
   const theme = useStore((s) => s.theme);
@@ -67,85 +194,22 @@ export function TensorCard({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const layers: Layer[] = [];
-    const agg = aggregateColors(dark);
-
-    // Transient hover preview, drawn faintly under everything else.
-    if (prev && !isSelected)
-      layers.push({ region: prev.region, color: agg.upstream, alpha: 0.22 * depthAlpha(prev.depth), hatch: false });
-
-    if (perBox) {
-      // Hue identifies which selected box produced this region.
-      // Focusing a box fades its peers rather than hiding them: this feature
-      // exists to compare cones, and blanking every other cone destroys the
-      // comparison being made. Only the explicit visibility toggle removes paint.
-      const plain: Layer[] = [];
-      const emphasised: Layer[] = [];
-      perBox.forEach((bp, i) => {
-        if (hiddenBoxes.has(i)) return; // parked by the user; metrics stay live
-        const emph = focusedBox === i;
-        const alphaScale = focusedBox !== null && !emph ? PEER_FADE : 1;
-        const color = boxColor(i, dark);
-        const bTr = bp.backward?.tensors.get(tensor.id);
-        const fTr = bp.forward?.tensors.get(tensor.id);
-        const into = emph ? emphasised : plain;
-        if (bTr && !(isSelected && bTr.depth === 0))
-          into.push({
-            region: bTr.region,
-            color,
-            alpha: depthAlpha(bTr.depth) * alphaScale,
-            hatch: !bTr.region.exact,
-            outline: emph,
-            lineWidth: emph ? EMPHASIS_LINE_PX : undefined,
-          });
-        if (fTr && !(isSelected && fTr.depth === 0))
-          into.push({
-            region: fTr.region,
-            color,
-            alpha: depthAlpha(fTr.depth) * alphaScale,
-            hatch: !fTr.region.exact,
-            outline: emph,
-            lineWidth: emph ? EMPHASIS_LINE_PX : undefined,
-          });
-      });
-      // The emphasised cone draws last so it sits over its faded peers. Scoped
-      // to this group on purpose: sorting all layers would also lift it over the
-      // selection outline, which is meant to stay on top.
-      layers.push(...plain, ...emphasised);
-    } else {
-      // Too many boxes to attribute: fall back to one hue per direction.
-      if (back && !(isSelected && back.depth === 0))
-        layers.push({ region: back.region, color: agg.upstream, alpha: depthAlpha(back.depth), hatch: !back.region.exact });
-      if (fwd && !(isSelected && fwd.depth === 0))
-        layers.push({ region: fwd.region, color: agg.downstream, alpha: depthAlpha(fwd.depth), hatch: !fwd.region.exact });
-    }
-
-    // The selection itself: each box in its own hue, dimmed when another is
-    // focused. A hidden box keeps its rectangle — hiding removes the *cone*, and
-    // a probe you cannot see is a probe you cannot move back.
-    if (isSelected && selection)
-      selection.region.boxes.forEach((b, i) => {
-        const isFocused = focusedBox === null || focusedBox === i;
-        const hidden = hiddenBoxes.has(i);
-        layers.push({
-          region: { boxes: [b], exact: selection.region.exact, reasons: [] },
-          color: boxColor(i, dark),
-          alpha: hidden ? 0.18 : isFocused ? 0.9 : 0.35,
-          hatch: false,
-          outline: isFocused && !hidden,
-        });
-      });
-
-    if (drag) {
-      const b = dragToBox(drag);
-      layers.push({
-        region: fromBox(b.map(([lo, hi]) => ({ lo, hi }))),
-        color: boxColor(selection && isSelected ? selection.region.boxes.length : 0, dark),
-        alpha: 0.4,
-        hatch: false,
-        outline: true,
-      });
-    }
+    const layers = buildLayers({
+      tensorId: tensor.id,
+      dark,
+      direction,
+      isSelected,
+      selection,
+      perBox,
+      hiddenBoxes,
+      focusedBox,
+      back,
+      fwd,
+      prev,
+      dragRegion: drag
+        ? fromBox(dragToBox(drag).map(([lo, hi]) => ({ lo, hi })))
+        : null,
+    });
     drawGrid(canvas, shape, cfg, geom, layers, dark, renderScale);
   });
 
@@ -172,8 +236,14 @@ export function TensorCard({
 
   /** Drag rectangle in tile-cell coordinates -> element-space box. */
   function dragToBox(d: { r0: number; c0: number; r1: number; c1: number }): [number, number][] {
-    const [rLo, rHi] = tileSpan(d.r0, d.r1, geom.tile, geom.rows);
-    const [cLo, cHi] = tileSpan(d.c0, d.c1, geom.tile, geom.cols);
+    // The drag is tracked in elements; snapping is a presentation choice applied
+    // at the end, so turning it off costs no precision that was ever available.
+    const [rLo, rHi] = snapToGrid
+      ? snapSpan(d.r0, d.r1, geom.tile, geom.rows)
+      : [Math.min(d.r0, d.r1), Math.max(d.r0, d.r1) + 1];
+    const [cLo, cHi] = snapToGrid
+      ? snapSpan(d.c0, d.c1, geom.tile, geom.cols)
+      : [Math.min(d.c0, d.c1), Math.max(d.c0, d.c1) + 1];
     return shape.map((e, ax) => {
       if (ax === rowAxis) return [rLo, rHi];
       if (ax === colAxis) return [cLo, cHi];
@@ -193,7 +263,7 @@ export function TensorCard({
   }
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const cell = cellFromEvent(e, canvasRef.current!, geom);
+    const cell = elementFromEvent(e, canvasRef.current!, geom);
     if (!cell) return;
     e.preventDefault();
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -201,13 +271,19 @@ export function TensorCard({
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    const cell = cellFromEvent(e, canvasRef.current!, geom);
+    const cell = elementFromEvent(e, canvasRef.current!, geom);
     if (drag && cell) {
       setDrag({ ...drag, r1: cell.row, c1: cell.col });
     }
     if (cell) {
-      const [rLo, rHi] = tileSpan(cell.row, cell.row, geom.tile, geom.rows);
-      const [cLo, cHi] = tileSpan(cell.col, cell.col, geom.tile, geom.cols);
+      // The readout follows the gesture: whole cells when snapping, the element
+      // under the pointer when not.
+      const [rLo, rHi] = snapToGrid
+        ? tileSpan(Math.floor(cell.row / geom.tile), Math.floor(cell.row / geom.tile), geom.tile, geom.rows)
+        : [cell.row, cell.row + 1];
+      const [cLo, cHi] = snapToGrid
+        ? tileSpan(Math.floor(cell.col / geom.tile), Math.floor(cell.col / geom.tile), geom.tile, geom.cols)
+        : [cell.col, cell.col + 1];
       const label = shape.map((_, ax) => {
         if (ax === rowAxis) return rHi - rLo === 1 ? `${rLo}` : `${rLo}:${rHi}`;
         if (ax === colAxis) return cHi - cLo === 1 ? `${cLo}` : `${cLo}:${cHi}`;
@@ -245,6 +321,12 @@ export function TensorCard({
   const totalBytes = shape.reduce((a, b) => a * b, 1) * DTYPE_BYTES[tensor.dtype];
   const axisName = (ax: number) => tensor.axisNames?.[ax] ?? `ax${ax}`;
   const numericShape = `[${shape.join(" × ")}]`;
+  const roleTag = tensor.producer ? null : tensor.role === "weight" ? "weight" : "input";
+  // Exactness is carried by hatching on the canvas; this repeats it in the
+  // header because an over-approximation must never be mistakable for ground
+  // truth, and hatching is easy to miss on a small or sparsely covered card.
+  const shownRegion = back?.region ?? fwd?.region;
+  const approximate = shownRegion ? !shownRegion.exact : false;
 
   return (
     <div
@@ -252,8 +334,10 @@ export function TensorCard({
       className={`tensor-card${isSelected ? " selected" : ""}`}
       data-tensor={tensor.id}
     >
-      {/* The tensor plate is deliberately frameless. Its only persistent label
-          is the name plus resolved numeric shape, sitting above the grid. */}
+      {/* The tensor plate is deliberately frameless. Its persistent label is the
+          name, the resolved numeric shape, and the two facts that change how the
+          grid below should be read: where the tensor comes from, and whether its
+          highlight is exact. */}
       <div className="tc-header">
         <span className="tc-name-wrap">
           <span className="tc-name" tabIndex={0}>{tensor.name}</span>
@@ -264,6 +348,16 @@ export function TensorCard({
           </span>
         </span>
         <span className="tc-shape">{numericShape}</span>
+        {roleTag && <span className="tc-role">{roleTag}</span>}
+        {approximate && (
+          <span
+            className="tc-approx"
+            title={`over-approximation: ${shownRegion!.reasons.join(", ") || "conservative bound"}`}
+            aria-label="highlight is a conservative over-approximation"
+          >
+            ≈
+          </span>
+        )}
       </div>
       {rank > 2 && (
         <div className="tc-axes">

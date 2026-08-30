@@ -13,6 +13,7 @@ import {
   MAX_GRAPH_H,
   maxTile,
   planeExtents,
+  settledTiles,
   MIN_CELL_PX,
   MIN_SIDE_PX,
   pow2Floor,
@@ -21,8 +22,8 @@ import {
   TILE_SCALE_MAX,
   TILE_SCALE_MIN,
 } from "../ui/tiling";
-import { gridGeometry, tileCoverage } from "../ui/grid";
-import { box, fromBox, union, count } from "../core/region";
+import { gridGeometry, MIN_MARK_PX, regionRects } from "../ui/grid";
+import { box, fromBox } from "../core/region";
 import { viewAxes } from "../ui/store";
 import type { ViewCfg } from "../ui/store";
 
@@ -148,17 +149,44 @@ describe("the global detail scale", () => {
     ];
     const px = graphScale(planes);
     const stops = effectiveTileScaleStops(planes, px);
-    expect(stops).toEqual([-1, 0, 1, 2, 3]);
+    // TILE_SCALE_MIN leads as the explicit "no tiling" request; the rest are
+    // the scales that genuinely change the graph-wide lattice.
+    expect(stops).toEqual([TILE_SCALE_MIN, -1, 0, 1, 2, 3]);
     const state = (scale: number) =>
       planes.map(({ rows, cols }) => tileFor(rows, cols, scale, px));
-    for (let i = 1; i < stops.length; i++) expect(state(stops[i])).not.toEqual(state(stops[i - 1]));
+    for (let i = 2; i < stops.length; i++) expect(state(stops[i])).not.toEqual(state(stops[i - 1]));
+  });
+
+  it("keeps the no-tiling request even where the fit rule cannot honour it", () => {
+    // These planes are 512 wide inside a ~300px card, so one cell per element
+    // is not drawable and "none" lands on the same lattice as its neighbour.
+    // The stop still exists, and `anyTileClamped` is what lets the UI say so
+    // instead of leaving the slider silently inert there.
+    const planes = [{ rows: 256, cols: 512 }, { rows: 512, cols: 256 }];
+    const px = graphScale(planes);
+    expect(effectiveTileScaleStops(planes, px)[0]).toBe(TILE_SCALE_MIN);
+    // the settled size is the honest signal: asking for none still reads > 1
+    expect(settledTiles(planes, TILE_SCALE_MIN, px).min).toBeGreaterThan(1);
+  });
+
+  it("settles at one cell per element where that does fit", () => {
+    const planes = [{ rows: 8, cols: 8 }];
+    const px = graphScale(planes);
+    expect(settledTiles(planes, TILE_SCALE_MIN, px)).toEqual({ min: 1, max: 1 });
+  });
+
+  it("names the spread when the graph does not settle on one tile", () => {
+    const planes = [{ rows: 8, cols: 8 }, { rows: 512, cols: 512 }];
+    const px = graphScale(planes);
+    const { min, max } = settledTiles(planes, 0, px);
+    expect(max).toBeGreaterThan(min); // a single number would be a lie here
   });
 
   it("maps legacy plateau values onto their equivalent visible stop", () => {
     const planes = [{ rows: 256, cols: 512 }];
     const px = graphScale(planes);
     const stops = effectiveTileScaleStops(planes, px);
-    expect(stops[effectiveTileScaleIndex(planes, px, stops, TILE_SCALE_MIN)]).toBe(-1);
+    expect(stops[effectiveTileScaleIndex(planes, px, stops, TILE_SCALE_MIN)]).toBe(TILE_SCALE_MIN);
     expect(stops[effectiveTileScaleIndex(planes, px, stops, TILE_SCALE_MAX)]).toBe(3);
   });
 });
@@ -264,74 +292,73 @@ describe("one scale for the whole graph", () => {
   });
 });
 
-describe("tile coverage shading", () => {
-  it("a fully covered tile reads 1 and an empty one reads 0", () => {
+describe("regions are drawn at element precision, not tile precision", () => {
+  const rectsOf = (region: Parameters<typeof regionRects>[0], shape: number[], c = cfg) =>
+    regionRects(region, shape, c, gridGeometry(shape, c, 0, pxOf(shape)));
+
+  it("a box maps to its exact fraction of the canvas", () => {
     const shape = [16, 16];
-    const geom = gridGeometry(shape, cfg, 2, pxOf(shape)); // coarse: tile 4 on a 16x16
-    expect(geom.tile).toBeGreaterThan(1);
-    const t = geom.tile;
-    const cov = tileCoverage(fromBox(box([0, t], [0, t])), shape, cfg, geom);
-    expect(cov[0]).toBeCloseTo(1, 6);
-    expect(cov[1]).toBeCloseTo(0, 6);
-  });
-
-  it("a partially covered tile is shaded by its exact fraction", () => {
-    const shape = [16, 16];
-    const geom = gridGeometry(shape, cfg, 2, pxOf(shape));
-    const t = geom.tile;
-    // cover a quarter of the first tile: half the rows, half the cols
-    const cov = tileCoverage(fromBox(box([0, t / 2], [0, t / 2])), shape, cfg, geom);
-    expect(cov[0]).toBeCloseTo(0.25, 6);
-  });
-
-  it("total coverage equals the region's element count over tile volume", () => {
-    const shape = [32, 32];
-    const geom = gridGeometry(shape, cfg, 1, pxOf(shape));
-    const region = union(fromBox(box([3, 19], [5, 27])), fromBox(box([22, 30], [1, 9])));
-    const cov = tileCoverage(region, shape, cfg, geom);
-    let total = 0;
-    for (const v of cov) total += v;
-    expect(total * geom.tile * geom.tile).toBeCloseTo(count(region), 4);
-  });
-
-  it("hidden axes contribute their fraction in projection mode", () => {
-    const shape = [4, 8, 8]; // axis 0 hidden
     const geom = gridGeometry(shape, cfg, 0, pxOf(shape));
-    const full = tileCoverage(fromBox(box([0, 4], [0, 8], [0, 8])), shape, cfg, geom);
-    const oneSlice = tileCoverage(fromBox(box([0, 1], [0, 8], [0, 8])), shape, cfg, geom);
-    expect(full[0]).toBeCloseTo(1, 6);
-    expect(oneSlice[0]).toBeCloseTo(0.25, 6); // 1 of 4 hidden indices
+    const [rect] = regionRects(fromBox(box([4, 8], [0, 16])), shape, cfg, geom);
+    expect(rect.x).toBeCloseTo(0, 5);
+    expect(rect.w).toBeCloseTo(geom.canvasW, 5);
+    expect(rect.y).toBeCloseTo(geom.canvasH * (4 / 16), 5);
+    expect(rect.h).toBeCloseTo(geom.canvasH * (4 / 16), 5);
   });
 
-  it("slice mode shows only the current slider index", () => {
-    const shape = [4, 8, 8];
-    const sliceCfg: ViewCfg = { sliders: [2, 0, 0], projection: false };
-    const geom = gridGeometry(shape, sliceCfg, 0, pxOf(shape));
-    const onSlice = tileCoverage(fromBox(box([2, 3], [0, 8], [0, 8])), shape, sliceCfg, geom);
-    const offSlice = tileCoverage(fromBox(box([0, 1], [0, 8], [0, 8])), shape, sliceCfg, geom);
-    expect(onSlice[0]).toBeCloseTo(1, 6);
-    expect(offSlice[0]).toBeCloseTo(0, 6);
+  it("does not round a range out to the tile lattice", () => {
+    // The whole point: an unsnapped 3-element range must not paint a whole
+    // 8-element cell, nor half-light one.
+    const shape = [64, 64];
+    const geom = gridGeometry(shape, cfg, 2, pxOf(shape));
+    expect(geom.tile).toBeGreaterThan(1); // cells aggregate several elements
+    const [rect] = regionRects(fromBox(box([3, 6], [0, 64])), shape, cfg, geom);
+    expect(rect.y).toBeCloseTo(geom.canvasH * (3 / 64), 5);
+    expect(rect.h).toBeCloseTo(geom.canvasH * (3 / 64), 5);
   });
 
-  it("a fully selected edge tile reads 1, not a fraction", () => {
-    // 100 columns with tile 8 leaves a 4-wide partial tile at the right edge;
-    // selecting all of it must render solid, not half-lit.
-    const shape = [100, 100];
-    const geom = gridGeometry(shape, cfg, 1, pxOf(shape));
-    const t = geom.tile;
-    const lastCol = geom.tileCols - 1;
-    expect(shape[1] % t).not.toBe(0); // precondition: the edge tile is partial
-    const cov = tileCoverage(fromBox(box([0, t], [lastCol * t, shape[1]])), shape, cfg, geom);
-    expect(cov[lastCol]).toBeCloseTo(1, 6);
+  it("paints a region at full strength regardless of tile alignment", () => {
+    // Coverage shading used to make a partly-covered cell translucent, which
+    // read as "partly selected" when the truth was "these exact elements".
+    const shape = [64, 64];
+    for (const b of [box([0, 8], [0, 8]), box([1, 3], [5, 6])])
+      for (const rect of rectsOf(fromBox(b), shape)) expect(rect.alpha).toBe(1);
   });
 
-  it("coverage never exceeds 1 and is never negative", () => {
-    const shape = [24, 24];
-    const geom = gridGeometry(shape, cfg, 1, pxOf(shape));
-    const region = union(fromBox(box([0, 24], [0, 24])), fromBox(box([4, 12], [4, 12])));
-    for (const v of tileCoverage(region, shape, cfg, geom)) {
-      expect(v).toBeGreaterThanOrEqual(0);
-      expect(v).toBeLessThanOrEqual(1);
+  it("keeps a sub-pixel region visible rather than losing it", () => {
+    const shape = [4096, 4096];
+    const rects = rectsOf(fromBox(box([0, 1], [0, 1])), shape);
+    expect(rects[0].w).toBeGreaterThanOrEqual(MIN_MARK_PX);
+    expect(rects[0].h).toBeGreaterThanOrEqual(MIN_MARK_PX);
+  });
+
+  it("never paints outside the canvas", () => {
+    const shape = [16, 16];
+    const geom = gridGeometry(shape, cfg, 0, pxOf(shape));
+    for (const rect of regionRects(fromBox(box([15, 16], [15, 16])), shape, cfg, geom)) {
+      expect(rect.x + rect.w).toBeLessThanOrEqual(geom.canvasW + 1e-6);
+      expect(rect.y + rect.h).toBeLessThanOrEqual(geom.canvasH + 1e-6);
     }
+  });
+
+  it("hidden axes stay fractional, because they are not on screen", () => {
+    const shape = [4, 8, 8]; // axis 0 hidden, projected
+    const full = rectsOf(fromBox(box([0, 4], [0, 8], [0, 8])), shape);
+    const quarter = rectsOf(fromBox(box([0, 1], [0, 8], [0, 8])), shape);
+    expect(full[0].alpha).toBeCloseTo(1, 5);
+    expect(quarter[0].alpha).toBeCloseTo(0.25, 5);
+    // the drawn plane is identical; only the unseen axis differs
+    expect(quarter[0].w).toBeCloseTo(full[0].w, 5);
+  });
+
+  it("slice mode shows only the current index", () => {
+    const shape = [4, 8, 8];
+    const sliceCfg = { sliders: [2, 0, 0], projection: false };
+    expect(rectsOf(fromBox(box([2, 3], [0, 8], [0, 8])), shape, sliceCfg)).toHaveLength(1);
+    expect(rectsOf(fromBox(box([0, 1], [0, 8], [0, 8])), shape, sliceCfg)).toHaveLength(0);
+  });
+
+  it("an empty region paints nothing", () => {
+    expect(rectsOf({ boxes: [], exact: true, reasons: [] }, [16, 16])).toEqual([]);
   });
 });

@@ -192,7 +192,33 @@ export function effectiveTileScaleStops(
     previous = current;
   }
   runs.push({ lo: runLo, hi: TILE_SCALE_MAX });
-  return runs.map(({ lo, hi }) => Math.max(lo, Math.min(hi, 0)));
+  const stops = runs.map(({ lo, hi }) => Math.max(lo, Math.min(hi, 0)));
+
+  // "none" — one cell per element — is always offered as the leftmost stop,
+  // because asking for no tiling is a meaningful intent even where the fit rule
+  // cannot honour it. On a graph whose widest tensor cannot draw a cell per
+  // element it settles to the same lattice as its neighbour; the settled size
+  // shown beside the slider is what makes that visible rather than silent.
+  return stops[0] === TILE_SCALE_MIN ? stops : [TILE_SCALE_MIN, ...stops];
+}
+
+/** The request meaning "no tiling": one drawn cell per element, where it fits. */
+export const TILE_SCALE_NONE = TILE_SCALE_MIN;
+
+/**
+ * The tile every tensor actually settles on at this scale. A single number when
+ * the graph agrees, a spread when the fit rule coarsens some tensors and not
+ * others — the control is global but the outcome is per tensor, and saying one
+ * number for a graph that has two would be a lie.
+ */
+export function settledTiles(
+  planes: { rows: number; cols: number }[],
+  scale: number,
+  px: number
+): { min: number; max: number } {
+  const tiles = tileState(planes, scale, px);
+  if (!tiles.length) return { min: 1, max: 1 };
+  return { min: Math.min(...tiles), max: Math.max(...tiles) };
 }
 
 /** Find which effective stop renders the same graph-wide lattice as `scale`. */

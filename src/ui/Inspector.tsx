@@ -16,9 +16,13 @@ import {
 import { formatBytes } from "./TensorCard";
 import { boxColor, MAX_DISTINCT_HUES, rgbCss } from "./palette";
 import { MAX_PER_BOX_PROPS, planesOf, useStore, viewAxes } from "./store";
-import { tileOf } from "./grid";
 import { formatSelectionBox, parseSelectionBox } from "./selection-range";
-import { effectiveTileScaleIndex, effectiveTileScaleStops } from "./tiling";
+import {
+  effectiveTileScaleIndex,
+  effectiveTileScaleStops,
+  settledTiles,
+  TILE_SCALE_NONE,
+} from "./tiling";
 
 function fmt(n: number): string {
   if (n === 0) return "0";
@@ -30,24 +34,57 @@ function fmt(n: number): string {
 }
 
 const scaleLabel = (scale: number) =>
-  scale === 0 ? "auto" : `${scale > 0 ? "×" : "÷"}${2 ** Math.abs(scale)}`;
+  scale === TILE_SCALE_NONE ? "none" : scale === 0 ? "auto" : `${scale > 0 ? "×" : "÷"}${2 ** Math.abs(scale)}`;
+
+/** What the graph actually settled on, which the request only asks for. */
+function settledLabel(min: number, max: number): string {
+  return min === max ? `${min} × ${min}` : `${min} × ${min} – ${max} × ${max}`;
+}
 
 function TileGridControl(): React.ReactElement {
   const resolved = useStore((s) => s.resolved)!;
   const graphPx = useStore((s) => s.graphPx);
   const tileScale = useStore((s) => s.tileScale);
   const setTileScale = useStore((s) => s.setTileScale);
+  const snapToGrid = useStore((s) => s.snapToGrid);
+  const setSnapToGrid = useStore((s) => s.setSnapToGrid);
   const detail = useMemo(() => {
     const planes = planesOf(resolved);
     const stops = effectiveTileScaleStops(planes, graphPx);
-    return { stops, index: effectiveTileScaleIndex(planes, graphPx, stops, tileScale) };
+    const index = effectiveTileScaleIndex(planes, graphPx, stops, tileScale);
+    return { stops, index, settled: settledTiles(planes, stops[index], graphPx) };
   }, [resolved, graphPx, tileScale]);
+  const requested = detail.stops[detail.index];
+  const { min, max } = detail.settled;
+  // "none" that could not be honoured is worth saying out loud; every other
+  // request either lands or is a plain power-of-two shift of the auto base.
+  const overridden = requested === TILE_SCALE_NONE && min > 1;
 
   return (
     <section className="tile-grid-control">
       <div className="tile-grid-head">
         <span>tile grid</span>
-        <b>{scaleLabel(detail.stops[detail.index])}</b>
+        <b>{scaleLabel(requested)}</b>
+        <span
+          className={`tile-settled${overridden ? " overridden" : ""}`}
+          title={
+            overridden
+              ? `one cell per element does not fit this graph's largest tensor, so the finest drawable lattice is ${settledLabel(min, max)}`
+              : min === max
+                ? "the tile every tensor settles on"
+                : "tiles differ per tensor: the fit rule coarsens the largest ones"
+          }
+        >
+          {settledLabel(min, max)}
+        </span>
+        <button
+          className={`mini snap-btn${snapToGrid ? " on" : ""}`}
+          aria-pressed={snapToGrid}
+          onClick={() => setSnapToGrid(!snapToGrid)}
+          title="snap a drawn box out to whole tiles; off cuts an exact element range"
+        >
+          snap
+        </button>
       </div>
       <input
         type="range"
@@ -266,12 +303,8 @@ function FootprintBar({
 function RegionEditor(): React.ReactElement | null {
   const resolved = useStore((s) => s.resolved);
   const selection = useStore((s) => s.selection);
-  const moveSelection = useStore((s) => s.moveSelection);
   const replaceBox = useStore((s) => s.replaceBox);
-  const tileScale = useStore((s) => s.tileScale);
-  const graphPx = useStore((s) => s.graphPx);
   const deleteBox = useStore((s) => s.deleteBox);
-  const undoWorkspace = useStore((s) => s.undoWorkspace);
   const perBox = useStore((s) => s.perBox);
   const focusedBox = useStore((s) => s.focusedBox);
   const pinned = useStore((s) => s.pinnedBox);
@@ -285,7 +318,6 @@ function RegionEditor(): React.ReactElement | null {
   const t = resolved.tensors[selection.tensorId];
   const shape = t.resolved!;
   const { rowAxis: rowAx, colAxis: colAx } = viewAxes(shape);
-  const tile = tileOf(shape, tileScale, graphPx); // the nudge pad moves by whole tiles
   const axisLabel = (ax: number) => t.axisNames?.[ax] ?? `ax${ax}`;
   const boxes = selection.region.boxes;
   const overlap = partsOverlap(boxes);
@@ -293,32 +325,10 @@ function RegionEditor(): React.ReactElement | null {
 
   return (
     <div className="ins-section">
-      <div className="ins-title">
-        Region <span className="muted">{boxes.length} box{boxes.length === 1 ? "" : "es"}</span>
-      </div>
-
-      <div
-        className="nudge-pad"
-        title={
-          focusedBox !== null
-            ? `move box ${focusedBox + 1} alone by one ${tile}-element tile (arrow keys; Shift = 8 tiles)`
-            : `move the whole selection by one ${tile}-element tile — pin a box below to move it alone`
-        }
-      >
-        <button onClick={() => moveSelection(rowAx, -tile)} disabled={rowAx < 0} style={{ gridArea: "up" }}>↑</button>
-        <button onClick={() => moveSelection(colAx, -tile)} disabled={colAx < 0} style={{ gridArea: "left" }}>←</button>
-        <span className="nudge-mid" style={{ gridArea: "mid" }}>
-          {focusedBox !== null ? `#${focusedBox + 1}` : "all"}
-        </span>
-        <button onClick={() => moveSelection(colAx, tile)} disabled={colAx < 0} style={{ gridArea: "right" }}>→</button>
-        <button onClick={() => moveSelection(rowAx, tile)} disabled={rowAx < 0} style={{ gridArea: "down" }}>↓</button>
-        <button className="undo-btn" style={{ gridArea: "undo" }} onClick={undoWorkspace} title="undo the last selection or layout change (ctrl+z)">undo</button>
-      </div>
-
       {boxes.length > 1 && (
         <p className="hint">
           {perBox
-            ? "hover a box to emphasise its cone; click to pin it, then the arrows move that box alone"
+            ? "hover a box to emphasise its cone; click to pin it, then arrow keys move that box alone"
             : `too many boxes to trace individually (over ${MAX_PER_BOX_PROPS}) — showing the merged cone`}
         </p>
       )}
@@ -342,9 +352,15 @@ function RegionEditor(): React.ReactElement | null {
               onClick={() => perBox && togglePinBox(i)}
               title={perBox ? "hover to emphasise this box's dependencies; click to pin (esc unpins)" : undefined}
             >
+              {/* One control, not two: the swatch *is* the visibility toggle, so
+                  the row states the box's hue and its shown/hidden state once. */}
               <button
                 className="vis-toggle"
                 disabled={!perBox}
+                style={{
+                  borderColor: rgbCss(boxColor(i, dark)),
+                  background: hidden ? "transparent" : rgbCss(boxColor(i, dark)),
+                }}
                 title={
                   perBox
                     ? `${hidden ? "show" : "hide"} this box's cone (h) — its numbers stay in the table either way`
@@ -354,16 +370,18 @@ function RegionEditor(): React.ReactElement | null {
                   e.stopPropagation();
                   toggleBoxHidden(i);
                 }}
-              >
-                {hidden ? "○" : "●"}
-              </button>
-              <i className="swatch" style={{ background: rgbCss(boxColor(i, dark)) }} />
-              <SelectionRangeInput
-                box={b}
-                shape={shape}
-                onCommit={(next) => replaceBox(i, next)}
+                aria-label={`${hidden ? "show" : "hide"} box ${i + 1}`}
               />
-              <span className="muted">{fmt(b.reduce((a, I) => a * (I.hi - I.lo), 1))}</span>
+              <span className="box-body">
+                <span className="box-label">
+                  <b>{t.name}</b> · {fmt(b.reduce((a, I) => a * (I.hi - I.lo), 1))} elements
+                </span>
+                <SelectionRangeInput
+                  box={b}
+                  shape={shape}
+                  onCommit={(next) => replaceBox(i, next)}
+                />
+              </span>
               <button
                 className="mini"
                 title="remove this box from the selection"
@@ -387,19 +405,6 @@ function RegionEditor(): React.ReactElement | null {
       <p className="hint">
         rows {axisLabel(rowAx >= 0 ? rowAx : 0)} · cols {axisLabel(colAx >= 0 ? colAx : 0)} · shape [{shape.join("×")}]
       </p>
-      <details className="keys">
-        <summary className="hint">keyboard</summary>
-        <div className="kv">
-          <span>arrows</span><span>move by one tile</span>
-          <span>shift+arrows</span><span>move by 8 tiles</span>
-          <span>[ / ]</span><span>scrub hidden axis</span>
-          <span>h</span><span>hide/show focused cone</span>
-          <span>ctrl+z</span><span>undo selection / layout</span>
-          <span>u / d</span><span>toggle upstream / downstream</span>
-          <span>f</span><span>fit to view</span>
-          <span>esc</span><span>unpin / leave editing</span>
-        </div>
-      </details>
     </div>
   );
 }
@@ -431,6 +436,9 @@ export function Inspector(): React.ReactElement {
   if (!resolved) return <aside className="inspector" />;
 
   const selBoxes = selection?.region.boxes.length ?? 0;
+  const hue = rgbCss(boxColor(0, theme === "dark"));
+  /** Past the cap the cones are still correct, but merged rather than attributed. */
+  const merged = selBoxes > MAX_PER_BOX_PROPS;
 
   /** Reuse factor (§5.5): sample selection-sized output tiles across the selected
    * tensor; count how many touch the current footprint on each input. */
@@ -487,32 +495,41 @@ export function Inspector(): React.ReactElement {
     <aside className="inspector">
       <TileGridControl />
       <div className="tiles-heading">
-        <h2>Tiles <small>{selBoxes ? `${selBoxes} selected` : "none selected"}</small></h2>
+        <h2>
+          Tiles{" "}
+          <small title={merged ? `per-box cones stop at ${MAX_PER_BOX_PROPS} selections; above that the cone is correct but merged` : undefined}>
+            {selBoxes ? `${selBoxes} selected${merged ? " · cones merged" : ""}` : "none selected"}
+          </small>
+        </h2>
         <button className="mini" onClick={clearSelection} disabled={!selection}>clear all</button>
       </div>
+      {/* The legend has to track the canvas: direction is drawn as fill vs
+          outline, but only in "both" mode — with one direction active there is
+          nothing to disambiguate and the region is simply filled. */}
       <div className="tile-legend">
-        <span><i className="selected" style={{ background: rgbCss(boxColor(0, theme === "dark")) }} /> selected tile</span>
-        <span><i className="required" style={{ background: rgbCss(boxColor(0, theme === "dark")) }} /> dependency</span>
+        <span><i className="selected" style={{ background: hue }} /> selected tile</span>
+        {direction === "both" ? (
+          <>
+            <span><i className="required" style={{ background: hue }} /> upstream (filled)</span>
+            <span><i className="produced" style={{ borderColor: hue }} /> downstream (outlined)</span>
+          </>
+        ) : (
+          direction !== "none" && (
+            <span>
+              <i className="required" style={{ background: hue }} />{" "}
+              {direction === "backward" ? "upstream" : "downstream"}
+            </span>
+          )
+        )}
         <span><i className="approx" /> approximate</span>
       </div>
       {!selection && <p className="hint">Click or drag on any tensor grid to select a region. Shift adds, Alt subtracts.</p>}
-      {selection && (
-        <div className="ins-section">
-          <div className="ins-title">
-            Selection: <b>{resolved.tensors[selection.tensorId].name}</b>
-          </div>
-          <div className="kv">
-            <span>elements</span><span>{fmt(count(selection.region))}</span>
-            <span>boxes</span><span>{selBoxes}</span>
-          </div>
-        </div>
-      )}
       <RegionEditor />
       {metrics && direction !== "forward" && (
         <>
           <div className="ins-section">
             <div className="ins-title">
-              {focusedBox !== null && perBox ? `Box ${focusedBox + 1} (upstream)` : "Aggregate (upstream)"}
+              {focusedBox !== null && perBox ? `Cost of box ${focusedBox + 1}` : "Cost of this cone"}
             </div>
             <div className="kv">
               <span>FLOPs</span><span>{fmt(metrics.flops)}</span>
@@ -552,39 +569,50 @@ export function Inspector(): React.ReactElement {
             </div>
           )}
           <div className="ins-section">
-            <div className="ins-title">Contributing tensors</div>
+            <div className="ins-title">Footprint per tensor</div>
+            {/* Flat rather than a disclosure: the slice expressions are the
+                answer this panel exists to give, and hiding them behind a
+                triangle means the cone cannot be read in one pass. */}
             {metrics.tensors.map((t) => (
-              <details key={t.tensorId} className="tensor-row" open={t.isInput}>
-                <summary>
+              <div key={t.tensorId} className="tensor-row">
+                <div className="tensor-row-head">
                   <b>{t.name}</b>
-                  <span className="muted"> d{t.depth}</span>
+                  {/* The role is what a reader wants first; depth is the finer
+                      detail and stays available beside it. */}
+                  <span className="role-tag">{t.depth === 0 ? "selected" : "required"}</span>
+                  <span className="muted" title={`${t.depth} step${t.depth === 1 ? "" : "s"} upstream of the selection`}>d{t.depth}</span>
                   {!t.exact && <span className="badge approx">≈</span>}
                   {t.isInput && <span className="badge input">in</span>}
                   <span className="row-stats">
                     {fmt(t.elements)} el ({((t.elements / t.totalElements) * 100).toFixed(1)}%) · {formatBytes(t.bytes)} · {t.boxCount} box{t.boxCount === 1 ? "" : "es"}
                   </span>
-                  <FootprintBar
-                    tensorId={t.tensorId}
-                    elements={t.elements}
-                    totalElements={t.totalElements}
-                    perBox={perBox}
-                    focusedBox={focusedBox}
-                    dark={theme === "dark"}
-                  />
-                </summary>
+                </div>
+                <FootprintBar
+                  tensorId={t.tensorId}
+                  elements={t.elements}
+                  totalElements={t.totalElements}
+                  perBox={perBox}
+                  focusedBox={focusedBox}
+                  dark={theme === "dark"}
+                />
                 <div className="slice-exprs">
-                  {t.sliceExprsNumpy.slice(0, 12).map((line, i) => (
+                  {t.sliceExprsNumpy.slice(0, 4).map((line, i) => (
                     <code key={i}>{line}</code>
                   ))}
-                  {t.sliceExprsNumpy.length > 12 && <code># … {t.sliceExprsNumpy.length - 12} more boxes</code>}
+                  {t.sliceExprsNumpy.length > 4 && (
+                    <code className="muted"># … {t.sliceExprsNumpy.length - 4} more boxes</code>
+                  )}
+                  {/* Revealed on hover: one per row would otherwise put twenty
+                      buttons between the reader and the expressions. */}
                   <button
-                    className="mini"
+                    className="mini copy-exprs"
+                    title="copy every slice expression for this tensor"
                     onClick={() => copy(t.sliceExprsNumpy.join("\n"), t.tensorId)}
                   >
-                    {copied === t.tensorId ? "copied ✓" : "copy numpy/torch"}
+                    {copied === t.tensorId ? "copied ✓" : "copy"}
                   </button>
                 </div>
-              </details>
+              </div>
             ))}
           </div>
         </>
