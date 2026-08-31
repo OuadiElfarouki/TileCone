@@ -84,9 +84,14 @@ export function buildLayers({
 }: LayerInputs): Layer[] {
   const layers: Layer[] = [];
   const agg = aggregateColors(dark);
+  // Both cones are always analysed; `direction` decides which are painted. A
+  // filter here rather than upstream keeps the numbers in the inspector whole
+  // while the canvas shows only the question being asked.
+  const showBack = direction === "backward" || direction === "both";
+  const showFwd = direction === "forward" || direction === "both";
 
   // Transient hover preview, drawn faintly under everything else.
-  if (prev && !isSelected)
+  if (prev && !isSelected && showBack)
     layers.push({ region: prev.region, color: agg.upstream, alpha: 0.22 * depthAlpha(prev.depth), hatch: false });
 
   if (perBox) {
@@ -108,7 +113,7 @@ export function buildLayers({
       // fill vs outline is what is left to carry up- versus downstream. With a
       // single direction there is nothing to disambiguate, so it stays filled.
       const outlineDownstream = direction === "both";
-      if (bTr && !(isSelected && bTr.depth === 0))
+      if (showBack && bTr && !(isSelected && bTr.depth === 0))
         into.push({
           region: bTr.region,
           color,
@@ -117,7 +122,7 @@ export function buildLayers({
           outline: emph,
           lineWidth: emph ? EMPHASIS_LINE_PX : undefined,
         });
-      if (fTr && !(isSelected && fTr.depth === 0))
+      if (showFwd && fTr && !(isSelected && fTr.depth === 0))
         into.push({
           region: fTr.region,
           color,
@@ -136,9 +141,9 @@ export function buildLayers({
     layers.push(...plain, ...emphasised);
   } else {
     // Too many boxes to attribute: fall back to one hue per direction.
-    if (back && !(isSelected && back.depth === 0))
+    if (showBack && back && !(isSelected && back.depth === 0))
       layers.push({ region: back.region, color: agg.upstream, alpha: depthAlpha(back.depth), hatch: !back.region.exact });
-    if (fwd && !(isSelected && fwd.depth === 0))
+    if (showFwd && fwd && !(isSelected && fwd.depth === 0))
       layers.push({
         region: fwd.region,
         color: agg.downstream,

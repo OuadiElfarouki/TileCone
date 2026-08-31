@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Box, Region, canonicalize, count, fromBox, iv } from "../region";
+import { Box, Region, canonicalize, count, coversAxisFully, fromBox, iv } from "../region";
 import { normAxis } from "./reduce";
 import { DependencyNoteDraft, OpCtx, OpSpec, uniformDTypeOutputs, NoteCtx } from "./types";
 
@@ -29,13 +29,15 @@ function softmaxDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
   if (!region) return null;
   const axis = axisOf(ctx);
   const extent = ctx.inShapes[0][axis];
-  const pullsWholeAxis = region.boxes.some(
-    (box) => box[axis].hi - box[axis].lo === extent
-  );
+  const pullsWholeAxis = coversAxisFully(region, axis, extent);
   if (!pullsWholeAxis) return null;
   return {
     key: `softmax:${axis}:${extent}`,
     subject: ctx.outNames[0],
+    severity: 2,
+    flags: [
+      { tensorId: ctx.inIds[0], text: `full axis ${axis} — softmax normalises across it` },
+    ],
     text:
       `softmax normalises ${ctx.inNames[0]} along axis ${axis} (${extent} wide), so a tile ` +
       `of ${ctx.outNames[0]} needs that axis of ${ctx.inNames[0]} complete. Splitting ` +

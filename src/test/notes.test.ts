@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { coneIsFullyElementwise, dependencyNotes, MAX_NOTES } from "../core/notes";
+import {
+  coneFindings,
+  coneIsFullyElementwise,
+  dependencyNotes,
+  MAX_NOTES,
+} from "../core/notes";
 import { propagateBackward } from "../core/propagate";
 import { box, fromBox } from "../core/region";
 import { compileDSL } from "../parse/compiler";
@@ -273,4 +278,143 @@ describe("notes describe the cone that exists", () => {
     });
     expect(dependencyNotes(resolved, back)).toEqual([]);
   });
+});
+
+describe("cone findings: flags, and what survives the note cap", () => {
+  const findingsFor = (dsl: string, tensor: string, sel: [number, number][]) => {
+    const { resolved } = compileDSL(dsl);
+    const back = propagateBackward(resolved, {
+      tensorId: tensor,
+      region: fromBox(sel.map(([lo, hi]) => ({ lo, hi }))),
+    });
+    return { resolved, back, findings: coneFindings(resolved, back) };
+  };
+
+  // Five distinct constraints, with the hardest one produced by the *last* node
+  // in graph order, so a verdict taken from the capped list would miss it.
+  const STACK = `params S=16 E=16
+input X [S, E] f16
+input W [E] f16
+input Bb [E] f16
+input V [E, E] f16
+C1 = cumsum(X, axis=0, reverse=false)
+C2 = cumsum(C1, axis=0, reverse=true)
+P = softmax(C2, axis=-1)
+H = layernorm(P, W, Bb, axes=[-1])
+Y = matmul(H, V)
+`;
+
+  it("keeps the hardest constraint when the cap has to drop one", () => {
+    const { findings } = findingsFor(STACK, "Y", [[0, 4], [0, 4]]);
+    expect(findings.notes).toHaveLength(MAX_NOTES);
+    // the contraction is the fifth and last in graph order: dropping by graph
+    // order would lose the one constraint that forces staging or accumulation
+    expect(findings.notes.some((note) => note.severity === 3)).toBe(true);
+    // the weakest constraints are what gave way
+    expect(findings.notes.filter((note) => note.severity === 1)).toHaveLength(1);
+  });
+
+  it("reads the surviving notes in graph order, not in ranked order", () => {
+    const { resolved, findings } = findingsFor(STACK, "Y", [[0, 4], [0, 4]]);
+    const position = (nodeId: string) => resolved.topo.findIndex((n) => n.id === nodeId);
+    const order = findings.notes.map((note) => position(note.nodeId));
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  it("flags a tensor even when its note did not fit the list", () => {
+    const { findings } = findingsFor(STACK, "Y", [[0, 4], [0, 4]]);
+    expect(findings.flags.get("V")?.[0]).toContain("contracted");
+    expect(findings.flags.get("H")?.[0]).toContain("contracted");
+  });
+
+  it("addresses flags to the tensors the constraint is visible on", () => {
+    const { resolved, findings } = findingsFor(STACK, "Y", [[0, 4], [0, 4]]);
+    for (const tensorId of findings.flags.keys())
+      expect(resolved.tensors[tensorId]).toBeDefined();
+    // softmax closes an axis of its own input, not of its output
+    expect(findings.flags.get("C2")?.some((f) => f.includes("softmax"))).toBe(true);
+    expect(findings.flags.get("P")?.some((f) => f.includes("softmax"))).toBe(false);
+  });
+
+  it("breaks a severity tie on the constraint nearest the tile", () => {
+    // three equally hard contractions: the projections are four steps upstream,
+    // the attention product one. The reader hits the near one first.
+    const QKV = `params S=16 E=32
+input X [S, E] f16
+input Wq [E, E] f16
+input Wk [E, E] f16
+Q = matmul(X, Wq)
+K = matmul(X, Wk)
+Kt = transpose(K, perm=[1, 0])
+Y = matmul(Q, Kt)
+`;
+    const { resolved, back, findings } = findingsFor(QKV, "Y", [[0, 4], [0, 8]]);
+    // Q and K contract E four steps away; Y contracts its own axis one step
+    // away, so a cap of one has to keep Y
+    expect(dependencyNotes(resolved, back, 1)[0].subject).toBe("Y");
+    expect(
+      findings.notes.some(
+        (note) => note.subject === "Q" || note.alsoApplies?.includes("Q")
+      )
+    ).toBe(true);
+  });
+
+  it("states the constraint an operation puts on a tensor it takes twice", () => {
+    // matmul(D, D) contracts D against itself: one slot pulls whole rows, the
+    // other whole columns. The union covers the axis; the disjoint boxes that
+    // represent it do not, and the note used to vanish because of that.
+    const SELF = `params M=256 N=256 K=512
+input A [M, K] f16
+input B [K, N] f16
+input F [N, M] f16
+C = matmul(A, B)
+D = matmul(F, C)
+DD = matmul(D, D)
+`;
+    const { resolved, back, findings } = findingsFor(SELF, "DD", [[0, 32], [0, 32]]);
+    // the tile's own operation is stated, and is the nearest of the three
+    expect(findings.notes.some((note) => note.subject === "DD")).toBe(true);
+    expect(dependencyNotes(resolved, back, 1)[0].subject).toBe("DD");
+    // both operand slots are reported against the one tensor they share
+    expect(findings.flags.get("D")).toHaveLength(2);
+  });
+
+  it("a merged note flags every tensor it was merged from", () => {
+    const QKV = `params S=16 E=32
+input X [S, E] f16
+input Wq [E, E] f16
+input Wk [E, E] f16
+input Wv [E, E] f16
+Q = matmul(X, Wq)
+K = matmul(X, Wk)
+V = matmul(X, Wv)
+Kt = transpose(K, perm=[1, 0])
+S1 = matmul(Q, Kt)
+Y = matmul(S1, V)
+`;
+    const { findings } = findingsFor(QKV, "Y", [[0, 4], [0, 8]]);
+    for (const weight of ["Wq", "Wk", "Wv"])
+      expect(findings.flags.get(weight)?.length).toBeGreaterThan(0);
+  });
+
+  it("states the elementwise finding as its own verdict, with no author", () => {
+    const { findings } = findingsFor(
+      `params S=8
+input X [S] f32
+Y = add(X, X)
+`,
+      "Y",
+      [[0, 4]]
+    );
+    expect(findings.elementwise).toBe(true);
+    expect(findings.notes).toEqual([]);
+  });
+
+  it("says nothing at all when the cone reached no operation", () => {
+    const { findings } = findingsFor(GEMM, "A", [[0, 4], [0, 4]]);
+    expect(findings.elementwise).toBe(false);
+    expect(findings.notes).toEqual([]);
+    expect(findings.flags.size).toBe(0);
+  });
+
 });

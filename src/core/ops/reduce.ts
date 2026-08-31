@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Box, fromBox, iv } from "../region";
+import { Box, coversAxisFully, fromBox, iv } from "../region";
 import { DependencyNoteDraft, OpCtx, OpSpec, uniformDTypeOutputs, NoteCtx } from "./types";
 
 /** Normalize one Python-style axis and reject anything outside the tensor rank. */
@@ -26,15 +26,20 @@ function reduceDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
   const shape = ctx.inShapes[0];
   const attrs = ctx.attrs as RAttrs;
   const axes = normAxes(attrs.axes, shape.length);
-  const full = axes.filter((axis) =>
-    region.boxes.some((box) => box[axis].hi - box[axis].lo === shape[axis])
-  );
+  const full = axes.filter((axis) => coversAxisFully(region, axis, shape[axis]));
   if (!full.length) return null;
   const list = full.map((axis) => `${axis} (${shape[axis]} wide)`).join(", ");
   const one = full.length === 1;
   return {
     key: `reduce:${attrs.fn}:${full.join(",")}`,
     subject: ctx.outNames[0],
+    severity: 3,
+    flags: [
+      {
+        tensorId: ctx.inIds[0],
+        text: `full ${one ? `axis ${full[0]}` : `axes ${full.join(", ")}`} — reduced, needs an accumulator`,
+      },
+    ],
     text:
       `${attrs.fn} reduces ${ctx.inNames[0]} over ${one ? "axis" : "axes"} ${list}, so one ` +
       `element of ${ctx.outNames[0]} depends on every element along ${one ? "it" : "them"}. ` +

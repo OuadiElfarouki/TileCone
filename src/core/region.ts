@@ -219,6 +219,29 @@ export function subtract(a: Region, b: Region): Region {
 }
 
 /** Number of distinct elements. Canonicalizes internally so boxes are disjoint. */
+/**
+ * True when some whole line along `axis` lies inside the region — the honest
+ * form of "this cone pulls that axis in full".
+ *
+ * Deliberately not `boxes.some(box => box spans the axis)`. Canonicalization
+ * splits overlapping boxes to keep them disjoint, so a region that genuinely
+ * covers an axis can end up with no single box spanning it. That is exactly
+ * what an operation taking one tensor in two operand slots produces — the two
+ * slot contributions are unioned on the tensor and then split — and the naive
+ * test silently loses the constraint. Anchoring a unit line at each box's lower
+ * corner and asking whether the region contains all of it proves containment
+ * against the union, so it can never claim a pull the cone did not make.
+ */
+export function coversAxisFully(r: Region, axis: number, extent: number): boolean {
+  for (const b of r.boxes) {
+    const line: Box = b.map((interval, i) =>
+      i === axis ? { lo: 0, hi: extent } : { lo: interval.lo, hi: interval.lo + 1 }
+    );
+    if (isEmpty(subtract(fromBox(line), r))) return true;
+  }
+  return false;
+}
+
 export function count(r: Region): number {
   const c = canonicalize(r);
   let n = 0;

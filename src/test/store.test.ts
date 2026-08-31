@@ -4,7 +4,7 @@ import { computeMetrics } from "../core/metrics";
 import { EXAMPLES } from "../examples";
 import {
   MAX_PER_BOX_PROPS, PANEL_COLLAPSE_AT, PANEL_MAX, PANEL_MIN,
-  planesOf, useStore, viewAxes,
+  planesOf, startingTiles, useStore, viewAxes,
 } from "../ui/store";
 import { cardPx, graphScale, MAX_ELEM_PX, planeExtents } from "../ui/tiling";
 import { nudgeUnit, tileOf } from "../ui/grid";
@@ -33,24 +33,26 @@ describe("independent cone toggles", () => {
 
   it("represents all four upstream/downstream combinations", () => {
     expect(S().direction).toBe("both");
-    expect(S().backwardRes).not.toBeNull();
-    expect(S().forwardRes).not.toBeNull();
-
     S().toggleDirection("backward");
     expect(S().direction).toBe("forward");
-    expect(S().backwardRes).toBeNull();
-    expect(S().forwardRes).not.toBeNull();
-
     S().toggleDirection("forward");
     expect(S().direction).toBe("none");
-    expect(S().backwardRes).toBeNull();
-    expect(S().forwardRes).toBeNull();
-    expect(S().perBox).toBeNull();
-
     S().toggleDirection("backward");
     expect(S().direction).toBe("backward");
     S().toggleDirection("forward");
     expect(S().direction).toBe("both");
+  });
+
+  it("filters what is shown without gating what is analysed", () => {
+    // A mode is a question, not a budget: switching to downstream must not
+    // discard the upstream numbers the inspector still reports.
+    for (const direction of ["both", "backward", "forward", "none"] as const) {
+      S().setDirection(direction);
+      expect(S().backwardRes, direction).not.toBeNull();
+      expect(S().forwardRes, direction).not.toBeNull();
+      expect(S().perBox![0].backward, direction).not.toBeNull();
+      expect(S().perBox![0].forward, direction).not.toBeNull();
+    }
   });
 });
 
@@ -509,7 +511,9 @@ describe("per-box dependency attribution", () => {
     expect(pb).toHaveLength(2);
     expect(pb[0].forward!.tensors.get("C")!.region.boxes).toEqual([box([0, 8], [0, 256])]);
     expect(pb[1].forward!.tensors.get("C")!.region.boxes).toEqual([box([100, 108], [0, 256])]);
-    expect(pb[0].backward).toBeNull(); // backward is not computed in forward-only mode
+    // the upstream half is attributed too: downstream mode hides it, and the
+    // per-tile footprint numbers are read from it either way
+    expect(pb[0].backward!.tensors.get("A")!.region.boxes).toEqual([box([0, 8], [0, 512])]);
   });
 
   it("focusing a box scopes the readout to that box alone", () => {
@@ -932,5 +936,44 @@ describe("tiles on different tensors coexist", () => {
     expect(sel()!.parts.length).toBeGreaterThan(MAX_PER_BOX_PROPS);
     expect(S().perBox).toBeNull();
     expect(S().backwardRes!.roots.sort()).toEqual(["A", "C"]);
+  });
+});
+
+describe("offered starting tiles", () => {
+  beforeEach(() => {
+    S().setDirection("both");
+    loadExampleNamed("Plain GEMM");
+  });
+
+  it("offers the graph's result and the step before it", () => {
+    const starts = startingTiles(S().resolved!, S().tileScale, S().graphPx);
+    expect(starts.map((s) => s.tensorId)).toEqual(["C"]); // GEMM has no intermediate
+    loadExampleNamed("Multi-head attention");
+    const attention = startingTiles(S().resolved!, S().tileScale, S().graphPx);
+    expect(attention).toHaveLength(2);
+    const [output, previous] = attention;
+    expect(S().resolved!.consumers[output.tensorId]).toHaveLength(0);
+    expect(S().resolved!.tensors[previous.tensorId].producer).toBeDefined();
+  });
+
+  it("offers a tile the canvas would have snapped to, in bounds", () => {
+    const [start] = startingTiles(S().resolved!, S().tileScale, S().graphPx);
+    const shape = S().resolved!.tensors[start.tensorId].resolved!;
+    const { rowAxis, colAxis } = viewAxes(shape);
+    const tile = tileOf(shape, S().tileScale, S().graphPx);
+    start.box.forEach((interval, axis) => {
+      expect(interval.lo).toBe(0);
+      expect(interval.hi).toBeLessThanOrEqual(shape[axis]);
+      expect(interval.hi).toBe(
+        axis === rowAxis || axis === colAxis ? Math.min(tile, shape[axis]) : 1
+      );
+    });
+  });
+
+  it("produces a selection the executor accepts", () => {
+    const [start] = startingTiles(S().resolved!, S().tileScale, S().graphPx);
+    S().setSelection(start.tensorId, fromBox(start.box), "replace");
+    expect(selTensors()).toEqual([start.tensorId]);
+    expect(S().backwardRes).not.toBeNull();
   });
 });

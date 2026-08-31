@@ -37,6 +37,39 @@ function regionSliceExprs(name: string, r: Region): { numpy: string[]; torch: st
   return { numpy: [...lines, ...suffix], torch: [...lines, ...suffix] };
 }
 
+/**
+ * What one cone touches, per tensor, ordered by distance from the seed.
+ *
+ * Direction-neutral on purpose: a backward cone's rows say what a tile reads and
+ * a forward cone's rows say what it feeds, but they are the same measurement of
+ * the same region algebra and the panel shows them side by side. `depth` is
+ * therefore steps *along the cone*, not steps upstream.
+ */
+export function coneReadout(graph: ResolvedGraph, prop: PropResult): TensorReadout[] {
+  const tensors: TensorReadout[] = [];
+  for (const [tid, tr] of prop.tensors) {
+    const t = graph.tensors[tid];
+    const elements = count(tr.region);
+    const exprs = regionSliceExprs(t.name, tr.region);
+    tensors.push({
+      tensorId: tid,
+      name: t.name,
+      depth: tr.depth,
+      elements,
+      totalElements: (t.resolved ?? []).reduce((a, b) => a * b, 1),
+      bytes: elements * DTYPE_BYTES[t.dtype],
+      boxCount: tr.region.boxes.length,
+      exact: tr.region.exact,
+      reasons: tr.region.reasons,
+      isInput: !t.producer,
+      sliceExprsNumpy: exprs.numpy,
+      sliceExprsTorch: exprs.torch,
+    });
+  }
+  tensors.sort((a, b) => a.depth - b.depth || a.name.localeCompare(b.name));
+  return tensors;
+}
+
 export function computeMetrics(
   graph: ResolvedGraph,
   back: PropResult,
@@ -58,35 +91,15 @@ export function computeMetrics(
     });
   }
 
+  const tensors = coneReadout(graph, back);
   let inputBytes = 0;
   let intermediateBytes = 0;
   let outputBytes = 0;
-  const tensors: TensorReadout[] = [];
-  for (const [tid, tr] of back.tensors) {
-    const t = graph.tensors[tid];
-    const elements = count(tr.region);
-    const bytes = elements * DTYPE_BYTES[t.dtype];
-    const isInput = !t.producer;
-    if (isInput) inputBytes += bytes;
-    else if (back.roots.includes(tid)) outputBytes += bytes;
-    else intermediateBytes += bytes;
-    const exprs = regionSliceExprs(t.name, tr.region);
-    tensors.push({
-      tensorId: tid,
-      name: t.name,
-      depth: tr.depth,
-      elements,
-      totalElements: (t.resolved ?? []).reduce((a, b) => a * b, 1),
-      bytes,
-      boxCount: tr.region.boxes.length,
-      exact: tr.region.exact,
-      reasons: tr.region.reasons,
-      isInput,
-      sliceExprsNumpy: exprs.numpy,
-      sliceExprsTorch: exprs.torch,
-    });
+  for (const t of tensors) {
+    if (t.isInput) inputBytes += t.bytes;
+    else if (back.roots.includes(t.tensorId)) outputBytes += t.bytes;
+    else intermediateBytes += t.bytes;
   }
-  tensors.sort((a, b) => a.depth - b.depth || a.name.localeCompare(b.name));
   const denom = inputBytes + (countIntermediates ? intermediateBytes : 0);
   return {
     flops,

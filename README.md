@@ -61,7 +61,6 @@ src/
   examples/      built-in demo graphs
   test/          oracle + suites
 SYSTEM.md        current architecture and implementation invariants
-docs/IDEA.md     the full design spec, kept in sync with the code
 ```
 
 `core/` is strictly headless so the oracle and any future CLI can run without a DOM.

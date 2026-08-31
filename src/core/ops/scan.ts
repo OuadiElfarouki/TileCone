@@ -43,6 +43,10 @@ function cumsumDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
   return {
     key: `scan:${axis}:${reverse}`,
     subject: ctx.outNames[0],
+    severity: 1,
+    flags: [
+      { tensorId: ctx.inIds[0], text: `triangular cone — prefix over axis ${axis}` },
+    ],
     text:
       `cumsum is a prefix scan along axis ${axis} (${extent} wide), so element i of ` +
       `${ctx.outNames[0]} depends on ${reverse ? "every later" : "every earlier"} element ` +

@@ -151,9 +151,14 @@ function convDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
   const slack = reach.map((r, i) => r - (stride[i] ?? 1));
   // stride >= reach tiles cleanly; there is no halo to warn about
   if (!slack.some((v) => v > 0)) return null;
+  const halo = slack.map((v) => Math.max(0, v)).join("×");
   return {
     key: `conv:${kernel.join("x")}:${stride.join("x")}:${dilation.join("x")}`,
     subject: ctx.outNames[0],
+    severity: 1,
+    flags: [
+      { tensorId: ctx.inIds[0], text: `halo — neighbouring tiles overlap by ${halo}` },
+    ],
     text:
       `conv reads a ${reach.join("×")} window of ${ctx.inNames[0]} per output element at ` +
       `stride ${stride.join("×")}, so adjacent tiles of ${ctx.outNames[0]} overlap by ` +

@@ -6,6 +6,7 @@ import {
   box,
   canonicalize,
   count,
+  coversAxisFully,
   empty,
   fromBox,
   full,
@@ -229,5 +230,34 @@ describe("selection parts (identity-stable, may overlap)", () => {
       expect(count({ boxes: parts, exact: true, reasons: [] })).toBe(asSet(parts).size);
       void before;
     }
+  });
+});
+
+describe("a full-axis pull survives being split into disjoint boxes", () => {
+  // What `matmul(D, D)` produces: slot 0 asks for whole rows, slot 1 for whole
+  // columns, and canonicalization clips the overlap out of one of them. No box
+  // spans either axis afterwards, but the union still covers both.
+  const rowsAndCols = union(
+    fromBox(box([0, 32], [0, 256])),
+    fromBox(box([0, 256], [0, 32]))
+  );
+
+  it("sees the axis the union covers, not the axis one box happens to span", () => {
+    expect(rowsAndCols.boxes.some((b) => b[0].hi - b[0].lo === 256)).toBe(false);
+    expect(coversAxisFully(rowsAndCols, 0, 256)).toBe(true);
+    expect(coversAxisFully(rowsAndCols, 1, 256)).toBe(true);
+  });
+
+  it("refuses an axis no line covers", () => {
+    // one element short on both axes: nothing spans either
+    const short = union(fromBox(box([0, 32], [0, 255])), fromBox(box([0, 255], [0, 32])));
+    expect(coversAxisFully(short, 0, 256)).toBe(false);
+    expect(coversAxisFully(short, 1, 256)).toBe(false);
+  });
+
+  it("agrees with the single-box case it replaces", () => {
+    expect(coversAxisFully(fromBox(box([0, 4], [0, 16])), 1, 16)).toBe(true);
+    expect(coversAxisFully(fromBox(box([0, 4], [0, 15])), 1, 16)).toBe(false);
+    expect(coversAxisFully(empty(2), 0, 16)).toBe(false);
   });
 });

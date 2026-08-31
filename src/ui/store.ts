@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { executeQuery, validateSelection } from "../core/executor";
-import { Graph, ResolvedGraph, resolveGraph } from "../core/graph";
+import { Graph, graphOutputs, ResolvedGraph, resolveGraph } from "../core/graph";
 import { expandNode } from "../core/expand";
 import { PropResult, mergeProps } from "../core/propagate";
 import {
@@ -15,6 +15,7 @@ import {
 import { EXAMPLES } from "../examples/index";
 import { compileDSL } from "../parse/compiler";
 import { graphScale, MAX_ELEM_PX, planeExtents, TILE_SCALE_MAX, TILE_SCALE_MIN } from "./tiling";
+import { tileOf } from "./grid";
 
 /** Which independently toggled cones are active in the workspace. `both` and
  * `none` are UI combinations; the checked executor keeps its smaller query API. */
@@ -246,6 +247,11 @@ function initialTheme(): Theme {
  * holds several probes at once. Merging is a per-tensor union, which is also
  * what the propagator already does internally when two paths reconverge.
  *
+ * Both cones are always computed. `direction` is a view filter over the result,
+ * not a gate on producing it: the panel answers "what does this tile need" and
+ * "what does it feed" from the same analysis, and a global mode should not
+ * decide whether a number exists. Painting applies the filter instead.
+ *
  * Above `MAX_PER_BOX_PROPS` parts, per-part attribution is dropped and the
  * queries are grouped by tensor instead, so the cost is bounded by the number
  * of tensors drawn on rather than the number of tiles. Note that the grouped
@@ -255,12 +261,10 @@ function initialTheme(): Theme {
  */
 function recompute(
   resolved: ResolvedGraph | null,
-  selection: Selection,
-  direction: Direction
+  selection: Selection
 ): Pick<State, "backwardRes" | "forwardRes" | "perBox"> {
   const none = { backwardRes: null, forwardRes: null, perBox: null };
   if (!resolved || !selection || selection.parts.length === 0) return none;
-  if (direction === "none") return none;
 
   const parts = selection.parts;
   const backs: PropResult[] = [];
@@ -272,7 +276,7 @@ function recompute(
       const r = executeQuery(resolved, {
         tensorId: p.tensorId,
         region: fromBox(p.box),
-        direction,
+        direction: "both",
       });
       if (r.backward) backs.push(r.backward);
       if (r.forward) fwds.push(r.forward);
@@ -289,7 +293,7 @@ function recompute(
       const r = executeQuery(resolved, {
         tensorId,
         region: { boxes, exact: true, reasons: [] },
-        direction,
+        direction: "both",
       });
       if (r.backward) backs.push(r.backward);
       if (r.forward) fwds.push(r.forward);
@@ -310,7 +314,7 @@ function editSelection(
   keepFocus = false,
   record = true
 ): void {
-  const { selection, resolved, direction, workspaceHistory, tensorOffsets, focusedBox } = get();
+  const { selection, resolved, workspaceHistory, tensorOffsets, focusedBox } = get();
   if (!selection || !resolved) return;
   const shapeOf = (tensorId: string) => resolved.tensors[tensorId].resolved!;
   const parts = fn(selection.parts, shapeOf);
@@ -329,7 +333,7 @@ function editSelection(
     // pointing at the wrong cone.
     hiddenBoxes: keepFocus ? get().hiddenBoxes : new Set<number>(),
     preview: null,
-    ...recompute(resolved, sel, direction),
+    ...recompute(resolved, sel),
   });
 }
 
@@ -339,6 +343,43 @@ export function planesOf(resolved: ResolvedGraph): { rows: number; cols: number 
     const shape = t.resolved!;
     const { rowAxis, colAxis } = viewAxes(shape);
     return planeExtents(shape, rowAxis, colAxis);
+  });
+}
+
+/**
+ * Two tiles worth offering someone who has not drawn one: the graph's result,
+ * and the last thing computed before it. They are the fastest path from a
+ * loaded workspace to a cone worth reading, and both are one selection away.
+ *
+ * The box is one tile of the lattice currently drawn, so the offered tile is
+ * the one the canvas would have snapped a click to.
+ */
+export function startingTiles(
+  resolved: ResolvedGraph,
+  tileScale: number,
+  graphPx: number
+): { label: string; tensorId: string; box: Box }[] {
+  const output = graphOutputs(resolved)[0];
+  if (!output) return [];
+  const producer = resolved.nodes.find((node) => node.id === output.producer!.nodeId);
+  const feeding = producer?.inputs.filter((id) => resolved.tensors[id].producer) ?? [];
+  const previous = feeding.length ? resolved.tensors[feeding[feeding.length - 1]] : null;
+
+  return [
+    { tensor: output, label: "the output" },
+    ...(previous ? [{ tensor: previous, label: "one step back" }] : []),
+  ].map(({ tensor, label }) => {
+    const shape = tensor.resolved!;
+    const tile = tileOf(shape, tileScale, graphPx);
+    const { rowAxis, colAxis } = viewAxes(shape);
+    return {
+      label,
+      tensorId: tensor.id,
+      box: shape.map((extent, axis) => ({
+        lo: 0,
+        hi: axis === rowAxis || axis === colAxis ? Math.min(tile, extent) : 1,
+      })),
+    };
   });
 }
 
@@ -420,7 +461,7 @@ export const useStore = create<State>((set, get) => ({
         };
         st.focusedBox = null;
         st.pinnedBox = null;
-        Object.assign(st, recompute(base.resolved, st.selection!, get().direction));
+        Object.assign(st, recompute(base.resolved, st.selection!));
       }
       set(st as State);
     } catch (e) {
@@ -474,7 +515,7 @@ export const useStore = create<State>((set, get) => ({
         tileScale: clampedTile,
         snapToGrid,
         selection,
-        ...recompute(program.resolved, selection, direction),
+        ...recompute(program.resolved, selection),
       });
       return true;
     } catch {
@@ -486,7 +527,6 @@ export const useStore = create<State>((set, get) => ({
     const {
       selection,
       resolved,
-      direction,
       workspaceHistory,
       tensorOffsets,
       pinnedBox,
@@ -537,7 +577,7 @@ export const useStore = create<State>((set, get) => ({
       pinnedBox: nextPinned,
       hiddenBoxes: nextHidden,
       preview: null,
-      ...recompute(resolved, sel, direction),
+      ...recompute(resolved, sel),
     });
   },
 
@@ -559,7 +599,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   undoWorkspace: () => {
-    const { workspaceHistory, resolved, direction } = get();
+    const { workspaceHistory, resolved } = get();
     if (!workspaceHistory.length) return;
     const prev = workspaceHistory[workspaceHistory.length - 1];
     set({
@@ -570,7 +610,7 @@ export const useStore = create<State>((set, get) => ({
       pinnedBox: null,
       hiddenBoxes: new Set<number>(),
       preview: null,
-      ...recompute(resolved, prev.selection, direction),
+      ...recompute(resolved, prev.selection),
     });
   },
 
@@ -644,13 +684,12 @@ export const useStore = create<State>((set, get) => ({
 
   setDragging: (v) => set({ dragging: v }),
 
-  setDirection: (d) => {
-    const { resolved, selection } = get();
-    set({ direction: d, ...recompute(resolved, selection, d) });
-  },
+  // Direction is a view setting. It changes what is drawn and which section the
+  // inspector shows, never what was analysed, so no repropagation follows.
+  setDirection: (d) => set({ direction: d }),
 
   toggleDirection: (axis) => {
-    const { direction, resolved, selection } = get();
+    const { direction } = get();
     const backward = direction === "backward" || direction === "both";
     const forward = direction === "forward" || direction === "both";
     const nextBackward = axis === "backward" ? !backward : backward;
@@ -658,7 +697,7 @@ export const useStore = create<State>((set, get) => ({
     const next: Direction = nextBackward
       ? nextForward ? "both" : "backward"
       : nextForward ? "forward" : "none";
-    set({ direction: next, ...recompute(resolved, selection, next) });
+    set({ direction: next });
   },
 
   setTheme: (theme) => set({ theme }),

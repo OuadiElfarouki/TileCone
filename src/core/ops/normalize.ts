@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Box, Region, canonicalize, count, fromBox, iv } from "../region";
+import { Box, Region, canonicalize, count, coversAxisFully, fromBox, iv } from "../region";
 import { normAxes } from "./reduce";
 import { DependencyNoteDraft, OpCtx, OpSpec, uniformDTypeOutputs, NoteCtx } from "./types";
 
@@ -53,9 +53,7 @@ function normalizeDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
   const shape = ctx.inShapes[0];
   const attrs = ctx.attrs as NAttrs;
   const axes = normAxes(attrs.axes, shape.length);
-  const full = axes.filter((axis) =>
-    region.boxes.some((box) => box[axis].hi - box[axis].lo === shape[axis])
-  );
+  const full = axes.filter((axis) => coversAxisFully(region, axis, shape[axis]));
   if (!full.length) return null;
   const free = shape.map((_, axis) => axis).filter((axis) => !axes.includes(axis));
   const one = full.length === 1;
@@ -66,6 +64,13 @@ function normalizeDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
   return {
     key: `normalize:${attrs.kind}:${full.join(",")}`,
     subject: ctx.outNames[0],
+    severity: 2,
+    flags: [
+      {
+        tensorId: ctx.inIds[0],
+        text: `full ${one ? `axis ${full[0]}` : `axes ${full.join(", ")}`} — ${attrs.kind} statistics span ${one ? "it" : "them"}`,
+      },
+    ],
     text:
       `${attrs.kind} takes statistics over ${one ? "axis" : "axes"} ${full.join(", ")} of ` +
       `${ctx.inNames[0]}, so a tile of ${ctx.outNames[0]} needs ` +

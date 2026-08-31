@@ -111,6 +111,17 @@ function cloneGraph(source: Graph): Graph {
 }
 
 /** Validate structure, resolve shapes, infer intermediate/output shapes, topo sort. */
+/**
+ * The tensors nothing consumes — what the graph is for. A produced tensor with
+ * no consumer is a result; an unused *input* is a loose end, not an output, so
+ * it is not one of these.
+ */
+export function graphOutputs(graph: ResolvedGraph): Tensor[] {
+  return Object.values(graph.tensors).filter(
+    (tensor) => tensor.producer && !graph.consumers[tensor.id]?.length
+  );
+}
+
 export function resolveGraph(source: Graph): ResolvedGraph {
   const g = cloneGraph(source);
   for (const [name, value] of Object.entries(g.params))

@@ -53,6 +53,7 @@ src/
 │   ├── region.ts         exact and conservative region algebra
 │   ├── metrics.ts        FLOP, byte, and intensity estimates
 │   ├── reuse.ts          seeded dependency-reuse estimator
+│   ├── contribution.ts   whether a tile completes what it feeds, or only adds to it
 │   ├── expand.ts         composite-to-primitive graph rewrites
 │   ├── notes.ts          plain-language dependency constraints
 │   ├── shapes.ts         symbolic dimensions and shape errors
@@ -228,7 +229,13 @@ The text belongs to the operation, not the UI, because only the operation knows 
 - **A note may only claim what the cone did.** A contraction note is withheld unless the region demonstrably spans the whole contracted axis, so a degenerate selection can never produce a false statement.
 - **Notes carry a `key`.** Drafts sharing a key describe one constraint about different tensors and are merged rather than repeated, which stops a family of look-alike notes from crowding a distinct one past the display cap.
 
+A draft also carries a `severity` and `flags` naming the tensors the constraint is visible on. Both are written where the note is — the operation — rather than derived in the view: only the operation knows how hard its constraint binds and which of its operands shows it. Severity is 3 for an axis consumed in full (a contraction, a reduction), 2 for an axis closed by a normalisation, 1 for ordering, halo re-reads, or strided access. There is no zero, because a constraint not worth stating is `null`.
+
+Severity decides **what survives the display cap**, not what order notes are read in. The cap has to drop something, and dropping by graph order drops whichever the topological walk reached last — which can be the constraint that forces staging or accumulation. Selection is therefore by severity, then by nearness to the tile; the survivors are displayed in graph order, because that is the order the computation happens in. Flags are collected over every constraint found rather than the surviving ones, since a flag is true of its tensor whether or not its note had room.
+
 `coneIsFullyElementwise` separates "every step fused" — a real finding — from "the cone reached no operation at all", so the two empty states can say different things.
+
+`src/core/contribution.ts` answers the downstream half. Being in the forward cone means a tile *influences* a tensor, not that it produces it: a tile spanning part of a contracted axis reaches an output without determining a single element of it. The test runs backwards — what does that downstream region actually read? — and subtracts the tile; anything left is what the tile does not supply. The asymmetry is deliberate and matches the region contract: an over-approximated backward region can make the residue phantom, so the flag may over-warn, but an empty residue proves the true residue is empty, so it can never under-warn. Rows carry `exact` so an over-warning is shown as one, and the probe count is capped up front because each probe is a full propagation.
 
 Reuse is a separate derived analysis in `src/core/reuse.ts`, rather than part of `computeMetrics`. It takes one anchored selection, deterministically samples same-sized tiles across that tensor with a fixed seed, and uses checked backward queries to estimate how many tiles touch each input region in the anchor's footprint. Keeping it pure and seeded makes repeated estimates reproducible without conflating a sampled statistic with the exact cost metrics.
 
@@ -243,10 +250,10 @@ The React layer is a projection over the headless compiler and executor.
 - **Source:** DSL text, selected example, unresolved/resolved graph, and load errors.
 - **Selection:** ordered parts, each naming its own tensor, and the independently enabled upstream/downstream cones. Direct canvas gestures add by default and Alt subtracts; both compose against the drawn tensor's parts only, so a gesture on one tensor can never edit or discard a part on another. Replacement is reserved for controlled internal transitions. Composition retains object identity for untouched parts, allowing their index-based UI metadata to be remapped safely if another tensor loses parts.
 - **Attribution:** which part is focused (emphasised, one at a time) and which parts are hidden (excluded from painting, any number). These are separate axes: focus is transient and drives emphasis, visibility is sticky and drives whether a cone contributes paint. Neither affects metrics, so a hidden part still reports its footprint. Metadata is cleared for edited parts and follows untouched parts by identity when their indices shift.
-- **Analysis:** aggregate backward/forward results, bounded per-box results, focus/pin state, and hover previews.
+- **Analysis:** aggregate backward/forward results, bounded per-box results, focus/pin state, and hover previews. **Both cones are always computed.** `direction` is a view filter over the analysis, not a gate on producing it: the inspector answers "what does this tile need" and "what does it feed" from one result, and a global mode must not decide whether a number exists. The filter is applied where the cones are drawn — `buildLayers` and the graph's highlighting — so switching mode changes the picture without discarding the readout.
 - **View:** per-tensor projection settings, tile scale, gesture snapping, the graph's px-per-element scale, metric options, graph focus, panel layout, and tensor offsets. Selection edits and committed tensor moves share one chronological workspace history.
 
-Applying DSL recompiles the entire source into a new resolved graph. Changing a selection runs one query per part, which serves both the per-part attribution and, merged, the aggregate the panels read. Past the per-part cap attribution is dropped and the queries are grouped by tensor instead, bounding the cost by the number of tensors drawn on rather than the number of tiles; the grouped result can only be equal or coarser, never tighter and never an under-approximation.
+Applying DSL recompiles the entire source into a new resolved graph. Changing a selection runs one bidirectional query per part, which serves both the per-part attribution and, merged, the aggregate the panels read. Past the per-part cap attribution is dropped and the queries are grouped by tensor instead, bounding the cost by the number of tensors drawn on rather than the number of tiles; the grouped result can only be equal or coarser, never tighter and never an under-approximation.
 
 Actions defined against one tensor's axes — arrow-key moves, hidden-axis sliders, the reuse estimate, the axis legend — follow the **anchor**: the focused part's tensor, else the last one drawn on. An axis index means different things on tensors of different rank, so there is no single axis such an action could apply everywhere.
 
@@ -259,7 +266,7 @@ Expanding a composite node rewrites the unresolved graph, resolves the result, a
 - `SidePanel.tsx` owns the editable DSL draft, independent upstream/downstream toggles, built-in examples, and operation list. Running the draft updates the store only after compilation succeeds.
 - `GraphView.tsx` is the graph controller and React projection: it derives highlighting, manages pan/zoom/focus and tensor gestures, and renders the current scene. It does not own layout or routing algorithms.
 - `TensorCard.tsx` renders an interactive tensor grid on canvas and converts pointer gestures into element-space boxes. Its paint stack is built by a pure `buildLayers`, so the encoding rules — which cone is filled and which outlined, what fades under focus, what a hidden box still shows — are asserted directly instead of inferred from pixels.
-- `Inspector.tsx` owns global tile-grid detail, editable selection parts, exactness, tensor slices, metrics, and the reuse estimate.
+- `Inspector.tsx` is ordered by the question the product asks, not by the order its sections were built: the tile's identity, the tiles list, then **Needs upstream** and **Feeds downstream** as the two directional readouts, and only then the supporting detail — the approximation warning, cost, reuse, the per-tensor footprint, and the dependency notes. The tiles list sits above the readouts rather than below because it is their selector: it chooses which cone the two sections describe. The constraints themselves stay in one place, at the bottom: a headline promoted to the top of the panel restated a note the reader would meet again a screen later, and one statement of a fact beats two. Setup is pinned to a strip at the bottom, because the tile lattice is chosen once and then stops being read. Only the two directional headings keep heading weight; everything below them is a step quieter. Two blocks earn their space only from two tiles upwards: the tiles list, which at one tile restates the header, and the footprint table, which is the only place the segment *shared* between tiles appears. With nothing drawn the panel is a different panel — it names the two questions it will answer and offers a starting tile — rather than the same one rendered with nulls.
 - `PanelFrame.tsx` owns side-panel width, the drag strip, and collapse-to-rail for both panels.
 - `palette.ts` owns the categorical hues, their recorded CVD/contrast validation, and the canvas surfaces they were validated against. Two rules live there: identity is never carried by colour alone, and chrome must sit outside the data hues, because hue on a card means *which selection box* and a hot graph edge must not be mistakable for a cone.
 - `share.ts` holds link encoding and decoding together. They were split across a toolbar and `App` once, and when the toolbar was removed the encoder went with it, leaving the app able to restore links nothing could produce. Decoding is all-or-nothing: an unknown setting or any malformed part rejects the payload, while genuinely absent legacy fields receive their documented defaults. The store then validates graph-dependent selection bounds transactionally.
@@ -299,8 +306,8 @@ For a typical edit-and-select interaction:
 5. A pointer gesture creates or composes an ordered selection box.
 6. The store submits the canonical selection to `SymbolicExecutor`.
 7. Operation specifications map the region through the graph in the requested direction(s).
-8. Metrics are calculated from the upstream result.
-9. Tensor canvases and the inspector render aggregate and per-box results.
+8. Metrics, notes, and the partial-contribution report are derived from those results.
+9. Tensor canvases and the inspector render aggregate and per-box results, filtered by the current direction.
 
 This flow keeps parsing and execution synchronous and deterministic. React components do not implement operation semantics; they only create queries and render results.
 
@@ -318,6 +325,8 @@ The test suite checks the architecture at several levels:
 - dependency notes: that a note claims only what the cone did, names axes as the source does, and merges look-alikes rather than crowding out distinct ones;
 - canvas encoding: filled versus outlined per direction, focus fading rather than hiding, and regions drawn at element precision rather than rounded to the lattice;
 - workspace link round-trips, including refusal of malformed payloads;
+- note severity, cap selection, and the per-tensor flags, including that the hardest constraint survives the cap and that a full-axis pull is still seen once its region is split into disjoint boxes;
+- partial versus complete downstream contribution, including the over-approximated case;
 - randomized graph and propagation cases.
 
 Some tests deliberately import pure implementation seams: reshape decomposition, the einsum
@@ -366,6 +375,7 @@ Keep shape/index logic in the core or pure UI geometry helpers. The store should
 - Parsed operation outputs use an empty shape as an unresolved placeholder before graph resolution. Consumers should not execute or render that intermediate form.
 - The DSL compiler exposes structured diagnostics, while parts of the current UI reduce them to a display string.
 - Reuse estimation is deterministic for a given seed but sampled; exact FLOP/byte metrics remain a separate contract.
+- The partial-contribution flag can over-warn on an over-approximated region and never under-warns; past its probe cap, downstream rows are simply unflagged.
 - Per-part attribution is intentionally capped to keep interaction responsive; aggregate propagation remains complete.
 - Expanding a composite can expose intermediate traffic, so dependency and FLOP semantics may remain equivalent while displayed intermediate-byte estimates change.
 - JSON graph support exists below the UI, but the main interactive authoring path is the DSL.

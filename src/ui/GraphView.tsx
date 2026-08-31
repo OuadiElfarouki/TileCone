@@ -27,6 +27,7 @@ export function GraphView(): React.ReactElement {
   const forwardRes = useStore((s) => s.forwardRes);
   const selection = useStore((s) => s.selection);
   const expandNodeInPlace = useStore((s) => s.expandNodeInPlace);
+  const direction = useStore((s) => s.direction);
   const focusTensor = useStore((s) => s.focusTensor);
   const setDragging = useStore((s) => s.setDragging);
   const tensorOffsets = useStore((s) => s.tensorOffsets);
@@ -43,13 +44,19 @@ export function GraphView(): React.ReactElement {
    * fitted graph fitted without throwing away a view someone deliberately set. */
   const movedRef = useRef(false);
 
+  // Highlighting follows the direction filter, not the analysis: both cones are
+  // always computed, and a hot edge should mean "the cone you asked for".
   const contributing = useMemo(() => {
     const s = new Set<string>();
     for (const id of selectedTensorIds(selection)) s.add(id);
-    for (const res of [backwardRes, forwardRes])
+    const shown = [
+      direction === "backward" || direction === "both" ? backwardRes : null,
+      direction === "forward" || direction === "both" ? forwardRes : null,
+    ];
+    for (const res of shown)
       if (res) for (const id of res.tensors.keys()) s.add(id);
     return s;
-  }, [backwardRes, forwardRes, selection]);
+  }, [backwardRes, direction, forwardRes, selection]);
 
   const hasResult = contributing.size > 0;
 

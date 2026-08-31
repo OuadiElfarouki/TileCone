@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Box, Region, empty, fromBox, iv, canonicalize } from "../region";
+import { Box, Region, coversAxisFully, empty, fromBox, iv, canonicalize } from "../region";
 import { Attrs, DependencyNoteDraft, DIAG_ENUM_CAP, OpCtx, OpSpec, uniformDTypeOutputs, NoteCtx } from "./types";
 
 type ParsedEquation = { operands: string[][]; output: string[] };
@@ -196,7 +196,7 @@ function einsumDependencyNote(eq: string, ctx: NoteCtx): DependencyNoteDraft | n
 
     const pulledInFull = carriers.filter(({ slot, axis }) => {
       const region = ctx.inRegions[slot];
-      return region?.boxes.some((box) => box[axis].hi - box[axis].lo === ctx.inShapes[slot][axis]);
+      return region && coversAxisFully(region, axis, ctx.inShapes[slot][axis]);
     });
     if (pulledInFull.length !== carriers.length) continue;
 
@@ -212,10 +212,15 @@ function einsumDependencyNote(eq: string, ctx: NoteCtx): DependencyNoteDraft | n
     return {
       key: `contract:${axisLabel}:${extent}`,
       subject: ctx.outNames[0],
+      severity: 3,
+      flags: carriers.map(({ slot, axis }) => ({
+        tensorId: ctx.inIds[slot],
+        text: `full ${axisLabel} on axis ${axis} : contracted, never tiled`,
+      })),
       // Phrased without an article before the axis name on purpose: the label
       // is user-supplied, so "a K" / "an E" cannot be chosen ahead of time.
       text:
-        `${ctx.outNames[0]} contracts ${axisLabel}=${extent} in full — one tile of ` +
+        `${ctx.outNames[0]} contracts ${axisLabel}=${extent} in full. One tile of ` +
         `${ctx.outNames[0]} pulls the complete ${axisLabel} extent of ${listed}. A fused ` +
         `kernel must either stage ${axisLabel} or accumulate across it.`,
     };

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { computeMetrics } from "../core/metrics";
-import { coneIsFullyElementwise, dependencyNotes } from "../core/notes";
+import { Contribution, contributions, MAX_CONTRIBUTION_PROBES } from "../core/contribution";
+import { coneReadout, computeMetrics, TensorReadout } from "../core/metrics";
+import { coneFindings, coneIsFullyElementwise, dependencyNotes } from "../core/notes";
 import { estimateInputReuse, ReuseEstimate } from "../core/reuse";
 import {
   Box,
@@ -19,6 +20,7 @@ import {
   partsOn,
   planesOf,
   selectedTensorIds,
+  startingTiles,
   useStore,
   viewAxes,
 } from "./store";
@@ -47,13 +49,20 @@ function settledLabel(min: number, max: number): string {
   return min === max ? `${min} × ${min}` : `${min} × ${min} – ${max} × ${max}`;
 }
 
-function TileGridControl(): React.ReactElement {
+/**
+ * Setup, pinned below the reading path. The lattice is chosen once and then
+ * stops being read, so it earns a strip rather than the top of the panel — but
+ * it stays visible, because the slider changes what a drawn tile means.
+ */
+function SetupStrip(): React.ReactElement {
   const resolved = useStore((s) => s.resolved)!;
   const graphPx = useStore((s) => s.graphPx);
   const tileScale = useStore((s) => s.tileScale);
   const setTileScale = useStore((s) => s.setTileScale);
   const snapToGrid = useStore((s) => s.snapToGrid);
   const setSnapToGrid = useStore((s) => s.setSnapToGrid);
+  const selection = useStore((s) => s.selection);
+  const clearSelection = useStore((s) => s.clearSelection);
   const detail = useMemo(() => {
     const planes = planesOf(resolved);
     const stops = effectiveTileScaleStops(planes, graphPx);
@@ -67,10 +76,9 @@ function TileGridControl(): React.ReactElement {
   const overridden = requested === TILE_SCALE_NONE && min > 1;
 
   return (
-    <section className="tile-grid-control">
-      <div className="tile-grid-head">
-        <span>tile grid</span>
-        <b>{scaleLabel(requested)}</b>
+    <section className="inspector-setup">
+      <div className="setup-row">
+        <span className="setup-kicker">grid</span>
         <span
           className={`tile-settled${overridden ? " overridden" : ""}`}
           title={
@@ -91,6 +99,9 @@ function TileGridControl(): React.ReactElement {
         >
           snap
         </button>
+        <button className="mini clear-all" onClick={clearSelection} disabled={!selection}>
+          clear all
+        </button>
       </div>
       <input
         type="range"
@@ -101,11 +112,8 @@ function TileGridControl(): React.ReactElement {
         onChange={(event) => setTileScale(detail.stops[Number(event.target.value)])}
         aria-label="tile grid detail"
         aria-valuetext={scaleLabel(detail.stops[detail.index])}
-        title="global tile detail; every stop changes the rendered lattice"
+        title={`global tile detail — ${detail.stops.map(scaleLabel).join(" · ")}`}
       />
-      <div className="tile-grid-stops">
-        {detail.stops.map((stop) => <span key={stop}>{scaleLabel(stop)}</span>)}
-      </div>
     </section>
   );
 }
@@ -192,7 +200,7 @@ function DependencyNotes(): React.ReactElement {
     <section className="ins-section notes-section">
       <div className="ins-title">
         Dependency notes
-        {focusedBox !== null && perBox && <span className="muted"> · box {focusedBox + 1}</span>}
+        {focusedBox !== null && perBox && <span className="muted"> · tile {focusedBox + 1}</span>}
       </div>
       {!selection || !result ? (
         <p className="hint">
@@ -251,7 +259,7 @@ function FootprintBar({
     segments.push({
       elements,
       color: rgbCss(boxColor(focusedBox, dark)),
-      title: `box ${focusedBox + 1}: ${fmt(elements)} elements`,
+      title: `tile ${focusedBox + 1}: ${fmt(elements)} elements`,
     });
   } else if (regions) {
     let exclusiveTotal = 0;
@@ -266,7 +274,7 @@ function FootprintBar({
         segments.push({
           elements: exclusive,
           color: rgbCss(boxColor(index, dark)),
-          title: `box ${index + 1} only: ${fmt(exclusive)} elements`,
+          title: `tile ${index + 1} only: ${fmt(exclusive)} elements`,
         });
     });
     const shared = Math.max(0, elements - exclusiveTotal);
@@ -274,7 +282,7 @@ function FootprintBar({
       segments.push({
         elements: shared,
         color: "",
-        title: `shared by multiple boxes: ${fmt(shared)} elements`,
+        title: `shared by multiple tiles: ${fmt(shared)} elements`,
         shared: true,
       });
   } else if (elements > 0) {
@@ -302,9 +310,236 @@ function FootprintBar({
   );
 }
 
+/** Slice expressions minus the over-approximation comment the readout appends. */
+const sliceLines = (row: TensorReadout) =>
+  row.sliceExprsNumpy.filter((line) => !line.startsWith("#"));
+
 /**
- * The selection's boxes, one row each. Hovering a row emphasises that box's
- * dependency cone across the whole graph; clicking pins the emphasis.
+ * One tensor in one direction: how much of it the tile touches, why it has that
+ * shape, and — downstream — whether the tile finishes it or only feeds it.
+ */
+function ConeRow({
+  row,
+  hue,
+  flags,
+  contribution,
+  onCopy,
+  copied,
+}: {
+  row: TensorReadout;
+  hue: string;
+  flags: string[];
+  contribution?: Contribution;
+  onCopy: () => void;
+  copied: boolean;
+}): React.ReactElement {
+  const exprs = sliceLines(row);
+  const share = row.totalElements > 0 ? (row.elements / row.totalElements) * 100 : 0;
+
+  return (
+    <div className="cone-row">
+      <div className="cone-row-head">
+        <b>{row.name}</b>
+        {/* One box is the common case and reads best inline. More than one is
+            exactly when a single truncated expression would hide the answer, so
+            those move to their own block below. */}
+        {exprs.length === 1 && (
+          <code className="cone-expr">{exprs[0].slice(row.name.length)}</code>
+        )}
+        {!row.exact && <span className="badge approx" title={row.reasons.join("; ")}>≈</span>}
+        {row.isInput && <span className="badge input">in</span>}
+        <span className="muted d-tag" title={`${row.depth} step${row.depth === 1 ? "" : "s"} along the cone`}>
+          d{row.depth}
+        </span>
+        <span className="row-stats">
+          {share.toFixed(1)}% · {formatBytes(row.bytes)}
+        </span>
+      </div>
+      <span
+        className="cone-bar"
+        title={`${fmt(row.elements)} of ${fmt(row.totalElements)} elements`}
+        aria-label={`${share.toFixed(1)} percent of ${row.name}`}
+      >
+        <i style={{ width: `${Math.min(100, share)}%`, background: hue }} />
+      </span>
+      {flags.map((flag) => (
+        <span className="cone-flag" key={flag}>
+          {flag}
+        </span>
+      ))}
+      {contribution?.partial && (
+        <span className="cone-flag">
+          partial — {contribution.detail}
+          {!contribution.exact && " (from an over-approximated region)"}
+        </span>
+      )}
+      {exprs.length > 1 && (
+        <div className="slice-exprs">
+          {exprs.slice(0, 4).map((line, index) => (
+            <code key={index}>{line}</code>
+          ))}
+          {exprs.length > 4 && (
+            <code className="muted"># … {exprs.length - 4} more boxes</code>
+          )}
+        </div>
+      )}
+      <button className="mini copy-exprs" title="copy every slice expression for this tensor" onClick={onCopy}>
+        {copied ? "copied ✓" : "copy"}
+      </button>
+    </div>
+  );
+}
+
+function ConeSection({
+  arrow,
+  title,
+  rows,
+  hue,
+  flags,
+  contributions: contrib,
+  showRows,
+  empty,
+  copiedKey,
+  onCopy,
+}: {
+  arrow: string;
+  title: string;
+  rows: TensorReadout[];
+  hue: string;
+  flags: Map<string, string[]>;
+  contributions?: Map<string, Contribution>;
+  showRows: boolean;
+  empty: string;
+  copiedKey: string | null;
+  onCopy: (row: TensorReadout, key: string) => void;
+}): React.ReactElement {
+  const bytes = rows.reduce((total, row) => total + row.bytes, 0);
+
+  return (
+    <section className="cone-section">
+      <div className="cone-head">
+        <span className="cone-arrow" aria-hidden>
+          {arrow}
+        </span>
+        <h2 className="panel-title">{title}</h2>
+        <span className="rollup">
+          {rows.length} tensor{rows.length === 1 ? "" : "s"} · {formatBytes(bytes)}
+        </span>
+      </div>
+      {showRows &&
+        (rows.length ? (
+          rows.map((row) => {
+            const key = `${title}:${row.tensorId}`;
+            return (
+              <ConeRow
+                key={row.tensorId}
+                row={row}
+                hue={hue}
+                flags={flags.get(row.tensorId) ?? []}
+                contribution={contrib?.get(row.tensorId)}
+                copied={copiedKey === key}
+                onCopy={() => onCopy(row, key)}
+              />
+            );
+          })
+        ) : (
+          <p className="hint">{empty}</p>
+        ))}
+    </section>
+  );
+}
+
+/**
+ * The tile itself: which one it is, where it sits, and how big it is. At one
+ * tile this is also where the range is edited, because a list of one restates
+ * the header and adds nothing to compare it against.
+ */
+function TileIdentity({
+  onCopyAll,
+  copied,
+}: {
+  onCopyAll: () => void;
+  copied: boolean;
+}): React.ReactElement | null {
+  const resolved = useStore((s) => s.resolved)!;
+  const selection = useStore((s) => s.selection);
+  const focusedBox = useStore((s) => s.focusedBox);
+  const replaceBox = useStore((s) => s.replaceBox);
+  const deleteBox = useStore((s) => s.deleteBox);
+  const theme = useStore((s) => s.theme);
+
+  if (!selection) return null;
+  const parts = selection.parts;
+  const anchorId = anchorTensorId(selection, focusedBox);
+  const index = focusedBox ?? parts.length - 1;
+  const part = parts[index];
+  if (!anchorId || !part) return null;
+
+  // With several tiles and none focused, everything below describes the merged
+  // cone. Naming one of them here would put the wrong tile at the top of a
+  // readout about all of them, so the header describes the selection instead.
+  const merged = parts.length > 1 && focusedBox === null;
+  const tensor = resolved.tensors[anchorId];
+  const shape = tensor.resolved!;
+  const { rowAxis, colAxis } = viewAxes(shape);
+  const axisLabel = (axis: number) => tensor.axisNames?.[axis] ?? `ax${axis}`;
+  const volume = (box: Box) =>
+    box.reduce((total, interval) => total * (interval.hi - interval.lo), 1);
+  const elements = merged
+    ? parts.reduce((total, p) => total + volume(p.box), 0)
+    : volume(part.box);
+
+  return (
+    <header className="tile-identity">
+      <div className="tile-ord">
+        {/* The swatch is the tile's hue on the canvas: the header and the cone
+            it describes have to be the same colour, so it follows the anchor's
+            own index rather than the first one. A merged readout belongs to no
+            single hue, so it carries none. */}
+        {!merged && (
+          <i className="swatch" style={{ background: rgbCss(boxColor(index, theme === "dark")) }} />
+        )}
+        <span>
+          {merged ? `${parts.length} tiles · merged` : `tile ${index + 1} of ${parts.length}`}
+        </span>
+        <button className="mini copy-cone" onClick={onCopyAll} title="copy every slice expression in this cone, both directions">
+          {copied ? "copied ✓" : "copy"}
+        </button>
+        {parts.length === 1 && (
+          <button className="mini" title="remove this tile from the selection" onClick={() => deleteBox(index)}>
+            ×
+          </button>
+        )}
+      </div>
+      <div className="tile-name">
+        <b
+          title={
+            merged
+              ? "every tensor the selection draws on"
+              : `rows ${axisLabel(rowAxis >= 0 ? rowAxis : 0)} · cols ${axisLabel(colAxis >= 0 ? colAxis : 0)} · shape [${shape.join("×")}]`
+          }
+        >
+          {merged
+            ? selectedTensorIds(selection)
+                .map((id) => resolved.tensors[id].name)
+                .join(" · ")
+            : tensor.name}
+        </b>
+        <span className="tile-count">{fmt(elements)} el</span>
+      </div>
+      {/* Only at one tile. From two upwards the list below carries every range,
+          and repeating the focused one here made the header change height as
+          the pointer moved across the list. */}
+      {parts.length === 1 && (
+        <SelectionRangeInput box={part.box} shape={shape} onCommit={(next) => replaceBox(index, next)} />
+      )}
+    </header>
+  );
+}
+
+/**
+ * The selection's tiles, one row each, from two upwards. Hovering a row
+ * emphasises that tile's cone across the whole graph; clicking pins it.
  */
 function RegionEditor(): React.ReactElement | null {
   const resolved = useStore((s) => s.resolved);
@@ -320,7 +555,7 @@ function RegionEditor(): React.ReactElement | null {
   const toggleBoxHidden = useStore((s) => s.toggleBoxHidden);
   const theme = useStore((s) => s.theme);
 
-  if (!resolved || !selection) return null;
+  if (!resolved || !selection || selection.parts.length < 2) return null;
   const parts = selection.parts;
   const dark = theme === "dark";
 
@@ -333,26 +568,17 @@ function RegionEditor(): React.ReactElement | null {
     overlap.summed += one.summed;
   }
 
-  // The trailing axis legend describes one tensor, so it follows the anchor --
-  // the same tensor the arrow keys move.
-  const anchor = anchorTensorId(selection, focusedBox);
-  const anchorT = anchor ? resolved.tensors[anchor] : null;
-  const anchorShape = anchorT?.resolved ?? [];
-  const { rowAxis: rowAx, colAxis: colAx } = viewAxes(anchorShape);
-  const axisLabel = (ax: number) => anchorT?.axisNames?.[ax] ?? `ax${ax}`;
-
   return (
     <div className="ins-section">
-      {parts.length > 1 && (
-        <p className="hint">
-          {perBox
-            ? "hover a box to emphasise its cone; click to pin it, then arrow keys move that box alone"
-            : `too many boxes to trace individually (over ${MAX_PER_BOX_PROPS}) — showing the merged cone`}
-        </p>
-      )}
+      <div className="ins-title">Tiles</div>
+      <p className="hint">
+        {perBox
+          ? "hover a tile to emphasise its cone; click to pin it, then arrow keys move that tile alone"
+          : `too many tiles to trace individually (over ${MAX_PER_BOX_PROPS}) — showing the merged cone`}
+      </p>
       {overlap.summed > overlap.unique && (
         <p className="hint overlap">
-          boxes overlap: {fmt(overlap.summed)} counted across parts,{" "}
+          tiles overlap: {fmt(overlap.summed)} counted across parts,{" "}
           <b>{fmt(overlap.unique)}</b> distinct elements — upstream and downstream use the
           deduplicated set
         </p>
@@ -370,10 +596,10 @@ function RegionEditor(): React.ReactElement | null {
               key={i}
               onMouseEnter={() => hoverBox(i)}
               onClick={() => perBox && togglePinBox(i)}
-              title={perBox ? "hover to emphasise this box's dependencies; click to pin (esc unpins)" : undefined}
+              title={perBox ? "hover to emphasise this tile's dependencies; click to pin (esc unpins)" : undefined}
             >
               {/* One control, not two: the swatch *is* the visibility toggle, so
-                  the row states the box's hue and its shown/hidden state once. */}
+                  the row states the tile's hue and its shown/hidden state once. */}
               <button
                 className="vis-toggle"
                 disabled={!perBox}
@@ -383,14 +609,14 @@ function RegionEditor(): React.ReactElement | null {
                 }}
                 title={
                   perBox
-                    ? `${hidden ? "show" : "hide"} this box's cone (h) — its numbers stay in the table either way`
-                    : "per-box cones are not traced at this many boxes"
+                    ? `${hidden ? "show" : "hide"} this tile's cone (h) — its numbers stay in the table either way`
+                    : "per-tile cones are not traced at this many tiles"
                 }
                 onClick={(e) => {
                   e.stopPropagation();
                   toggleBoxHidden(i);
                 }}
-                aria-label={`${hidden ? "show" : "hide"} box ${i + 1}`}
+                aria-label={`${hidden ? "show" : "hide"} tile ${i + 1}`}
               />
               <span className="box-body">
                 <span className="box-label">
@@ -404,7 +630,7 @@ function RegionEditor(): React.ReactElement | null {
               </span>
               <button
                 className="mini"
-                title="remove this box from the selection"
+                title="remove this tile from the selection"
                 onClick={(e) => {
                   e.stopPropagation();
                   deleteBox(i);
@@ -418,15 +644,67 @@ function RegionEditor(): React.ReactElement | null {
       </div>
       {parts.length > MAX_DISTINCT_HUES && (
         <p className="hint">
-          boxes past the {MAX_DISTINCT_HUES}rd share a neutral color — only {MAX_DISTINCT_HUES} hues stay
+          tiles past the {MAX_DISTINCT_HUES}rd share a neutral color — only {MAX_DISTINCT_HUES} hues stay
           distinguishable side by side, so use hover to tell the rest apart.
         </p>
       )}
-      {anchorT && (
-        <p className="hint">
-          <b>{anchorT.name}</b> · rows {axisLabel(rowAx >= 0 ? rowAx : 0)} · cols{" "}
-          {axisLabel(colAx >= 0 ? colAx : 0)} · shape [{anchorShape.join("×")}]
-        </p>
+    </div>
+  );
+}
+
+/** Nothing drawn yet: teach the two questions instead of rendering empty tables. */
+function EmptyPanel(): React.ReactElement {
+  const resolved = useStore((s) => s.resolved)!;
+  const tileScale = useStore((s) => s.tileScale);
+  const graphPx = useStore((s) => s.graphPx);
+  const setSelection = useStore((s) => s.setSelection);
+  const starts = useMemo(
+    () => startingTiles(resolved, tileScale, graphPx),
+    [resolved, tileScale, graphPx]
+  );
+
+  return (
+    <div className="empty-panel">
+      <h2 className="panel-title">No tile drawn</h2>
+      <p className="hint">
+        Drag a rectangle on any tensor to cut a tile. Shift adds another, Alt subtracts. This
+        panel then answers two questions about it.
+      </p>
+      <dl className="empty-questions">
+        <div>
+          <dt>
+            <span className="cone-arrow" aria-hidden>
+              ↑
+            </span>
+            What it needs
+          </dt>
+          <dd>Every upstream tensor the tile reads, and how much of each.</dd>
+        </div>
+        <div>
+          <dt>
+            <span className="cone-arrow" aria-hidden>
+              ↓
+            </span>
+            What it feeds
+          </dt>
+          <dd>Everything downstream it reaches, and whether that contribution is partial.</dd>
+        </div>
+      </dl>
+      {starts.length > 0 && (
+        <>
+          <div className="setup-kicker">or start from</div>
+          <div className="empty-starts">
+            {starts.map((start) => (
+              <button
+                key={start.tensorId}
+                className="mini"
+                onClick={() => setSelection(start.tensorId, fromBox(start.box), "replace")}
+              >
+                {resolved.tensors[start.tensorId].name} — {start.label}
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
@@ -437,23 +715,61 @@ export function Inspector(): React.ReactElement {
   const theme = useStore((s) => s.theme);
   const selection = useStore((s) => s.selection);
   const backwardRes = useStore((s) => s.backwardRes);
+  const forwardRes = useStore((s) => s.forwardRes);
   const direction = useStore((s) => s.direction);
   const countIntermediates = useStore((s) => s.countIntermediates);
   const setCountIntermediates = useStore((s) => s.setCountIntermediates);
-  const clearSelection = useStore((s) => s.clearSelection);
   const perBox = useStore((s) => s.perBox);
   const focusedBox = useStore((s) => s.focusedBox);
 
   const [reuse, setReuse] = useState<ReuseEstimate[] | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
-  // When a box is focused, every readout below scopes to that box alone.
-  const scopedRes = focusedBox !== null ? perBox?.[focusedBox]?.backward ?? backwardRes : backwardRes;
+  // When a tile is focused, every readout below scopes to that tile alone.
+  const scopedBack = focusedBox !== null ? perBox?.[focusedBox]?.backward ?? backwardRes : backwardRes;
+  const scopedFwd = focusedBox !== null ? perBox?.[focusedBox]?.forward ?? forwardRes : forwardRes;
 
   const metrics = useMemo(() => {
-    if (!resolved || !scopedRes) return null;
-    return computeMetrics(resolved, scopedRes, countIntermediates);
-  }, [resolved, scopedRes, countIntermediates]);
+    if (!resolved || !scopedBack) return null;
+    return computeMetrics(resolved, scopedBack, countIntermediates);
+  }, [resolved, scopedBack, countIntermediates]);
+
+  const findings = useMemo(
+    () => (resolved && scopedBack ? coneFindings(resolved, scopedBack) : null),
+    [resolved, scopedBack]
+  );
+
+  /** The tile's own region per tensor, scoped the same way the cones are. */
+  const seeds = useMemo(() => {
+    const map = new Map<string, Region>();
+    if (!selection) return map;
+    const parts =
+      focusedBox !== null && selection.parts[focusedBox]
+        ? [selection.parts[focusedBox]]
+        : selection.parts;
+    for (const part of parts) {
+      const prev = map.get(part.tensorId);
+      map.set(part.tensorId, prev ? union(prev, fromBox(part.box)) : fromBox(part.box));
+    }
+    return map;
+  }, [selection, focusedBox]);
+
+  const contrib = useMemo(
+    () => (resolved && scopedFwd ? contributions(resolved, scopedFwd, seeds) : null),
+    [resolved, scopedFwd, seeds]
+  );
+
+  const upstream = useMemo(() => {
+    if (!metrics || !scopedBack) return [];
+    const roots = new Set(scopedBack.roots);
+    return metrics.tensors.filter((row) => !roots.has(row.tensorId));
+  }, [metrics, scopedBack]);
+
+  const downstream = useMemo(() => {
+    if (!resolved || !scopedFwd) return [];
+    const roots = new Set(scopedFwd.roots);
+    return coneReadout(resolved, scopedFwd).filter((row) => !roots.has(row.tensorId));
+  }, [resolved, scopedFwd]);
 
   useEffect(() => setReuse(null), [resolved, selection, focusedBox]);
 
@@ -461,12 +777,38 @@ export function Inspector(): React.ReactElement {
 
   const selBoxes = selection?.parts.length ?? 0;
   const dark = theme === "dark";
-  const hue = rgbCss(boxColor(0, dark));
   /** Past the cap the cones are still correct, but merged rather than attributed. */
   const merged = selBoxes > MAX_PER_BOX_PROPS;
   const aggregate = aggregateColors(dark);
-  const upstreamHue = merged ? rgbCss(aggregate.upstream) : hue;
-  const downstreamHue = merged ? rgbCss(aggregate.downstream) : hue;
+  /** A bar carries the hue of the tile it belongs to, or the aggregate when the
+   *  rows describe several tiles at once. */
+  const coneHue = (cone: "upstream" | "downstream") => {
+    if (focusedBox !== null) return rgbCss(boxColor(focusedBox, dark));
+    if (selBoxes === 1 && !merged) return rgbCss(boxColor(0, dark));
+    return rgbCss(cone === "upstream" ? aggregate.upstream : aggregate.downstream);
+  };
+
+  // `direction` chooses which question is on screen; it never decides whether
+  // the panel works. Both cones are computed either way.
+  const showUpstream = direction !== "forward";
+  const showDownstream = direction !== "backward";
+  const showRows = direction !== "none";
+
+  // An empty section has two causes, and they are different findings: the
+  // selection sits at the edge of the graph, or what it reaches is selected too
+  // and is therefore not something it reads or feeds.
+  const seedIds = [...seeds.keys()];
+  const upstreamEmpty = seedIds.some((id) => resolved.tensors[id].producer)
+    ? "Everything upstream of the selection is itself selected."
+    : "Every selected tensor is a graph input — there is nothing upstream to read.";
+  const downstreamEmpty = seedIds.some((id) => resolved.consumers[id]?.length)
+    ? "Everything the selection feeds is itself selected."
+    : "Nothing consumes this selection — it is a graph output.";
+
+  const visibleRows = [...(showUpstream ? upstream : []), ...(showDownstream ? downstream : [])];
+  const approxReasons = [
+    ...new Set(visibleRows.filter((row) => !row.exact).flatMap((row) => row.reasons)),
+  ];
 
   /** Reuse factor (§5.5): sample selection-sized output tiles across the selected
    * tensor; count how many touch the current footprint on each input. The sweep
@@ -486,150 +828,161 @@ export function Inspector(): React.ReactElement {
       setTimeout(() => setCopied(null), 1200);
     });
   };
+  const copyRow = (row: TensorReadout, key: string) => copy(sliceLines(row).join("\n"), key);
+  const copyCone = () =>
+    copy(
+      [...upstream, ...downstream].flatMap((row) => sliceLines(row)).join("\n"),
+      "cone"
+    );
 
   return (
     <aside className="inspector">
-      <TileGridControl />
-      <div className="tiles-heading">
-        <h2 className="panel-title">
-          Tiles{" "}
-          <small title={merged ? `per-box cones stop at ${MAX_PER_BOX_PROPS} selections; above that the cone is correct but merged` : undefined}>
-            {selBoxes ? `${selBoxes} selected${merged ? " · cones merged" : ""}` : "none selected"}
-          </small>
-        </h2>
-        <button className="mini" onClick={clearSelection} disabled={!selection}>clear all</button>
-      </div>
-      {/* The legend has to track the canvas: direction is drawn as fill vs
-          outline, but only in "both" mode — with one direction active there is
-          nothing to disambiguate and the region is simply filled. */}
-      <div className="tile-legend">
-        <span><i className="selected" style={{ background: hue }} /> selected tile</span>
-        {direction === "both" ? (
-          <>
-            <span><i className="required" style={{ background: upstreamHue }} /> upstream (filled)</span>
-            <span><i className="produced" style={{ borderColor: downstreamHue }} /> downstream (outlined)</span>
-          </>
+      <div className="inspector-scroll">
+        {!selection ? (
+          <EmptyPanel />
         ) : (
-          direction !== "none" && (
-            <span>
-              <i
-                className="required"
-                style={{
-                  background: merged
-                    ? rgbCss(direction === "backward" ? aggregate.upstream : aggregate.downstream)
-                    : hue,
-                }}
-              />{" "}
-              {direction === "backward" ? "upstream" : "downstream"}
-            </span>
-          )
-        )}
-        <span><i className="approx" /> approximate</span>
-      </div>
-      {!selection && <p className="hint">Click or drag on any tensor grid to select a region. Shift adds, Alt subtracts.</p>}
-      <RegionEditor />
-      {metrics && direction !== "forward" && (
-        <>
-          <div className="ins-section">
-            <div className="ins-title">
-              {focusedBox !== null && perBox ? `Cost of box ${focusedBox + 1}` : "Cost of this cone"}
-            </div>
-            <div className="kv">
-              <span>FLOPs</span><span>{fmt(metrics.flops)}</span>
-              <span>input bytes</span><span>{formatBytes(metrics.inputBytes)}</span>
-              <span>intermediate</span><span>{formatBytes(metrics.intermediateBytes)}</span>
-              <span>output bytes</span><span>{formatBytes(metrics.outputBytes)}</span>
-              <span>cone working set</span>
-              <span>{formatBytes(metrics.inputBytes + metrics.intermediateBytes + metrics.outputBytes)}</span>
-              <span>intensity</span><span>{metrics.intensity.toFixed(2)} FLOP/B</span>
-            </div>
-            <label className="chk">
-              <input type="checkbox" checked={countIntermediates} onChange={(e) => setCountIntermediates(e.target.checked)} />
-              count intermediates in bytes
-            </label>
-          </div>
-          <div className="ins-section">
-            <div className="ins-title">
-              Reuse <button className="mini" onClick={computeReuse}>estimate</button>
-            </div>
-            {reuse ? (
-              <div className="kv">
-                {reuse.map((estimate) => (
-                  <React.Fragment key={estimate.tensorId}>
-                    <span>{resolved.tensors[estimate.tensorId].name}</span>
-                    <span>
-                      {estimate.estimatedTiles.toFixed(estimate.estimatedTiles < 10 ? 1 : 0)}×
-                      {` (of ${estimate.totalTiles} tiles)`}
-                    </span>
-                  </React.Fragment>
-                ))}
-              </div>
-            ) : (
-              <p className="hint">selection-sized output tiles touching each input's current footprint (sampled)</p>
+          <>
+            <TileIdentity onCopyAll={copyCone} copied={copied === "cone"} />
+            {/* The tiles list is the selector for everything below it: it picks
+                which cone the two sections describe, so it sits above them. */}
+            <RegionEditor />
+
+            {showUpstream && (
+              <ConeSection
+                arrow="↑"
+                title="Needs upstream"
+                rows={upstream}
+                hue={coneHue("upstream")}
+                flags={findings?.flags ?? new Map()}
+                showRows={showRows}
+                empty={upstreamEmpty}
+                copiedKey={copied}
+                onCopy={copyRow}
+              />
             )}
-          </div>
-          {metrics.tensors.some((t) => !t.exact) && (
-            <div className="ins-section warn">
-              ⚠ some regions are conservative over-approximations:{" "}
-              {[...new Set(metrics.tensors.flatMap((t) => t.reasons))].join("; ")}
-            </div>
-          )}
-          <div className="ins-section">
-            <div className="ins-title">Footprint per tensor</div>
-            {/* Flat rather than a disclosure: the slice expressions are the
-                answer this panel exists to give, and hiding them behind a
-                triangle means the cone cannot be read in one pass. */}
-            {metrics.tensors.map((t) => (
-              <div key={t.tensorId} className="tensor-row">
-                <div className="tensor-row-head">
-                  <b>{t.name}</b>
-                  {/* The role is what a reader wants first; depth is the finer
-                      detail and stays available beside it. */}
-                  <span className="role-tag">{t.depth === 0 ? "selected" : "required"}</span>
-                  <span className="muted" title={`${t.depth} step${t.depth === 1 ? "" : "s"} upstream of the selection`}>d{t.depth}</span>
-                  {!t.exact && <span className="badge approx">≈</span>}
-                  {t.isInput && <span className="badge input">in</span>}
-                  <span className="row-stats">
-                    {fmt(t.elements)} el ({((t.elements / t.totalElements) * 100).toFixed(1)}%) · {formatBytes(t.bytes)} · {t.boxCount} box{t.boxCount === 1 ? "" : "es"}
-                  </span>
-                </div>
-                <FootprintBar
-                  tensorId={t.tensorId}
-                  elements={t.elements}
-                  totalElements={t.totalElements}
-                  perBox={perBox}
-                  focusedBox={focusedBox}
-                  dark={theme === "dark"}
-                />
-                <div className="slice-exprs">
-                  {t.sliceExprsNumpy.slice(0, 4).map((line, i) => (
-                    <code key={i}>{line}</code>
-                  ))}
-                  {t.sliceExprsNumpy.length > 4 && (
-                    <code className="muted"># … {t.sliceExprsNumpy.length - 4} more boxes</code>
-                  )}
-                  {/* Revealed on hover: one per row would otherwise put twenty
-                      buttons between the reader and the expressions. */}
-                  <button
-                    className="mini copy-exprs"
-                    title="copy every slice expression for this tensor"
-                    onClick={() => copy(t.sliceExprsNumpy.join("\n"), t.tensorId)}
-                  >
-                    {copied === t.tensorId ? "copied ✓" : "copy"}
-                  </button>
-                </div>
+            {showDownstream && (
+              <ConeSection
+                arrow="↓"
+                title="Feeds downstream"
+                rows={downstream}
+                hue={coneHue("downstream")}
+                flags={new Map()}
+                contributions={contrib?.byTensor}
+                showRows={showRows}
+                empty={downstreamEmpty}
+                copiedKey={copied}
+                onCopy={copyRow}
+              />
+            )}
+            {showDownstream && showRows && contrib?.capped && (
+              <p className="hint">
+                more than {MAX_CONTRIBUTION_PROBES} tensors downstream — rows below do not say
+                whether this tile completes them or only feeds them
+              </p>
+            )}
+
+            {approxReasons.length > 0 && (
+              <div className="ins-section warn">
+                ⚠ some regions are conservative over-approximations: {approxReasons.join("; ")}
               </div>
-            ))}
-          </div>
-        </>
-      )}
-      <DependencyNotes />
-      {direction === "forward" && selection && (
-        <p className="hint">Downstream mode shows influence; switch to Upstream for cost metrics.</p>
-      )}
-      {direction === "none" && selection && (
-        <p className="hint">Enable Upstream or Downstream to show this selection's cone.</p>
-      )}
+            )}
+
+            {metrics && (
+              <>
+                <div className="ins-section">
+                  <div className="ins-title">
+                    {direction === "forward"
+                      ? "Cost of the upstream cone"
+                      : focusedBox !== null && perBox
+                        ? `Cost of tile ${focusedBox + 1}`
+                        : "Cost of this cone"}
+                  </div>
+                  <div className="kv">
+                    <span>FLOPs</span><span>{fmt(metrics.flops)}</span>
+                    <span>input bytes</span><span>{formatBytes(metrics.inputBytes)}</span>
+                    <span>intermediate</span><span>{formatBytes(metrics.intermediateBytes)}</span>
+                    <span>output bytes</span><span>{formatBytes(metrics.outputBytes)}</span>
+                    <span>cone working set</span>
+                    <span>{formatBytes(metrics.inputBytes + metrics.intermediateBytes + metrics.outputBytes)}</span>
+                    <span>intensity</span><span>{metrics.intensity.toFixed(2)} FLOP/B</span>
+                  </div>
+                  <label className="chk">
+                    <input type="checkbox" checked={countIntermediates} onChange={(e) => setCountIntermediates(e.target.checked)} />
+                    count intermediates in bytes
+                  </label>
+                </div>
+                <div className="ins-section">
+                  <div className="ins-title">
+                    Reuse <button className="mini" onClick={computeReuse}>estimate</button>
+                  </div>
+                  {reuse ? (
+                    <div className="kv">
+                      {reuse.map((estimate) => (
+                        <React.Fragment key={estimate.tensorId}>
+                          <span>{resolved.tensors[estimate.tensorId].name}</span>
+                          <span>
+                            {estimate.estimatedTiles.toFixed(estimate.estimatedTiles < 10 ? 1 : 0)}×
+                            {` (of ${estimate.totalTiles} tiles)`}
+                          </span>
+                        </React.Fragment>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="hint">selection-sized output tiles touching each input's current footprint (sampled)</p>
+                  )}
+                </div>
+                {/* At one tile the two directional sections already cover every
+                    tensor this table covers. From two upwards it is the only
+                    place the shared segment between tiles appears. */}
+                {selBoxes > 1 && (
+                  <div className="ins-section">
+                    <div className="ins-title">Footprint per tensor</div>
+                    {metrics.tensors.map((t) => (
+                      <div key={t.tensorId} className="tensor-row">
+                        <div className="tensor-row-head">
+                          <b>{t.name}</b>
+                          <span className="role-tag">{t.depth === 0 ? "selected" : "required"}</span>
+                          <span className="muted" title={`${t.depth} step${t.depth === 1 ? "" : "s"} upstream of the selection`}>d{t.depth}</span>
+                          {!t.exact && <span className="badge approx">≈</span>}
+                          {t.isInput && <span className="badge input">in</span>}
+                          <span className="row-stats">
+                            {fmt(t.elements)} el ({((t.elements / t.totalElements) * 100).toFixed(1)}%) · {formatBytes(t.bytes)} · {t.boxCount} box{t.boxCount === 1 ? "" : "es"}
+                          </span>
+                        </div>
+                        <FootprintBar
+                          tensorId={t.tensorId}
+                          elements={t.elements}
+                          totalElements={t.totalElements}
+                          perBox={perBox}
+                          focusedBox={focusedBox}
+                          dark={dark}
+                        />
+                        <div className="slice-exprs">
+                          {t.sliceExprsNumpy.slice(0, 4).map((line, i) => (
+                            <code key={i}>{line}</code>
+                          ))}
+                          {t.sliceExprsNumpy.length > 4 && (
+                            <code className="muted"># … {t.sliceExprsNumpy.length - 4} more boxes</code>
+                          )}
+                          <button
+                            className="mini copy-exprs"
+                            title="copy every slice expression for this tensor"
+                            onClick={() => copy(t.sliceExprsNumpy.join("\n"), t.tensorId)}
+                          >
+                            {copied === t.tensorId ? "copied ✓" : "copy"}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+            <DependencyNotes />
+          </>
+        )}
+      </div>
+      <SetupStrip />
     </aside>
   );
 }

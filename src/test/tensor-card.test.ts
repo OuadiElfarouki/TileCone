@@ -63,6 +63,27 @@ describe("direction stays readable once hue means box identity", () => {
     }
   });
 
+  it("paints only the cone the direction asks for, though both were analysed", () => {
+    // upstream sits at [0,4) and downstream at [4,8) in this fixture, so which
+    // cone was painted is readable from the layer itself
+    const upstream = buildLayers(inputs({ direction: "backward" }));
+    expect(upstream).toHaveLength(1);
+    expect(upstream[0].region.boxes).toEqual(region([0, 4]).boxes);
+
+    const downstream = buildLayers(inputs({ direction: "forward" }));
+    expect(downstream).toHaveLength(1);
+    expect(downstream[0].region.boxes).toEqual(region([4, 8]).boxes);
+
+    expect(buildLayers(inputs({ direction: "none" }))).toEqual([]);
+  });
+
+  it("paints nothing in either mode once attribution is capped", () => {
+    const back = { region: region([0, 4]), depth: 1 };
+    const fwd = { region: region([4, 8]), depth: 1 };
+    expect(buildLayers(inputs({ perBox: null, back, fwd, direction: "none" }))).toEqual([]);
+    expect(buildLayers(inputs({ perBox: null, back, fwd, direction: "backward" }))).toHaveLength(1);
+  });
+
   it("gives the two cones the same hue, so hue is left to mean the box", () => {
     const layers = buildLayers(inputs({ direction: "both" }));
     expect(layers[0].color).toEqual(layers[1].color);

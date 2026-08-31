@@ -3,12 +3,28 @@ import type { Box, Region } from "../region";
 import type { Sym } from "../shapes";
 import type { DType } from "../dtypes";
 
+/**
+ * One tensor's own short reason: why *its* footprint has the shape it has.
+ * Carried by tensor id rather than name, because a note is matched against
+ * analysis rows and a display name is neither an identity nor stable.
+ */
+export type NoteFlag = { tensorId: string; text: string };
+
 export type DependencyNoteDraft = {
   text: string;
   /** Identity of the constraint; equal keys are merged. */
   key: string;
   /** The tensor the note is about, used when merging. */
   subject: string;
+  /**
+   * How hard this binds a kernel that wants to fuse across the operation:
+   * 3 an axis consumed in full (contraction, reduction), 2 an axis closed for
+   * a normalisation, 1 ordering, halo re-reads, or strided access. There is no
+   * zero: a constraint not worth stating is `null`, not a note nobody reads.
+   */
+  severity: 1 | 2 | 3;
+  /** Which tensors carry this constraint in their own footprint. */
+  flags?: NoteFlag[];
 };
 
 export type Attrs = Record<string, unknown>;
@@ -31,6 +47,9 @@ export type OpCtx = {
 export type NoteCtx = OpCtx & {
   inNames: string[];
   outNames: string[];
+  /** Tensor ids, parallel to the names. Flags address rows, so they need ids. */
+  inIds: string[];
+  outIds: string[];
   /**
    * Declared (possibly symbolic) dimensions per input, parallel to `inShapes`.
    * A note should name an axis the way the source does — a reader who wrote

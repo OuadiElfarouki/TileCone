@@ -205,6 +205,10 @@ function reshapeDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
     return {
       key: "reshape:inexact",
       subject: ctx.outNames[0],
+      severity: 1,
+      flags: [
+        { tensorId: ctx.inIds[0], text: "superset — preimage fragmented past the box cap" },
+      ],
       text:
         `reshape ${from} → ${to} fragmented this tile's preimage past the box cap, so the ` +
         `highlight on ${ctx.inNames[0]} is a conservative superset — it is hatched for that ` +
@@ -215,6 +219,13 @@ function reshapeDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
     return {
       key: "reshape:split",
       subject: ctx.outNames[0],
+      severity: 1,
+      flags: [
+        {
+          tensorId: ctx.inIds[0],
+          text: `${region.boxes.length} disjoint runs — strided in memory`,
+        },
+      ],
       text:
         `reshape ${from} → ${to} costs nothing to compute but is not free to tile: this ` +
         `contiguous tile of ${ctx.outNames[0]} lands on ${region.boxes.length} disjoint runs ` +
