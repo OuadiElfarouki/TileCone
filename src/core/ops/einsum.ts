@@ -2,9 +2,9 @@ import { z } from "zod";
 import { Box, Region, empty, fromBox, iv, canonicalize } from "../region";
 import { Attrs, DependencyNoteDraft, DIAG_ENUM_CAP, OpCtx, OpSpec, uniformDTypeOutputs, NoteCtx } from "./types";
 
-export type ParsedEquation = { operands: string[][]; output: string[] };
+type ParsedEquation = { operands: string[][]; output: string[] };
 
-export function parseEquation(eq: string, nInputs?: number): ParsedEquation {
+function parseEquation(eq: string, nInputs?: number): ParsedEquation {
   const clean = eq.replace(/\s+/g, "");
   const m = clean.split("->");
   if (m.length !== 2) throw new Error(`einsum equation "${eq}" must contain "->"`);
@@ -39,12 +39,13 @@ function labelExtents(pe: ParsedEquation, inShapes: number[][]): Map<string, num
   return ext;
 }
 
-export function einsumInferShapes(eq: string, inShapes: number[][]): number[][] {
+function einsumInferShapes(eq: string, inShapes: number[][]): number[][] {
   const pe = parseEquation(eq, inShapes.length);
   const ext = labelExtents(pe, inShapes);
   return [pe.output.map((L) => ext.get(L)!)];
 }
 
+/** @internal Exported for direct oracle-sized tests of diagonal semantics. */
 export function einsumBackward(eq: string, outBox: Box, ctx: OpCtx): Region[] {
   const pe = parseEquation(eq, ctx.inShapes.length);
   const ext = labelExtents(pe, ctx.inShapes);
@@ -96,7 +97,7 @@ export function einsumBackward(eq: string, outBox: Box, ctx: OpCtx): Region[] {
   });
 }
 
-export function einsumForward(eq: string, inSlot: number, inBox: Box, ctx: OpCtx): Region[] {
+function einsumForward(eq: string, inSlot: number, inBox: Box, ctx: OpCtx): Region[] {
   const pe = parseEquation(eq, ctx.inShapes.length);
   const ext = labelExtents(pe, ctx.inShapes);
   const labs = pe.operands[inSlot];
@@ -114,7 +115,7 @@ export function einsumForward(eq: string, inSlot: number, inBox: Box, ctx: OpCtx
   return [fromBox(outBox)];
 }
 
-export function einsumOracleDeps(eq: string, outIndex: number[], ctx: OpCtx): number[][][] {
+function einsumOracleDeps(eq: string, outIndex: number[], ctx: OpCtx): number[][][] {
   const pe = parseEquation(eq, ctx.inShapes.length);
   const ext = labelExtents(pe, ctx.inShapes);
   const assign = new Map<string, number>();
@@ -146,7 +147,7 @@ export function einsumOracleDeps(eq: string, outIndex: number[], ctx: OpCtx): nu
   });
 }
 
-export function einsumFlops(eq: string, outBox: Box, ctx: OpCtx): number {
+function einsumFlops(eq: string, outBox: Box, ctx: OpCtx): number {
   const pe = parseEquation(eq, ctx.inShapes.length);
   const ext = labelExtents(pe, ctx.inShapes);
   let vol = 1;
@@ -169,7 +170,7 @@ export function einsumFlops(eq: string, outBox: Box, ctx: OpCtx): number {
  * selection, and claiming a full contraction that did not happen would be a
  * statement the picture does not support.
  */
-export function einsumDependencyNote(eq: string, ctx: NoteCtx): DependencyNoteDraft | null {
+function einsumDependencyNote(eq: string, ctx: NoteCtx): DependencyNoteDraft | null {
   let pe: ParsedEquation;
   try {
     pe = parseEquation(eq, ctx.inShapes.length);
@@ -247,7 +248,7 @@ export const einsumOp: OpSpec = {
 };
 
 /** Sugar: build an OpSpec that lowers to a fixed-arity einsum with a shape-derived equation. */
-export function einsumSugar(
+function einsumSugar(
   name: string,
   nInputs: number,
   makeEq: (inShapes: number[][]) => string

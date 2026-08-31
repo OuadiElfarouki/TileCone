@@ -2,7 +2,7 @@
 
 This document describes TileCone as it is implemented today. It is an engineering map of the system: where source text becomes an executable graph, how tensor regions propagate through operations, and how the React UI turns those results into an interactive visualization.
 
-For product usage and DSL examples, see `README.md`. This document focuses on boundaries, invariants, data flow, and extension points.
+For product usage and DSL examples, see `README.md`. This document focuses on boundaries, invariants, data flow, and extension points. `docs/README.md` records which supporting documents are current, historical, local-only, or disposable.
 
 ## 1. Purpose and execution model
 
@@ -257,13 +257,12 @@ Expanding a composite node rewrites the unresolved graph, resolves the result, a
 - `WorkspaceHeader.tsx` contains only product identity, description, and the global theme control.
 - `SidePanel.tsx` owns the editable DSL draft, independent upstream/downstream toggles, built-in examples, and operation list. Running the draft updates the store only after compilation succeeds.
 - `GraphView.tsx` uses Dagre for collision-free base positions, applies persistent user tensor offsets, routes live cubic connectors, and manages pan/zoom/focus. Structural Dagre placement is memoized independently from query highlighting and interactive offsets, so selection changes and card motion do not rerun graph layout. Drag motion is constrained against the full rectangles of every tensor and operator.
-- `graph-geometry.ts` is the pure geometry boundary for collision-safe sliding and curved edge paths; large pointer jumps cannot tunnel through another node.
 - `TensorCard.tsx` renders an interactive tensor grid on canvas and converts pointer gestures into element-space boxes. Its paint stack is built by a pure `buildLayers`, so the encoding rules — which cone is filled and which outlined, what fades under focus, what a hidden box still shows — are asserted directly instead of inferred from pixels.
 - `Inspector.tsx` owns global tile-grid detail, editable selection parts, exactness, tensor slices, metrics, and the reuse estimate.
 - `PanelFrame.tsx` owns side-panel width, the drag strip, and collapse-to-rail for both panels.
 - `palette.ts` owns the categorical hues, their recorded CVD/contrast validation, and the canvas surfaces they were validated against. Two rules live there: identity is never carried by colour alone, and chrome must sit outside the data hues, because hue on a card means *which selection box* and a hot graph edge must not be mistakable for a cone.
 - `share.ts` holds link encoding and decoding together. They were split across a toolbar and `App` once, and when the toolbar was removed the encoder went with it, leaving the app able to restore links nothing could produce. Decoding is all-or-nothing: an unknown setting or any malformed part rejects the payload, while genuinely absent legacy fields receive their documented defaults. The store then validates graph-dependent selection bounds transactionally.
-- `graph-geometry.ts` owns connector routing. Connectors are built from the operation's operand lists rather than from the layout library's edge set, which keys edges by endpoint pair: an op taking one tensor in more than one slot - `matmul(X, X)` - collapses to a single edge there, and drawing that as one line claims an arity the op does not have. Layout is unaffected by the collapse; only the drawing is. Connectors sharing a pair fan their anchors along the facing sides, as wide as those sides allow up to a cap, and each carries a flow chevron sized and positioned to stay inside its own lane. Two such connectors are a translation of each other, so where the tangent runs parallel to the offset they have no perpendicular separation; the marks are therefore spread across a band rather than clustered at the midpoint, where an S-shaped connector's lines coincide.
+- `graph-geometry.ts` is the pure boundary for collision-safe card motion and connector routing; large pointer jumps cannot tunnel through another node. Connectors are built from operation operand lists rather than Dagre's endpoint-keyed edge set, so repeated operands such as `matmul(X, X)` remain distinct. Connectors sharing a pair fan their anchors and stagger their flow marks to remain readable.
 - `useDragGuard.ts` suppresses text selection for the duration of any drag. It is a hook rather than part of `setDragging` so that store actions stay free of DOM access and remain testable headlessly.
 
 ### Tensor rendering and tiling
@@ -319,6 +318,13 @@ The test suite checks the architecture at several levels:
 - workspace link round-trips, including refusal of malformed payloads;
 - randomized graph and propagation cases.
 
+Some tests deliberately import pure implementation seams: reshape decomposition, the einsum
+diagonal mapper, canvas layer construction, grid rectangles, and the exhaustive region point
+enumerator. Those exports carry an `@internal` marker. They are not application or embedding APIs;
+they exist because testing the invariant directly is materially stronger than inferring it through
+React or a large graph. Helpers that merely duplicated production behavior are not retained for
+tests.
+
 For operations with a pointwise `oracleDeps`, the test harness can enumerate small tensors and compare analytic propagation against brute-force dependencies. Exact results must equal the oracle; inexact results must contain it. This directly enforces the core no-under-approximation rule.
 
 The normal verification commands are:
@@ -357,8 +363,8 @@ Keep shape/index logic in the core or pure UI geometry helpers. The store should
 - Regions are unions of axis-aligned boxes; highly fragmented mappings may conservatively collapse at the box cap.
 - Parsed operation outputs use an empty shape as an unresolved placeholder before graph resolution. Consumers should not execute or render that intermediate form.
 - The DSL compiler exposes structured diagnostics, while parts of the current UI reduce them to a display string.
-- Reuse estimation is sampled and UI-local; the core FLOP/byte metrics are deterministic.
-- Per-selection-box attribution is intentionally capped to keep interaction responsive; aggregate propagation remains complete.
+- Reuse estimation is deterministic for a given seed but sampled; exact FLOP/byte metrics remain a separate contract.
+- Per-part attribution is intentionally capped to keep interaction responsive; aggregate propagation remains complete.
 - Expanding a composite can expose intermediate traffic, so dependency and FLOP semantics may remain equivalent while displayed intermediate-byte estimates change.
 - JSON graph support exists below the UI, but the main interactive authoring path is the DSL.
 

@@ -30,7 +30,7 @@ export class GraphError extends Error {
   }
 }
 
-export function resolveDim(s: Sym, params: Record<string, number>): number {
+function resolveDim(s: Sym, params: Record<string, number>): number {
   if (typeof s === "number") {
     if (!Number.isSafeInteger(s) || s < 0)
       throw new GraphError(`bad dimension ${s}`, "GRAPH_SHAPE");

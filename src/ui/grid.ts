@@ -90,9 +90,10 @@ function hiddenFraction(box: Box, shape: number[], cfg: ViewCfg, geom: GridGeom)
 }
 
 /** Never let a thin region vanish. Over-stating extent is the safe direction. */
+/** @internal Exported with `regionRects` for renderer invariant tests. */
 export const MIN_MARK_PX = 1;
 
-export type RegionRect = { x: number; y: number; w: number; h: number; alpha: number };
+type RegionRect = { x: number; y: number; w: number; h: number; alpha: number };
 
 /**
  * A region as exact rectangles in canvas pixels.
@@ -110,6 +111,7 @@ export type RegionRect = { x: number; y: number; w: number; h: number; alpha: nu
  *
  * Pure and DOM-free so the geometry can be tested directly.
  */
+/** @internal Pure geometry seam used by drawing and direct renderer tests. */
 export function regionRects(
   region: Region,
   shape: number[],

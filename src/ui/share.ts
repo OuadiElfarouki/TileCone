@@ -43,6 +43,7 @@ const isBox = (box: unknown): box is [number, number][] =>
 const DIRECTIONS: Direction[] = ["none", "backward", "forward", "both"];
 
 /** Hash payloads above this are impractical as URLs; callers fall back to JSON. */
+/** @internal Exported so the URL/raw-payload boundary is tested directly. */
 export const MAX_HASH_LENGTH = 8000;
 
 export function encodeWorkspace(state: WorkspaceLink): string {

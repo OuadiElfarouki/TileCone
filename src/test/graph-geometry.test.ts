@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   constrainRectMotion,
+  cubicPath,
   curvedEdge,
   EDGE_FAN_MAX_PX,
   fanSpacing,
   fannedFlowMark,
-  curvedEdgePath,
   flowMarkPath,
   FLOW_MARK_PX,
   type Cubic,
@@ -47,12 +47,12 @@ describe("solid graph-node motion", () => {
 
 describe("curved graph connectors", () => {
   it("uses a cubic path between facing horizontal edges", () => {
-    expect(curvedEdgePath(card, op)).toBe("M120,80 C152,80 148,75 180,75");
+    expect(cubicPath(curvedEdge(card, op))).toBe("M120,80 C152,80 148,75 180,75");
   });
 
   it("switches to vertical anchors for a mostly vertical relationship", () => {
     const below = { x: 35, y: 220, w: 60, h: 30 };
-    const path = curvedEdgePath(card, below);
+    const path = cubicPath(curvedEdge(card, below));
     expect(path).toMatch(/^M70,120 C70,/);
     expect(path).toMatch(/ 65,220$/);
   });

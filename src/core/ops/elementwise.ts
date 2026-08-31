@@ -2,7 +2,7 @@ import { z } from "zod";
 import { Box, fromBox, iv } from "../region";
 import { OpSpec, uniformDTypeOutputs } from "./types";
 
-export function broadcastShapes(shapes: number[][]): number[] {
+function broadcastShapes(shapes: number[][]): number[] {
   const rank = Math.max(...shapes.map((s) => s.length));
   const out: number[] = [];
   for (let i = 0; i < rank; i++) {

@@ -34,7 +34,7 @@ function validateSpatialActivationRank(op: "conv" | "pool", rank: number): void 
  * Exact single interval when dilation == 1 && stride <= kernel (windows union
  * contiguously); otherwise enumerate, falling back to an inexact bound (IDEA §3.1).
  */
-export function spatialBackward(
+function spatialBackward(
   o0: number,
   o1: number,
   s: number,
@@ -71,7 +71,7 @@ export function spatialBackward(
 }
 
 /** Image of input interval [i0,i1) on one spatial axis. */
-export function spatialForward(
+function spatialForward(
   i0: number,
   i1: number,
   s: number,

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { DTYPE_BYTES, Tensor } from "../core/graph";
+import { Tensor } from "../core/graph";
+import { DTYPE_BYTES } from "../core/dtypes";
 import { Box, fromBox, Region } from "../core/region";
 import { drawGrid, elementFromEvent, gridGeometry, Layer, snapSpan, tileSpan } from "./grid";
 import { aggregateColors, boxColor } from "./palette";
@@ -14,6 +15,7 @@ export function formatBytes(n: number): string {
 }
 
 /** Combine exactness across every cone currently visible on a tensor card. */
+/** @internal Pure rendering seam exported for deterministic canvas tests. */
 export function visibleApproximation(...regions: (Region | undefined)[]): {
   approximate: boolean;
   reasons: string[];
@@ -34,6 +36,7 @@ const PEER_FADE = 0.4;
 const EMPHASIS_LINE_PX = 2.7;
 
 /** Everything the canvas needs to decide what to paint, as plain data. */
+/** @internal Input contract for the directly tested layer builder. */
 export type LayerInputs = {
   tensorId: string;
   dark: boolean;
@@ -63,6 +66,7 @@ export type LayerInputs = {
  * cone is filled, which is outlined, what fades, what is hidden — can be
  * asserted directly instead of inferred from pixels.
  */
+/** @internal Pure rendering seam exported for deterministic canvas tests. */
 export function buildLayers({
   tensorId,
   dark,

@@ -7,7 +7,6 @@ import {
   graphScale,
   effectiveTileScaleIndex,
   effectiveTileScaleStops,
-  isTileClamped,
   MAX_ELEM_PX,
   MAX_GRAPH_W,
   MAX_GRAPH_H,
@@ -113,7 +112,6 @@ describe("the global detail scale", () => {
     // fit rule stops at the finest tile that still draws at MIN_CELL_PX.
     const finest = tileFor(256, 256, TILE_SCALE_MIN, pxFor(256, 256));
     expect(finest).toBeGreaterThan(1);
-    expect(isTileClamped(256, 256, TILE_SCALE_MIN, pxFor(256, 256))).toBe(true);
     const geom = gridGeometry([256, 256], cfg, TILE_SCALE_MIN, pxFor(256, 256));
     expect(Math.min(geom.cellW, geom.cellH)).toBeGreaterThanOrEqual(MIN_CELL_PX);
   });
@@ -125,11 +123,6 @@ describe("the global detail scale", () => {
         expect(Math.min(geom.cellW, geom.cellH), `${r}x${c} @${k}`).toBeGreaterThanOrEqual(MIN_CELL_PX);
       }
     }
-  });
-
-  it("reports when the fit rule overrode the request", () => {
-    expect(isTileClamped(4096, 4096, TILE_SCALE_MIN, pxFor(4096, 4096))).toBe(true); // too fine to draw
-    expect(isTileClamped(256, 256, 0, pxFor(256, 256))).toBe(false);
   });
 
   it("the auto default is ~5% of the smallest axis", () => {

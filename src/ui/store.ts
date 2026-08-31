@@ -23,7 +23,7 @@ export type ConeDirection = "backward" | "forward";
 export type PanelSide = "left" | "right";
 export type Theme = "light" | "dark";
 export type TensorOffset = { dx: number; dy: number };
-export type TensorOffsets = Record<string, TensorOffset>;
+type TensorOffsets = Record<string, TensorOffset>;
 /**
  * One drawn tile. The tensor travels with the part rather than sitting above
  * the list, so tiles on different tensors coexist: comparing what two tensors
@@ -70,7 +70,7 @@ export function anchorTensorId(selection: Selection, focusedBox: number | null):
   return parts[parts.length - 1].tensorId;
 }
 type WorkspaceSnapshot = { selection: Selection; tensorOffsets: TensorOffsets };
-export type WorkspaceRestore = {
+type WorkspaceRestore = {
   dsl: string;
   direction: Direction;
   tileScale: number;
@@ -96,7 +96,7 @@ export type ViewCfg = {
   projection: boolean; // union over hidden axes vs slice at slider
 };
 
-export function defaultViewCfg(shape: number[]): ViewCfg {
+function defaultViewCfg(shape: number[]): ViewCfg {
   return { sliders: shape.map(() => 0), projection: true };
 }
 

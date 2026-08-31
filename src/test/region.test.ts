@@ -5,7 +5,6 @@ import {
   boundingBox,
   box,
   canonicalize,
-  contains,
   count,
   empty,
   fromBox,
@@ -15,7 +14,6 @@ import {
   points,
   addPart,
   partsOverlap,
-  removePart,
   subtractFromParts,
   translateAllParts,
   translatePart,
@@ -133,13 +131,6 @@ describe("region algebra", () => {
     }
   });
 
-  it("contains agrees with membership", () => {
-    const r = union(fromBox(box([0, 2], [0, 2])), fromBox(box([3, 5], [3, 5])));
-    expect(contains(r, [1, 1])).toBe(true);
-    expect(contains(r, [2, 2])).toBe(false);
-    expect(contains(r, [4, 3])).toBe(true);
-  });
-
   it("box count cap produces bounding box marked inexact", () => {
     const boxes: Box[] = [];
     for (let i = 0; i < 600; i++) boxes.push(box([i * 2, i * 2 + 1]));
@@ -208,12 +199,6 @@ describe("selection parts (identity-stable, may overlap)", () => {
     const a = box([0, 2], [0, 2]);
     expect(addPart(P(a), box([4, 6], [4, 6]))).toHaveLength(2);
     expect(addPart(P(a), box([0, 2], [0, 2]))).toHaveLength(1);
-  });
-
-  it("removePart drops exactly one, preserving order of the rest", () => {
-    const parts = P(box([0, 1], [0, 1]), box([2, 3], [2, 3]), box([4, 5], [4, 5]));
-    const left = removePart(parts, 1);
-    expect(left).toEqual(P(box([0, 1], [0, 1]), box([4, 5], [4, 5])));
   });
 
   it("subtractFromParts can split a part into several", () => {

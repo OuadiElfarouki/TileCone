@@ -1,13 +1,11 @@
 /** Graph IR: types, validation, topological sort, symbolic shape resolution. */
 
 import { getOp } from "./ops/index";
-import { GraphError, resolveDim, resolveShape, Shape, Sym } from "./shapes";
+import { GraphError, resolveShape, Shape } from "./shapes";
 import { DTYPES, DType } from "./dtypes";
 import type { Cardinality } from "./ops/types";
 
-export { GraphError, resolveDim, resolveShape };
-export type { Shape, Sym };
-export { DTYPES, DTYPE_BYTES } from "./dtypes";
+export type { Shape, Sym } from "./shapes";
 export type { DType } from "./dtypes";
 
 export type Tensor = {
@@ -77,7 +75,7 @@ function validateCardinality(
  * a private copy makes compilation referentially transparent: callers may cache,
  * diff, or recompile their source graph without resolution leaking state into it.
  */
-export function cloneGraph(source: Graph): Graph {
+function cloneGraph(source: Graph): Graph {
   const cloneValue = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(cloneValue);
     if (value && typeof value === "object")

@@ -1,6 +1,5 @@
-export type Example = {
+type Example = {
   name: string;
-  description: string;
   dsl: string;
   /** initial selection: tensor name + box as [lo, hi] pairs */
   defaultSelection?: { tensor: string; box: [number, number][] };
@@ -9,7 +8,6 @@ export type Example = {
 export const EXAMPLES: Example[] = [
   {
     name: "Plain GEMM",
-    description: "C = A @ B. The canonical tile-dependency picture.",
     dsl: `params M=256 N=256 K=512
 
 input A [M, K] f16
@@ -21,8 +19,6 @@ C = matmul(A, B)
   },
   {
     name: "Multi-head attention",
-    description:
-      "Q/K/V projections, scores, softmax, value contraction, output projection. Select one output token row: the full K and V for that head light up — why attention is memory-bound at long context.",
     dsl: `params B=1 H=4 S=128 D=32 E=128
 
 input X  [B, S, E] f16
@@ -51,7 +47,6 @@ Out = einsum("bse,ef->bsf", Zm, Wo)
   },
   {
     name: "Conv2d 3x3 stride 2 (stacked)",
-    description: "Receptive-field cone, and how it dilates across two stacked conv layers.",
     dsl: `params N=1 C=3 F1=8 F2=16 H=64 W=64
 
 input X  [N, C, H, W] f16
@@ -65,8 +60,6 @@ Y2 = conv(Y1, W2, stride=[2, 2], pads=[[1, 1], [1, 1]], dilation=[1, 1], groups=
   },
   {
     name: "Reshape trap",
-    description:
-      "(4,4) -> (16,) -> (2,8). Select a flat range that straddles rows to see the union-of-boxes preimage. This example exists so a reshape regression is visible immediately.",
     dsl: `input X [4, 4] f32
 
 F = reshape(X, shape=[16])
@@ -76,7 +69,6 @@ Y = reshape(F, shape=[2, 8])
   },
   {
     name: "Layernorm + residual",
-    description: "A diamond: X feeds both the normalization and the residual add. Demonstrates tensor-level region merging.",
     dsl: `params S=64 E=64
 
 input X [S, E] f16
@@ -90,7 +82,6 @@ Y = add(H, X)
   },
   {
     name: "Cumsum",
-    description: "The triangular (non-symmetric) dependency cone. Try Upstream vs Downstream.",
     dsl: `params S=48
 
 input X [S] f32

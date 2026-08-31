@@ -3,7 +3,7 @@
  *
  * Representation choice (see IDEA.md §2.1): `canonicalize` makes the box set
  * DISJOINT via split-on-overlap, then merges adjacent boxes to a fixpoint.
- * `count` therefore sums volumes directly, and `contains` is a linear scan.
+ * `count` therefore sums box volumes directly after canonicalization.
  */
 
 export type Interval = { lo: number; hi: number }; // half-open: lo <= i < hi
@@ -37,7 +37,7 @@ export function fromBox(b: Box): Region {
   return canonicalize({ boxes: [b], exact: true, reasons: [] });
 }
 
-export function isEmptyBox(b: Box): boolean {
+function isEmptyBox(b: Box): boolean {
   return b.some((i) => i.hi <= i.lo);
 }
 
@@ -45,13 +45,13 @@ export function isEmpty(r: Region): boolean {
   return r.boxes.length === 0;
 }
 
-export function boxVolume(b: Box): number {
+function boxVolume(b: Box): number {
   let v = 1;
   for (const i of b) v *= Math.max(0, i.hi - i.lo);
   return v;
 }
 
-export function intersectBoxes(a: Box, b: Box): Box | null {
+function intersectBoxes(a: Box, b: Box): Box | null {
   const out: Box = [];
   for (let i = 0; i < a.length; i++) {
     const lo = Math.max(a[i].lo, b[i].lo);
@@ -226,21 +226,7 @@ export function count(r: Region): number {
   return n;
 }
 
-export function contains(r: Region, point: number[]): boolean {
-  for (const b of r.boxes) {
-    let inside = true;
-    for (let ax = 0; ax < b.length; ax++) {
-      if (point[ax] < b[ax].lo || point[ax] >= b[ax].hi) {
-        inside = false;
-        break;
-      }
-    }
-    if (inside) return true;
-  }
-  return false;
-}
-
-/** Enumerate all points of a region (test-sized regions only). */
+/** @internal Exhaustive test oracle; never call on application-sized regions. */
 export function* points(r: Region): Generator<number[]> {
   const c = canonicalize(r);
   for (const b of c.boxes) {
@@ -287,11 +273,6 @@ export function addPart(parts: Box[], b: Box): Box[] {
   const same = (x: Box, y: Box) =>
     x.length === y.length && x.every((I, i) => I.lo === y[i].lo && I.hi === y[i].hi);
   return parts.some((p) => same(p, b)) ? parts : [...parts, b];
-}
-
-/** Drop one part by index. */
-export function removePart(parts: Box[], index: number): Box[] {
-  return parts.filter((_, i) => i !== index);
 }
 
 /**

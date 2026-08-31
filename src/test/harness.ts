@@ -1,5 +1,6 @@
 import { expect } from "vitest";
-import { Graph, ResolvedGraph, resolveGraph, Tensor, DType } from "../core/graph";
+import { Graph, ResolvedGraph, resolveGraph, Tensor } from "../core/graph";
+import { DType } from "../core/dtypes";
 import { propagateBackward, propagateForward } from "../core/propagate";
 import { Region, fromBox, points } from "../core/region";
 import { computeOracle, regionToFlatSet, truthBackward, truthForward, unflatIndex, Oracle } from "./oracle";

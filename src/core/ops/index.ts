@@ -21,7 +21,7 @@ import { gatherOp } from "./gather";
 
 const registry = new Map<string, OpSpec>();
 
-export function registerOp(spec: OpSpec): void {
+function registerOp(spec: OpSpec): void {
   if (registry.has(spec.name)) throw new Error(`op "${spec.name}" already registered`);
   registry.set(spec.name, spec);
 }

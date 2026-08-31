@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { estimateInputReuse, sampledTileIndices } from "../core/reuse";
+import { estimateInputReuse } from "../core/reuse";
 import { box, fromBox } from "../core/region";
 import { compileDSL } from "../parse/compiler";
 
@@ -16,10 +16,13 @@ describe("reuse estimation", () => {
     ]);
   });
 
-  it("uses reproducible, non-repeating stratified samples", () => {
-    const first = sampledTileIndices(10_000, 48, 1234);
-    expect(sampledTileIndices(10_000, 48, 1234)).toEqual(first);
-    expect(new Set(first).size).toBe(48);
-    expect(sampledTileIndices(10_000, 48, 5678)).not.toEqual(first);
+  it("is reproducible when the estimate is sampled", () => {
+    const { resolved } = compileDSL("input X [100] f32\nY = identity(X)\n");
+    const root = { tensorId: "Y", region: fromBox(box([0, 2])) };
+    const first = estimateInputReuse(resolved, root, { sampleCap: 12, seed: 1234 });
+
+    expect(estimateInputReuse(resolved, root, { sampleCap: 12, seed: 1234 })).toEqual(first);
+    expect(first[0].probes).toBe(12);
+    expect(first[0].totalTiles).toBe(50);
   });
 });

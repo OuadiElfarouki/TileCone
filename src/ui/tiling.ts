@@ -1,8 +1,9 @@
 /**
  * Tile sizing. Tiles are the *rendering unit*: a card draws one cell per tile,
  * shaded by how much of the region that tile actually contains. So the tile size
- * sets both the analysis granularity and the display resolution, and there is one
- * global control for it rather than a per-card setting.
+ * sets the reading lattice and the unit that snapped gestures select. Analysis
+ * remains element-precise, and there is one global control rather than a
+ * per-card setting.
  *
  * Sizing rule, in order:
  *   1. auto  — 5% of the smallest non-degenerate visible axis, snapped to a power
@@ -23,6 +24,7 @@
  * "different granularity" where the truth is "same axis".
  */
 
+/** @internal Policy details are exported so tiling invariants can be tested directly. */
 export const AUTO_TILE_FRACTION = 0.05;
 export const TILE_SCALE_MIN = -5;
 export const TILE_SCALE_MAX = 5;
@@ -39,7 +41,7 @@ export const MIN_SIDE_PX = 14;
 /** Cap on pixels per element, so a tiny graph does not blow up to fill the view. */
 export const MAX_ELEM_PX = 15;
 /** Absolute floor on px per element, so a huge graph still draws something. */
-export const MIN_ELEM_PX = 0.18;
+const MIN_ELEM_PX = 0.18;
 /** A degenerate axis (extent 1) is drawn at a fixed size: it has no length to
  * scale, and letting it vote on the global scale would peg `minD` at 1. */
 export const DEGENERATE_SIDE_PX = 14;
@@ -130,7 +132,7 @@ export function cardPx(rows: number, cols: number, px: number): { w: number; h: 
 
 /** The tile actually used for this tensor, given the global detail setting. */
 export function tileFor(rows: number, cols: number, tileScale: number, px: number): number {
-  const base = pow2Round(AUTO_TILE_FRACTION * governingAxis(rows, cols));
+  const base = autoTile(rows, cols);
   let tile = clampTile(base * 2 ** tileScale, rows, cols);
   // fit: the card is a fixed size, so refuse tiles that would draw cells below
   // MIN_CELL_PX inside it. This is the minimum elementary tile.
@@ -139,25 +141,13 @@ export function tileFor(rows: number, cols: number, tileScale: number, px: numbe
   // has ~5 distinct tiles across the slider's 11 stops, so roughly half the
   // travel is inert. That predates the graph scale (measured: mean 4.69 distinct
   // stops before, 5.02 after) and is a property of snapping tiles to powers of
-  // two inside a bounded card. `isTileClamped` reports it but nothing in the UI
-  // consumes that yet; see docs/UI_REFACTOR.md §1.10 before wiring it to a
-  // warning, because a warning that is always on says nothing.
+  // two inside a bounded card. The effective-stop calculation removes adjacent
+  // requests that settle on the same graph-wide lattice.
   const { w, h } = cardPx(rows, cols, px);
   const maxCols = Math.max(1, Math.floor(w / MIN_CELL_PX));
   const maxRows = Math.max(1, Math.floor(h / MIN_CELL_PX));
   while (Math.ceil(cols / tile) > maxCols || Math.ceil(rows / tile) > maxRows) tile *= 2;
   return tile;
-}
-
-/** True when `tileFor` had to override the requested scale to keep cells legible. */
-export function isTileClamped(
-  rows: number,
-  cols: number,
-  tileScale: number,
-  px: number
-): boolean {
-  const base = pow2Round(AUTO_TILE_FRACTION * governingAxis(rows, cols));
-  return tileFor(rows, cols, tileScale, px) !== base * 2 ** tileScale;
 }
 
 function tileState(planes: { rows: number; cols: number }[], scale: number, px: number): number[] {

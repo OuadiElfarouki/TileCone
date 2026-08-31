@@ -58,8 +58,9 @@ src/
     expand.ts    composite ops -> primitive subgraphs
   parse/         DSL/JSON front ends + source-aware compiler facade
   ui/            React + canvas; store.ts holds all view state
-  examples/      the seven built-in demo graphs
+  examples/      built-in demo graphs
   test/          oracle + suites
+SYSTEM.md        current architecture and implementation invariants
 docs/IDEA.md     the full design spec, kept in sync with the code
 ```
 

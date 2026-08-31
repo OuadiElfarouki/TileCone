@@ -29,7 +29,7 @@ export type AggregateReadout = {
   tensors: TensorReadout[];
 };
 
-export function regionSliceExprs(name: string, r: Region): { numpy: string[]; torch: string[] } {
+function regionSliceExprs(name: string, r: Region): { numpy: string[]; torch: string[] } {
   const mk = (b: { lo: number; hi: number }[]) =>
     `${name}[` + b.map((I) => (I.hi - I.lo === 1 ? `${I.lo}` : `${I.lo}:${I.hi}`)).join(", ") + "]";
   const lines = r.boxes.map(mk);

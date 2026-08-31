@@ -6,6 +6,7 @@ export type Rect = Point & { w: number; h: number };
 export const NODE_GAP = 18;
 export const WORLD_MARGIN = 20;
 
+/** @internal Pure collision predicate exported for boundary invariant tests. */
 export function rectsOverlap(a: Rect, b: Rect, gap = NODE_GAP): boolean {
   return (
     a.x < b.x + b.w + gap &&
@@ -173,10 +174,6 @@ export function curvedEdge(from: Rect, to: Rect, lateral = 0): Cubic {
 
 export function cubicPath([p0, p1, p2, p3]: Cubic): string {
   return `M${n(p0.x)},${n(p0.y)} C${n(p1.x)},${n(p1.y)} ${n(p2.x)},${n(p2.y)} ${n(p3.x)},${n(p3.y)}`;
-}
-
-export function curvedEdgePath(from: Rect, to: Rect): string {
-  return cubicPath(curvedEdge(from, to));
 }
 
 /** Half-width of the flow chevron, in world px. */

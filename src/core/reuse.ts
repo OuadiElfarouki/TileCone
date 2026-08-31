@@ -24,7 +24,7 @@ function mulberry32(seed: number): () => number {
 }
 
 /** Deterministic, non-repeating picks with one sample from each equal stratum. */
-export function sampledTileIndices(total: number, count: number, seed: number): number[] {
+function sampledTileIndices(total: number, count: number, seed: number): number[] {
   if (!Number.isSafeInteger(total) || total < 1)
     throw new Error("reuse tile count must be a positive safe integer");
   const n = Math.max(1, Math.min(total, Math.floor(count)));

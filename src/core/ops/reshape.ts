@@ -3,7 +3,7 @@ import { Box, Interval, Region, boundingBox, canonicalize, iv, MAX_BOXES } from 
 import { resolveShape } from "../shapes";
 import { DependencyNoteDraft, NoteCtx, OpSpec, uniformDTypeOutputs } from "./types";
 
-export const MAX_RESHAPE_RUNS = 4096;
+const MAX_RESHAPE_RUNS = 4096;
 
 /**
  * Reshape provenance, implemented per IDEA.md §3.2 but unified:
@@ -24,6 +24,7 @@ export const MAX_RESHAPE_RUNS = 4096;
 
 type AxisGroup = { from: number[]; to: number[] }; // extents on each side, equal products
 
+/** @internal Exported for exhaustive tests of reshape's axis grouping. */
 export function groupAxes(fromShape: number[], toShape: number[]): AxisGroup[] {
   const groups: AxisGroup[] = [];
   let i = 0,
@@ -68,7 +69,7 @@ function strides(extents: number[]): number[] {
   return s;
 }
 
-/** Decompose a contiguous linear range [a, b) into row-major boxes over `ext`. */
+/** @internal Decompose a linear range into boxes; exported for brute-force tests. */
 export function linearRangeToBoxes(a: number, b: number, ext: number[]): Box[] {
   if (a >= b) return [];
   if (ext.length === 0) return [[]];
@@ -121,7 +122,7 @@ function boxToRuns(box: Box, ext: number[], budget: number): [number, number][] 
   return runs;
 }
 
-/** Map a box through a reshape: from `fromShape` coordinates into `toShape` coordinates. */
+/** @internal Map a box through reshape; exported for round-trip and brute-force tests. */
 export function reshapeMapBox(b: Box, fromShape: number[], toShape: number[]): Region {
   const groups = groupAxes(fromShape, toShape);
   // Per group: a small Region over the group's `to` axes.

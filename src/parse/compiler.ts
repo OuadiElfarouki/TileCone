@@ -1,5 +1,6 @@
 import { SymbolicExecutor } from "../core/executor";
-import { Graph, GraphError, ResolvedGraph, resolveGraph } from "../core/graph";
+import { Graph, ResolvedGraph, resolveGraph } from "../core/graph";
+import { GraphError } from "../core/shapes";
 import { DSLError, parseDSLWithSource } from "./dsl";
 import { DSLSourceMap, SourceSpan } from "./source";
 
@@ -35,7 +36,7 @@ export class CompilationError extends Error {
   }
 }
 
-export function formatDiagnostic(diagnostic: CompilerDiagnostic): string {
+function formatDiagnostic(diagnostic: CompilerDiagnostic): string {
   return `line ${diagnostic.span.start.line}: ${diagnostic.message}`;
 }
 

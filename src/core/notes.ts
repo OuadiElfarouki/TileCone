@@ -14,6 +14,7 @@ export type DependencyNote = {
 };
 
 /** Above this, the panel stops being a summary and becomes a wall. */
+/** @internal Exported so note-cap behavior is tested at its exact boundary. */
 export const MAX_NOTES = 4;
 
 /**
