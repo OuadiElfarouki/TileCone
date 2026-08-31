@@ -109,7 +109,15 @@ Use `tryCompileDSL` when diagnostics should be returned as data instead of throw
   truth is "these exact elements". One global detail slider sets the tile for every tensor (default ~5% of
   the smallest axis, snapped to a power of two). Card size depends only on the tensor's shape and
   the graph's scale, never on the tile, so changing detail re-lattices cards in place without
-  resizing them.
+  resizing them. **None always means 1×1**: one logical tile per element for drawing, hover,
+  starter tiles, and keyboard movement. On a large tensor those boundaries may be too dense to
+  display individually, but the semantics are never silently coarsened.
+- **Typed ranges are exact and authoritative.** Editing a tile's range never snaps or rounds it,
+  even while snap is enabled. Snap governs future canvas gestures and keyboard movement only:
+  arrows move by the current grid tile while snap is on and by one element while it is off.
+  Toggling snap or changing grid detail never rewrites an existing range; a grid change only
+  changes the next snapped stride. At a tensor edge movement clamps the whole range without
+  shrinking it.
 - **One px-per-element for the whole graph.** The scale is a property of the graph, not of each
   card, so a dimension two tensors share is drawn at the same physical length in both: in
   `C[M,N] = A[M,K] @ B[K,N]`, `A`'s width and `B`'s height are equal because both are `K`. Sizing

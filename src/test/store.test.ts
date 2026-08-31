@@ -7,8 +7,8 @@ import {
   MAX_PER_BOX_PROPS, PANEL_COLLAPSE_AT, PANEL_MAX, PANEL_MIN,
   planesOf, startingTiles, useStore, viewAxes,
 } from "../ui/store";
-import { cardPx, graphScale, MAX_ELEM_PX, planeExtents } from "../ui/tiling";
-import { nudgeUnit, tileOf } from "../ui/grid";
+import { cardPx, graphScale, MAX_ELEM_PX, planeExtents, TILE_SCALE_NONE } from "../ui/tiling";
+import { nudgeUnit, snapSpan, tileOf } from "../ui/grid";
 
 const S = () => useStore.getState();
 const sel = () => S().selection;
@@ -301,6 +301,111 @@ describe("snapping is a gesture setting, not an analysis one", () => {
     expect(regionOf("A")!.boxes).toEqual([box([3, 7], [0, 512])]);
     expect(regionOf("B")!.boxes).toEqual([box([0, 512], [1, 2])]);
   });
+
+  it("a text edit remains exact with snap on, before and after grid changes", () => {
+    S().setSelection("C", fromBox(box([64, 128], [0, 64])), "replace");
+    const typed = box([65, 129], [3, 67]);
+    S().setSnapToGrid(true);
+    S().replaceBox(0, typed);
+    expect(selBoxes()).toEqual([typed]);
+
+    S().setTileScale(1);
+    expect(selBoxes()).toEqual([typed]);
+    S().setSnapToGrid(false);
+    S().setTileScale(TILE_SCALE_NONE);
+    S().setSnapToGrid(true);
+    expect(selBoxes()).toEqual([typed]);
+  });
+
+  it("changing snap or detail never creates an undo entry", () => {
+    S().setSelection("C", fromBox(box([65, 129], [3, 67])), "replace");
+    const depth = S().workspaceHistory.length;
+    S().setSnapToGrid(false);
+    S().setTileScale(2);
+    S().setSnapToGrid(true);
+    S().setTileScale(TILE_SCALE_NONE);
+    expect(S().workspaceHistory).toHaveLength(depth);
+    expect(selBoxes()).toEqual([box([65, 129], [3, 67])]);
+  });
+
+  it("a snapped nudge uses the current grid but preserves a typed extent and offset", () => {
+    const typed = box([65, 129], [3, 67]);
+    S().setSelection("C", fromBox(typed), "replace");
+    S().setTileScale(2);
+    S().setSnapToGrid(true);
+    const shape = S().resolved!.tensors.C.resolved!;
+    const step = nudgeUnit(shape, S().tileScale, S().graphPx, S().snapToGrid);
+    expect(step).toBeGreaterThan(1);
+
+    S().moveSelection(0, step);
+    const moved = selBoxes()[0];
+    expect(moved[0].hi - moved[0].lo).toBe(64);
+    expect(moved[0].lo).toBe(65 + step);
+    expect(moved[0].lo % step).toBe(65 % step);
+    expect(moved[1]).toEqual(typed[1]);
+  });
+
+  it("changing detail changes only the next snapped stride", () => {
+    const typed = box([65, 129], [3, 67]);
+    S().setSelection("C", fromBox(typed), "replace");
+    S().setSnapToGrid(true);
+    const shape = S().resolved!.tensors.C.resolved!;
+
+    S().setTileScale(TILE_SCALE_NONE);
+    expect(nudgeUnit(shape, S().tileScale, S().graphPx, true)).toBe(1);
+    expect(selBoxes()).toEqual([typed]);
+
+    S().setTileScale(1);
+    const coarse = nudgeUnit(shape, S().tileScale, S().graphPx, true);
+    expect(coarse).toBeGreaterThan(1);
+    expect(selBoxes()).toEqual([typed]);
+    S().moveSelection(0, coarse);
+    expect(selBoxes()[0][0]).toEqual({ lo: 65 + coarse, hi: 129 + coarse });
+  });
+
+  it("a coarse nudge clamps a typed range flush to an edge without resizing it", () => {
+    const typed = box([189, 253], [3, 67]);
+    S().setSelection("C", fromBox(typed), "replace");
+    S().setTileScale(3);
+    S().setSnapToGrid(true);
+    const shape = S().resolved!.tensors.C.resolved!;
+    const coarse = nudgeUnit(shape, S().tileScale, S().graphPx, true);
+    S().moveSelection(0, coarse);
+    expect(selBoxes()[0][0]).toEqual({ lo: 192, hi: 256 });
+  });
+
+  it("snap off always nudges by one even after changing grid detail", () => {
+    const shape = S().resolved!.tensors.C.resolved!;
+    S().setSnapToGrid(false);
+    for (const scale of [3, TILE_SCALE_NONE, 0]) {
+      S().setTileScale(scale);
+      expect(nudgeUnit(shape, S().tileScale, S().graphPx, S().snapToGrid)).toBe(1);
+    }
+  });
+
+  it("none makes snapped gestures and nudges element-sized", () => {
+    const shape = S().resolved!.tensors.C.resolved!;
+    S().setTileScale(TILE_SCALE_NONE);
+    S().setSnapToGrid(true);
+    const tile = tileOf(shape, S().tileScale, S().graphPx);
+    expect(tile).toBe(1);
+    expect(nudgeUnit(shape, S().tileScale, S().graphPx, true)).toBe(1);
+    expect(snapSpan(7, 7, tile, shape[0])).toEqual([7, 8]);
+  });
+
+  it("undo reverts movement without reverting snap or grid settings", () => {
+    const typed = box([65, 129], [3, 67]);
+    S().setSelection("C", fromBox(typed), "replace");
+    S().setTileScale(TILE_SCALE_NONE);
+    S().setSnapToGrid(true);
+    S().moveSelection(0, 1);
+    expect(selBoxes()[0][0]).toEqual({ lo: 66, hi: 130 });
+
+    S().undoWorkspace();
+    expect(selBoxes()).toEqual([typed]);
+    expect(S().tileScale).toBe(TILE_SCALE_NONE);
+    expect(S().snapToGrid).toBe(true);
+  });
 });
 
 describe("side panel geometry", () => {
@@ -434,6 +539,15 @@ describe("selection editing through the store", () => {
     expect(regionOf("A")!.boxes).toEqual([box([16, 48], [0, 512])]);
     expect(regionOf("B")!.boxes).toEqual([box([0, 512], [32, 96])]);
     expect(S().workspaceHistory.length).toBe(depth + 1);
+  });
+
+  it("replaceBox preserves the edited part's pin", () => {
+    S().setSelection("C", fromBox(box([160, 192], [96, 128])));
+    S().togglePinBox(1);
+    S().replaceBox(1, box([161, 193], [97, 129]));
+    expect(S().pinnedBox).toBe(1);
+    expect(S().focusedBox).toBe(1);
+    expect(selBoxes()[1]).toEqual(box([161, 193], [97, 129]));
   });
 
   it("moveSelection clamps at the tensor edge without shrinking", () => {
@@ -731,6 +845,41 @@ describe("cone visibility is independent of focus", () => {
     expect(S().focusedBox).toBeNull();
   });
 
+  it("keeps a text-edited hidden tile excluded until it is re-enabled", () => {
+    S().toggleBoxHidden(1);
+    const before = enabledPropResult(
+      S().backwardRes,
+      S().perBox,
+      S().hiddenBoxes,
+      null,
+      "backward"
+    )!;
+    const beforeA = before.tensors.get("A")!.region;
+
+    const edited = box([96, 160], [80, 144]);
+    S().replaceBox(1, edited);
+    expect(S().hiddenBoxes).toEqual(new Set([1]));
+    expect(selBoxes()[1]).toEqual(edited);
+    const whileHidden = enabledPropResult(
+      S().backwardRes,
+      S().perBox,
+      S().hiddenBoxes,
+      null,
+      "backward"
+    )!;
+    expect(whileHidden.tensors.get("A")!.region).toEqual(beforeA);
+
+    S().toggleBoxHidden(1);
+    const enabled = enabledPropResult(
+      S().backwardRes,
+      S().perBox,
+      S().hiddenBoxes,
+      null,
+      "backward"
+    )!;
+    expect(enabled.tensors.get("A")!.region).not.toEqual(beforeA);
+  });
+
   it("toggles independently of focus, in both directions", () => {
     S().toggleBoxHidden(0);
     S().hoverBox(2);
@@ -1026,6 +1175,15 @@ describe("offered starting tiles", () => {
       expect(interval.hi).toBe(
         axis === rowAxis || axis === colAxis ? Math.min(tile, shape[axis]) : 1
       );
+    });
+  });
+
+  it("offers a single element when detail is none", () => {
+    S().setTileScale(TILE_SCALE_NONE);
+    const [start] = startingTiles(S().resolved!, S().tileScale, S().graphPx);
+    start.box.forEach((interval) => {
+      expect(interval.lo).toBe(0);
+      expect(interval.hi).toBe(1);
     });
   });
 

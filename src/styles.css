@@ -587,5 +587,4 @@ textarea.source.error-state { border-color: var(--err); }
   font-family: var(--mono);
   font-size: var(--t-small); color: var(--muted); font-variant-numeric: tabular-nums;
 }
-.tile-settled.overridden { color: var(--warn-ink); }
 .tile-grid-head .snap-btn { margin-left: auto; align-self: center; }

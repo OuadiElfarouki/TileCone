@@ -74,19 +74,16 @@ function SetupStrip(): React.ReactElement {
   }, [resolved, graphPx, tileScale]);
   const requested = detail.stops[detail.index];
   const { min, max } = detail.settled;
-  // "none" that could not be honoured is worth saying out loud; every other
-  // request either lands or is a plain power-of-two shift of the auto base.
-  const overridden = requested === TILE_SCALE_NONE && min > 1;
 
   return (
     <section className="inspector-setup">
       <div className="setup-row">
         <span className="setup-kicker">grid</span>
         <span
-          className={`tile-settled${overridden ? " overridden" : ""}`}
+          className="tile-settled"
           title={
-            overridden
-              ? `one cell per element does not fit this graph's largest tensor, so the finest drawable lattice is ${settledLabel(min, max)}`
+            requested === TILE_SCALE_NONE
+              ? "one logical tile per element; boundaries are omitted where they are too dense to draw"
               : min === max
                 ? "the tile every tensor settles on"
                 : "tiles differ per tensor: the fit rule coarsens the largest ones"

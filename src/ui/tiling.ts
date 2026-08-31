@@ -11,9 +11,10 @@
  *   2. scale — the global slider shifts that by powers of two (2^tileScale).
  *   3. clamp — to [1, largest power of two <= minAxis/2], so the coarsest setting
  *              still leaves at least a 2x2 tile grid on the smallest axis.
- *   4. fit   — raise the tile until the grid fits the card at >= MIN_CELL_PX per
- *              cell. This is the "minimum elementary tile" that keeps very large
- *              tensors crisp instead of collapsing them into sub-pixel mush.
+ *   4. fit   — for ordinary scale values, raise the tile until the grid fits the
+ *              card at >= MIN_CELL_PX per cell. None deliberately bypasses this:
+ *              its logical tile is 1 even when individual boundaries are too
+ *              dense to render.
  *
  * Card size is a separate axis from tile size, and it is a property of the
  * *graph*, not of the tensor: `graphScale` picks one px-per-element for every
@@ -28,6 +29,8 @@
 export const AUTO_TILE_FRACTION = 0.05;
 export const TILE_SCALE_MIN = -5;
 export const TILE_SCALE_MAX = 5;
+/** The sentinel meaning no aggregation: one element per logical tile. */
+export const TILE_SCALE_NONE = TILE_SCALE_MIN;
 
 /** Rendering budget. */
 export const MIN_CELL_PX = 3;
@@ -132,6 +135,10 @@ export function cardPx(rows: number, cols: number, px: number): { w: number; h: 
 
 /** The tile actually used for this tensor, given the global detail setting. */
 export function tileFor(rows: number, cols: number, tileScale: number, px: number): number {
+  // None is semantic, not a best-effort rendering request. A large tensor may
+  // be too dense to draw every boundary, but gestures, hover readouts, starter
+  // tiles and keyboard nudges must still operate one element at a time.
+  if (tileScale === TILE_SCALE_NONE) return 1;
   const base = autoTile(rows, cols);
   let tile = clampTile(base * 2 ** tileScale, rows, cols);
   // fit: the card is a fixed size, so refuse tiles that would draw cells below
@@ -159,7 +166,8 @@ function sameTileState(a: number[], b: number[]): boolean {
 }
 
 /**
- * Slider stops that produce distinct graph-wide tile lattices.
+ * Slider stops that produce distinct graph-wide tile lattices, plus the
+ * semantically distinct None sentinel.
  *
  * `tileScale` remains the serialized power-of-two shift; this only removes UI
  * positions whose complete per-tensor tile vector is identical to a neighbour.
@@ -184,16 +192,11 @@ export function effectiveTileScaleStops(
   runs.push({ lo: runLo, hi: TILE_SCALE_MAX });
   const stops = runs.map(({ lo, hi }) => Math.max(lo, Math.min(hi, 0)));
 
-  // "none" — one cell per element — is always offered as the leftmost stop,
-  // because asking for no tiling is a meaningful intent even where the fit rule
-  // cannot honour it. On a graph whose widest tensor cannot draw a cell per
-  // element it settles to the same lattice as its neighbour; the settled size
-  // shown beside the slider is what makes that visible rather than silent.
+  // "none" — one logical tile per element — is always the leftmost stop and is
+  // distinct from fitted scale values even when its boundaries are too dense
+  // to draw individually.
   return stops[0] === TILE_SCALE_MIN ? stops : [TILE_SCALE_MIN, ...stops];
 }
-
-/** The request meaning "no tiling": one drawn cell per element, where it fits. */
-export const TILE_SCALE_NONE = TILE_SCALE_MIN;
 
 /**
  * The tile every tensor actually settles on at this scale. A single number when
@@ -218,6 +221,10 @@ export function effectiveTileScaleIndex(
   stops: number[],
   scale: number
 ): number {
+  // Intent wins over coincident geometry. On a small graph both None and Auto
+  // can be 1×1, but the control must still show the setting the user chose.
+  const exact = stops.indexOf(scale);
+  if (exact >= 0) return exact;
   const wanted = tileState(planes, scale, px);
   const found = stops.findIndex((stop) => sameTileState(tileState(planes, stop, px), wanted));
   if (found >= 0) return found;

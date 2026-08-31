@@ -107,18 +107,19 @@ describe("the global detail scale", () => {
     expect(tileFor(32, 90, TILE_SCALE_MIN, pxFor(32, 90))).toBe(1);
   });
 
-  it("larger tensors bottom out at a minimum elementary tile instead", () => {
-    // 256 columns at one element per cell would need a card ~768px wide, so the
-    // fit rule stops at the finest tile that still draws at MIN_CELL_PX.
+  it("none is one element per tile even when boundaries are sub-pixel", () => {
     const finest = tileFor(256, 256, TILE_SCALE_MIN, pxFor(256, 256));
-    expect(finest).toBeGreaterThan(1);
+    expect(finest).toBe(1);
     const geom = gridGeometry([256, 256], cfg, TILE_SCALE_MIN, pxFor(256, 256));
-    expect(Math.min(geom.cellW, geom.cellH)).toBeGreaterThanOrEqual(MIN_CELL_PX);
+    expect(geom.tile).toBe(1);
+    expect(geom.tileRows).toBe(256);
+    expect(geom.tileCols).toBe(256);
+    expect(Math.min(geom.cellW, geom.cellH)).toBeLessThan(MIN_CELL_PX);
   });
 
-  it("never renders cells below the minimum size, however fine the request", () => {
+  it("normal scale values never render cells below the minimum size", () => {
     for (const [r, c] of [[4096, 4096], [1, 100000], [2048, 512]]) {
-      for (let k = TILE_SCALE_MIN; k <= TILE_SCALE_MAX; k++) {
+      for (let k = TILE_SCALE_MIN + 1; k <= TILE_SCALE_MAX; k++) {
         const geom = gridGeometry([r, c], cfg, k, pxFor(r, c));
         expect(Math.min(geom.cellW, geom.cellH), `${r}x${c} @${k}`).toBeGreaterThanOrEqual(MIN_CELL_PX);
       }
@@ -150,16 +151,13 @@ describe("the global detail scale", () => {
     for (let i = 2; i < stops.length; i++) expect(state(stops[i])).not.toEqual(state(stops[i - 1]));
   });
 
-  it("keeps the no-tiling request even where the fit rule cannot honour it", () => {
-    // These planes are 512 wide inside a ~300px card, so one cell per element
-    // is not drawable and "none" lands on the same lattice as its neighbour.
-    // The stop still exists, and `anyTileClamped` is what lets the UI say so
-    // instead of leaving the slider silently inert there.
+  it("keeps no tiling semantically distinct from fitted scales", () => {
     const planes = [{ rows: 256, cols: 512 }, { rows: 512, cols: 256 }];
     const px = graphScale(planes);
     expect(effectiveTileScaleStops(planes, px)[0]).toBe(TILE_SCALE_MIN);
-    // the settled size is the honest signal: asking for none still reads > 1
-    expect(settledTiles(planes, TILE_SCALE_MIN, px).min).toBeGreaterThan(1);
+    expect(settledTiles(planes, TILE_SCALE_MIN, px)).toEqual({ min: 1, max: 1 });
+    expect(planes.map(({ rows, cols }) => tileFor(rows, cols, TILE_SCALE_MIN + 1, px)))
+      .not.toEqual([1, 1]);
   });
 
   it("settles at one cell per element where that does fit", () => {
@@ -181,6 +179,17 @@ describe("the global detail scale", () => {
     const stops = effectiveTileScaleStops(planes, px);
     expect(stops[effectiveTileScaleIndex(planes, px, stops, TILE_SCALE_MIN)]).toBe(TILE_SCALE_MIN);
     expect(stops[effectiveTileScaleIndex(planes, px, stops, TILE_SCALE_MAX)]).toBe(3);
+  });
+
+  it("does not confuse auto with none when both happen to be 1x1", () => {
+    const planes = [{ rows: 8, cols: 8 }];
+    const px = graphScale(planes);
+    const stops = effectiveTileScaleStops(planes, px);
+    expect(stops).toContain(TILE_SCALE_MIN);
+    expect(stops).toContain(0);
+    expect(stops[effectiveTileScaleIndex(planes, px, stops, TILE_SCALE_MIN)])
+      .toBe(TILE_SCALE_MIN);
+    expect(stops[effectiveTileScaleIndex(planes, px, stops, 0)]).toBe(0);
   });
 });
 
