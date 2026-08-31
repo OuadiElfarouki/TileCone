@@ -188,7 +188,7 @@ export function SidePanel(): React.ReactElement {
     <nav className="side-panel">
       <div className="side-panel-scroll">
         <header className="source-heading">
-          <h2>Graph source</h2>
+          <h2 className="panel-title">Graph source</h2>
           <p>
             Declare dimensions in <code>params</code>, tensors as <code>input</code>, <code>weight</code>,
             or <code>const</code>. Shapes are inferred when the graph is rendered.
@@ -229,7 +229,7 @@ export function SidePanel(): React.ReactElement {
         </div>
 
         <div className="side-divider" />
-        <h3 className="operations-heading">Operations</h3>
+        <h3 className="panel-title operations-heading">Operations</h3>
         <Operations />
       </div>
     </nav>

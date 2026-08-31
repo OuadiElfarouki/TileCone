@@ -14,15 +14,25 @@
  * of the surface. A surface move needs only the contrast check re-run; a *hue*
  * move needs the whole validator.
  *
- * The light hues are deeper than their dark counterparts rather than mirroring
- * them. At the original values orange and aqua sat at 2.91:1 and 2.56:1 against
- * the light surface — under the 3:1 floor. That was a relief condition, not a
+ * Aqua is deeper in light than in dark rather than mirroring it. At the
+ * original values orange and aqua sat at 2.91:1 and 2.56:1 against the light
+ * surface — under the 3:1 floor. That was a relief condition, not a
  * pass, and it could not be discharged the way relief usually is: a cone drawn
  * on a card carries no label, so out there hue *is* the identifier, and the
  * inspector's swatch-plus-index sits on a different surface entirely. Deepening
  * them (scaling linear RGB, which holds chromaticity exactly, so the hue is
  * unchanged) clears the floor and costs nothing elsewhere — the two palettes are
  * independent, and light's CVD separation improved 9.2 -> 9.4 in the process.
+ *
+ * Orange needs no such split: #e2603a clears the floor on both surfaces
+ * (light 3.20:1, dark 4.70:1) and so is the same value in each theme. It
+ * replaced a light #e56532 / dark #d95926 pair. The swap does not touch the
+ * binding constraint — the all-pairs minimum is blue-vs-aqua in both themes,
+ * and orange sits far above it — but it also moves orange further from the
+ * dark amber chrome (normal ΔE 22.4 -> 22.8) while raising both surface
+ * contrasts. The CVD figures recorded above predate this change and were not
+ * regenerated: they come from the dataviz validator, and re-running them needs
+ * that script. Nothing measured without it regressed.
  *
  * A 4th hue fails in dark mode (violet↔blue ΔE 1.9), so boxes past the third
  * render in a neutral instead of an invented hue. Identity is never carried by
@@ -34,13 +44,13 @@ export type RGB = [number, number, number];
 
 const CATEGORICAL_LIGHT: RGB[] = [
   [42, 120, 214], // blue   #2a78d6  4.01:1
-  [229, 101, 50], // orange #e56532  3.06:1
+  [226, 96, 58], // orange #e2603a  3.20:1
   [24, 159, 111], // aqua   #189f6f  3.06:1
 ];
 
 const CATEGORICAL_DARK: RGB[] = [
   [57, 135, 229], // blue   #3987e5
-  [217, 89, 38], // orange #d95926
+  [226, 96, 58], // orange #e2603a
   [25, 158, 112], // aqua   #199e70
 ];
 

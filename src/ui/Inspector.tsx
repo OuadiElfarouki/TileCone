@@ -495,7 +495,7 @@ export function Inspector(): React.ReactElement {
     <aside className="inspector">
       <TileGridControl />
       <div className="tiles-heading">
-        <h2>
+        <h2 className="panel-title">
           Tiles{" "}
           <small title={merged ? `per-box cones stop at ${MAX_PER_BOX_PROPS} selections; above that the cone is correct but merged` : undefined}>
             {selBoxes ? `${selBoxes} selected${merged ? " · cones merged" : ""}` : "none selected"}

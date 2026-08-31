@@ -4,26 +4,31 @@
   --ink: #1b1e24;
   --muted: #6b7280;
   --line: #d9dce1;
-  /* Chrome is magenta in light mode, amber in dark, and neither is a taste
-     call: hue carries selection-box identity on the cards, so chrome must not
-     land in a data hue. The previous #2563eb sat at normal ΔE 6.5 / CVD ΔE 4.8
-     from categorical blue #2a78d6 — a hot edge and a box-1 cone read the same.
-     Amber cannot be reused here: against the deepened light orange #e56532 every
-     amber step falls under the normal-vision floor (#a16207 → 13.2,
-     #b45309 → 10.8). Magenta is the one hue clearing all four checks against the
-     light trio (CVD ΔE 8.6, normal ΔE 17.9, contrast ≥ 3:1), and it carries
-     white at 6.04:1 for `button.on`. */
+  /* Chrome is magenta in light and amber in dark. That split is not a taste
+     call, and since active controls became frames instead of fills it is no
+     longer mainly a ΔE argument: the accent is now *foreground* everywhere it
+     appears — border, text, stroke — so it has to carry foreground contrast.
+     Amber does not, on this ground. #e39c3d is 2.31:1 on the panel and 2.16:1
+     on the page: a failure for text and for a UI boundary alike. Magenta is
+     6.04:1 on both. Dropping the fill did not free amber for light mode; it
+     made amber's lightness a harder constraint, not a softer one.
+     The older ΔE reason still stands underneath: hue carries selection-box
+     identity on the cards, so chrome must not land in a data hue — #2563eb sat
+     at normal ΔE 6.5 from categorical blue #2a78d6, and a hot edge read as a
+     box-1 cone. */
   --accent: #be185d;
-  --accent-ink: #ffffff;
   --card: #ffffff;
   --card-line: #c9cdd4;
   --hot: #be185d;
-  --warn-bg: #fef3c7;
   --warn-ink: #92400e;
-  --accent-hi: #9d174d;
-  --accent-ring: rgba(190,24,93,0.32);
   --err: #dc2626;
-  --ok: #047857;
+  /* There is deliberately no "ok" green. Green is a data hue, and a green
+     chrome token failed the same check that rejected an amber accent: #047857
+     sits at normal ΔE 14.1 from categorical aqua #189f6f (floor 15) and CVD
+     ΔE 7.7 from blue, and the dark counterpart #34d399 was ΔE 14.7 from its
+     aqua. `.badge.input` is painted on the card surface among cones, so it
+     cannot borrow a near-categorical hue. Healthy states are quiet (--muted);
+     only failure is loud (--err). */
   /* Floating surfaces need a shadow the ground can actually take: this one is
      read against white, and the dark theme overrides it rather than reusing it. */
   --shadow-pop: 0 4px 14px rgba(16, 20, 28, 0.14);
@@ -57,23 +62,15 @@
     /* Chrome is amber, not blue, and that is a correctness constraint rather
        than a taste call: hue carries selection-box identity on the cards, so
        chrome must not land in a data hue. The previous #5b8def sat at normal
-       ΔE 3.9 / CVD ΔE 2.6 from categorical blue #3987e5 — a hot edge and a
-       box-1 cone were the same color. Amber clears both floors against all
-       three data hues (worst: normal ΔE 15.2, CVD ΔE 9.0, vs orange) and
-       matches the amber already used for selected cards and outline rows. */
+       ΔE 3.9 from categorical blue #3987e5 — a hot edge and a box-1 cone were
+       the same color. Amber is normal ΔE 22.8 from the orange, and as
+       foreground it reads 7.15:1 on the panel and 7.77:1 on the page. */
     --accent: #e39c3d;
-    /* Amber is light enough that white text is only 2.31:1. Dark ink clears
-       7.77:1 and keeps active controls readable at normal UI text sizes. */
-    --accent-ink: #15171b;
-    --accent-hi: #f0ad50;
-    --accent-ring: rgba(227,156,61,0.35);
     --card: #1c1f24; /* == CARD_SURFACE.dark in ui/palette.ts */
     --card-line: #303540;
     --hot: #e39c3d;
-    --warn-bg: #3d2d19;
     --warn-ink: #f6c073;
     --err: #ef7a54;
-    --ok: #34d399;
     --shadow-pop: 0 6px 18px rgba(0, 0, 0, 0.45);
 }
 
@@ -97,8 +94,20 @@ button, select, input {
   padding: 2px 8px;
 }
 button { cursor: pointer; }
-button:hover { border-color: var(--accent); }
-button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+/* Hover is neutral so that accent means *active* and nothing else. When hover
+   also went accent, a hovered chip and a live one were the same mark. */
+button:hover { border-color: var(--muted); }
+/* Active is a frame, not a fill. Everything else in this UI is drawn --
+   hairlines, outlined swatches, stroke-weight cone edges, a 2px outline on the
+   selected card -- and filled chrome slabs were the only place that broke, in
+   the one color reserved for meaning. Four of them out-shouted the cones. The
+   inset shadow thickens the frame to 2px without reflowing the button. */
+button.on {
+  background: transparent;
+  color: var(--accent);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
 button.mini { padding: 0 6px; font-size: var(--t-small); }
 .muted { color: var(--muted); }
 
@@ -115,7 +124,10 @@ button.mini { padding: 0 6px; font-size: var(--t-small); }
   font: 600 var(--t-brand)/1 var(--mono);
   letter-spacing: -0.01em;
 }
-.brand span { color: var(--accent); }
+/* The mark's slash is deliberately not --accent: chrome hue differs by theme
+   (magenta / amber), and the product should not change identity when the theme
+   changes. --muted is stable and keeps the accent purely functional. */
+.brand span { color: var(--muted); }
 .product-tag {
   border: 1px solid var(--line); padding: 1px 5px; color: var(--muted);
   font: var(--t-micro)/1.45 var(--mono);
@@ -170,10 +182,9 @@ button.mini { padding: 0 6px; font-size: var(--t-small); }
   border-right: 1px solid var(--line); background: var(--panel); overflow: hidden;
 }
 .side-panel-scroll { min-height: 0; overflow-y: auto; padding-bottom: 18px; }
+/* Every panel heading, in the left rail and the inspector alike. */
+.panel-title { margin: 0; font: 600 var(--t-head)/1.3 var(--mono); }
 .source-heading { padding: 10px 12px 7px; }
-.source-heading h2, .operations-heading {
-  margin: 0; font: 600 var(--t-head)/1.3 var(--mono);
-}
 .source-heading p { margin: 3px 24px 0 0; color: var(--muted); font-size: var(--t-small); line-height: 1.5; }
 .source-heading code { font-size: var(--t-small); }
 .source-workspace { display: flex; flex-direction: column; gap: 7px; padding: 0 12px; }
@@ -190,7 +201,7 @@ button.mini { padding: 0 6px; font-size: var(--t-small); }
 .example-list { display: flex; flex-wrap: wrap; gap: 5px; padding: 5px 12px 0; }
 .example-list button { padding: 3px 8px; font-size: var(--t-small); }
 .side-divider { height: 1px; margin: 14px 12px 0; background: var(--line); }
-.operations-heading { padding: 11px 12px 4px; font-size: var(--t-head); }
+.operations-heading { padding: 11px 12px 4px; }
 .operation-list { padding: 0 12px; }
 .operation-row {
   display: grid; grid-template-columns: 7px 1fr; gap: 8px; width: 100%;
@@ -217,10 +228,10 @@ textarea.source.error-state { border-color: var(--err); }
 .source-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .share-btn { flex: none; }
 .run-btn { font-weight: 600; padding: 3px 12px; }
-.run-btn:not(:disabled) { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.run-btn:not(:disabled) { color: var(--accent); border-color: var(--accent); }
 .run-btn:disabled { opacity: 0.45; cursor: default; }
 .source-status { font-size: var(--t-small); min-width: 0; overflow: hidden; }
-.source-status .ok { color: var(--ok); }
+.source-status .ok { color: var(--muted); }
 .source-status .error { white-space: normal; }
 
 
@@ -296,14 +307,14 @@ textarea.source.error-state { border-color: var(--err); }
   background: transparent;
 }
 .tc-name-wrap { position: relative; display: inline-flex; }
-.tc-name { font-size: var(--t-base); font-weight: 700; line-height: 1; cursor: help; outline: none; }
+.tc-name { font-size: var(--t-base); font-weight: 600; line-height: 1; cursor: help; outline: none; }
 .tc-name:focus-visible { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
 .tc-shape { color: var(--muted); font-size: var(--t-micro); font-variant-numeric: tabular-nums; }
 
 /* Compact details belong to the name, not the whole tensor plate. */
 .tc-info {
   display: none; position: absolute; left: 50%; top: calc(100% + 7px); z-index: 50;
-  transform: translateX(-50%); min-width: 150px; padding: 6px 8px; border-radius: var(--r);
+  transform: translateX(-50%); min-width: 150px; padding: 6px 8px;
   background: var(--panel); border: 1px solid var(--card-line);
   border-radius: var(--r-pop); box-shadow: var(--shadow-pop); pointer-events: none;
   grid-template-columns: auto 1fr; gap: 1px 12px;
@@ -315,7 +326,7 @@ textarea.source.error-state { border-color: var(--err); }
 .badge {
   font-size: var(--t-micro); padding: 0 4px; border-radius: var(--r); border: 1px solid currentColor;
 }
-.badge.input { color: var(--ok); }
+.badge.input { color: var(--muted); }
 .badge.approx { color: var(--warn-ink); }
 .tc-axes { display: flex; gap: 6px; align-items: center; margin: 3px 0; font-size: var(--t-small); color: var(--muted); }
 /* a hovered card floats above its neighbours so the info panel is not clipped */
@@ -372,16 +383,13 @@ textarea.source.error-state { border-color: var(--err); }
   font: var(--t-micro)/1.3 var(--mono); font-variant-numeric: tabular-nums;
 }
 .tiles-heading { display: flex; align-items: baseline; gap: 8px; padding: 11px 0 6px; }
-.tiles-heading h2 {
-  margin: 0; font: 600 var(--t-head)/1.3 var(--mono);
-}
-.tiles-heading h2 small { color: var(--muted); font: var(--t-small)/1.3 ui-sans-serif, system-ui, sans-serif; }
+.tiles-heading h2 small { color: var(--muted); font: var(--t-small)/1.3 var(--sans); }
 .tiles-heading button { margin-left: auto; }
 .tiles-heading button:disabled { opacity: .4; cursor: default; }
 .tile-legend { display: flex; flex-wrap: wrap; gap: 5px 12px; padding-bottom: 8px; color: var(--muted); font-size: var(--t-small); }
 .tile-legend span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .tile-legend i { display: block; width: 12px; height: 12px; border: 1px solid var(--card-line); }
-.tile-legend i.selected { border: 1.5px solid var(--ink); opacity: .9; }
+.tile-legend i.selected { border: 2px solid var(--ink); opacity: .9; }
 .tile-legend i.required { opacity: .3; }
 .tile-legend i.produced { background: transparent; border-width: 2px; border-style: solid; }
 .tile-legend i.approx {
@@ -418,7 +426,10 @@ textarea.source.error-state { border-color: var(--err); }
 .slice-exprs { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 4px 0 0; }
 .slice-exprs code { background: var(--bg); padding: 1px 5px; border-radius: var(--r); overflow-x: auto; white-space: pre; }
 .hint.overlap { color: var(--warn-ink); border-left: 2px solid var(--warn-ink); padding: 2px 0 2px 8px; }
-.box-list { display: flex; flex-direction: column; gap: 2px; max-height: 160px; overflow-y: auto; margin: 4px 0; }
+/* Four rows before it scrolls. Tiles can sit on different tensors, so this list
+   is now the place you compare them; capping it at two and a half rows hid the
+   comparison the feature exists to make. */
+.box-list { display: flex; flex-direction: column; gap: 2px; max-height: 252px; overflow-y: auto; margin: 4px 0; }
 .box-row {
   display: flex; align-items: flex-start; gap: 8px; padding: 6px 3px; border-radius: var(--r);
   border: 1px solid transparent; border-bottom: 1px solid var(--line); cursor: pointer;
