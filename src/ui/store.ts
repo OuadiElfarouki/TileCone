@@ -18,8 +18,8 @@ import { toDSL } from "../parse/dsl";
 import { graphScale, MAX_ELEM_PX, planeExtents, TILE_SCALE_MAX, TILE_SCALE_MIN } from "./tiling";
 import { tileOf } from "./grid";
 
-/** Which independently toggled cones are active in the workspace. `both` and
- * `none` are UI combinations; the checked executor keeps its smaller query API. */
+/** Which independently toggled views are active in the workspace. `none` is
+ * the explicit figures-only state: analysis remains live while paint and rows hide. */
 export type Direction = "none" | "backward" | "forward" | "both";
 export type ConeDirection = "backward" | "forward";
 export type PanelSide = "left" | "right";
@@ -33,6 +33,28 @@ type TensorOffsets = Record<string, TensorOffset>;
  * if drawing on B discards the tile on A.
  */
 export type SelPart = { tensorId: string; box: Box };
+
+/**
+ * Scope an aggregate result to enabled tiles, optionally to one focused tile.
+ * Per-tile propagation stays cached; toggling visibility only re-merges those
+ * results and never reruns the symbolic executor.
+ */
+export function enabledPropResult(
+  aggregate: PropResult | null,
+  perBox: BoxProp[] | null,
+  hiddenBoxes: Set<number>,
+  focusedBox: number | null,
+  direction: ConeDirection
+): PropResult | null {
+  if (!perBox) return aggregate;
+  if (focusedBox !== null && !hiddenBoxes.has(focusedBox))
+    return perBox[focusedBox]?.[direction] ?? null;
+  return mergeProps(
+    perBox.flatMap((prop, index) =>
+      hiddenBoxes.has(index) || !prop[direction] ? [] : [prop[direction]!]
+    )
+  );
+}
 /**
  * The user's ordered parts (identity-stable, may overlap, may span tensors),
  * never a canonicalized set. See the note in core/region.ts.
@@ -138,11 +160,9 @@ type State = {
   /** Sticky focus set by clicking a part; survives the pointer leaving the row. */
   pinnedBox: number | null;
   /**
-   * Parts whose dependency cone is not painted. Visibility is a separate concern
-   * from focus: focus is *which row is emphasised* (one at a time, transient),
-   * while this is *which cones contribute paint* (any number, sticky). Keeping
-   * them apart lets a probe be parked — its numbers stay live in the footprint
-   * table — without its cone competing for the canvas.
+   * Parts excluded from merged analysis and dependency paint. Focus is still a
+   * separate transient choice, but hiding the focused part clears that focus so
+   * the inspector cannot name a tile it is no longer analysing.
    *
    * Indexes into `selection.parts`. Edits clear metadata for affected parts and
    * remap it by object identity for untouched parts on other tensors.
@@ -198,7 +218,7 @@ type State = {
   togglePinBox: (index: number) => void;
   /** Drop both hover and pin. What Escape does. */
   clearFocus: () => void;
-  /** Show/hide one part's cone, leaving its metrics untouched. */
+  /** Include/exclude one part from merged analysis and dependency paint. */
   toggleBoxHidden: (index: number) => void;
   setDragging: (v: boolean) => void;
   setDirection: (d: Direction) => void;
@@ -663,10 +683,12 @@ export const useStore = create<State>((set, get) => ({
 
   hoverBox: (index) => {
     if (get().pinnedBox !== null) return; // a pinned part outranks hovering
+    if (index !== null && get().hiddenBoxes.has(index)) return;
     set({ focusedBox: index });
   },
 
   togglePinBox: (index) => {
+    if (get().hiddenBoxes.has(index)) return;
     const pinned = get().pinnedBox === index ? null : index;
     set({ pinnedBox: pinned, focusedBox: pinned });
   },
@@ -675,8 +697,13 @@ export const useStore = create<State>((set, get) => ({
 
   toggleBoxHidden: (index) => {
     const next = new Set(get().hiddenBoxes);
-    if (!next.delete(index)) next.add(index);
-    set({ hiddenBoxes: next });
+    const hiding = !next.delete(index);
+    if (hiding) next.add(index);
+    const focused = get().focusedBox === index;
+    set({
+      hiddenBoxes: next,
+      ...(hiding && focused ? { focusedBox: null, pinnedBox: null } : {}),
+    });
   },
 
   setDragging: (v) => set({ dragging: v }),

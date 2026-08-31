@@ -85,8 +85,8 @@ export function buildLayers({
   const layers: Layer[] = [];
   const agg = aggregateColors(dark);
   // Both cones are always analysed; `direction` decides which are painted. A
-  // filter here rather than upstream keeps the numbers in the inspector whole
-  // while the canvas shows only the question being asked.
+  // Direction filtering happens at paint time; per-tile visibility is shared
+  // with the inspector so the picture and merged numbers describe the same set.
   const showBack = direction === "backward" || direction === "both";
   const showFwd = direction === "forward" || direction === "both";
 
@@ -102,7 +102,7 @@ export function buildLayers({
     const plain: Layer[] = [];
     const emphasised: Layer[] = [];
     perBox.forEach((bp, i) => {
-      if (hiddenBoxes.has(i)) return; // parked by the user; metrics stay live
+      if (hiddenBoxes.has(i)) return;
       const emph = focusedBox === i;
       const alphaScale = focusedBox !== null && !emph ? PEER_FADE : 1;
       const color = boxColor(i, dark);

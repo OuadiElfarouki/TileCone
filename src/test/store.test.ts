@@ -3,6 +3,7 @@ import { canonicalize, count, fromBox, box } from "../core/region";
 import { computeMetrics } from "../core/metrics";
 import { EXAMPLES } from "../examples";
 import {
+  enabledPropResult,
   MAX_PER_BOX_PROPS, PANEL_COLLAPSE_AT, PANEL_MAX, PANEL_MIN,
   planesOf, startingTiles, useStore, viewAxes,
 } from "../ui/store";
@@ -31,7 +32,7 @@ describe("independent cone toggles", () => {
     S().loadExample(0);
   });
 
-  it("represents all four upstream/downstream combinations", () => {
+  it("toggles both directions independently, including figures-only", () => {
     expect(S().direction).toBe("both");
     S().toggleDirection("backward");
     expect(S().direction).toBe("forward");
@@ -41,6 +42,11 @@ describe("independent cone toggles", () => {
     expect(S().direction).toBe("backward");
     S().toggleDirection("forward");
     expect(S().direction).toBe("both");
+  });
+
+  it("keeps figures-only when set directly", () => {
+    S().setDirection("none");
+    expect(S().direction).toBe("none");
   });
 
   it("filters what is shown without gating what is analysed", () => {
@@ -164,7 +170,20 @@ describe("transactional workspace restore", () => {
     expect(S()).toBe(before);
   });
 
-  it("validates every part even when cones are disabled", () => {
+  it("restores a shared figures-only view", () => {
+    const restored = S().restoreWorkspace({
+      dsl: "input X [4, 4] f32\nY = relu(X)\n",
+      direction: "none",
+      tileScale: 0,
+      snapToGrid: true,
+      parts: null,
+    });
+
+    expect(restored).toBe(true);
+    expect(S().direction).toBe("none");
+  });
+
+  it("validates every part in a legacy none workspace", () => {
     const before = S();
     for (const parts of [
       [{ tensorId: "missing", box: box([0, 1]) }],
@@ -681,14 +700,35 @@ describe("cone visibility is independent of focus", () => {
     S().setSelection("C", fromBox(box([192, 256], [0, 64])), "union");
   });
 
-  it("hiding a box leaves its metrics live", () => {
-    // The whole point of parking a probe: it stops painting, it does not stop
-    // being measured.
+  it("excludes a hidden box from merged analysis without rerunning its cached propagation", () => {
     const before = S().perBox![1].backward!.tensors.get("A")!.region;
     S().toggleBoxHidden(1);
     expect(S().hiddenBoxes.has(1)).toBe(true);
     expect(S().perBox![1].backward!.tensors.get("A")!.region).toEqual(before);
+    const enabled = enabledPropResult(
+      S().backwardRes,
+      S().perBox,
+      S().hiddenBoxes,
+      null,
+      "backward"
+    )!;
+    const enabledCount = [0, 2].reduce(
+      (total, index) => total + count(S().perBox![index].backward!.tensors.get("A")!.region),
+      0
+    );
+    expect(count(enabled.tensors.get("A")!.region)).toBe(enabledCount);
+    expect(count(S().backwardRes!.tensors.get("A")!.region)).toBeGreaterThan(enabledCount);
     expect(selBoxes().length).toBe(3);
+  });
+
+  it("clears focus when the focused tile is hidden", () => {
+    S().togglePinBox(1);
+    expect(S().focusedBox).toBe(1);
+    S().toggleBoxHidden(1);
+    expect(S().focusedBox).toBeNull();
+    expect(S().pinnedBox).toBeNull();
+    S().hoverBox(1);
+    expect(S().focusedBox).toBeNull();
   });
 
   it("toggles independently of focus, in both directions", () => {
@@ -901,27 +941,25 @@ describe("tiles on different tensors coexist", () => {
     expect(selBoxes()[0]).toEqual(before);
   });
 
-  it("preserves hidden and pinned state on untouched tensors", () => {
+  it("preserves hidden state on untouched tensors", () => {
     S().toggleBoxHidden(0);
-    S().togglePinBox(0);
     S().setSelection("A", fromBox(box([0, 64], [0, 64])));
 
     expect(S().hiddenBoxes).toEqual(new Set([0]));
-    expect(S().pinnedBox).toBe(0);
-    expect(S().focusedBox).toBe(0);
+    expect(S().pinnedBox).toBeNull();
+    expect(S().focusedBox).toBeNull();
   });
 
   it("remaps untouched UI state when edits on another tensor shift indices", () => {
     S().setSelection("A", fromBox(box([0, 64], [0, 64])));
     S().setSelection("B", fromBox(box([0, 64], [0, 64])));
     S().toggleBoxHidden(2); // B
-    S().togglePinBox(2);
 
     S().setSelection("A", fromBox(box([0, 64], [0, 64])), "subtract");
     expect(selTensors()).toEqual(["C", "B"]);
     expect(S().hiddenBoxes).toEqual(new Set([1]));
-    expect(S().pinnedBox).toBe(1);
-    expect(S().focusedBox).toBe(1);
+    expect(S().pinnedBox).toBeNull();
+    expect(S().focusedBox).toBeNull();
   });
 
   it("moves only the anchor tensor's parts, leaving the others put", () => {

@@ -12,7 +12,15 @@ const isTyping = (el: EventTarget | null) => {
  * card is currently showing (its row/col axes), so what moves on screen is what
  * moves in index space.
  */
-export function useKeyboard(): void {
+export function useKeyboard({
+  shortcutsOpen,
+  showShortcuts,
+  closeShortcuts,
+}: {
+  shortcutsOpen: boolean;
+  showShortcuts: () => void;
+  closeShortcuts: () => void;
+}): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const s = useStore.getState();
@@ -23,6 +31,11 @@ export function useKeyboard(): void {
        * explicit act, not a side effect of pressing cancel.
        */
       if (e.key === "Escape") {
+        if (shortcutsOpen) {
+          e.preventDefault();
+          closeShortcuts();
+          return;
+        }
         const el = e.target as HTMLElement | null;
         if (isTyping(el)) {
           el?.blur(); // leave text editing, keeping what was typed
@@ -44,6 +57,11 @@ export function useKeyboard(): void {
       }
 
       if (isTyping(e.target)) return;
+      if (e.key === "?") {
+        e.preventDefault();
+        showShortcuts();
+        return;
+      }
       // Arrow keys and slider keys act on one tensor's axes, so they follow the
       // anchor: the focused tile's tensor, else the last one drawn on.
       const anchor = anchorTensorId(s.selection, s.focusedBox);
@@ -83,7 +101,7 @@ export function useKeyboard(): void {
         return;
       }
 
-      // hide/show the focused part's cone; its metrics stay live either way
+      // include/exclude the focused part from merged analysis and paint
       if (e.key === "h" && s.focusedBox !== null && s.perBox) {
         e.preventDefault();
         s.toggleBoxHidden(s.focusedBox);
@@ -103,5 +121,5 @@ export function useKeyboard(): void {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [closeShortcuts, shortcutsOpen, showShortcuts]);
 }

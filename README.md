@@ -92,6 +92,14 @@ Use `tryCompileDSL` when diagnostics should be returned as data instead of throw
 
 ## Notes on the UI
 
+- **The inspector answers two adjacent questions.** Upstream” lists every tensor region the
+  tile reads; "Downstream” lists every region it influences. Their headings are also the
+  view controls (`u` / `d`), so collapsing a question removes the same paint from the graph. Both
+  can be collapsed independently for an explicitly labelled figures-only view.
+- **Downstream reach is classified, not merely highlighted.** Each downstream row says whether the
+  tile completes that region or contributes only partially, and the section heading rolls those
+  verdicts up. A partial verdict derived from an approximate region may over-warn, never
+  under-warn.
 - **Row-major everywhere.** Rows are the second-to-last axis, columns the last. There is no per-card
   axis remapping: a different view of a tensor is a `transpose` node in the graph, where it is part
   of the computation being explained.
@@ -110,14 +118,20 @@ Use `tryCompileDSL` when diagnostics should be returned as data instead of throw
   categorical colors — the largest set clearing all-pairs contrast floors on both canvas surfaces.
   Chrome deliberately sits outside those hues (amber in dark, magenta in light) so a hot edge is
   never mistaken for a cone.
-- **Hovering a box in the inspector emphasises its cone; it never hides the others.** The peers fade
-  but stay legible, because comparing cones is the point of a multi-box selection. Removing a cone
-  from the canvas is a separate, explicit toggle (`h`), and a parked box keeps its numbers in the
-  footprint table.
+- **Hovering a box in the inspector emphasises what it needs and feeds; it never hides the others.**
+  The peers fade but stay legible, because comparing tiles is the point of a multi-tile selection.
+  Excluding one tile from the merged analysis and dependency paint is a separate, explicit toggle
+  (`h`). Its faint selection rectangle remains available so the tile can be included again.
 - **Tensor placement is editable without weakening the layout.** Drag the dotted handle outside a
   card's top-left corner to reposition it. Curved connectors follow live; tensor cards and operation
   nodes remain hard collision boundaries. A completed drag is one chronological workspace undo
   step, and Escape cancels an in-progress move.
+
+Press `?` in the app for the complete shortcut sheet. The main bindings are:
+
+- `u` / `d`: toggle Upstream / Feeds downstream; `f`: fit the graph; `[` / `]`: scrub a hidden axis.
+- Arrow keys move the focused tile; Shift+arrow moves eight steps; `h` toggles its paint; Escape cancels or unpins.
+- Ctrl/Cmd+Z undoes workspace movement; Alt+1 / Alt+2 toggle the panels; Ctrl/Cmd+Enter runs source edits.
 
 See `SYSTEM.md` for the current architecture and implementation invariants. `docs/README.md`
 classifies the remaining design and decision documents so historical plans are not mistaken for

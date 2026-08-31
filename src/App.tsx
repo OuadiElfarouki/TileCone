@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { PanelFrame } from "./ui/PanelFrame";
 import { SidePanel } from "./ui/SidePanel";
 import { GraphView } from "./ui/GraphView";
@@ -8,14 +8,18 @@ import { useStore } from "./ui/store";
 import { useDragGuard } from "./ui/useDragGuard";
 import { useKeyboard } from "./ui/useKeyboard";
 import { decodeWorkspace } from "./ui/share";
+import { ShortcutsDialog } from "./ui/ShortcutsDialog";
 
 export default function App(): React.ReactElement {
   const loadExample = useStore((s) => s.loadExample);
   const restoreWorkspace = useStore((s) => s.restoreWorkspace);
   const resolved = useStore((s) => s.resolved);
   const theme = useStore((s) => s.theme);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const showShortcuts = useCallback(() => setShortcutsOpen(true), []);
+  const closeShortcuts = useCallback(() => setShortcutsOpen(false), []);
 
-  useKeyboard();
+  useKeyboard({ shortcutsOpen, showShortcuts, closeShortcuts });
   useDragGuard();
 
   useEffect(() => {
@@ -49,7 +53,7 @@ export default function App(): React.ReactElement {
 
   return (
     <div className="app">
-      <WorkspaceHeader />
+      <WorkspaceHeader onShowShortcuts={showShortcuts} />
       <div className="main">
         <PanelFrame side="left" label="source">
           <SidePanel />
@@ -59,6 +63,7 @@ export default function App(): React.ReactElement {
           <Inspector />
         </PanelFrame>
       </div>
+      <ShortcutsDialog open={shortcutsOpen} onClose={closeShortcuts} />
     </div>
   );
 }

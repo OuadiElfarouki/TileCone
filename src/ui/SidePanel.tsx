@@ -3,10 +3,8 @@ import { fromBox } from "../core/region";
 import { EXAMPLES } from "../examples";
 import { tileOf } from "./grid";
 import { selectionToLink, shareTarget } from "./share";
-import { ConeDirection, Direction, useStore, viewAxes } from "./store";
-
-const coneEnabled = (direction: Direction, cone: ConeDirection) =>
-  direction === cone || direction === "both";
+import { copyText } from "./clipboard";
+import { enabledPropResult, useStore, viewAxes } from "./store";
 
 /**
  * Copies a link that restores this workspace — source, selection, cone direction
@@ -19,9 +17,9 @@ function ShareButton(): React.ReactElement {
   const direction = useStore((s) => s.direction);
   const tileScale = useStore((s) => s.tileScale);
   const snapToGrid = useStore((s) => s.snapToGrid);
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<"copied" | "failed" | null>(null);
 
-  const copy = () => {
+  const copy = async () => {
     const target = shareTarget(location.origin, location.pathname, {
       dsl: dslText,
       dir: direction,
@@ -29,19 +27,18 @@ function ShareButton(): React.ReactElement {
       snap: snapToGrid,
       sel: selectionToLink(selection),
     });
-    navigator.clipboard?.writeText(target).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    });
+    setCopyState((await copyText(target)) ? "copied" : "failed");
+    setTimeout(() => setCopyState(null), 1600);
   };
 
   return (
     <button
-      className="mini share-btn"
+      className={`mini share-btn${copyState === "failed" ? " copy-failed" : ""}`}
       onClick={copy}
-      title="copy a link that restores this source, selection and view"
+      title="copy a link that restores this source, selection, needs-upstream view and feeds-downstream view"
+      aria-live="polite"
     >
-      {copied ? "copied ✓" : "share"}
+      {copyState === "copied" ? "copied ✓" : copyState === "failed" ? "copy failed" : "share"}
     </button>
   );
 }
@@ -116,6 +113,8 @@ function Operations(): React.ReactElement {
   const setFocusTensor = useStore((s) => s.setFocusTensor);
   const backwardRes = useStore((s) => s.backwardRes);
   const forwardRes = useStore((s) => s.forwardRes);
+  const perBox = useStore((s) => s.perBox);
+  const hiddenBoxes = useStore((s) => s.hiddenBoxes);
   const setSelection = useStore((s) => s.setSelection);
   const tileScale = useStore((s) => s.tileScale);
   const graphPx = useStore((s) => s.graphPx);
@@ -123,7 +122,9 @@ function Operations(): React.ReactElement {
   if (!resolved) return <p className="hint">no graph</p>;
 
   const involved = new Set<string>();
-  for (const res of [backwardRes, forwardRes])
+  const enabledBackward = enabledPropResult(backwardRes, perBox, hiddenBoxes, null, "backward");
+  const enabledForward = enabledPropResult(forwardRes, perBox, hiddenBoxes, null, "forward");
+  for (const res of [enabledBackward, enabledForward])
     if (res) for (const id of res.tensors.keys()) involved.add(id);
 
   const probe = (tensorId: string) => {
@@ -177,12 +178,6 @@ function Operations(): React.ReactElement {
 export function SidePanel(): React.ReactElement {
   const exampleIndex = useStore((s) => s.exampleIndex);
   const loadExample = useStore((s) => s.loadExample);
-  const direction = useStore((s) => s.direction);
-  const toggleDirection = useStore((s) => s.toggleDirection);
-  const directions: { id: ConeDirection; label: string; tip: string }[] = [
-    { id: "backward", label: "▲ upstream", tip: "what this selection depends on (u)" },
-    { id: "forward", label: "▼ downstream", tip: "what this selection influences (d)" },
-  ];
 
   return (
     <nav className="side-panel">
@@ -196,21 +191,6 @@ export function SidePanel(): React.ReactElement {
         </header>
         <div className="source-workspace">
           <SourceEditor />
-        </div>
-
-        <div className="side-control-row">
-          <span>cone</span>
-          {directions.map(({ id, label, tip }) => (
-            <button
-              key={id}
-              className={coneEnabled(direction, id) ? "on" : ""}
-              title={tip}
-              aria-pressed={coneEnabled(direction, id)}
-              onClick={() => toggleDirection(id)}
-            >
-              {label}
-            </button>
-          ))}
         </div>
 
         <div className="side-kicker">try an example</div>

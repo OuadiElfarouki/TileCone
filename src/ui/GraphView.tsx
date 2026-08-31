@@ -7,7 +7,7 @@ import {
   PlacedGraphNode,
 } from "./graph-scene";
 import { cardSize, TensorCard } from "./TensorCard";
-import { selectedTensorIds, TensorOffset, useStore } from "./store";
+import { enabledPropResult, selectedTensorIds, TensorOffset, useStore } from "./store";
 
 type CardDrag = {
   id: string;
@@ -34,6 +34,8 @@ export function GraphView(): React.ReactElement {
   const graphPx = useStore((s) => s.graphPx);
   const backwardRes = useStore((s) => s.backwardRes);
   const forwardRes = useStore((s) => s.forwardRes);
+  const perBox = useStore((s) => s.perBox);
+  const hiddenBoxes = useStore((s) => s.hiddenBoxes);
   const selection = useStore((s) => s.selection);
   const expandNodeInPlace = useStore((s) => s.expandNodeInPlace);
   const direction = useStore((s) => s.direction);
@@ -60,13 +62,17 @@ export function GraphView(): React.ReactElement {
     const s = new Set<string>();
     for (const id of selectedTensorIds(selection)) s.add(id);
     const shown = [
-      direction === "backward" || direction === "both" ? backwardRes : null,
-      direction === "forward" || direction === "both" ? forwardRes : null,
+      direction === "backward" || direction === "both"
+        ? enabledPropResult(backwardRes, perBox, hiddenBoxes, null, "backward")
+        : null,
+      direction === "forward" || direction === "both"
+        ? enabledPropResult(forwardRes, perBox, hiddenBoxes, null, "forward")
+        : null,
     ];
     for (const res of shown)
       if (res) for (const id of res.tensors.keys()) s.add(id);
     return s;
-  }, [backwardRes, direction, forwardRes, selection]);
+  }, [backwardRes, direction, forwardRes, hiddenBoxes, perBox, selection]);
 
   const hasResult = contributing.size > 0;
 
