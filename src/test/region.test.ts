@@ -20,6 +20,7 @@ import {
   translatePart,
   sortRegion,
   subtractBox,
+  subtract,
   union,
 } from "../core/region";
 import { rng, randInt } from "./harness";
@@ -130,6 +131,20 @@ describe("region algebra", () => {
       for (const p of pieces) total += flatSet(fromBox(p), shape).size;
       expect(total).toBe(expected.size);
     }
+  });
+
+  it("does not under-approximate when subtracting an inexact region", () => {
+    const minuend = fromBox(box([0, 10]));
+    const representedSuperset: Region = {
+      boxes: [box([0, 10])],
+      exact: false,
+      reasons: ["test bound"],
+    };
+
+    const difference = subtract(minuend, representedSuperset);
+    expect(difference.boxes).toEqual(minuend.boxes);
+    expect(difference.exact).toBe(false);
+    expect(difference.reasons).toEqual(expect.arrayContaining(["test bound", "inexact subtraction"]));
   });
 
   it("box count cap produces bounding box marked inexact", () => {
@@ -259,5 +274,14 @@ describe("a full-axis pull survives being split into disjoint boxes", () => {
     expect(coversAxisFully(fromBox(box([0, 4], [0, 16])), 1, 16)).toBe(true);
     expect(coversAxisFully(fromBox(box([0, 4], [0, 15])), 1, 16)).toBe(false);
     expect(coversAxisFully(empty(2), 0, 16)).toBe(false);
+  });
+
+  it("refuses to prove full-axis coverage from an inexact bound", () => {
+    const bound: Region = {
+      boxes: [box([0, 4], [0, 16])],
+      exact: false,
+      reasons: ["test bound"],
+    };
+    expect(coversAxisFully(bound, 1, 16)).toBe(false);
   });
 });

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { executeQuery, validateSelection } from "../core/executor";
-import { Graph, graphOutputs, ResolvedGraph, resolveGraph } from "../core/graph";
+import { Graph, graphOutputs, ResolvedGraph } from "../core/graph";
 import { expandNode } from "../core/expand";
 import { PropResult, mergeProps } from "../core/propagate";
 import {
@@ -14,6 +14,7 @@ import {
 } from "../core/region";
 import { EXAMPLES } from "../examples/index";
 import { compileDSL } from "../parse/compiler";
+import { toDSL } from "../parse/dsl";
 import { graphScale, MAX_ELEM_PX, planeExtents, TILE_SCALE_MAX, TILE_SCALE_MIN } from "./tiling";
 import { tileOf } from "./grid";
 
@@ -412,10 +413,6 @@ function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
   };
 }
 
-function loadGraph(graph: Graph): ReturnType<typeof loadResolvedGraph> {
-  return loadResolvedGraph(graph, resolveGraph(graph));
-}
-
 export const useStore = create<State>((set, get) => ({
   dslText: EXAMPLES[0].dsl,
   exampleIndex: 0,
@@ -791,7 +788,16 @@ export const useStore = create<State>((set, get) => ({
     if (!graph) return;
     try {
       const g2 = expandNode(graph, nodeId);
-      set({ ...loadGraph(g2), dslText: get().dslText + `\n# (node ${nodeId} expanded in view)` });
+      // Source and graph remain one transaction: rerunning or sharing the text
+      // must restore the same primitive graph currently shown in the workspace.
+      const source = toDSL(g2);
+      const program = compileDSL(source);
+      set({
+        ...loadResolvedGraph(program.graph, program.resolved),
+        dslText: source,
+        exampleIndex: -1,
+        focusTensor: null,
+      });
     } catch (e) {
       set({ loadError: (e as Error).message });
     }

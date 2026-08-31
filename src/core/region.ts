@@ -209,6 +209,16 @@ export function intersect(a: Region, b: Region): Region {
 }
 
 export function subtract(a: Region, b: Region): Region {
+  // `b` is a conservative superset when inexact. Subtracting that represented
+  // superset could remove elements that are not in the true set and therefore
+  // under-approximate the true difference. The only generally safe result is
+  // the minuend itself: it may retain too much, but it cannot lose truth.
+  if (!b.exact)
+    return canonicalize({
+      boxes: a.boxes,
+      exact: false,
+      reasons: mergeReasons(mergeReasons(a.reasons, b.reasons), ["inexact subtraction"]),
+    });
   let frags: Box[] = a.boxes.slice();
   for (const bb of b.boxes) {
     const next: Box[] = [];

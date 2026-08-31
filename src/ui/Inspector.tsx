@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Contribution, contributions, MAX_CONTRIBUTION_PROBES } from "../core/contribution";
-import { coneReadout, computeMetrics, TensorReadout } from "../core/metrics";
-import { coneFindings, coneIsFullyElementwise, dependencyNotes } from "../core/notes";
+import { Contribution, MAX_CONTRIBUTION_PROBES } from "../core/contribution";
+import { TensorReadout } from "../core/metrics";
+import type { ConeFindings } from "../core/notes";
 import { estimateInputReuse, ReuseEstimate } from "../core/reuse";
 import {
   Box,
@@ -13,6 +13,7 @@ import {
   union,
 } from "../core/region";
 import { formatBytes } from "./TensorCard";
+import { useInspectorAnalysis } from "./inspector-analysis";
 import { aggregateColors, boxColor, MAX_DISTINCT_HUES, rgbCss } from "./palette";
 import {
   anchorTensorId,
@@ -179,44 +180,38 @@ function SelectionRangeInput({
  * Why the footprint has the shape it has. The numbers above say how much; this
  * says what constrains it, which is the part that transfers to writing a kernel.
  */
-function DependencyNotes(): React.ReactElement {
-  const resolved = useStore((s) => s.resolved);
-  const selection = useStore((s) => s.selection);
-  const backwardRes = useStore((s) => s.backwardRes);
-  const perBox = useStore((s) => s.perBox);
-  const focusedBox = useStore((s) => s.focusedBox);
-
-  const scoped = focusedBox !== null ? perBox?.[focusedBox]?.backward ?? backwardRes : backwardRes;
-
-  const result = useMemo(() => {
-    if (!resolved || !scoped) return null;
-    return {
-      notes: dependencyNotes(resolved, scoped),
-      elementwise: coneIsFullyElementwise(resolved, scoped),
-    };
-  }, [resolved, scoped]);
-
+function DependencyNotes({
+  findings,
+  hasSelection,
+  focusedBox,
+  attributed,
+}: {
+  findings: ConeFindings | null;
+  hasSelection: boolean;
+  focusedBox: number | null;
+  attributed: boolean;
+}): React.ReactElement {
   return (
     <section className="ins-section notes-section">
       <div className="ins-title">
         Dependency notes
-        {focusedBox !== null && perBox && <span className="muted"> · tile {focusedBox + 1}</span>}
+        {focusedBox !== null && attributed && <span className="muted"> · tile {focusedBox + 1}</span>}
       </div>
-      {!selection || !result ? (
+      {!hasSelection || !findings ? (
         <p className="hint">
           Draw a tile to read its cone. Notes here call out the reductions and contractions
           that constrain a fused kernel.
         </p>
-      ) : result.notes.length ? (
+      ) : findings.notes.length ? (
         <ul className="notes-list">
-          {result.notes.map((note) => (
+          {findings.notes.map((note) => (
             <li key={`${note.nodeId}:${note.text}`}>
               <b>{note.op}</b>
               {note.text}
             </li>
           ))}
         </ul>
-      ) : result.elementwise ? (
+      ) : findings.elementwise ? (
         <p className="hint">
           This cone is elementwise all the way through: any tiling of the selection fuses
           without cross-tile traffic.
@@ -725,51 +720,23 @@ export function Inspector(): React.ReactElement {
   const [reuse, setReuse] = useState<ReuseEstimate[] | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
-  // When a tile is focused, every readout below scopes to that tile alone.
-  const scopedBack = focusedBox !== null ? perBox?.[focusedBox]?.backward ?? backwardRes : backwardRes;
-  const scopedFwd = focusedBox !== null ? perBox?.[focusedBox]?.forward ?? forwardRes : forwardRes;
-
-  const metrics = useMemo(() => {
-    if (!resolved || !scopedBack) return null;
-    return computeMetrics(resolved, scopedBack, countIntermediates);
-  }, [resolved, scopedBack, countIntermediates]);
-
-  const findings = useMemo(
-    () => (resolved && scopedBack ? coneFindings(resolved, scopedBack) : null),
-    [resolved, scopedBack]
-  );
-
-  /** The tile's own region per tensor, scoped the same way the cones are. */
-  const seeds = useMemo(() => {
-    const map = new Map<string, Region>();
-    if (!selection) return map;
-    const parts =
-      focusedBox !== null && selection.parts[focusedBox]
-        ? [selection.parts[focusedBox]]
-        : selection.parts;
-    for (const part of parts) {
-      const prev = map.get(part.tensorId);
-      map.set(part.tensorId, prev ? union(prev, fromBox(part.box)) : fromBox(part.box));
-    }
-    return map;
-  }, [selection, focusedBox]);
-
-  const contrib = useMemo(
-    () => (resolved && scopedFwd ? contributions(resolved, scopedFwd, seeds) : null),
-    [resolved, scopedFwd, seeds]
-  );
-
-  const upstream = useMemo(() => {
-    if (!metrics || !scopedBack) return [];
-    const roots = new Set(scopedBack.roots);
-    return metrics.tensors.filter((row) => !roots.has(row.tensorId));
-  }, [metrics, scopedBack]);
-
-  const downstream = useMemo(() => {
-    if (!resolved || !scopedFwd) return [];
-    const roots = new Set(scopedFwd.roots);
-    return coneReadout(resolved, scopedFwd).filter((row) => !roots.has(row.tensorId));
-  }, [resolved, scopedFwd]);
+  const {
+    metrics,
+    findings,
+    seeds,
+    contribution: contrib,
+    upstream,
+    downstream,
+  } = useInspectorAnalysis({
+    resolved,
+    selection,
+    backward: backwardRes,
+    forward: forwardRes,
+    perBox,
+    focusedBox,
+    countIntermediates,
+    direction,
+  });
 
   useEffect(() => setReuse(null), [resolved, selection, focusedBox]);
 
@@ -978,7 +945,12 @@ export function Inspector(): React.ReactElement {
                 )}
               </>
             )}
-            <DependencyNotes />
+            <DependencyNotes
+              findings={findings}
+              hasSelection={!!selection}
+              focusedBox={focusedBox}
+              attributed={!!perBox}
+            />
           </>
         )}
       </div>

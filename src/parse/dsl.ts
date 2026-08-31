@@ -82,7 +82,10 @@ class LineParser {
   }
   ident(): string | null {
     this.ws();
-    const m = /^[A-Za-z_][A-Za-z0-9_.]*/.exec(this.src.slice(this.pos));
+    // `$` is reserved by composite expansion for generated tensor names. It is
+    // accepted after the first character so an expanded graph can be serialized
+    // back to executable DSL without renaming the tensors shown in the UI.
+    const m = /^[A-Za-z_][A-Za-z0-9_.$]*/.exec(this.src.slice(this.pos));
     if (!m) return null;
     this.pos += m[0].length;
     return m[0];

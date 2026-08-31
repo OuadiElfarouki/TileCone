@@ -87,6 +87,18 @@ describe("composite expansion equivalence", () => {
     expect(g2.nodes.length).toBe(5);
   });
 
+  it("expands a composite whose input still has an unresolved placeholder shape", () => {
+    const graph = G({ A: [2, 3], B: [3, 4] }, [
+      ["mm", "matmul", ["A", "B"], ["S"]],
+      ["sm", "softmax", ["S"], ["P"], { axis: -1 }],
+    ]);
+    expect(graph.tensors.S.shape).toEqual([]);
+
+    const expanded = resolveGraph(expandNode(graph, "sm"));
+    expect(expanded.tensors.P.resolved).toEqual([2, 4]);
+    expect(expanded.nodes.some((node) => node.op === "softmax")).toBe(false);
+  });
+
   it("shares softmax reduction work across disjoint selections before and after expansion", () => {
     const graph = G({ X: [2, 128] }, [["sm", "softmax", ["X"], ["Y"], { axis: -1 }]]);
     const primitive = resolveGraph(graph);

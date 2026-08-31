@@ -69,6 +69,7 @@ src/
 │   ├── GraphView.tsx     graph rendering, gestures, highlighting, and viewport
 │   ├── TensorCard.tsx    interactive tensor canvas
 │   ├── Inspector.tsx     tile grid, selection parts, footprint, cost, notes
+│   ├── inspector-analysis.ts  memoized inspector derivation and costly-probe gating
 │   ├── SidePanel.tsx     source, cone direction, examples, and operations
 │   ├── PanelFrame.tsx    side-panel width, drag strip, collapse-to-rail
 │   ├── WorkspaceHeader.tsx  product identity and theme control
@@ -137,6 +138,8 @@ The central correctness rule is:
 An under-approximation is therefore a correctness bug; an over-approximation is permitted only when marked `exact: false` with a reason.
 
 `src/core/region.ts` owns region algebra and normalization. Canonicalization removes empty boxes, disjointifies overlap, merges compatible boxes, and keeps results deterministic. If fragmentation exceeds the configured box cap, it falls back to a bounding box and records the loss of precision.
+
+Set difference preserves the same contract. When the subtrahend is inexact, subtracting its represented superset could remove true elements, so the result conservatively retains the minuend and records `inexact subtraction`. Proof-oriented consumers such as full-axis detection therefore decline conclusions drawn only from an inexact bound.
 
 The UI preserves the user's selection as **ordered parts** so individual boxes can be focused, colored, moved, or subtracted. Before execution, those parts are canonicalized into a mathematical set. This distinction prevents presentation identity from leaking into dependency semantics.
 
@@ -257,7 +260,7 @@ Applying DSL recompiles the entire source into a new resolved graph. Changing a 
 
 Actions defined against one tensor's axes — arrow-key moves, hidden-axis sliders, the reuse estimate, the axis legend — follow the **anchor**: the focused part's tensor, else the last one drawn on. An axis index means different things on tensors of different rank, so there is no single axis such an action could apply everywhere.
 
-Expanding a composite node rewrites the unresolved graph, resolves the result, and clears selection state that could no longer be valid.
+Expanding a composite node first resolves shape context, so composites fed by inferred intermediate tensors have their true rank available. The rewrite is serialized back to primitive DSL and compiled through the normal boundary, keeping the displayed source, share links, unresolved graph, and resolved graph synchronized. Selection state that could no longer be valid is cleared.
 
 ### Main components
 
@@ -267,6 +270,7 @@ Expanding a composite node rewrites the unresolved graph, resolves the result, a
 - `GraphView.tsx` is the graph controller and React projection: it derives highlighting, manages pan/zoom/focus and tensor gestures, and renders the current scene. It does not own layout or routing algorithms.
 - `TensorCard.tsx` renders an interactive tensor grid on canvas and converts pointer gestures into element-space boxes. Its paint stack is built by a pure `buildLayers`, so the encoding rules — which cone is filled and which outlined, what fades under focus, what a hidden box still shows — are asserted directly instead of inferred from pixels.
 - `Inspector.tsx` is ordered by the question the product asks, not by the order its sections were built: the tile's identity, the tiles list, then **Needs upstream** and **Feeds downstream** as the two directional readouts, and only then the supporting detail — the approximation warning, cost, reuse, the per-tensor footprint, and the dependency notes. The tiles list sits above the readouts rather than below because it is their selector: it chooses which cone the two sections describe. The constraints themselves stay in one place, at the bottom: a headline promoted to the top of the panel restated a note the reader would meet again a screen later, and one statement of a fact beats two. Setup is pinned to a strip at the bottom, because the tile lattice is chosen once and then stops being read. Only the two directional headings keep heading weight; everything below them is a step quieter. Two blocks earn their space only from two tiles upwards: the tiles list, which at one tile restates the header, and the footprint table, which is the only place the segment *shared* between tiles appears. With nothing drawn the panel is a different panel — it names the two questions it will answer and offers a starting tile — rather than the same one rendered with nulls.
+- `inspector-analysis.ts` derives the inspector's scoped metrics, notes, rows, selection seeds, and contribution report with independent memoization. Contribution classification can launch many checked backward probes, so it runs only while downstream rows are visible; note findings are collected once and shared by the row flags and notes section.
 - `PanelFrame.tsx` owns side-panel width, the drag strip, and collapse-to-rail for both panels.
 - `palette.ts` owns the categorical hues, their recorded CVD/contrast validation, and the canvas surfaces they were validated against. Two rules live there: identity is never carried by colour alone, and chrome must sit outside the data hues, because hue on a card means *which selection box* and a hot graph edge must not be mistakable for a cone.
 - `share.ts` holds link encoding and decoding together. They were split across a toolbar and `App` once, and when the toolbar was removed the encoder went with it, leaving the app able to restore links nothing could produce. Decoding is all-or-nothing: an unknown setting or any malformed part rejects the payload, while genuinely absent legacy fields receive their documented defaults. The store then validates graph-dependent selection bounds transactionally.

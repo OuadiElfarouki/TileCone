@@ -68,6 +68,27 @@ Y = softmax(X, axis=-1)
     expect(S().resolved?.tensors.Y.resolved).toEqual([2, 3]);
   });
 
+  it("expands an intermediate composite and keeps the displayed DSL executable", () => {
+    S().applyDSL(`input A [2, 3] f32
+input B [3, 4] f32
+S = matmul(A, B)
+P = softmax(S, axis=-1)
+`);
+
+    S().expandNodeInPlace("softmax_P");
+    expect(S().loadError).toBeNull();
+    expect(S().resolved?.tensors.P.resolved).toEqual([2, 4]);
+    expect(S().resolved?.nodes.some((node) => node.op === "softmax")).toBe(false);
+    expect(S().dslText).not.toContain("softmax(");
+    expect(S().dslText).toContain("softmax_P$max");
+
+    const expandedSource = S().dslText;
+    const expandedOps = S().resolved?.nodes.map((node) => node.op);
+    S().applyDSL(expandedSource);
+    expect(S().loadError).toBeNull();
+    expect(S().resolved?.nodes.map((node) => node.op)).toEqual(expandedOps);
+  });
+
   it("surfaces semantic failures with the originating DSL line", () => {
     S().applyDSL(`input A [2, 3] f32
 input B [4, 5] f32

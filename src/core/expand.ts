@@ -1,7 +1,7 @@
 /** Composite-op expansion: rewrite softmax / normalize nodes into primitive subgraphs.
  * The dependency result must be identical either way (tested in composite.test.ts). */
 
-import { Graph, Node, Tensor } from "./graph";
+import { Graph, Node, resolveGraph, Tensor } from "./graph";
 import { normAxes, normAxis } from "./ops/reduce";
 
 export function isExpandable(op: string): boolean {
@@ -13,6 +13,10 @@ function clone(g: Graph): Graph {
 }
 
 export function expandNode(g: Graph, nodeId: string): Graph {
+  // Parsed operation outputs intentionally carry `shape: []` until resolution.
+  // Expansion needs the actual rank even when its input is an intermediate, so
+  // resolve a separate shape context rather than trusting those placeholders.
+  const resolved = resolveGraph(g);
   const out = clone(g);
   const idx = out.nodes.findIndex((n) => n.id === nodeId);
   if (idx < 0) throw new Error(`no node "${nodeId}"`);
@@ -29,7 +33,7 @@ export function expandNode(g: Graph, nodeId: string): Graph {
 
   const x = out.tensors[node.inputs[0]];
   const y = node.outputs[0];
-  const rank = (x.resolved ?? x.shape).length;
+  const rank = resolved.tensors[x.id].resolved!.length;
 
   if (node.op === "softmax") {
     const axis = normAxis(node.attrs.axis as number, rank);
