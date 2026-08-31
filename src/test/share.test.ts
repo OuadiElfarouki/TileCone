@@ -86,17 +86,35 @@ describe("a link that cannot be trusted is refused, not repaired", () => {
     expect(decodeWorkspace(`#s=${btoa(JSON.stringify({ dir: "both" }))}`)).toBeNull();
   });
 
-  it("falls back on an unknown direction instead of adopting it", () => {
+  it("rejects an unknown direction", () => {
     const bad = encodeWorkspace({ ...LINK, dir: "sideways" as never });
-    expect(decodeWorkspace(`#s=${bad}`)?.dir).toBe("backward");
+    expect(decodeWorkspace(`#s=${bad}`)).toBeNull();
   });
 
-  it("drops malformed boxes rather than restoring half a selection", () => {
+  it("rejects malformed boxes rather than restoring half a selection", () => {
     const bad = encodeWorkspace({
       ...LINK,
       sel: [{ t: "B", box: [[3, 1]] as [number, number][] }], // hi <= lo
     });
-    expect(decodeWorkspace(`#s=${bad}`)?.sel).toBeNull();
+    expect(decodeWorkspace(`#s=${bad}`)).toBeNull();
+  });
+
+  it("rejects a mixed valid and invalid selection rather than keeping a prefix", () => {
+    const bad = encodeWorkspace({
+      ...LINK,
+      sel: [
+        { t: "B", box: [[0, 1], [0, 1]] },
+        { t: "B", box: [[3, 1]] },
+      ],
+    });
+    expect(decodeWorkspace(`#s=${bad}`)).toBeNull();
+  });
+
+  it("rejects explicitly malformed settings while defaulting absent legacy ones", () => {
+    for (const patch of [{ tile: "large" }, { tile: Infinity }, { snap: "yes" }]) {
+      const bad = btoa(JSON.stringify({ ...LINK, ...patch }));
+      expect(decodeWorkspace(`#s=${bad}`)).toBeNull();
+    }
   });
 
   it("defaults snapping on for links written before it existed", () => {

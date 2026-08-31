@@ -11,9 +11,7 @@ import { decodeWorkspace } from "./ui/share";
 
 export default function App(): React.ReactElement {
   const loadExample = useStore((s) => s.loadExample);
-  const applyDSL = useStore((s) => s.applyDSL);
-  const restoreSelection = useStore((s) => s.restoreSelection);
-  const setDirection = useStore((s) => s.setDirection);
+  const restoreWorkspace = useStore((s) => s.restoreWorkspace);
   const resolved = useStore((s) => s.resolved);
   const theme = useStore((s) => s.theme);
 
@@ -32,26 +30,22 @@ export default function App(): React.ReactElement {
   useEffect(() => {
     const link = decodeWorkspace(location.hash);
     if (link) {
-      try {
-        applyDSL(link.dsl);
-        setDirection(link.dir);
-        useStore.getState().setTileScale(link.tile);
-        useStore.getState().setSnapToGrid(link.snap !== false);
-        if (link.sel)
-          restoreSelection(
-            link.sel.map((p) => ({
-              tensorId: p.t,
-              box: p.box.map(([lo, hi]) => ({ lo, hi })),
-            }))
-          );
+      const restored = restoreWorkspace({
+        dsl: link.dsl,
+        direction: link.dir,
+        tileScale: link.tile,
+        snapToGrid: link.snap !== false,
+        parts:
+          link.sel?.map((p) => ({
+            tensorId: p.t,
+            box: p.box.map(([lo, hi]) => ({ lo, hi })),
+          })) ?? null,
+      });
+      if (restored)
         return;
-      } catch {
-        /* a link naming a tensor this graph lacks: fall back to the example */
-      }
     }
     loadExample(0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadExample, restoreWorkspace]);
 
   return (
     <div className="app">

@@ -1,15 +1,28 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { DTYPE_BYTES, Tensor } from "../core/graph";
-import { Box, empty, fromBox, Region } from "../core/region";
+import { Box, fromBox, Region } from "../core/region";
 import { drawGrid, elementFromEvent, gridGeometry, Layer, snapSpan, tileSpan } from "./grid";
 import { aggregateColors, boxColor } from "./palette";
-import { BoxProp, Direction, partsOn, useStore, viewAxes, ViewCfg } from "./store";
+import { BoxProp, Direction, partsOn, useStore, viewAxes } from "./store";
+import { cardPx, planeExtents } from "./tiling";
 
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1 << 20) return `${(n / 1024).toFixed(1)} KB`;
   if (n < 1 << 30) return `${(n / (1 << 20)).toFixed(1)} MB`;
   return `${(n / (1 << 30)).toFixed(2)} GB`;
+}
+
+/** Combine exactness across every cone currently visible on a tensor card. */
+export function visibleApproximation(...regions: (Region | undefined)[]): {
+  approximate: boolean;
+  reasons: string[];
+} {
+  const inexact = regions.filter((region): region is Region => !!region && !region.exact);
+  return {
+    approximate: inexact.length > 0,
+    reasons: [...new Set(inexact.flatMap((region) => region.reasons))],
+  };
 }
 
 const depthAlpha = (depth: number, base = 0.72) => base / (1 + 0.35 * Math.max(0, depth - 1));
@@ -65,7 +78,7 @@ export function buildLayers({
   prev,
   dragRegion,
 }: LayerInputs): Layer[] {
-const layers: Layer[] = [];
+  const layers: Layer[] = [];
   const agg = aggregateColors(dark);
 
   // Transient hover preview, drawn faintly under everything else.
@@ -122,7 +135,13 @@ const layers: Layer[] = [];
     if (back && !(isSelected && back.depth === 0))
       layers.push({ region: back.region, color: agg.upstream, alpha: depthAlpha(back.depth), hatch: !back.region.exact });
     if (fwd && !(isSelected && fwd.depth === 0))
-      layers.push({ region: fwd.region, color: agg.downstream, alpha: depthAlpha(fwd.depth), hatch: !fwd.region.exact });
+      layers.push({
+        region: fwd.region,
+        color: agg.downstream,
+        alpha: depthAlpha(fwd.depth),
+        hatch: !fwd.region.exact,
+        strokeOnly: direction === "both",
+      });
   }
 
   // The selection itself: each box in its own hue, dimmed when another is
@@ -335,8 +354,7 @@ export function TensorCard({
   // Exactness is carried by hatching on the canvas; this repeats it in the
   // header because an over-approximation must never be mistakable for ground
   // truth, and hatching is easy to miss on a small or sparsely covered card.
-  const shownRegion = back?.region ?? fwd?.region;
-  const approximate = shownRegion ? !shownRegion.exact : false;
+  const approximation = visibleApproximation(back?.region, fwd?.region);
 
   return (
     <div
@@ -359,10 +377,10 @@ export function TensorCard({
         </span>
         <span className="tc-shape">{numericShape}</span>
         {roleTag && <span className="tc-role">{roleTag}</span>}
-        {approximate && (
+        {approximation.approximate && (
           <span
             className="tc-approx"
-            title={`over-approximation: ${shownRegion!.reasons.join(", ") || "conservative bound"}`}
+            title={`over-approximation: ${approximation.reasons.join(", ") || "conservative bound"}`}
             aria-label="highlight is a conservative over-approximation"
           >
             ≈
@@ -416,26 +434,23 @@ export function TensorCard({
   );
 }
 
-export { empty as emptyRegion };
-
-/** Cfg helper exported for GraphView size estimation. */
 /** Layout footprint of a card at the graph's scale `px`. Independent of the
  * tile: detail never relayouts. */
 export function cardSize(
   shape: number[],
-  cfg: ViewCfg,
   px: number,
   name = ""
 ): { w: number; h: number } {
-  const geom = gridGeometry(shape, cfg, 0, px);
   const rank = shape.length;
   const { rowAxis, colAxis } = viewAxes(shape);
+  const { rows, cols } = planeExtents(shape, rowAxis, colAxis);
+  const canvas = cardPx(rows, cols, px);
   const hiddenAxes = Math.max(0, rank - (rowAxis >= 0 ? 1 : 0) - (colAxis >= 0 ? 1 : 0));
   // Transparent label + optional higher-rank controls + canvas. There is no
   // decorative outer-card padding: this is the solid collision footprint.
-  const h = 24 + (rank > 2 ? 24 : 0) + hiddenAxes * 20 + geom.canvasH;
+  const h = 24 + (rank > 2 ? 24 : 0) + hiddenAxes * 20 + canvas.h;
   const shapeLabel = `[${shape.join(" × ")}]`;
   const labelW = name.length * 9 + shapeLabel.length * 6.5 + 12;
-  const w = Math.max(geom.canvasW, labelW, 120);
+  const w = Math.max(canvas.w, labelW, 120);
   return { w, h };
 }

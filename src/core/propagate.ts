@@ -43,7 +43,6 @@ function propagate(graph: ResolvedGraph, sel: Selection, dir: "backward" | "forw
     };
     const fromIds = dir === "backward" ? node.outputs : node.inputs;
     const toIds = dir === "backward" ? node.inputs : node.outputs;
-    const toShapes = dir === "backward" ? ctx.inShapes : ctx.outShapes;
 
     // Union of contributions per destination tensor, canonicalized ONCE per node.
     const pending: { boxes: Box[]; exact: boolean; reasons: Set<string> }[] = toIds.map(() => ({
@@ -83,7 +82,6 @@ function propagate(graph: ResolvedGraph, sel: Selection, dir: "backward" | "forw
         ? { region: union(prev.region, r), depth: Math.min(prev.depth, sourceDepth + 1) }
         : { region: r, depth: sourceDepth + 1 };
       acc.set(id, next);
-      void toShapes;
     });
   }
 

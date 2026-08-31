@@ -102,6 +102,64 @@ C = matmul(A, B)
   });
 });
 
+describe("transactional workspace restore", () => {
+  beforeEach(() => S().loadExample(0));
+
+  it("installs source, settings, and an ordered selection together", () => {
+    const restored = S().restoreWorkspace({
+      dsl: "input X [4, 4] f32\nY = relu(X)\n",
+      direction: "both",
+      tileScale: 2,
+      snapToGrid: false,
+      parts: [
+        { tensorId: "Y", box: box([0, 2], [1, 3]) },
+        { tensorId: "X", box: box([2, 4], [0, 1]) },
+      ],
+    });
+
+    expect(restored).toBe(true);
+    expect(S().dslText).toContain("Y = relu(X)");
+    expect(S().direction).toBe("both");
+    expect(S().tileScale).toBe(2);
+    expect(S().snapToGrid).toBe(false);
+    expect(selTensors()).toEqual(["Y", "X"]);
+    expect(S().workspaceHistory).toEqual([]);
+    expect(S().exampleIndex).toBe(-1);
+  });
+
+  it("leaves the current workspace untouched when compilation fails", () => {
+    const before = S();
+    const restored = S().restoreWorkspace({
+      dsl: "this is not TileCone DSL",
+      direction: "none",
+      tileScale: -3,
+      snapToGrid: false,
+      parts: null,
+    });
+
+    expect(restored).toBe(false);
+    expect(S()).toBe(before);
+  });
+
+  it("validates every part even when cones are disabled", () => {
+    const before = S();
+    for (const parts of [
+      [{ tensorId: "missing", box: box([0, 1]) }],
+      [{ tensorId: "A", box: box([0, 999], [0, 1]) }],
+    ]) {
+      const restored = S().restoreWorkspace({
+        dsl: "input A [4, 4] f32\nB = relu(A)\n",
+        direction: "none",
+        tileScale: 0,
+        snapToGrid: true,
+        parts,
+      });
+      expect(restored).toBe(false);
+      expect(S()).toBe(before);
+    }
+  });
+});
+
 describe("tensor layout transactions", () => {
   beforeEach(() => S().loadExample(0));
 
@@ -429,7 +487,7 @@ describe("per-box dependency attribution", () => {
     expect(pb).toHaveLength(2);
 
     const boxes = selBoxes();
-    // box order matches selection.region.boxes, so row bands line up per box
+    // part order matches selection.parts, so row bands line up per part
     boxes.forEach((b, i) => {
       const aRegion = pb[i].backward!.tensors.get("A")!.region;
       expect(aRegion.boxes).toEqual([box([b[0].lo, b[0].hi], [0, 512])]);
@@ -816,6 +874,29 @@ describe("tiles on different tensors coexist", () => {
     S().setSelection("B", fromBox(box([64, 128], [0, 64])));
     expect(selTensors()).toEqual(["C", "A", "B", "B"]);
     expect(selBoxes()[0]).toEqual(before);
+  });
+
+  it("preserves hidden and pinned state on untouched tensors", () => {
+    S().toggleBoxHidden(0);
+    S().togglePinBox(0);
+    S().setSelection("A", fromBox(box([0, 64], [0, 64])));
+
+    expect(S().hiddenBoxes).toEqual(new Set([0]));
+    expect(S().pinnedBox).toBe(0);
+    expect(S().focusedBox).toBe(0);
+  });
+
+  it("remaps untouched UI state when edits on another tensor shift indices", () => {
+    S().setSelection("A", fromBox(box([0, 64], [0, 64])));
+    S().setSelection("B", fromBox(box([0, 64], [0, 64])));
+    S().toggleBoxHidden(2); // B
+    S().togglePinBox(2);
+
+    S().setSelection("A", fromBox(box([0, 64], [0, 64])), "subtract");
+    expect(selTensors()).toEqual(["C", "B"]);
+    expect(S().hiddenBoxes).toEqual(new Set([1]));
+    expect(S().pinnedBox).toBe(1);
+    expect(S().focusedBox).toBe(1);
   });
 
   it("moves only the anchor tensor's parts, leaving the others put", () => {

@@ -60,29 +60,35 @@ export function decodeWorkspace(hash: string): WorkspaceLink | null {
   try {
     const raw = JSON.parse(decodeURIComponent(escape(atob(m[1])))) as Partial<WorkspaceLink>;
     if (typeof raw.dsl !== "string" || !raw.dsl) return null;
-    const dir = DIRECTIONS.includes(raw.dir as Direction) ? (raw.dir as Direction) : "backward";
-    const tile = typeof raw.tile === "number" && Number.isFinite(raw.tile) ? raw.tile : 0;
-    const snap = typeof raw.snap === "boolean" ? raw.snap : true;
+    const dir = raw.dir === undefined
+      ? "backward"
+      : DIRECTIONS.includes(raw.dir as Direction) ? (raw.dir as Direction) : null;
+    const tile = raw.tile === undefined
+      ? 0
+      : typeof raw.tile === "number" && Number.isFinite(raw.tile) ? raw.tile : null;
+    const snap = raw.snap === undefined
+      ? true
+      : typeof raw.snap === "boolean" ? raw.snap : null;
+    if (dir === null || tile === null || snap === null) return null;
 
     let sel: WorkspaceLink["sel"] = null;
     const candidate: unknown = raw.sel;
     if (Array.isArray(candidate)) {
-      const parts = candidate.filter(
+      if (!candidate.every(
         (p): p is { t: string; box: [number, number][] } =>
           !!p && typeof p === "object" && typeof (p as { t?: unknown }).t === "string" &&
           isBox((p as { box?: unknown }).box)
-      );
-      if (parts.length) sel = parts;
+      )) return null;
+      if (candidate.length) sel = candidate;
     } else if (candidate && typeof candidate === "object") {
       // Legacy single-tensor form: every box belonged to one tensor.
       const legacy = candidate as Partial<LegacySel>;
       if (typeof legacy.t === "string" && Array.isArray(legacy.boxes)) {
-        const parts = legacy.boxes
-          .filter(isBox)
-          .map((box) => ({ t: legacy.t as string, box }));
+        if (!legacy.boxes.every(isBox)) return null;
+        const parts = legacy.boxes.map((box) => ({ t: legacy.t as string, box }));
         if (parts.length) sel = parts;
-      }
-    }
+      } else return null;
+    } else if (candidate !== undefined && candidate !== null) return null;
     return { dsl: raw.dsl, dir, tile, snap, sel };
   } catch {
     return null;

@@ -1,13 +1,12 @@
 import { create } from "zustand";
-import { executeQuery } from "../core/executor";
+import { executeQuery, validateSelection } from "../core/executor";
 import { Graph, ResolvedGraph, resolveGraph } from "../core/graph";
-import { expandNode, isExpandable } from "../core/expand";
+import { expandNode } from "../core/expand";
 import { PropResult, mergeProps } from "../core/propagate";
 import {
   Box,
   Region,
   addPart,
-  empty,
   fromBox,
   subtractFromParts,
   translateAllParts,
@@ -71,6 +70,13 @@ export function anchorTensorId(selection: Selection, focusedBox: number | null):
   return parts[parts.length - 1].tensorId;
 }
 type WorkspaceSnapshot = { selection: Selection; tensorOffsets: TensorOffsets };
+export type WorkspaceRestore = {
+  dsl: string;
+  direction: Direction;
+  tileScale: number;
+  snapToGrid: boolean;
+  parts: SelPart[] | null;
+};
 
 /** Panel geometry. VS Code semantics: drag to resize between the bounds, drag
  * far enough inward to collapse, click the rail to bring it back. */
@@ -136,9 +142,8 @@ type State = {
    * them apart lets a probe be parked — its numbers stay live in the footprint
    * table — without its cone competing for the canvas.
    *
-   * Indexes into `selection.region.boxes`, so it is cleared by every edit that
-   * can renumber the parts, exactly where `focusedBox` is cleared. Only a move
-   * preserves it, because a move preserves order and length.
+   * Indexes into `selection.parts`. Edits clear metadata for affected parts and
+   * remap it by object identity for untouched parts on other tensors.
    */
   hiddenBoxes: Set<number>;
   /** True while any drag is in progress — a card rubber-band or a canvas pan —
@@ -173,10 +178,9 @@ type State = {
 
   loadExample: (i: number) => void;
   applyDSL: (text: string) => void;
+  /** Compile, validate, and install a shared workspace as one transaction. */
+  restoreWorkspace: (workspace: WorkspaceRestore) => boolean;
   setSelection: (tensorId: string, region: Region, compose?: Compose) => void;
-  /** Install an exact part list. Used by link restore, where part *order* is
-   * the payload: it is what assigns hues and footprint rows. */
-  restoreSelection: (parts: SelPart[]) => void;
   clearSelection: () => void;
   undoWorkspace: () => void;
   /** Move the whole selection along one axis, clamped to the tensor.
@@ -217,7 +221,7 @@ type State = {
   expandNodeInPlace: (nodeId: string) => void;
 };
 
-/** Per-selection-box propagation results, aligned with `selection.region.boxes`. */
+/** Per-part propagation results, aligned with `selection.parts`. */
 export type BoxProp = { backward: PropResult | null; forward: PropResult | null };
 
 /** Above this many boxes, per-box attribution costs more than it is worth. */
@@ -427,14 +431,67 @@ export const useStore = create<State>((set, get) => ({
   applyDSL: (text) => {
     try {
       const program = compileDSL(text);
-      set({ ...loadResolvedGraph(program.graph, program.resolved), dslText: text });
+      set({
+        ...loadResolvedGraph(program.graph, program.resolved),
+        dslText: text,
+        exampleIndex: -1,
+        focusTensor: null,
+      });
     } catch (e) {
       set({ loadError: (e as Error).message });
     }
   },
 
+  restoreWorkspace: ({ dsl, direction, tileScale, snapToGrid, parts }) => {
+    try {
+      if (
+        !["none", "backward", "forward", "both"].includes(direction) ||
+        !Number.isFinite(tileScale) ||
+        typeof snapToGrid !== "boolean"
+      ) return false;
+      const program = compileDSL(dsl);
+      const base = loadResolvedGraph(program.graph, program.resolved);
+      const checkedParts = (parts ?? []).map((part) => {
+        const checked = validateSelection(program.resolved, {
+          tensorId: part.tensorId,
+          region: fromBox(part.box),
+        });
+        if (checked.region.boxes.length !== 1)
+          throw new Error(`selection on tensor "${part.tensorId}" is empty`);
+        return { tensorId: checked.tensorId, box: checked.region.boxes[0] };
+      });
+      const selection = checkedParts.length ? { parts: checkedParts } : null;
+      const clampedTile = Math.max(
+        TILE_SCALE_MIN,
+        Math.min(TILE_SCALE_MAX, Math.round(tileScale))
+      );
+      set({
+        ...base,
+        dslText: dsl,
+        exampleIndex: -1,
+        focusTensor: null,
+        direction,
+        tileScale: clampedTile,
+        snapToGrid,
+        selection,
+        ...recompute(program.resolved, selection, direction),
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  },
+
   setSelection: (tensorId, region, compose) => {
-    const { selection, resolved, direction, workspaceHistory, tensorOffsets } = get();
+    const {
+      selection,
+      resolved,
+      direction,
+      workspaceHistory,
+      tensorOffsets,
+      pinnedBox,
+      hiddenBoxes,
+    } = get();
     const mode = compose ?? "union";
     const drawn = region.boxes;
 
@@ -448,8 +505,9 @@ export const useStore = create<State>((set, get) => ({
       let mine = partsOn(selection, tensorId).map((p) => p.box);
       for (const b of drawn)
         mine = mode === "union" ? addPart(mine, b) : subtractFromParts(mine, b);
-      // Rebuild in place so untouched parts keep their index -- and with it
-      // their hue, their footprint row, and any hidden/pinned state.
+      // Rebuild in place and retain the object identity of parts on other
+      // tensors. Their indices can still shift when this tensor loses parts,
+      // so the index-based UI state below is remapped by identity.
       parts = [];
       let k = 0;
       for (const p of selection.parts) {
@@ -459,27 +517,25 @@ export const useStore = create<State>((set, get) => ({
       for (; k < mine.length; k++) parts.push({ tensorId, box: mine[k] });
     }
     const sel = parts.length === 0 ? null : { parts };
+    const newIndex = new Map(parts.map((part, index) => [part, index]));
+    const remap = (index: number): number | null => {
+      if (mode === "replace" || !selection) return null;
+      return newIndex.get(selection.parts[index]) ?? null;
+    };
+    const nextPinned = pinnedBox === null ? null : remap(pinnedBox);
+    const nextHidden = new Set<number>();
+    for (const index of hiddenBoxes) {
+      const mapped = remap(index);
+      if (mapped !== null) nextHidden.add(mapped);
+    }
     set({
       selection: sel,
       // Null is a real workspace state: the first selection must be undoable
       // without also rewinding an earlier tensor move.
       workspaceHistory: [...workspaceHistory, { selection, tensorOffsets }].slice(-40),
-      focusedBox: null,
-      pinnedBox: null,
-      hiddenBoxes: new Set<number>(),
-      preview: null,
-      ...recompute(resolved, sel, direction),
-    });
-  },
-
-  restoreSelection: (parts) => {
-    const { resolved, direction } = get();
-    const sel = parts.length === 0 ? null : { parts };
-    set({
-      selection: sel,
-      focusedBox: null,
-      pinnedBox: null,
-      hiddenBoxes: new Set<number>(),
+      focusedBox: nextPinned,
+      pinnedBox: nextPinned,
+      hiddenBoxes: nextHidden,
       preview: null,
       ...recompute(resolved, sel, direction),
     });
@@ -702,5 +758,3 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 }));
-
-export { isExpandable, EXAMPLES, empty };

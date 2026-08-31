@@ -14,7 +14,7 @@ No values are ever computed. The whole engine is integer interval arithmetic ove
 ```bash
 npm install
 npm run dev      # http://localhost:5173
-npm test         # 292 tests
+npm test         # unit and integration suite
 npm run build    # typecheck + production bundle
 ```
 
@@ -53,7 +53,8 @@ src/
     propagate.ts the backward/forward driver
     executor.ts  checked headless query API
     ops/         the op registry — einsum is the heart of it
-    metrics.ts   flops, bytes, intensity, reuse
+    metrics.ts   flops, bytes, intensity
+    reuse.ts     deterministic sampled reuse estimates
     expand.ts    composite ops -> primitive subgraphs
   parse/         DSL/JSON front ends + source-aware compiler facade
   ui/            React + canvas; store.ts holds all view state

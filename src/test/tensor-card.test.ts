@@ -1,16 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { cardSize } from "../ui/TensorCard";
+import { cardSize, visibleApproximation } from "../ui/TensorCard";
 import { graphScale } from "../ui/tiling";
-import type { ViewCfg } from "../ui/store";
-
-const cfg: ViewCfg = { sliders: [0, 0], projection: true };
 
 describe("frameless tensor footprint", () => {
   it("reserves collision width for the visible name and numeric shape", () => {
     const shape = [4, 4];
     const px = graphScale([{ rows: 4, cols: 4 }]);
-    const short = cardSize(shape, cfg, px, "X");
-    const long = cardSize(shape, cfg, px, "attention_output_projection");
+    const short = cardSize(shape, px, "X");
+    const long = cardSize(shape, px, "attention_output_projection");
     expect(long.w).toBeGreaterThan(short.w);
     expect(long.h).toBe(short.h);
   });
@@ -18,7 +15,7 @@ describe("frameless tensor footprint", () => {
   it("keeps the label and grid inside the solid collision height", () => {
     const shape = [16, 16];
     const px = graphScale([{ rows: 16, cols: 16 }]);
-    const size = cardSize(shape, cfg, px, "X");
+    const size = cardSize(shape, px, "X");
     expect(size.h).toBeGreaterThan(16 * px); // numeric label sits above the grid
   });
 });
@@ -69,6 +66,14 @@ describe("direction stays readable once hue means box identity", () => {
   it("gives the two cones the same hue, so hue is left to mean the box", () => {
     const layers = buildLayers(inputs({ direction: "both" }));
     expect(layers[0].color).toEqual(layers[1].color);
+  });
+
+  it("keeps fill versus outline encoding after per-box attribution is capped", () => {
+    const back = { region: region([0, 4]), depth: 1 };
+    const fwd = { region: region([4, 8]), depth: 1 };
+    const layers = buildLayers(inputs({ perBox: null, back, fwd, direction: "both" }));
+    expect(layers[0].strokeOnly).toBeFalsy();
+    expect(layers[1].strokeOnly).toBe(true);
   });
 });
 
@@ -134,5 +139,16 @@ describe("inexact regions are hatched", () => {
     };
     const layers = buildLayers(inputs({ perBox: [inexact], direction: "backward" }));
     expect(layers[0].hatch).toBe(true);
+  });
+
+  it("reports an inexact forward cone even when the backward cone is exact", () => {
+    const result = visibleApproximation(
+      region([0, 4]),
+      { boxes: [box([4, 8])], exact: false, reasons: ["conservative forward map"] }
+    );
+    expect(result).toEqual({
+      approximate: true,
+      reasons: ["conservative forward map"],
+    });
   });
 });

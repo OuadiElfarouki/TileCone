@@ -1,20 +1,18 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { computeMetrics } from "../core/metrics";
 import { coneIsFullyElementwise, dependencyNotes } from "../core/notes";
-import { propagateBackward } from "../core/propagate";
+import { estimateInputReuse, ReuseEstimate } from "../core/reuse";
 import {
   Box,
   Region,
   count,
   fromBox,
-  intersect,
-  isEmpty,
   partsOverlap,
   subtract,
   union,
 } from "../core/region";
 import { formatBytes } from "./TensorCard";
-import { boxColor, MAX_DISTINCT_HUES, rgbCss } from "./palette";
+import { aggregateColors, boxColor, MAX_DISTINCT_HUES, rgbCss } from "./palette";
 import {
   anchorTensorId,
   MAX_PER_BOX_PROPS,
@@ -446,71 +444,40 @@ export function Inspector(): React.ReactElement {
   const perBox = useStore((s) => s.perBox);
   const focusedBox = useStore((s) => s.focusedBox);
 
-  const [reuse, setReuse] = useState<Record<string, string> | null>(null);
+  const [reuse, setReuse] = useState<ReuseEstimate[] | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
   // When a box is focused, every readout below scopes to that box alone.
   const scopedRes = focusedBox !== null ? perBox?.[focusedBox]?.backward ?? backwardRes : backwardRes;
 
   const metrics = useMemo(() => {
-    setReuse(null);
     if (!resolved || !scopedRes) return null;
     return computeMetrics(resolved, scopedRes, countIntermediates);
   }, [resolved, scopedRes, countIntermediates]);
 
+  useEffect(() => setReuse(null), [resolved, selection, focusedBox]);
+
   if (!resolved) return <aside className="inspector" />;
 
   const selBoxes = selection?.parts.length ?? 0;
-  const hue = rgbCss(boxColor(0, theme === "dark"));
+  const dark = theme === "dark";
+  const hue = rgbCss(boxColor(0, dark));
   /** Past the cap the cones are still correct, but merged rather than attributed. */
   const merged = selBoxes > MAX_PER_BOX_PROPS;
+  const aggregate = aggregateColors(dark);
+  const upstreamHue = merged ? rgbCss(aggregate.upstream) : hue;
+  const downstreamHue = merged ? rgbCss(aggregate.downstream) : hue;
 
   /** Reuse factor (§5.5): sample selection-sized output tiles across the selected
    * tensor; count how many touch the current footprint on each input. The sweep
    * is defined by one tile on one tensor, so it follows the anchor part — the
    * focused one, else the last drawn — rather than mixing tensors. */
   const computeReuse = () => {
-    if (!selection || !resolved || !scopedRes) return;
+    if (!selection || !resolved) return;
     const probe =
       selection.parts[focusedBox !== null ? focusedBox : selection.parts.length - 1];
     if (!probe) return;
-    const shape = resolved.tensors[probe.tensorId].resolved!;
-    const bb = probe.box;
-    const tileExt = bb.map((I) => I.hi - I.lo);
-    const gridDims = shape.map((e, ax) => Math.ceil(e / Math.max(1, tileExt[ax])));
-    const totalTiles = gridDims.reduce((a, b) => a * b, 1);
-    const probeCount = Math.min(48, totalTiles);
-    const picked = new Set<number>();
-    const results: Record<string, { touch: number }> = {};
-    const inputs = Object.values(resolved.tensors).filter((t) => !t.producer);
-    for (const t of inputs) results[t.id] = { touch: 0 };
-    for (let k = 0; k < probeCount; k++) {
-      let flat = totalTiles <= 48 ? k : Math.floor(Math.random() * totalTiles);
-      while (totalTiles > 48 && picked.has(flat)) flat = Math.floor(Math.random() * totalTiles);
-      picked.add(flat);
-      const tIdx: number[] = [];
-      let rest = flat;
-      for (let ax = shape.length - 1; ax >= 0; ax--) {
-        tIdx.unshift(rest % gridDims[ax]);
-        rest = Math.floor(rest / gridDims[ax]);
-      }
-      const probeBox = shape.map((e, ax) => ({
-        lo: Math.min(tIdx[ax] * tileExt[ax], e - 1),
-        hi: Math.min((tIdx[ax] + 1) * tileExt[ax], e),
-      }));
-      const res = propagateBackward(resolved, { tensorId: probe.tensorId, region: fromBox(probeBox) });
-      for (const t of inputs) {
-        const mine = scopedRes.tensors.get(t.id)?.region;
-        const theirs = res.tensors.get(t.id)?.region;
-        if (mine && theirs && !isEmpty(intersect(mine, theirs))) results[t.id].touch++;
-      }
-    }
-    const out: Record<string, string> = {};
-    for (const t of inputs) {
-      const est = (results[t.id].touch / probeCount) * totalTiles;
-      out[t.id] = `${est.toFixed(est < 10 ? 1 : 0)}× (of ${totalTiles} tiles)`;
-    }
-    setReuse(out);
+    setReuse(estimateInputReuse(resolved, { tensorId: probe.tensorId, region: fromBox(probe.box) }));
   };
 
   const copy = (text: string, key: string) => {
@@ -539,13 +506,20 @@ export function Inspector(): React.ReactElement {
         <span><i className="selected" style={{ background: hue }} /> selected tile</span>
         {direction === "both" ? (
           <>
-            <span><i className="required" style={{ background: hue }} /> upstream (filled)</span>
-            <span><i className="produced" style={{ borderColor: hue }} /> downstream (outlined)</span>
+            <span><i className="required" style={{ background: upstreamHue }} /> upstream (filled)</span>
+            <span><i className="produced" style={{ borderColor: downstreamHue }} /> downstream (outlined)</span>
           </>
         ) : (
           direction !== "none" && (
             <span>
-              <i className="required" style={{ background: hue }} />{" "}
+              <i
+                className="required"
+                style={{
+                  background: merged
+                    ? rgbCss(direction === "backward" ? aggregate.upstream : aggregate.downstream)
+                    : hue,
+                }}
+              />{" "}
               {direction === "backward" ? "upstream" : "downstream"}
             </span>
           )
@@ -580,10 +554,13 @@ export function Inspector(): React.ReactElement {
             </div>
             {reuse ? (
               <div className="kv">
-                {Object.entries(reuse).map(([id, v]) => (
-                  <React.Fragment key={id}>
-                    <span>{resolved.tensors[id].name}</span>
-                    <span>{v}</span>
+                {reuse.map((estimate) => (
+                  <React.Fragment key={estimate.tensorId}>
+                    <span>{resolved.tensors[estimate.tensorId].name}</span>
+                    <span>
+                      {estimate.estimatedTiles.toFixed(estimate.estimatedTiles < 10 ? 1 : 0)}×
+                      {` (of ${estimate.totalTiles} tiles)`}
+                    </span>
                   </React.Fragment>
                 ))}
               </div>

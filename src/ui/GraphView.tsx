@@ -1,5 +1,5 @@
 import dagre from "dagre";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isExpandable } from "../core/expand";
 import {
   constrainRectMotion,
@@ -22,7 +22,8 @@ type Placed = {
   h: number;
 };
 
-type EdgeLine = { key: string; path: string; mark: string; hot: boolean };
+type Link = { v: string; w: string; tensorId: string; opId: string };
+type EdgeLine = Link & { key: string; path: string; mark: string };
 
 type CardDrag = {
   id: string;
@@ -37,7 +38,6 @@ type CardDrag = {
 
 export function GraphView(): React.ReactElement {
   const resolved = useStore((s) => s.resolved);
-  const viewCfgs = useStore((s) => s.viewCfgs);
   const graphPx = useStore((s) => s.graphPx);
   const backwardRes = useStore((s) => s.backwardRes);
   const forwardRes = useStore((s) => s.forwardRes);
@@ -76,20 +76,16 @@ export function GraphView(): React.ReactElement {
     [tf.k]
   );
 
-  const layout = useMemo(() => {
+  /** Dagre placement depends only on graph structure and card dimensions. */
+  const baseLayout = useMemo(() => {
     if (!resolved)
-      return { placed: [] as Placed[], solids: [] as Placed[], edges: [] as EdgeLine[], w: 800, h: 600 };
+      return { solids: [] as Placed[], links: [] as Link[], graphW: 800, graphH: 600 };
     const g = new dagre.graphlib.Graph();
     g.setGraph({ rankdir: "LR", nodesep: 26, ranksep: 46, marginx: 20, marginy: 20 });
     g.setDefaultEdgeLabel(() => ({}));
 
-    const nodeHot = (nid: string) => {
-      const n = resolved.nodes.find((x) => x.id === nid)!;
-      return [...n.inputs, ...n.outputs].some((t) => contributing.has(t));
-    };
     for (const t of Object.values(resolved.tensors)) {
-      const cfg = viewCfgs[t.id];
-      const { w, h } = cfg ? cardSize(t.resolved!, cfg, graphPx, t.name) : { w: 230, h: 120 };
+      const { w, h } = cardSize(t.resolved!, graphPx, t.name);
       g.setNode(`t:${t.id}`, { width: w, height: h });
     }
     for (const n of resolved.nodes) {
@@ -103,26 +99,19 @@ export function GraphView(): React.ReactElement {
     for (const id of g.nodes()) {
       const nd = g.node(id);
       if (!nd) continue;
-      const tensorId = id.startsWith("t:") ? id.slice(2) : null;
-      const offset = tensorId ? tensorOffsets[tensorId] ?? { dx: 0, dy: 0 } : { dx: 0, dy: 0 };
       solids.push({
         id: id.slice(2),
         kind: id.startsWith("t:") ? "tensor" : "op",
-        x: nd.x - nd.width / 2 + offset.dx,
-        y: nd.y - nd.height / 2 + offset.dy,
+        x: nd.x - nd.width / 2,
+        y: nd.y - nd.height / 2,
         w: nd.width,
         h: nd.height,
       });
     }
-    const placed = solids;
-    const byGraphId = new Map(
-      placed.map((p) => [`${p.kind === "tensor" ? "t" : "n"}:${p.id}`, p])
-    );
     // Connectors come from the operand lists, not from dagre's edge set: dagre
     // keys edges by endpoint pair, so an op taking one tensor twice —
     // `matmul(X, X)` — collapses to a single edge there. Layout is unaffected
     // by that collapse, but the drawing is: one line claims an arity of one.
-    type Link = { v: string; w: string; tensorId: string; opId: string };
     const links: Link[] = [];
     for (const n of resolved.nodes) {
       for (const t of n.inputs)
@@ -130,13 +119,32 @@ export function GraphView(): React.ReactElement {
       for (const t of n.outputs)
         links.push({ v: `n:${n.id}`, w: `t:${t}`, tensorId: t, opId: n.id });
     }
+    const graph = g.graph();
+    return { solids, links, graphW: graph.width ?? 800, graphH: graph.height ?? 600 };
+  }, [resolved, graphPx]);
+
+  /** Apply interactive offsets and route connectors without invoking Dagre. */
+  const layout = useMemo(() => {
+    const solids = baseLayout.solids.map((placed) => {
+      if (placed.kind !== "tensor") return placed;
+      const offset = tensorOffsets[placed.id] ?? { dx: 0, dy: 0 };
+      return { ...placed, x: placed.x + offset.dx, y: placed.y + offset.dy };
+    });
+    const byGraphId = new Map(
+      solids.map((placed) => [
+        `${placed.kind === "tensor" ? "t" : "n"}:${placed.id}`,
+        placed,
+      ])
+    );
+
     // Parallel connectors fan around their shared centre line, in operand order.
     const parallel = new Map<string, number>();
-    for (const l of links) parallel.set(`${l.v}|${l.w}`, (parallel.get(`${l.v}|${l.w}`) ?? 0) + 1);
+    for (const link of baseLayout.links)
+      parallel.set(`${link.v}|${link.w}`, (parallel.get(`${link.v}|${link.w}`) ?? 0) + 1);
     const drawn = new Map<string, number>();
 
     const edges: EdgeLine[] = [];
-    for (const l of links) {
+    for (const l of baseLayout.links) {
       const pairKey = `${l.v}|${l.w}`;
       const slot = drawn.get(pairKey) ?? 0;
       drawn.set(pairKey, slot + 1);
@@ -150,27 +158,45 @@ export function GraphView(): React.ReactElement {
         key: `${pairKey}#${slot}`,
         path: cubicPath(c),
         mark: fannedFlowMark(c, slot, count, spacing),
-        hot: hasResult && contributing.has(l.tensorId) && nodeHot(l.opId),
+        ...l,
       });
     }
-    const gr = g.graph();
-    const w = Math.max(gr.width ?? 800, ...solids.map((p) => p.x + p.w + WORLD_MARGIN));
-    const h = Math.max(gr.height ?? 600, ...solids.map((p) => p.y + p.h + WORLD_MARGIN));
-    return { placed, solids, edges, w, h };
-  }, [resolved, viewCfgs, contributing, hasResult, graphPx, tensorOffsets]);
+    const w = Math.max(baseLayout.graphW, ...solids.map((p) => p.x + p.w + WORLD_MARGIN));
+    const h = Math.max(baseLayout.graphH, ...solids.map((p) => p.y + p.h + WORLD_MARGIN));
+    return { placed: solids, solids, edges, w, h };
+  }, [baseLayout, tensorOffsets]);
 
-  const fit = () => {
+  const nodeById = useMemo(
+    () => new Map(resolved?.nodes.map((node) => [node.id, node]) ?? []),
+    [resolved]
+  );
+  const hotNodes = useMemo(() => {
+    const hot = new Set<string>();
+    if (!hasResult || !resolved) return hot;
+    for (const node of resolved.nodes)
+      if ([...node.inputs, ...node.outputs].some((tensorId) => contributing.has(tensorId)))
+        hot.add(node.id);
+    return hot;
+  }, [contributing, hasResult, resolved]);
+
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const fit = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
-    const k = Math.min(el.clientWidth / (layout.w + 40), el.clientHeight / (layout.h + 40), 1.25);
+    const current = layoutRef.current;
+    const k = Math.min(
+      el.clientWidth / (current.w + 40),
+      el.clientHeight / (current.h + 40),
+      1.25
+    );
     setTf({ x: 20 * k, y: 20 * k, k });
     movedRef.current = false;
-  };
+  }, []);
 
   useEffect(() => {
     fit();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolved]);
+  }, [resolved, fit]);
 
   // Re-fit when the viewport changes size — panel collapse/restore, panel drag,
   // window resize. An observer is used rather than a timeout after each of those
@@ -184,8 +210,7 @@ export function GraphView(): React.ReactElement {
     });
     ro.observe(el);
     return () => ro.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layout]);
+  }, [fit]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -195,8 +220,7 @@ export function GraphView(): React.ReactElement {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layout]);
+  }, [fit]);
 
   useEffect(() => {
     if (!focusTensor) return;
@@ -334,7 +358,8 @@ export function GraphView(): React.ReactElement {
       >
         <svg className="edges" width={layout.w} height={layout.h}>
           {layout.edges.map((e) => {
-            const cls = hasResult ? (e.hot ? "edge hot" : "edge dim") : "edge";
+            const hot = contributing.has(e.tensorId) && hotNodes.has(e.opId);
+            const cls = hasResult ? (hot ? "edge hot" : "edge dim") : "edge";
             return (
               <g key={e.key}>
                 <path d={e.path} className={cls} />
@@ -347,8 +372,8 @@ export function GraphView(): React.ReactElement {
         </svg>
         {layout.placed.map((p) => {
           if (p.kind === "op") {
-            const node = resolved.nodes.find((n) => n.id === p.id)!;
-            const hot = !hasResult || [...node.inputs, ...node.outputs].some((t) => contributing.has(t));
+            const node = nodeById.get(p.id)!;
+            const hot = !hasResult || hotNodes.has(p.id);
             return (
               <div
                 key={`n:${p.id}`}

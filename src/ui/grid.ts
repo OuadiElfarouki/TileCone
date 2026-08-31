@@ -56,19 +56,6 @@ export function gridGeometry(
   };
 }
 
-/** Pixel bounds of one tile cell, snapped to whole pixels so cells tile seamlessly. */
-export function cellRect(
-  geom: GridGeom,
-  tr: number,
-  tc: number
-): { x: number; y: number; w: number; h: number } {
-  const x0 = Math.round(tc * geom.cellW);
-  const x1 = Math.round((tc + 1) * geom.cellW);
-  const y0 = Math.round(tr * geom.cellH);
-  const y1 = Math.round((tr + 1) * geom.cellH);
-  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
-}
-
 export type Layer = {
   region: Region;
   color: [number, number, number];
@@ -291,21 +278,6 @@ export function nudgeUnit(
   snapToGrid: boolean
 ): number {
   return snapToGrid ? tileOf(shape, tileScale, px) : 1;
-}
-
-/** Pixel position -> tile cell. */
-export function cellFromEvent(
-  e: { clientX: number; clientY: number },
-  canvas: HTMLCanvasElement,
-  geom: GridGeom
-): { row: number; col: number } | null {
-  const rect = canvas.getBoundingClientRect();
-  const x = ((e.clientX - rect.left) / rect.width) * geom.canvasW;
-  const y = ((e.clientY - rect.top) / rect.height) * geom.canvasH;
-  const col = Math.floor(x / geom.cellW);
-  const row = Math.floor(y / geom.cellH);
-  if (col < 0 || col >= geom.tileCols || row < 0 || row >= geom.tileRows) return null;
-  return { row, col };
 }
 
 /**

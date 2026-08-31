@@ -37,18 +37,18 @@ export class ExecutionError extends Error {
   }
 }
 
-/** Validate and defensively copy a query seed before it enters propagation. */
-function prepareSelection(graph: ResolvedGraph, query: SymbolicQuery): Selection {
-  const tensor = graph.tensors[query.tensorId];
+/** Validate and defensively copy a selection before it enters propagation. */
+export function validateSelection(graph: ResolvedGraph, selection: Selection): Selection {
+  const tensor = graph.tensors[selection.tensorId];
   if (!tensor)
-    throw new ExecutionError("EXEC_UNKNOWN_TENSOR", `unknown tensor "${query.tensorId}"`);
+    throw new ExecutionError("EXEC_UNKNOWN_TENSOR", `unknown tensor "${selection.tensorId}"`);
 
   const shape = tensor.resolved!;
-  const boxes = query.region.boxes.map((box, boxIndex) => {
+  const boxes = selection.region.boxes.map((box, boxIndex) => {
     if (box.length !== shape.length)
       throw new ExecutionError(
         "EXEC_REGION_RANK",
-        `tensor "${query.tensorId}" has rank ${shape.length}, but box ${boxIndex} has rank ${box.length}`
+        `tensor "${selection.tensorId}" has rank ${shape.length}, but box ${boxIndex} has rank ${box.length}`
       );
     return box.map((interval, axis) => {
       const { lo, hi } = interval;
@@ -61,7 +61,7 @@ function prepareSelection(graph: ResolvedGraph, query: SymbolicQuery): Selection
       )
         throw new ExecutionError(
           "EXEC_REGION_BOUNDS",
-          `tensor "${query.tensorId}" box ${boxIndex}, axis ${axis}: ` +
+          `tensor "${selection.tensorId}" box ${boxIndex}, axis ${axis}: ` +
             `[${lo}, ${hi}) is outside [0, ${shape[axis]})`
         );
       return { lo, hi };
@@ -69,10 +69,10 @@ function prepareSelection(graph: ResolvedGraph, query: SymbolicQuery): Selection
   });
   const region: Region = canonicalize({
     boxes,
-    exact: query.region.exact,
-    reasons: query.region.reasons.slice(),
+    exact: selection.region.exact,
+    reasons: selection.region.reasons.slice(),
   });
-  return { tensorId: query.tensorId, region };
+  return { tensorId: selection.tensorId, region };
 }
 
 /** Execute one dependency query against a resolved graph. */
@@ -80,7 +80,7 @@ export function executeQuery(
   graph: ResolvedGraph,
   query: SymbolicQuery
 ): SymbolicQueryResult {
-  const selection = prepareSelection(graph, query);
+  const selection = validateSelection(graph, query);
   const direction = query.direction ?? "backward";
   if (direction !== "backward" && direction !== "forward" && direction !== "both")
     throw new ExecutionError("EXEC_DIRECTION", `unknown query direction "${String(direction)}"`);
