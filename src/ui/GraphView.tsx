@@ -1,7 +1,15 @@
 import dagre from "dagre";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { isExpandable } from "../core/expand";
-import { constrainRectMotion, curvedEdgePath, Rect, WORLD_MARGIN } from "./graph-geometry";
+import {
+  constrainRectMotion,
+  cubicPath,
+  curvedEdge,
+  fanSpacing,
+  fannedFlowMark,
+  Rect,
+  WORLD_MARGIN,
+} from "./graph-geometry";
 import { cardSize, TensorCard } from "./TensorCard";
 import { selectedTensorIds, TensorOffset, useStore } from "./store";
 
@@ -14,7 +22,7 @@ type Placed = {
   h: number;
 };
 
-type EdgeLine = { from: string; to: string; path: string; hot: boolean };
+type EdgeLine = { key: string; path: string; mark: string; hot: boolean };
 
 type CardDrag = {
   id: string;
@@ -110,14 +118,40 @@ export function GraphView(): React.ReactElement {
     const byGraphId = new Map(
       placed.map((p) => [`${p.kind === "tensor" ? "t" : "n"}:${p.id}`, p])
     );
+    // Connectors come from the operand lists, not from dagre's edge set: dagre
+    // keys edges by endpoint pair, so an op taking one tensor twice —
+    // `matmul(X, X)` — collapses to a single edge there. Layout is unaffected
+    // by that collapse, but the drawing is: one line claims an arity of one.
+    type Link = { v: string; w: string; tensorId: string; opId: string };
+    const links: Link[] = [];
+    for (const n of resolved.nodes) {
+      for (const t of n.inputs)
+        links.push({ v: `t:${t}`, w: `n:${n.id}`, tensorId: t, opId: n.id });
+      for (const t of n.outputs)
+        links.push({ v: `n:${n.id}`, w: `t:${t}`, tensorId: t, opId: n.id });
+    }
+    // Parallel connectors fan around their shared centre line, in operand order.
+    const parallel = new Map<string, number>();
+    for (const l of links) parallel.set(`${l.v}|${l.w}`, (parallel.get(`${l.v}|${l.w}`) ?? 0) + 1);
+    const drawn = new Map<string, number>();
+
     const edges: EdgeLine[] = [];
-    for (const e of g.edges()) {
-      const fromT = e.v.startsWith("t:") ? e.v.slice(2) : e.w.slice(2);
-      const opId = e.v.startsWith("n:") ? e.v.slice(2) : e.w.slice(2);
-      const hot = hasResult && contributing.has(fromT) && nodeHot(opId);
-      const from = byGraphId.get(e.v);
-      const to = byGraphId.get(e.w);
-      if (from && to) edges.push({ from: e.v, to: e.w, path: curvedEdgePath(from, to), hot });
+    for (const l of links) {
+      const pairKey = `${l.v}|${l.w}`;
+      const slot = drawn.get(pairKey) ?? 0;
+      drawn.set(pairKey, slot + 1);
+      const from = byGraphId.get(l.v);
+      const to = byGraphId.get(l.w);
+      if (!from || !to) continue;
+      const count = parallel.get(pairKey)!;
+      const spacing = fanSpacing(from, to, count);
+      const c = curvedEdge(from, to, (slot - (count - 1) / 2) * spacing);
+      edges.push({
+        key: `${pairKey}#${slot}`,
+        path: cubicPath(c),
+        mark: fannedFlowMark(c, slot, count, spacing),
+        hot: hasResult && contributing.has(l.tensorId) && nodeHot(l.opId),
+      });
     }
     const gr = g.graph();
     const w = Math.max(gr.width ?? 800, ...solids.map((p) => p.x + p.w + WORLD_MARGIN));
@@ -299,13 +333,17 @@ export function GraphView(): React.ReactElement {
         style={{ transform: `translate(${tf.x}px, ${tf.y}px) scale(${tf.k})`, width: layout.w, height: layout.h }}
       >
         <svg className="edges" width={layout.w} height={layout.h}>
-          {layout.edges.map((e, i) => (
-            <path
-              key={i}
-              d={e.path}
-              className={hasResult ? (e.hot ? "edge hot" : "edge dim") : "edge"}
-            />
-          ))}
+          {layout.edges.map((e) => {
+            const cls = hasResult ? (e.hot ? "edge hot" : "edge dim") : "edge";
+            return (
+              <g key={e.key}>
+                <path d={e.path} className={cls} />
+                {/* Flow direction. Structural, so it is drawn whether or not a
+                    query is live. */}
+                {e.mark && <path d={e.mark} className={`${cls} edge-arrow`} />}
+              </g>
+            );
+          })}
         </svg>
         {layout.placed.map((p) => {
           if (p.kind === "op") {

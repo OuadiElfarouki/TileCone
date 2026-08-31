@@ -253,6 +253,10 @@ textarea.source.error-state { border-color: var(--err); }
 }
 .edge.hot { stroke: var(--hot); stroke-width: 2.2; opacity: 1; }
 .edge.dim { opacity: var(--dim); }
+/* Slightly heavier than the line it sits on: a 4.5px chevron at the connector's
+   own weight reads as a kink in the curve rather than a mark on it. `.edge.hot`
+   is more specific, so a hot edge's chevron still takes the hot weight. */
+.edge-arrow { stroke-width: 1.7; }
 .graph-hud {
   position: absolute; left: 10px; right: 10px; bottom: 9px; z-index: 20;
   display: flex; align-items: flex-end; gap: 12px; pointer-events: none;
