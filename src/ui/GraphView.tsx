@@ -20,6 +20,15 @@ type CardDrag = {
   moved: boolean;
 };
 
+/** Elements that own their pointer gesture instead of panning the viewport. */
+const GRAPH_PAN_BLOCKERS = ".card-slot, .op-node, .zoom-controls";
+
+/** @internal DOM-light hit-test seam for the graph interaction tests. */
+export function canStartGraphPan(target: unknown): boolean {
+  if (!target || typeof (target as { closest?: unknown }).closest !== "function") return true;
+  return !(target as { closest: (selector: string) => unknown }).closest(GRAPH_PAN_BLOCKERS);
+}
+
 export function GraphView(): React.ReactElement {
   const resolved = useStore((s) => s.resolved);
   const graphPx = useStore((s) => s.graphPx);
@@ -36,6 +45,7 @@ export function GraphView(): React.ReactElement {
 
   const [tf, setTf] = useState({ x: 20, y: 20, k: 1 });
   const [movingTensor, setMovingTensor] = useState<string | null>(null);
+  const [panning, setPanning] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const panRef = useRef<{ x0: number; y0: number; tx: number; ty: number } | null>(null);
   const cardDragRef = useRef<CardDrag | null>(null);
@@ -186,9 +196,11 @@ export function GraphView(): React.ReactElement {
   };
 
   const onPointerDown = (e: React.PointerEvent) => {
-    if (e.target !== e.currentTarget) return; // only background pans
+    if (e.button !== 0 || !canStartGraphPan(e.target)) return;
+    e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     panRef.current = { x0: e.clientX, y0: e.clientY, tx: tf.x, ty: tf.y };
+    setPanning(true);
     setDragging(true); // so the drag guard suppresses text selection
   };
   const onPointerMove = (e: React.PointerEvent) => {
@@ -200,6 +212,7 @@ export function GraphView(): React.ReactElement {
   const endPan = () => {
     if (!panRef.current) return;
     panRef.current = null;
+    setPanning(false);
     setDragging(false);
   };
 
@@ -268,7 +281,7 @@ export function GraphView(): React.ReactElement {
   return (
     <div
       ref={containerRef}
-      className="graph-canvas"
+      className={`graph-canvas${panning ? " panning" : ""}`}
       onWheel={onWheel}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}

@@ -242,8 +242,9 @@ textarea.source.error-state { border-color: var(--err); }
      lattice, so a second grid behind them is noise competing with the data. */
   background: color-mix(in srgb, var(--bg) 92%, #000);
   background-image: none;
-  touch-action: none;
+  touch-action: none; cursor: grab;
 }
+.graph-canvas.panning { cursor: grabbing; }
 .canvas-empty { flex: 1; display: grid; place-items: center; color: var(--muted); }
 .graph-inner { position: absolute; transform-origin: 0 0; }
 .edges { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
@@ -280,14 +281,20 @@ textarea.source.error-state { border-color: var(--err); }
 .op-node {
   position: absolute; display: flex; align-items: center; justify-content: center; gap: 4px;
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
-  font-size: var(--t-body); font-weight: 500; color: var(--muted);
+  font-size: var(--t-body); font-weight: 500; color: var(--muted); cursor: default;
 }
 .op-node.dim { opacity: var(--dim); }
 .expand-btn { border: none; padding: 0 3px; background: none; font-size: var(--t-base); color: var(--accent); }
 
-.card-slot { position: absolute; }
+.card-slot { position: absolute; cursor: default; }
 .card-slot.dim { opacity: var(--dim); }
 .card-slot.moving { z-index: 40; opacity: 1; }
+/* Pointer capture keeps the pan alive across nodes; keep its cursor equally
+   stable instead of flashing back to a card's default/crosshair on the way by. */
+.graph-canvas.panning .card-slot,
+.graph-canvas.panning .card-slot *,
+.graph-canvas.panning .op-node,
+.graph-canvas.panning .op-node * { cursor: grabbing !important; }
 .tensor-grab {
   position: absolute; left: -18px; top: 3px; z-index: 4;
   width: 15px; height: 15px; padding: 0; border: 0; border-radius: var(--r);
@@ -347,7 +354,8 @@ textarea.source.error-state { border-color: var(--err); }
    hairline-plus: the ring is reserved for keyboard focus. */
 .tensor-card.selected .tc-canvas-wrap canvas { outline: 2px solid var(--accent); }
 .tc-tooltip {
-  position: absolute; right: 2px; top: -16px; font-size: var(--t-micro); color: var(--muted);
+  position: absolute; right: 0; top: calc(100% + 4px); font-size: var(--t-micro); color: var(--muted);
+  transform: scale(0.75); transform-origin: top right;
   background: var(--card); padding: 0 3px; border-radius: var(--r); pointer-events: none;
 }
 
