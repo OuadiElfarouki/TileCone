@@ -65,7 +65,7 @@ src/
 │   └── json.ts           JSON graph import/export
 ├── ui/
 │   ├── store.ts          application state and analysis orchestration
-│   ├── GraphView.tsx     DAG layout, tensor movement, curves, and pan/zoom
+│   ├── GraphView.tsx     graph rendering, gestures, highlighting, and viewport
 │   ├── TensorCard.tsx    interactive tensor canvas
 │   ├── Inspector.tsx     tile grid, selection parts, footprint, cost, notes
 │   ├── SidePanel.tsx     source, cone direction, examples, and operations
@@ -73,6 +73,7 @@ src/
 │   ├── WorkspaceHeader.tsx  product identity and theme control
 │   ├── grid.ts           pure grid geometry and drawing
 │   ├── graph-geometry.ts collision constraints and connector routing
+│   ├── graph-scene.ts    structural layout and live routed-scene projection
 │   ├── tiling.ts         tile-size policy and slider stops
 │   ├── palette.ts        validated categorical hues and canvas surfaces
 │   ├── share.ts          workspace link encoding and decoding
@@ -256,13 +257,14 @@ Expanding a composite node rewrites the unresolved graph, resolves the result, a
 - `App.tsx` composes the identity header, source panel, graph, and tile inspector. URL state crosses one transactional store boundary: the DSL is compiled and every selected part is validated before any source, graph, settings, or selection state is committed. Failure falls back to a built-in example without exposing a half-restored graph.
 - `WorkspaceHeader.tsx` contains only product identity, description, and the global theme control.
 - `SidePanel.tsx` owns the editable DSL draft, independent upstream/downstream toggles, built-in examples, and operation list. Running the draft updates the store only after compilation succeeds.
-- `GraphView.tsx` uses Dagre for collision-free base positions, applies persistent user tensor offsets, routes live cubic connectors, and manages pan/zoom/focus. Structural Dagre placement is memoized independently from query highlighting and interactive offsets, so selection changes and card motion do not rerun graph layout. Drag motion is constrained against the full rectangles of every tensor and operator.
+- `GraphView.tsx` is the graph controller and React projection: it derives highlighting, manages pan/zoom/focus and tensor gestures, and renders the current scene. It does not own layout or routing algorithms.
 - `TensorCard.tsx` renders an interactive tensor grid on canvas and converts pointer gestures into element-space boxes. Its paint stack is built by a pure `buildLayers`, so the encoding rules — which cone is filled and which outlined, what fades under focus, what a hidden box still shows — are asserted directly instead of inferred from pixels.
 - `Inspector.tsx` owns global tile-grid detail, editable selection parts, exactness, tensor slices, metrics, and the reuse estimate.
 - `PanelFrame.tsx` owns side-panel width, the drag strip, and collapse-to-rail for both panels.
 - `palette.ts` owns the categorical hues, their recorded CVD/contrast validation, and the canvas surfaces they were validated against. Two rules live there: identity is never carried by colour alone, and chrome must sit outside the data hues, because hue on a card means *which selection box* and a hot graph edge must not be mistakable for a cone.
 - `share.ts` holds link encoding and decoding together. They were split across a toolbar and `App` once, and when the toolbar was removed the encoder went with it, leaving the app able to restore links nothing could produce. Decoding is all-or-nothing: an unknown setting or any malformed part rejects the payload, while genuinely absent legacy fields receive their documented defaults. The store then validates graph-dependent selection bounds transactionally.
-- `graph-geometry.ts` is the pure boundary for collision-safe card motion and connector routing; large pointer jumps cannot tunnel through another node. Connectors are built from operation operand lists rather than Dagre's endpoint-keyed edge set, so repeated operands such as `matmul(X, X)` remain distinct. Connectors sharing a pair fan their anchors and stagger their flow marks to remain readable.
+- `graph-scene.ts` owns the two-stage graph rendering pipeline. A resolved graph plus a tensor-measurement policy produces the immutable Dagre base layout; that base plus persistent tensor offsets produces the cheap live scene and routed connectors. Query results, highlighting, and viewport state cannot invalidate structural placement. Links are rebuilt from ordered operation operands rather than Dagre's endpoint-keyed edge set, so repeated operands such as `matmul(X, X)` remain distinct.
+- `graph-geometry.ts` contains the lower-level pure geometry for collision-safe motion and connector curves; large pointer jumps cannot tunnel through another node. Connectors sharing a pair fan their anchors and stagger their flow marks to remain readable.
 - `useDragGuard.ts` suppresses text selection for the duration of any drag. It is a hook rather than part of `setDragging` so that store actions stay free of DOM access and remain testable headlessly.
 
 ### Tensor rendering and tiling
