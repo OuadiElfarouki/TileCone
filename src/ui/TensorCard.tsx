@@ -3,7 +3,7 @@ import { DTYPE_BYTES, Tensor } from "../core/graph";
 import { Box, empty, fromBox, Region } from "../core/region";
 import { drawGrid, elementFromEvent, gridGeometry, Layer, snapSpan, tileSpan } from "./grid";
 import { aggregateColors, boxColor } from "./palette";
-import { BoxProp, Direction, useStore, viewAxes, ViewCfg } from "./store";
+import { BoxProp, Direction, partsOn, useStore, viewAxes, ViewCfg } from "./store";
 
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -26,7 +26,15 @@ export type LayerInputs = {
   dark: boolean;
   direction: Direction;
   isSelected: boolean;
-  selection: { tensorId: string; region: Region } | null;
+  /**
+   * The selection parts drawn on *this* tensor, each carrying the index it has
+   * in the whole workspace. Parts on other tensors are not this card's business
+   * to draw, but the index is: hue, focus and visibility are all keyed by it,
+   * so a tile must keep the same colour whichever card it lives on.
+   */
+  parts: { index: number; box: Box }[];
+  /** Parts in the whole workspace, so the rubber band previews the next hue. */
+  partCount: number;
   perBox: BoxProp[] | null;
   hiddenBoxes: Set<number>;
   focusedBox: number | null;
@@ -47,7 +55,8 @@ export function buildLayers({
   dark,
   direction,
   isSelected,
-  selection,
+  parts,
+  partCount,
   perBox,
   hiddenBoxes,
   focusedBox,
@@ -119,24 +128,23 @@ const layers: Layer[] = [];
   // The selection itself: each box in its own hue, dimmed when another is
   // focused. A hidden box keeps its rectangle — hiding removes the *cone*, and
   // a probe you cannot see is a probe you cannot move back.
-  if (isSelected && selection)
-    selection.region.boxes.forEach((b: Box, i: number) => {
-      const isFocused = focusedBox === null || focusedBox === i;
-      const hidden = hiddenBoxes.has(i);
-      layers.push({
-        region: { boxes: [b], exact: selection.region.exact, reasons: [] },
-        color: boxColor(i, dark),
-        alpha: hidden ? 0.18 : isFocused ? 0.9 : 0.35,
-        hatch: false,
-        outline: isFocused && !hidden,
-      });
+  parts.forEach(({ index, box: b }) => {
+    const isFocused = focusedBox === null || focusedBox === index;
+    const hidden = hiddenBoxes.has(index);
+    layers.push({
+      region: fromBox(b),
+      color: boxColor(index, dark),
+      alpha: hidden ? 0.18 : isFocused ? 0.9 : 0.35,
+      hatch: false,
+      outline: isFocused && !hidden,
     });
+  });
 
   // The in-progress rubber band, drawn on top of everything it will replace.
   if (dragRegion)
     layers.push({
       region: dragRegion,
-      color: boxColor(selection && isSelected ? selection.region.boxes.length : 0, dark),
+      color: boxColor(partCount, dark),
       alpha: 0.4,
       hatch: false,
       outline: true,
@@ -184,7 +192,8 @@ export function TensorCard({
   );
   const { rowAxis, colAxis } = viewAxes(shape);
 
-  const isSelected = selection?.tensorId === tensor.id;
+  const parts = useMemo(() => partsOn(selection, tensor.id), [selection, tensor.id]);
+  const isSelected = parts.length > 0;
   const back = backwardRes?.tensors.get(tensor.id);
   const fwd = forwardRes?.tensors.get(tensor.id);
   const prev = preview?.tensors.get(tensor.id);
@@ -199,7 +208,8 @@ export function TensorCard({
       dark,
       direction,
       isSelected,
-      selection,
+      parts,
+      partCount: selection?.parts.length ?? 0,
       perBox,
       hiddenBoxes,
       focusedBox,

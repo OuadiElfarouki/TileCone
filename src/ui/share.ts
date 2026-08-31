@@ -1,4 +1,4 @@
-import { Region } from "../core/region";
+import { Box } from "../core/region";
 import { Direction } from "./store";
 
 /**
@@ -16,8 +16,29 @@ export type WorkspaceLink = {
   tile: number;
   /** Optional: links written before snapping existed simply default to on. */
   snap?: boolean;
-  sel: { t: string; boxes: [number, number][][] } | null;
+  /**
+   * One entry per drawn part, in order, each naming its own tensor. The order
+   * is load-bearing: it is what assigns hues and footprint rows, so parts are
+   * listed flat rather than grouped by tensor.
+   *
+   * Links written before tiles could span tensors carry the older
+   * `{ t, boxes }` object; `decodeWorkspace` accepts both.
+   */
+  sel: { t: string; box: [number, number][] }[] | null;
 };
+
+type LegacySel = { t: string; boxes: [number, number][][] };
+
+const isBox = (box: unknown): box is [number, number][] =>
+  Array.isArray(box) &&
+  box.length > 0 &&
+  box.every(
+    (interval) =>
+      Array.isArray(interval) &&
+      interval.length === 2 &&
+      interval.every((v) => Number.isSafeInteger(v)) &&
+      interval[0] < interval[1]
+  );
 
 const DIRECTIONS: Direction[] = ["none", "backward", "forward", "both"];
 
@@ -44,21 +65,23 @@ export function decodeWorkspace(hash: string): WorkspaceLink | null {
     const snap = typeof raw.snap === "boolean" ? raw.snap : true;
 
     let sel: WorkspaceLink["sel"] = null;
-    const candidate = raw.sel;
-    if (candidate && typeof candidate.t === "string" && Array.isArray(candidate.boxes)) {
-      const boxes = candidate.boxes.filter(
-        (box) =>
-          Array.isArray(box) &&
-          box.length > 0 &&
-          box.every(
-            (interval) =>
-              Array.isArray(interval) &&
-              interval.length === 2 &&
-              interval.every((v) => Number.isSafeInteger(v)) &&
-              interval[0] < interval[1]
-          )
+    const candidate: unknown = raw.sel;
+    if (Array.isArray(candidate)) {
+      const parts = candidate.filter(
+        (p): p is { t: string; box: [number, number][] } =>
+          !!p && typeof p === "object" && typeof (p as { t?: unknown }).t === "string" &&
+          isBox((p as { box?: unknown }).box)
       );
-      if (boxes.length) sel = { t: candidate.t, boxes: boxes as [number, number][][] };
+      if (parts.length) sel = parts;
+    } else if (candidate && typeof candidate === "object") {
+      // Legacy single-tensor form: every box belonged to one tensor.
+      const legacy = candidate as Partial<LegacySel>;
+      if (typeof legacy.t === "string" && Array.isArray(legacy.boxes)) {
+        const parts = legacy.boxes
+          .filter(isBox)
+          .map((box) => ({ t: legacy.t as string, box }));
+        if (parts.length) sel = parts;
+      }
     }
     return { dsl: raw.dsl, dir, tile, snap, sel };
   } catch {
@@ -68,15 +91,13 @@ export function decodeWorkspace(hash: string): WorkspaceLink | null {
 
 /** The ordered selection parts, in link form. */
 export function selectionToLink(
-  selection: { tensorId: string; region: Region } | null
+  selection: { parts: { tensorId: string; box: Box }[] } | null
 ): WorkspaceLink["sel"] {
-  if (!selection) return null;
-  return {
-    t: selection.tensorId,
-    boxes: selection.region.boxes.map(
-      (box) => box.map((interval) => [interval.lo, interval.hi]) as [number, number][]
-    ),
-  };
+  if (!selection || !selection.parts.length) return null;
+  return selection.parts.map((p) => ({
+    t: p.tensorId,
+    box: p.box.map((interval) => [interval.lo, interval.hi]) as [number, number][],
+  }));
 }
 
 /** A shareable URL, or the raw payload when it is too long to live in one. */

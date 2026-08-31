@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useStore, viewAxes } from "./store";
+import { anchorTensorId, useStore, viewAxes } from "./store";
 import { nudgeUnit } from "./grid";
 
 const isTyping = (el: EventTarget | null) => {
@@ -44,9 +44,11 @@ export function useKeyboard(): void {
       }
 
       if (isTyping(e.target)) return;
-      const sel = s.selection;
-      const cfg = sel ? s.viewCfgs[sel.tensorId] : null;
-      const shape = sel ? s.resolved?.tensors[sel.tensorId].resolved : null;
+      // Arrow keys and slider keys act on one tensor's axes, so they follow the
+      // anchor: the focused tile's tensor, else the last one drawn on.
+      const anchor = anchorTensorId(s.selection, s.focusedBox);
+      const cfg = anchor ? s.viewCfgs[anchor] : null;
+      const shape = anchor ? s.resolved?.tensors[anchor].resolved : null;
 
       // direction / view
       if (e.key === "u") return s.toggleDirection("backward");
@@ -56,7 +58,7 @@ export function useKeyboard(): void {
         return s.undoWorkspace();
       }
 
-      if (!sel || !cfg || !shape) return;
+      if (!anchor || !cfg || !shape) return;
 
       const { rowAxis: rowAx, colAxis: colAx } = viewAxes(shape);
       const visible = [rowAx, colAx].filter((a) => a >= 0);
@@ -96,7 +98,7 @@ export function useKeyboard(): void {
         const sliders = cfg.sliders.slice();
         const delta = e.key === "]" ? 1 : -1;
         sliders[ax] = Math.max(0, Math.min(shape[ax] - 1, (sliders[ax] ?? 0) + delta));
-        s.setViewCfg(sel.tensorId, { sliders });
+        s.setViewCfg(anchor, { sliders });
       }
     };
     window.addEventListener("keydown", onKey);

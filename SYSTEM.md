@@ -137,6 +137,8 @@ An under-approximation is therefore a correctness bug; an over-approximation is 
 
 The UI preserves the user's selection as **ordered parts** so individual boxes can be focused, colored, moved, or subtracted. Before execution, those parts are canonicalized into a mathematical set. This distinction prevents presentation identity from leaking into dependency semantics.
 
+Each part carries **its own tensor**, so parts may span several tensors at once. Comparing what two tensors pull from a shared input is a primary use of the tool, and it is impossible if drawing on one discards the tile on the other. The executor is unaffected: a cone is still defined from a single root, and multiplicity lives in the store, which runs one propagation per part and merges the results per tensor (`mergeProps`). Merging takes the union of regions and the *shortest* hop to any root, so a tensor reachable from two selections reports the distance it actually has. Because union never under-approximates, a merged result is a valid dependency claim whenever its inputs were.
+
 ## 5. DSL and compiler
 
 The compiler boundary is `compileDSL` / `tryCompileDSL` in `src/parse/compiler.ts`.
@@ -237,12 +239,14 @@ The React layer is a projection over the headless compiler and executor.
 `src/ui/store.ts` is the single Zustand store. Its state is divided conceptually into:
 
 - **Source:** DSL text, selected example, unresolved/resolved graph, and load errors.
-- **Selection:** ordered boxes and the independently enabled upstream/downstream cones. Direct canvas gestures add by default and Alt subtracts; replacement is reserved for controlled internal transitions.
+- **Selection:** ordered parts, each naming its own tensor, and the independently enabled upstream/downstream cones. Direct canvas gestures add by default and Alt subtracts; both compose against the drawn tensor's parts only, so a gesture on one tensor can never edit or discard a part on another. Replacement is reserved for controlled internal transitions. Composition rebuilds the list in place, so untouched parts keep their index and therefore their hue, footprint row, and hidden/pinned state.
 - **Attribution:** which part is focused (emphasised, one at a time) and which parts are hidden (excluded from painting, any number). These are separate axes: focus is transient and drives emphasis, visibility is sticky and drives whether a cone contributes paint. Neither affects metrics, so a hidden part still reports its footprint. Both index into the ordered parts, so both are cleared by any edit that can renumber them.
 - **Analysis:** aggregate backward/forward results, bounded per-box results, focus/pin state, and hover previews.
 - **View:** per-tensor projection settings, tile scale, gesture snapping, the graph's px-per-element scale, metric options, graph focus, panel layout, and tensor offsets. Selection edits and committed tensor moves share one chronological workspace history.
 
-Applying DSL recompiles the entire source into a new resolved graph. Changing a selection recomputes the aggregate query and, within a small cap, per-box queries used for color attribution and focused inspection. A single-box selection reuses its aggregate result.
+Applying DSL recompiles the entire source into a new resolved graph. Changing a selection runs one query per part, which serves both the per-part attribution and, merged, the aggregate the panels read. Past the per-part cap attribution is dropped and the queries are grouped by tensor instead, bounding the cost by the number of tensors drawn on rather than the number of tiles; the grouped result can only be equal or coarser, never tighter and never an under-approximation.
+
+Actions defined against one tensor's axes — arrow-key moves, hidden-axis sliders, the reuse estimate, the axis legend — follow the **anchor**: the focused part's tensor, else the last one drawn on. An axis index means different things on tensors of different rank, so there is no single axis such an action could apply everywhere.
 
 Expanding a composite node rewrites the unresolved graph, resolves the result, and clears selection state that could no longer be valid.
 

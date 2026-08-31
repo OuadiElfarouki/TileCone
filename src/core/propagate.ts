@@ -13,7 +13,14 @@ export type TensorResult = {
 
 export type PropResult = {
   direction: "backward" | "forward";
+  /**
+   * The seed. On a merged result this is the first contributing propagation's
+   * seed and nothing more — `roots` is the field that stays true after a merge,
+   * and anything asking "was this tensor selected?" must use that one.
+   */
   selection: Selection;
+  /** Every tensor this cone was seeded from: one entry per propagation merged. */
+  roots: string[];
   tensors: Map<string, TensorResult>;
   /** all inexactness reasons encountered anywhere */
   reasons: string[];
@@ -85,7 +92,7 @@ function propagate(graph: ResolvedGraph, sel: Selection, dir: "backward" | "forw
     acc.set(id, { region: sortRegion(tr.region), depth: tr.depth });
     tr.region.reasons.forEach((r) => reasons.add(r));
   }
-  return { direction: dir, selection: sel, tensors: acc, reasons: [...reasons].sort() };
+  return { direction: dir, selection: sel, roots: [sel.tensorId], tensors: acc, reasons: [...reasons].sort() };
 }
 
 export function propagateBackward(graph: ResolvedGraph, sel: Selection): PropResult {
@@ -94,4 +101,47 @@ export function propagateBackward(graph: ResolvedGraph, sel: Selection): PropRes
 
 export function propagateForward(graph: ResolvedGraph, sel: Selection): PropResult {
   return propagate(graph, sel, "forward");
+}
+
+/**
+ * Combine cones seeded from different tensors into one readout.
+ *
+ * A cone is a per-tensor region, so combining is a per-tensor union — the same
+ * operation the propagator already performs when two paths reconverge on one
+ * tensor, applied one level up. Depth is the shortest hop to *any* seed, which
+ * keeps the dim-by-distance rendering monotone: a tensor two hops from one
+ * selection and one hop from another reads as one hop, because it is.
+ *
+ * Union never under-approximates, so the merged region is a valid dependency
+ * claim whenever every input was, and inexactness propagates through
+ * `union`'s own `exact` handling rather than being reasoned about again here.
+ */
+export function mergeProps(parts: PropResult[]): PropResult | null {
+  if (parts.length === 0) return null;
+  if (parts.length === 1) return parts[0];
+  const tensors = new Map<string, TensorResult>();
+  for (const part of parts)
+    for (const [id, tr] of part.tensors) {
+      const prev = tensors.get(id);
+      tensors.set(
+        id,
+        prev
+          ? { region: union(prev.region, tr.region), depth: Math.min(prev.depth, tr.depth) }
+          : tr
+      );
+    }
+  const reasons = new Set<string>();
+  for (const [id, tr] of tensors) {
+    tensors.set(id, { region: sortRegion(tr.region), depth: tr.depth });
+    tr.region.reasons.forEach((r) => reasons.add(r));
+  }
+  const roots: string[] = [];
+  for (const part of parts) for (const r of part.roots) if (!roots.includes(r)) roots.push(r);
+  return {
+    direction: parts[0].direction,
+    selection: parts[0].selection,
+    roots,
+    tensors,
+    reasons: [...reasons].sort(),
+  };
 }

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { count, fromBox, box } from "../core/region";
+import { canonicalize, count, fromBox, box } from "../core/region";
+import { computeMetrics } from "../core/metrics";
 import { EXAMPLES } from "../examples";
 import {
   MAX_PER_BOX_PROPS, PANEL_COLLAPSE_AT, PANEL_MAX, PANEL_MIN,
@@ -10,6 +11,13 @@ import { nudgeUnit, tileOf } from "../ui/grid";
 
 const S = () => useStore.getState();
 const sel = () => S().selection;
+/** The drawn boxes, in order. Parts carry their own tensor now; these helpers
+ * keep the single-tensor assertions reading the way they always did. */
+const selBoxes = () => sel()!.parts.map((p) => p.box);
+const selTensors = () => sel()!.parts.map((p) => p.tensorId);
+/** Distinct elements across the parts -- overlapping parts counted once. */
+const selCount = () =>
+  count(canonicalize({ boxes: selBoxes(), exact: true, reasons: [] }));
 const regionOf = (tensorId: string) => S().backwardRes?.tensors.get(tensorId)?.region;
 const loadExampleNamed = (name: string) => {
   const index = EXAMPLES.findIndex((example) => example.name === name);
@@ -73,7 +81,7 @@ C = matmul(A, B)
     loadExampleNamed("Multi-head attention"); // different tensor IDs from Plain GEMM
     expect(S().workspaceHistory).toEqual([]);
     expect(() => S().undoWorkspace()).not.toThrow();
-    expect(S().selection?.tensorId).toBe("Out");
+    expect((sel() ? selTensors()[0] : undefined)).toBe("Out");
 
     S().moveSelection(0, 1);
     expect(S().workspaceHistory.length).toBeGreaterThan(0);
@@ -116,24 +124,24 @@ describe("tensor layout transactions", () => {
   });
 
   it("undoes layout and selection changes in chronological order", () => {
-    const initial = S().selection!.region.boxes;
+    const initial = selBoxes();
     S().moveSelection(0, 64);
-    const afterSelectionMove = S().selection!.region.boxes;
+    const afterSelectionMove = selBoxes();
 
     S().setTensorOffset("A", { dx: 90, dy: 35 });
     S().commitTensorMove("A", { dx: 0, dy: 0 });
     S().moveSelection(1, 64);
 
     S().undoWorkspace(); // selection edit after the tensor drag
-    expect(S().selection!.region.boxes).toEqual(afterSelectionMove);
+    expect(selBoxes()).toEqual(afterSelectionMove);
     expect(S().tensorOffsets.A).toEqual({ dx: 90, dy: 35 });
 
     S().undoWorkspace(); // tensor drag itself
-    expect(S().selection!.region.boxes).toEqual(afterSelectionMove);
+    expect(selBoxes()).toEqual(afterSelectionMove);
     expect(S().tensorOffsets.A).toBeUndefined();
 
     S().undoWorkspace(); // selection edit before the tensor drag
-    expect(S().selection!.region.boxes).toEqual(initial);
+    expect(selBoxes()).toEqual(initial);
   });
 
   it("can undo the first selection without disturbing tensor placement", () => {
@@ -163,7 +171,7 @@ describe("snapping is a gesture setting, not an analysis one", () => {
     S().setSelection("C", fromBox(box([0, 64], [0, 64])), "replace");
     const before = regionOf("A")!.boxes;
     S().setSnapToGrid(false);
-    expect(S().selection!.region.boxes).toEqual([box([0, 64], [0, 64])]);
+    expect(selBoxes()).toEqual([box([0, 64], [0, 64])]);
     expect(regionOf("A")!.boxes).toEqual(before);
   });
 
@@ -181,7 +189,7 @@ describe("snapping is a gesture setting, not an analysis one", () => {
     S().setSnapToGrid(false);
     S().setSelection("C", fromBox(box([64, 128], [0, 64])), "replace");
     S().moveSelection(0, nudgeUnit(S().resolved!.tensors.C.resolved!, S().tileScale, S().graphPx, false));
-    expect(S().selection!.region.boxes[0][0]).toEqual({ lo: 65, hi: 129 });
+    expect(selBoxes()[0][0]).toEqual({ lo: 65, hi: 129 });
   });
 
   it("an unsnapped range propagates exactly like any other", () => {
@@ -189,7 +197,7 @@ describe("snapping is a gesture setting, not an analysis one", () => {
     // odd range must be as ordinary to the engine as an aligned one.
     S().setSnapToGrid(false);
     S().setSelection("C", fromBox(box([3, 7], [1, 2])), "replace");
-    expect(S().selection!.region.boxes).toEqual([box([3, 7], [1, 2])]);
+    expect(selBoxes()).toEqual([box([3, 7], [1, 2])]);
     expect(regionOf("A")!.boxes).toEqual([box([3, 7], [0, 512])]);
     expect(regionOf("B")!.boxes).toEqual([box([0, 512], [1, 2])]);
   });
@@ -306,14 +314,14 @@ describe("selection editing through the store", () => {
   });
 
   it("loads with a propagated selection", () => {
-    expect(sel()!.tensorId).toBe("C");
+    expect(selTensors()[0]).toBe("C");
     expect(regionOf("A")!.boxes).toEqual([box([64, 128], [0, 512])]);
     expect(regionOf("B")!.boxes).toEqual([box([0, 512], [0, 64])]);
   });
 
   it("moveSelection shifts the selection and repropagates", () => {
     S().moveSelection(0, 64); // down one tile on the row axis
-    expect(sel()!.region.boxes).toEqual([box([128, 192], [0, 64])]);
+    expect(selBoxes()).toEqual([box([128, 192], [0, 64])]);
     expect(regionOf("A")!.boxes).toEqual([box([128, 192], [0, 512])]);
     // B is unaffected by a pure row move
     expect(regionOf("B")!.boxes).toEqual([box([0, 512], [0, 64])]);
@@ -322,53 +330,53 @@ describe("selection editing through the store", () => {
   it("replaceBox edits one stable part and repropagates", () => {
     const depth = S().workspaceHistory.length;
     S().replaceBox(0, box([16, 48], [32, 96]));
-    expect(sel()!.region.boxes).toEqual([box([16, 48], [32, 96])]);
+    expect(selBoxes()).toEqual([box([16, 48], [32, 96])]);
     expect(regionOf("A")!.boxes).toEqual([box([16, 48], [0, 512])]);
     expect(regionOf("B")!.boxes).toEqual([box([0, 512], [32, 96])]);
     expect(S().workspaceHistory.length).toBe(depth + 1);
   });
 
   it("moveSelection clamps at the tensor edge without shrinking", () => {
-    const before = count(sel()!.region);
+    const before = selCount();
     for (let i = 0; i < 10; i++) S().moveSelection(0, 64);
-    expect(count(sel()!.region)).toBe(before);
-    expect(sel()!.region.boxes).toEqual([box([192, 256], [0, 64])]);
+    expect(selCount()).toBe(before);
+    expect(selBoxes()).toEqual([box([192, 256], [0, 64])]);
   });
 
   it("direct drawing adds a multi-box selection by default", () => {
     S().setSelection("C", fromBox(box([0, 32], [200, 232])));
-    expect(sel()!.region.boxes).toHaveLength(2);
-    expect(count(sel()!.region)).toBe(64 * 64 + 32 * 32);
+    expect(selBoxes()).toHaveLength(2);
+    expect(selCount()).toBe(64 * 64 + 32 * 32);
     // both output tiles' row bands appear upstream in A
     expect(regionOf("A")!.boxes).toEqual([box([0, 32], [0, 512]), box([64, 128], [0, 512])]);
   });
 
   it("an explicit subtract gesture cuts a hole", () => {
     S().setSelection("C", fromBox(box([80, 96], [0, 64])), "subtract");
-    expect(count(sel()!.region)).toBe(64 * 64 - 16 * 64);
-    expect(sel()!.region.boxes).toHaveLength(2);
+    expect(selCount()).toBe(64 * 64 - 16 * 64);
+    expect(selBoxes()).toHaveLength(2);
   });
 
   it("an explicit union gesture adds a part", () => {
     S().setSelection("C", fromBox(box([0, 32], [0, 32])), "union");
-    expect(sel()!.region.boxes).toHaveLength(2);
+    expect(selBoxes()).toHaveLength(2);
   });
 
   it("deleteBox removes exactly one box", () => {
     S().setSelection("C", fromBox(box([0, 32], [200, 232])));
-    expect(sel()!.region.boxes).toHaveLength(2);
+    expect(selBoxes()).toHaveLength(2);
     S().deleteBox(0);
-    expect(sel()!.region.boxes).toHaveLength(1);
+    expect(selBoxes()).toHaveLength(1);
   });
 
   it("workspace undo walks back through selection edits", () => {
     S().moveSelection(0, 64);
     S().moveSelection(0, 64);
-    expect(sel()!.region.boxes).toEqual([box([192, 256], [0, 64])]);
+    expect(selBoxes()).toEqual([box([192, 256], [0, 64])]);
     S().undoWorkspace();
-    expect(sel()!.region.boxes).toEqual([box([128, 192], [0, 64])]);
+    expect(selBoxes()).toEqual([box([128, 192], [0, 64])]);
     S().undoWorkspace();
-    expect(sel()!.region.boxes).toEqual([box([64, 128], [0, 64])]);
+    expect(selBoxes()).toEqual([box([64, 128], [0, 64])]);
     expect(regionOf("A")!.boxes).toEqual([box([64, 128], [0, 512])]);
   });
 
@@ -376,7 +384,7 @@ describe("selection editing through the store", () => {
     S().clearSelection();
     expect(sel()).toBeNull();
     S().undoWorkspace();
-    expect(sel()!.region.boxes).toEqual([box([64, 128], [0, 64])]);
+    expect(selBoxes()).toEqual([box([64, 128], [0, 64])]);
   });
 
   it("editing actions are no-ops without a selection", () => {
@@ -420,7 +428,7 @@ describe("per-box dependency attribution", () => {
     const pb = S().perBox!;
     expect(pb).toHaveLength(2);
 
-    const boxes = sel()!.region.boxes;
+    const boxes = selBoxes();
     // box order matches selection.region.boxes, so row bands line up per box
     boxes.forEach((b, i) => {
       const aRegion = pb[i].backward!.tensors.get("A")!.region;
@@ -464,7 +472,7 @@ describe("per-box dependency attribution", () => {
     expect(S().focusedBox).toBe(1);
     S().moveSelection(0, -8);
     expect(S().focusedBox).toBe(1);
-    expect(sel()!.region.boxes[1]).toEqual(box([176, 240], [128, 192]));
+    expect(selBoxes()[1]).toEqual(box([176, 240], [128, 192]));
   });
 
   it("focus resets when parts are added or removed", () => {
@@ -478,7 +486,7 @@ describe("per-box dependency attribution", () => {
   it("beyond the propagation cap, per-box attribution is skipped", () => {
     for (let i = 0; i < MAX_PER_BOX_PROPS + 2; i++)
       S().setSelection("C", fromBox(box([i * 8, i * 8 + 4], [0, 4])), "union");
-    expect(sel()!.region.boxes.length).toBeGreaterThan(MAX_PER_BOX_PROPS);
+    expect(selBoxes().length).toBeGreaterThan(MAX_PER_BOX_PROPS);
     expect(S().perBox).toBeNull();
     // the aggregate cone is still available
     expect(regionOf("A")).toBeDefined();
@@ -501,10 +509,10 @@ describe("moving a single selected part", () => {
   beforeEach(twoParts);
 
   it("moves only the focused part", () => {
-    const before = sel()!.region.boxes[0];
+    const before = selBoxes()[0];
     S().togglePinBox(1);
     S().moveSelection(0, 32);
-    const after = sel()!.region.boxes;
+    const after = selBoxes();
     expect(after).toHaveLength(2);
     expect(after[0]).toEqual(before); // untouched
     expect(after[1]).toEqual(box([160, 224], [128, 192]));
@@ -513,7 +521,7 @@ describe("moving a single selected part", () => {
   it("moves the whole selection when nothing is focused", () => {
     S().clearFocus();
     S().moveSelection(0, 32);
-    expect(sel()!.region.boxes).toEqual([
+    expect(selBoxes()).toEqual([
       box([32, 96], [0, 64]),
       box([160, 224], [128, 192]),
     ]);
@@ -533,7 +541,7 @@ describe("moving a single selected part", () => {
     S().togglePinBox(1);
     S().moveSelection(0, -128); // slide part 1 onto part 0's rows
     S().moveSelection(1, -128);
-    const boxes = sel()!.region.boxes;
+    const boxes = selBoxes();
     expect(boxes).toHaveLength(2);
     expect(boxes[0]).toEqual(box([0, 64], [0, 64]));
     expect(boxes[1]).toEqual(box([0, 64], [0, 64])); // exactly coincident
@@ -544,7 +552,7 @@ describe("moving a single selected part", () => {
     S().moveSelection(0, -128);
     S().moveSelection(1, -128);
     // two coincident 64x64 parts denote 4096 elements, not 8192
-    expect(count(sel()!.region)).toBe(64 * 64);
+    expect(selCount()).toBe(64 * 64);
     // and the upstream footprint is the single row band, not two
     expect(regionOf("A")!.boxes).toEqual([box([0, 64], [0, 512])]);
     expect(count(regionOf("A")!)).toBe(64 * 512);
@@ -554,7 +562,7 @@ describe("moving a single selected part", () => {
     S().togglePinBox(1);
     S().moveSelection(0, -96); // rows 32:96 -> overlaps part 0's rows 0:64
     S().moveSelection(1, -128); // cols 0:64, same as part 0
-    expect(sel()!.region.boxes[1]).toEqual(box([32, 96], [0, 64]));
+    expect(selBoxes()[1]).toEqual(box([32, 96], [0, 64]));
     // union of rows 0:64 and 32:96 is 0:96, merged into one band upstream
     expect(regionOf("A")!.boxes).toEqual([box([0, 96], [0, 512])]);
     expect(count(regionOf("A")!)).toBe(96 * 512);
@@ -562,9 +570,9 @@ describe("moving a single selected part", () => {
 
   it("a moved part is clamped to the tensor without shrinking", () => {
     S().togglePinBox(1);
-    const vol = count(fromBox(sel()!.region.boxes[1]));
+    const vol = count(fromBox(selBoxes()[1]));
     for (let i = 0; i < 20; i++) S().moveSelection(0, 64);
-    const b = sel()!.region.boxes[1];
+    const b = selBoxes()[1];
     expect(b).toEqual(box([192, 256], [128, 192]));
     expect(count(fromBox(b))).toBe(vol);
   });
@@ -573,7 +581,7 @@ describe("moving a single selected part", () => {
     S().togglePinBox(5);
     expect(() => S().moveSelection(0, 8)).not.toThrow();
     // falls back to moving everything
-    expect(sel()!.region.boxes).toHaveLength(2);
+    expect(selBoxes()).toHaveLength(2);
   });
 });
 
@@ -597,7 +605,7 @@ describe("cone visibility is independent of focus", () => {
     S().toggleBoxHidden(1);
     expect(S().hiddenBoxes.has(1)).toBe(true);
     expect(S().perBox![1].backward!.tensors.get("A")!.region).toEqual(before);
-    expect(S().selection!.region.boxes.length).toBe(3);
+    expect(selBoxes().length).toBe(3);
   });
 
   it("toggles independently of focus, in both directions", () => {
@@ -628,7 +636,7 @@ describe("cone visibility is independent of focus", () => {
     // silently point at a different box than the user hid.
     S().toggleBoxHidden(2);
     S().deleteBox(0);
-    expect(S().selection!.region.boxes.length).toBe(2);
+    expect(selBoxes().length).toBe(2);
     expect(S().hiddenBoxes.size).toBe(0);
   });
 
@@ -665,12 +673,12 @@ describe("an arrow-key burst is one undo step", () => {
   });
 
   it("undo returns to where the burst began, not one tile back", () => {
-    const start = S().selection!.region.boxes[0][0].lo;
+    const start = selBoxes()[0][0].lo;
     S().moveSelection(0, 8);
     for (let i = 0; i < 5; i++) S().moveSelection(0, 8, false);
-    expect(S().selection!.region.boxes[0][0].lo).toBe(start + 48);
+    expect(selBoxes()[0][0].lo).toBe(start + 48);
     S().undoWorkspace();
-    expect(S().selection!.region.boxes[0][0].lo).toBe(start);
+    expect(selBoxes()[0][0].lo).toBe(start);
   });
 
   it("the nudge buttons still record every press", () => {
@@ -698,11 +706,11 @@ describe("escape cancels the current mode, never the selection", () => {
     expect(S().pinnedBox).toBeNull();
     expect(S().focusedBox).toBeNull();
     // the tiles survive, untouched
-    expect(sel()!.region.boxes).toEqual([
+    expect(selBoxes()).toEqual([
       box([0, 64], [0, 64]),
       box([128, 192], [128, 192]),
     ]);
-    expect(count(sel()!.region)).toBe(2 * 64 * 64);
+    expect(selCount()).toBe(2 * 64 * 64);
     expect(regionOf("A")).toBeDefined();
   });
 
@@ -735,7 +743,7 @@ describe("escape cancels the current mode, never the selection", () => {
     expect(S().pinnedBox).toBe(1);
     S().moveSelection(0, -16);
     expect(S().pinnedBox).toBe(1);
-    expect(sel()!.region.boxes[1]).toEqual(box([96, 160], [128, 192]));
+    expect(selBoxes()[1]).toEqual(box([96, 160], [128, 192]));
   });
 
   it("the pin is dropped when parts are removed", () => {
@@ -749,5 +757,99 @@ describe("escape cancels the current mode, never the selection", () => {
     S().clearSelection();
     expect(sel()).toBeNull();
     expect(S().pinnedBox).toBeNull();
+  });
+});
+
+describe("tiles on different tensors coexist", () => {
+  beforeEach(() => {
+    // Plain GEMM: A[256,512] @ B[512,256] -> C[256,256]
+    S().loadExample(0);
+    S().setDirection("backward");
+    S().setSelection("C", fromBox(box([0, 64], [0, 64])), "replace");
+  });
+
+  it("keeps the tile on C when a second is drawn on A", () => {
+    S().setSelection("A", fromBox(box([0, 64], [0, 64])));
+    expect(selTensors()).toEqual(["C", "A"]);
+    expect(selBoxes()).toHaveLength(2);
+  });
+
+  it("unions both cones into the aggregate", () => {
+    // C[0:64, 0:64] alone pulls A[0:64, :]
+    expect(regionOf("A")!.boxes).toEqual([box([0, 64], [0, 512])]);
+    // adding a tile on A itself contributes A[128:192, 0:64] as its own seed
+    S().setSelection("A", fromBox(box([128, 192], [0, 64])));
+    expect(regionOf("A")!.boxes).toEqual([
+      box([0, 64], [0, 512]),
+      box([128, 192], [0, 64]),
+    ]);
+  });
+
+  it("names every seeded tensor in the merged result's roots", () => {
+    S().setSelection("A", fromBox(box([0, 64], [0, 64])));
+    expect(S().backwardRes!.roots.sort()).toEqual(["A", "C"]);
+  });
+
+  it("attributes one cone per part, across tensors", () => {
+    S().setSelection("A", fromBox(box([128, 192], [0, 64])));
+    const perBox = S().perBox!;
+    expect(perBox).toHaveLength(2);
+    // part 0 is the C tile: it reaches A one hop back
+    expect(perBox[0].backward!.tensors.get("A")!.depth).toBe(1);
+    // part 1 is the A tile: A is its own seed, and it reaches no further back
+    expect(perBox[1].backward!.tensors.get("A")!.depth).toBe(0);
+    expect(perBox[1].backward!.tensors.get("C")).toBeUndefined();
+  });
+
+  it("composes only within the tensor drawn on", () => {
+    S().setSelection("A", fromBox(box([0, 64], [0, 64])));
+    // a subtract gesture on A must not reach the part on C
+    S().setSelection("A", fromBox(box([0, 64], [0, 64])), "subtract");
+    expect(selTensors()).toEqual(["C"]);
+  });
+
+  it("keeps untouched parts at their index, so hues do not shuffle", () => {
+    S().setSelection("A", fromBox(box([0, 64], [0, 64])));
+    S().setSelection("B", fromBox(box([0, 64], [0, 64])));
+    const before = selBoxes()[0];
+    // redrawing on B leaves C at index 0 and A at index 1
+    S().setSelection("B", fromBox(box([64, 128], [0, 64])));
+    expect(selTensors()).toEqual(["C", "A", "B", "B"]);
+    expect(selBoxes()[0]).toEqual(before);
+  });
+
+  it("moves only the anchor tensor's parts, leaving the others put", () => {
+    S().setSelection("A", fromBox(box([0, 64], [0, 64])));
+    const cBefore = selBoxes()[0];
+    S().moveSelection(0, 64); // anchor is A: the last tensor drawn on
+    expect(selBoxes()[0]).toEqual(cBefore);
+    expect(selBoxes()[1]).toEqual(box([64, 128], [0, 64]));
+  });
+
+  it("moves the focused part alone, whichever tensor it is on", () => {
+    S().setSelection("A", fromBox(box([0, 64], [0, 64])));
+    S().togglePinBox(0); // focus the tile on C
+    S().moveSelection(0, 64);
+    expect(selBoxes()[0]).toEqual(box([64, 128], [0, 64]));
+    expect(selBoxes()[1]).toEqual(box([0, 64], [0, 64]));
+  });
+
+  it("counts a selected tensor's own bytes as output, not intermediate", () => {
+    S().setSelection("A", fromBox(box([0, 64], [0, 64])));
+    const m = computeMetrics(S().resolved!, S().backwardRes!);
+    // A is an input tensor, so its bytes land in inputBytes either way; C is
+    // the producer output. What matters is that nothing seeded is counted as
+    // an intermediate.
+    expect(m.intermediateBytes).toBe(0);
+    expect(m.outputBytes).toBeGreaterThan(0);
+  });
+
+  it("drops per-part attribution past the cap but still merges every tensor", () => {
+    S().setSelection("C", fromBox(box([0, 8], [0, 8])), "replace");
+    for (let i = 1; i <= MAX_PER_BOX_PROPS; i++)
+      S().setSelection(i % 2 ? "A" : "C", fromBox(box([i * 8, i * 8 + 8], [0, 8])));
+    expect(sel()!.parts.length).toBeGreaterThan(MAX_PER_BOX_PROPS);
+    expect(S().perBox).toBeNull();
+    expect(S().backwardRes!.roots.sort()).toEqual(["A", "C"]);
   });
 });

@@ -2,13 +2,13 @@ import { create } from "zustand";
 import { executeQuery } from "../core/executor";
 import { Graph, ResolvedGraph, resolveGraph } from "../core/graph";
 import { expandNode, isExpandable } from "../core/expand";
-import { PropResult } from "../core/propagate";
+import { PropResult, mergeProps } from "../core/propagate";
 import {
   Box,
   Region,
   addPart,
   empty,
-  removePart,
+  fromBox,
   subtractFromParts,
   translateAllParts,
   translatePart,
@@ -25,7 +25,51 @@ export type PanelSide = "left" | "right";
 export type Theme = "light" | "dark";
 export type TensorOffset = { dx: number; dy: number };
 export type TensorOffsets = Record<string, TensorOffset>;
-type Selection = { tensorId: string; region: Region } | null;
+/**
+ * One drawn tile. The tensor travels with the part rather than sitting above
+ * the list, so tiles on different tensors coexist: comparing what two tensors
+ * pull from a shared input is the reason the tool exists, and it cannot be done
+ * if drawing on B discards the tile on A.
+ */
+export type SelPart = { tensorId: string; box: Box };
+/**
+ * The user's ordered parts (identity-stable, may overlap, may span tensors),
+ * never a canonicalized set. See the note in core/region.ts.
+ */
+type Selection = { parts: SelPart[] } | null;
+
+/** Parts drawn on one tensor, carrying the global index each one keeps. */
+export function partsOn(
+  selection: Selection,
+  tensorId: string
+): { index: number; box: Box }[] {
+  if (!selection) return [];
+  const out: { index: number; box: Box }[] = [];
+  selection.parts.forEach((p, index) => {
+    if (p.tensorId === tensorId) out.push({ index, box: p.box });
+  });
+  return out;
+}
+
+/** Distinct tensors carrying at least one part, in first-drawn order. */
+export function selectedTensorIds(selection: Selection): string[] {
+  const out: string[] = [];
+  for (const p of selection?.parts ?? []) if (!out.includes(p.tensorId)) out.push(p.tensorId);
+  return out;
+}
+
+/**
+ * The tensor a whole-selection action applies to: the focused part's tensor,
+ * else the most recently drawn one. Arrow keys resolve their axis indices
+ * against one shape, and with parts on tensors of different rank there is no
+ * single axis that means the same thing everywhere.
+ */
+export function anchorTensorId(selection: Selection, focusedBox: number | null): string | null {
+  const parts = selection?.parts ?? [];
+  if (!parts.length) return null;
+  if (focusedBox !== null && parts[focusedBox]) return parts[focusedBox].tensorId;
+  return parts[parts.length - 1].tensorId;
+}
 type WorkspaceSnapshot = { selection: Selection; tensorOffsets: TensorOffsets };
 
 /** Panel geometry. VS Code semantics: drag to resize between the bounds, drag
@@ -130,6 +174,9 @@ type State = {
   loadExample: (i: number) => void;
   applyDSL: (text: string) => void;
   setSelection: (tensorId: string, region: Region, compose?: Compose) => void;
+  /** Install an exact part list. Used by link restore, where part *order* is
+   * the payload: it is what assigns hues and footprint rows. */
+  restoreSelection: (parts: SelPart[]) => void;
   clearSelection: () => void;
   undoWorkspace: () => void;
   /** Move the whole selection along one axis, clamped to the tensor.
@@ -187,34 +234,64 @@ function initialTheme(): Theme {
   return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
+/**
+ * One propagation per part, merged into the aggregate the panels read.
+ *
+ * The executor stays a single-root primitive — a cone is defined from one
+ * tensor — and multiplicity lives here, where it belongs: the workspace is what
+ * holds several probes at once. Merging is a per-tensor union, which is also
+ * what the propagator already does internally when two paths reconverge.
+ *
+ * Above `MAX_PER_BOX_PROPS` parts, per-part attribution is dropped and the
+ * queries are grouped by tensor instead, so the cost is bounded by the number
+ * of tensors drawn on rather than the number of tiles. Note that the grouped
+ * result can only be equal or coarser than the per-part one: propagating a
+ * union through an over-approximating op is never tighter than unioning the
+ * separate propagations. Neither can under-approximate.
+ */
 function recompute(
   resolved: ResolvedGraph | null,
   selection: Selection,
   direction: Direction
 ): Pick<State, "backwardRes" | "forwardRes" | "perBox"> {
-  if (!resolved || !selection || selection.region.boxes.length === 0)
-    return { backwardRes: null, forwardRes: null, perBox: null };
-  if (direction === "none")
-    return { backwardRes: null, forwardRes: null, perBox: null };
-  const aggregate = executeQuery(resolved, { ...selection, direction });
-  const { backward: backwardRes, forward: forwardRes } = aggregate;
+  const none = { backwardRes: null, forwardRes: null, perBox: null };
+  if (!resolved || !selection || selection.parts.length === 0) return none;
+  if (direction === "none") return none;
 
-  const boxes = selection.region.boxes;
+  const parts = selection.parts;
+  const backs: PropResult[] = [];
+  const fwds: PropResult[] = [];
   let perBox: BoxProp[] | null = null;
-  if (boxes.length === 1) {
-    // the aggregate already is this box; no need to propagate twice
-    perBox = [{ backward: backwardRes, forward: forwardRes }];
-  } else if (boxes.length <= MAX_PER_BOX_PROPS) {
-    perBox = boxes.map((b) => {
-      const one = {
-        tensorId: selection.tensorId,
-        region: { boxes: [b], exact: selection.region.exact, reasons: selection.region.reasons },
-      };
-      const result = executeQuery(resolved, { ...one, direction });
-      return { backward: result.backward, forward: result.forward };
+
+  if (parts.length <= MAX_PER_BOX_PROPS) {
+    perBox = parts.map((p) => {
+      const r = executeQuery(resolved, {
+        tensorId: p.tensorId,
+        region: fromBox(p.box),
+        direction,
+      });
+      if (r.backward) backs.push(r.backward);
+      if (r.forward) fwds.push(r.forward);
+      return { backward: r.backward, forward: r.forward };
     });
+  } else {
+    const byTensor = new Map<string, Box[]>();
+    for (const p of parts) {
+      const cur = byTensor.get(p.tensorId);
+      if (cur) cur.push(p.box);
+      else byTensor.set(p.tensorId, [p.box]);
+    }
+    for (const [tensorId, boxes] of byTensor) {
+      const r = executeQuery(resolved, {
+        tensorId,
+        region: { boxes, exact: true, reasons: [] },
+        direction,
+      });
+      if (r.backward) backs.push(r.backward);
+      if (r.forward) fwds.push(r.forward);
+    }
   }
-  return { backwardRes, forwardRes, perBox };
+  return { backwardRes: mergeProps(backs), forwardRes: mergeProps(fwds), perBox };
 }
 
 /**
@@ -225,16 +302,15 @@ function recompute(
 function editSelection(
   get: () => State,
   set: (partial: Partial<State>) => void,
-  fn: (parts: Box[], shape: number[]) => Box[],
+  fn: (parts: SelPart[], shapeOf: (tensorId: string) => number[]) => SelPart[],
   keepFocus = false,
   record = true
 ): void {
   const { selection, resolved, direction, workspaceHistory, tensorOffsets, focusedBox } = get();
   if (!selection || !resolved) return;
-  const shape = resolved.tensors[selection.tensorId].resolved!;
-  const parts = fn(selection.region.boxes, shape);
-  const region: Region = { boxes: parts, exact: true, reasons: [] };
-  const sel = parts.length === 0 ? null : { tensorId: selection.tensorId, region };
+  const shapeOf = (tensorId: string) => resolved.tensors[tensorId].resolved!;
+  const parts = fn(selection.parts, shapeOf);
+  const sel = parts.length === 0 ? null : { parts };
   const nextFocus =
     keepFocus && sel && focusedBox !== null && focusedBox < parts.length ? focusedBox : null;
   set({
@@ -330,12 +406,14 @@ export const useStore = create<State>((set, get) => ({
       const base = loadResolvedGraph(program.graph, program.resolved);
       const st: Partial<State> = { ...base, dslText: ex.dsl, exampleIndex: i, focusTensor: null };
       if (ex.defaultSelection && base.resolved) {
-        const region: Region = {
-          boxes: [ex.defaultSelection.box.map(([lo, hi]) => ({ lo, hi }))],
-          exact: true,
-          reasons: [],
+        st.selection = {
+          parts: [
+            {
+              tensorId: ex.defaultSelection.tensor,
+              box: ex.defaultSelection.box.map(([lo, hi]) => ({ lo, hi })),
+            },
+          ],
         };
-        st.selection = { tensorId: ex.defaultSelection.tensor, region };
         st.focusedBox = null;
         st.pinnedBox = null;
         Object.assign(st, recompute(base.resolved, st.selection!, get().direction));
@@ -359,21 +437,46 @@ export const useStore = create<State>((set, get) => ({
     const { selection, resolved, direction, workspaceHistory, tensorOffsets } = get();
     const mode = compose ?? "union";
     const drawn = region.boxes;
-    let parts: Box[] = drawn;
-    if (selection && selection.tensorId === tensorId && mode !== "replace") {
-      parts = selection.region.boxes;
+
+    let parts: SelPart[];
+    if (mode === "replace" || !selection) {
+      parts = drawn.map((box) => ({ tensorId, box }));
+    } else {
+      // Compose against this tensor's own parts only. Parts on other tensors
+      // are untouched: drawing on B is an addition to the workspace, not a
+      // replacement of it, and a subtract gesture on B cannot reach into A.
+      let mine = partsOn(selection, tensorId).map((p) => p.box);
       for (const b of drawn)
-        parts = mode === "union" ? addPart(parts, b) : subtractFromParts(parts, b);
+        mine = mode === "union" ? addPart(mine, b) : subtractFromParts(mine, b);
+      // Rebuild in place so untouched parts keep their index -- and with it
+      // their hue, their footprint row, and any hidden/pinned state.
+      parts = [];
+      let k = 0;
+      for (const p of selection.parts) {
+        if (p.tensorId !== tensorId) parts.push(p);
+        else if (k < mine.length) parts.push({ tensorId, box: mine[k++] });
+      }
+      for (; k < mine.length; k++) parts.push({ tensorId, box: mine[k] });
     }
-    const sel =
-      parts.length === 0
-        ? null
-        : { tensorId, region: { boxes: parts, exact: true, reasons: [] } };
+    const sel = parts.length === 0 ? null : { parts };
     set({
       selection: sel,
       // Null is a real workspace state: the first selection must be undoable
       // without also rewinding an earlier tensor move.
       workspaceHistory: [...workspaceHistory, { selection, tensorOffsets }].slice(-40),
+      focusedBox: null,
+      pinnedBox: null,
+      hiddenBoxes: new Set<number>(),
+      preview: null,
+      ...recompute(resolved, sel, direction),
+    });
+  },
+
+  restoreSelection: (parts) => {
+    const { resolved, direction } = get();
+    const sel = parts.length === 0 ? null : { parts };
+    set({
+      selection: sel,
       focusedBox: null,
       pinnedBox: null,
       hiddenBoxes: new Set<number>(),
@@ -415,16 +518,40 @@ export const useStore = create<State>((set, get) => ({
     });
   },
 
-  /** Moves only the focused part when one is focused, otherwise the whole selection. */
+  /**
+   * Moves the focused part when one is focused, otherwise every part on the
+   * anchor tensor. `axis` is an index into one tensor's shape, so it cannot be
+   * applied across tensors of different rank -- parts elsewhere hold still.
+   */
   moveSelection: (axis, delta, record = true) => {
     const focused = get().focusedBox;
     editSelection(
       get,
       set,
-      (parts, shape) =>
-        focused !== null && focused < parts.length
-          ? translatePart(parts, focused, axis, delta, shape)
-          : translateAllParts(parts, axis, delta, shape),
+      (parts, shapeOf) => {
+        const anchor = anchorTensorId({ parts }, focused);
+        if (!anchor) return parts;
+        const shape = shapeOf(anchor);
+        const local: number[] = [];
+        const boxes: Box[] = [];
+        parts.forEach((p, i) => {
+          if (p.tensorId === anchor) {
+            local.push(i);
+            boxes.push(p.box);
+          }
+        });
+        const at = focused !== null ? local.indexOf(focused) : -1;
+        const moved =
+          at >= 0
+            ? translatePart(boxes, at, axis, delta, shape)
+            : translateAllParts(boxes, axis, delta, shape);
+        if (moved === boxes) return parts;
+        const next = parts.slice();
+        local.forEach((globalIndex, j) => {
+          next[globalIndex] = { tensorId: anchor, box: moved[j] };
+        });
+        return next;
+      },
       true,
       record
     );
@@ -434,11 +561,12 @@ export const useStore = create<State>((set, get) => ({
     editSelection(
       get,
       set,
-      (parts) => parts.map((part, i) => (i === index ? box : part)),
+      (parts) => parts.map((part, i) => (i === index ? { ...part, box } : part)),
       true
     ),
 
-  deleteBox: (index) => editSelection(get, set, (parts) => removePart(parts, index)),
+  deleteBox: (index) =>
+    editSelection(get, set, (parts) => parts.filter((_, i) => i !== index)),
 
   hoverBox: (index) => {
     if (get().pinnedBox !== null) return; // a pinned part outranks hovering

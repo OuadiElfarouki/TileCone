@@ -15,7 +15,15 @@ import {
 } from "../core/region";
 import { formatBytes } from "./TensorCard";
 import { boxColor, MAX_DISTINCT_HUES, rgbCss } from "./palette";
-import { MAX_PER_BOX_PROPS, planesOf, useStore, viewAxes } from "./store";
+import {
+  anchorTensorId,
+  MAX_PER_BOX_PROPS,
+  partsOn,
+  planesOf,
+  selectedTensorIds,
+  useStore,
+  viewAxes,
+} from "./store";
 import { formatSelectionBox, parseSelectionBox } from "./selection-range";
 import {
   effectiveTileScaleIndex,
@@ -315,17 +323,29 @@ function RegionEditor(): React.ReactElement | null {
   const theme = useStore((s) => s.theme);
 
   if (!resolved || !selection) return null;
-  const t = resolved.tensors[selection.tensorId];
-  const shape = t.resolved!;
-  const { rowAxis: rowAx, colAxis: colAx } = viewAxes(shape);
-  const axisLabel = (ax: number) => t.axisNames?.[ax] ?? `ax${ax}`;
-  const boxes = selection.region.boxes;
-  const overlap = partsOverlap(boxes);
+  const parts = selection.parts;
   const dark = theme === "dark";
+
+  // Overlap is a within-tensor question: two boxes on different tensors index
+  // different things and cannot double-count each other.
+  const overlap = { unique: 0, summed: 0 };
+  for (const id of selectedTensorIds(selection)) {
+    const one = partsOverlap(partsOn(selection, id).map((p) => p.box));
+    overlap.unique += one.unique;
+    overlap.summed += one.summed;
+  }
+
+  // The trailing axis legend describes one tensor, so it follows the anchor --
+  // the same tensor the arrow keys move.
+  const anchor = anchorTensorId(selection, focusedBox);
+  const anchorT = anchor ? resolved.tensors[anchor] : null;
+  const anchorShape = anchorT?.resolved ?? [];
+  const { rowAxis: rowAx, colAxis: colAx } = viewAxes(anchorShape);
+  const axisLabel = (ax: number) => anchorT?.axisNames?.[ax] ?? `ax${ax}`;
 
   return (
     <div className="ins-section">
-      {boxes.length > 1 && (
+      {parts.length > 1 && (
         <p className="hint">
           {perBox
             ? "hover a box to emphasise its cone; click to pin it, then arrow keys move that box alone"
@@ -341,9 +361,11 @@ function RegionEditor(): React.ReactElement | null {
       )}
 
       <div className="box-list" onMouseLeave={() => hoverBox(null)}>
-        {boxes.map((b, i) => {
+        {parts.map(({ tensorId, box: b }, i) => {
           const active = focusedBox === i;
           const hidden = hiddenBoxes.has(i);
+          const t = resolved.tensors[tensorId];
+          const shape = t.resolved!;
           return (
             <div
               className={`box-row${active ? " active" : ""}${pinned === i ? " pinned" : ""}${hidden ? " hidden-cone" : ""}`}
@@ -396,15 +418,18 @@ function RegionEditor(): React.ReactElement | null {
           );
         })}
       </div>
-      {boxes.length > MAX_DISTINCT_HUES && (
+      {parts.length > MAX_DISTINCT_HUES && (
         <p className="hint">
           boxes past the {MAX_DISTINCT_HUES}rd share a neutral color — only {MAX_DISTINCT_HUES} hues stay
           distinguishable side by side, so use hover to tell the rest apart.
         </p>
       )}
-      <p className="hint">
-        rows {axisLabel(rowAx >= 0 ? rowAx : 0)} · cols {axisLabel(colAx >= 0 ? colAx : 0)} · shape [{shape.join("×")}]
-      </p>
+      {anchorT && (
+        <p className="hint">
+          <b>{anchorT.name}</b> · rows {axisLabel(rowAx >= 0 ? rowAx : 0)} · cols{" "}
+          {axisLabel(colAx >= 0 ? colAx : 0)} · shape [{anchorShape.join("×")}]
+        </p>
+      )}
     </div>
   );
 }
@@ -435,18 +460,22 @@ export function Inspector(): React.ReactElement {
 
   if (!resolved) return <aside className="inspector" />;
 
-  const selBoxes = selection?.region.boxes.length ?? 0;
+  const selBoxes = selection?.parts.length ?? 0;
   const hue = rgbCss(boxColor(0, theme === "dark"));
   /** Past the cap the cones are still correct, but merged rather than attributed. */
   const merged = selBoxes > MAX_PER_BOX_PROPS;
 
   /** Reuse factor (§5.5): sample selection-sized output tiles across the selected
-   * tensor; count how many touch the current footprint on each input. */
+   * tensor; count how many touch the current footprint on each input. The sweep
+   * is defined by one tile on one tensor, so it follows the anchor part — the
+   * focused one, else the last drawn — rather than mixing tensors. */
   const computeReuse = () => {
     if (!selection || !resolved || !scopedRes) return;
-    const shape = resolved.tensors[selection.tensorId].resolved!;
-    const bb = selection.region.boxes[0];
-    if (!bb) return;
+    const probe =
+      selection.parts[focusedBox !== null ? focusedBox : selection.parts.length - 1];
+    if (!probe) return;
+    const shape = resolved.tensors[probe.tensorId].resolved!;
+    const bb = probe.box;
     const tileExt = bb.map((I) => I.hi - I.lo);
     const gridDims = shape.map((e, ax) => Math.ceil(e / Math.max(1, tileExt[ax])));
     const totalTiles = gridDims.reduce((a, b) => a * b, 1);
@@ -469,7 +498,7 @@ export function Inspector(): React.ReactElement {
         lo: Math.min(tIdx[ax] * tileExt[ax], e - 1),
         hi: Math.min((tIdx[ax] + 1) * tileExt[ax], e),
       }));
-      const res = propagateBackward(resolved, { tensorId: selection.tensorId, region: fromBox(probeBox) });
+      const res = propagateBackward(resolved, { tensorId: probe.tensorId, region: fromBox(probeBox) });
       for (const t of inputs) {
         const mine = scopedRes.tensors.get(t.id)?.region;
         const theirs = res.tensors.get(t.id)?.region;

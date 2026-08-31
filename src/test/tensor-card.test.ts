@@ -42,7 +42,8 @@ const inputs = (over: Partial<LayerInputs> = {}): LayerInputs => ({
   dark: true,
   direction: "both",
   isSelected: false,
-  selection: null,
+  parts: [],
+  partCount: 0,
   perBox: [bothCones("T")],
   hiddenBoxes: new Set<number>(),
   focusedBox: null,
@@ -106,9 +107,14 @@ describe("hiding removes paint but nothing else", () => {
   });
 
   it("keeps a hidden box's own rectangle so it can still be found", () => {
-    const selection = { tensorId: "T", region: { boxes: [box([0, 4])], exact: true, reasons: [] } };
     const layers = buildLayers(
-      inputs({ isSelected: true, selection, perBox: null, hiddenBoxes: new Set([0]) })
+      inputs({
+        isSelected: true,
+        parts: [{ index: 0, box: box([0, 4]) }],
+        partCount: 1,
+        perBox: null,
+        hiddenBoxes: new Set([0]),
+      })
     );
     expect(layers.length).toBeGreaterThan(0);
     expect(layers[layers.length - 1].alpha).toBeGreaterThan(0);

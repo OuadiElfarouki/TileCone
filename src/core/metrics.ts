@@ -68,7 +68,7 @@ export function computeMetrics(
     const bytes = elements * DTYPE_BYTES[t.dtype];
     const isInput = !t.producer;
     if (isInput) inputBytes += bytes;
-    else if (tid === back.selection.tensorId) outputBytes += bytes;
+    else if (back.roots.includes(tid)) outputBytes += bytes;
     else intermediateBytes += bytes;
     const exprs = regionSliceExprs(t.name, tr.region);
     tensors.push({

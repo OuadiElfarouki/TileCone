@@ -12,7 +12,7 @@ import { decodeWorkspace } from "./ui/share";
 export default function App(): React.ReactElement {
   const loadExample = useStore((s) => s.loadExample);
   const applyDSL = useStore((s) => s.applyDSL);
-  const setSelection = useStore((s) => s.setSelection);
+  const restoreSelection = useStore((s) => s.restoreSelection);
   const setDirection = useStore((s) => s.setDirection);
   const resolved = useStore((s) => s.resolved);
   const theme = useStore((s) => s.theme);
@@ -38,14 +38,11 @@ export default function App(): React.ReactElement {
         useStore.getState().setTileScale(link.tile);
         useStore.getState().setSnapToGrid(link.snap !== false);
         if (link.sel)
-          setSelection(
-            link.sel.t,
-            {
-              boxes: link.sel.boxes.map((b) => b.map(([lo, hi]) => ({ lo, hi }))),
-              exact: true,
-              reasons: [],
-            },
-            "replace"
+          restoreSelection(
+            link.sel.map((p) => ({
+              tensorId: p.t,
+              box: p.box.map(([lo, hi]) => ({ lo, hi })),
+            }))
           );
         return;
       } catch {

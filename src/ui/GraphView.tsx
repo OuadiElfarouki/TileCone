@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { isExpandable } from "../core/expand";
 import { constrainRectMotion, curvedEdgePath, Rect, WORLD_MARGIN } from "./graph-geometry";
 import { cardSize, TensorCard } from "./TensorCard";
-import { TensorOffset, useStore } from "./store";
+import { selectedTensorIds, TensorOffset, useStore } from "./store";
 
 type Placed = {
   id: string;
@@ -53,7 +53,7 @@ export function GraphView(): React.ReactElement {
 
   const contributing = useMemo(() => {
     const s = new Set<string>();
-    if (selection) s.add(selection.tensorId);
+    for (const id of selectedTensorIds(selection)) s.add(id);
     for (const res of [backwardRes, forwardRes])
       if (res) for (const id of res.tensors.keys()) s.add(id);
     return s;

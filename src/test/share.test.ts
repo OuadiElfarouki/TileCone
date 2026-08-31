@@ -7,14 +7,14 @@ import {
   shareTarget,
   WorkspaceLink,
 } from "../ui/share";
-import { box, fromBox } from "../core/region";
+import { box } from "../core/region";
 
 const LINK: WorkspaceLink = {
   dsl: "input A [4, 4] f32\nB = relu(A)\n",
   dir: "both",
   tile: -2,
   snap: false,
-  sel: { t: "B", boxes: [[[0, 2], [1, 3]]] },
+  sel: [{ t: "B", box: [[0, 2], [1, 3]] }],
 };
 
 describe("workspace links round-trip", () => {
@@ -34,13 +34,39 @@ describe("workspace links round-trip", () => {
 
   it("preserves ordered selection parts, including their order", () => {
     const selection = {
-      tensorId: "C",
-      region: { boxes: [box([4, 8], [0, 4]), box([0, 2], [2, 6])], exact: true, reasons: [] },
+      parts: [
+        { tensorId: "C", box: box([4, 8], [0, 4]) },
+        { tensorId: "C", box: box([0, 2], [2, 6]) },
+      ],
     };
     const link = { ...LINK, sel: selectionToLink(selection) };
-    expect(decodeWorkspace(`#s=${encodeWorkspace(link)}`)?.sel?.boxes).toEqual([
-      [[4, 8], [0, 4]],
-      [[0, 2], [2, 6]],
+    expect(decodeWorkspace(`#s=${encodeWorkspace(link)}`)?.sel).toEqual([
+      { t: "C", box: [[4, 8], [0, 4]] },
+      { t: "C", box: [[0, 2], [2, 6]] },
+    ]);
+  });
+
+  it("keeps each part's tensor, so a link can span several", () => {
+    const selection = {
+      parts: [
+        { tensorId: "A", box: box([0, 2], [0, 2]) },
+        { tensorId: "B", box: box([2, 4], [1, 3]) },
+        { tensorId: "A", box: box([2, 4], [2, 4]) },
+      ],
+    };
+    const link = { ...LINK, sel: selectionToLink(selection) };
+    expect(decodeWorkspace(`#s=${encodeWorkspace(link)}`)?.sel?.map((p) => p.t)).toEqual([
+      "A",
+      "B",
+      "A",
+    ]);
+  });
+
+  it("reads a pre-multi-tensor link as parts on that one tensor", () => {
+    const legacy = { ...LINK, sel: { t: "B", boxes: [[[0, 2], [1, 3]], [[2, 4], [0, 1]]] } };
+    expect(decodeWorkspace(`#s=${encodeWorkspace(legacy as never)}`)?.sel).toEqual([
+      { t: "B", box: [[0, 2], [1, 3]] },
+      { t: "B", box: [[2, 4], [0, 1]] },
     ]);
   });
 
@@ -68,7 +94,7 @@ describe("a link that cannot be trusted is refused, not repaired", () => {
   it("drops malformed boxes rather than restoring half a selection", () => {
     const bad = encodeWorkspace({
       ...LINK,
-      sel: { t: "B", boxes: [[[3, 1]]] as [number, number][][] }, // hi <= lo
+      sel: [{ t: "B", box: [[3, 1]] as [number, number][] }], // hi <= lo
     });
     expect(decodeWorkspace(`#s=${bad}`)?.sel).toBeNull();
   });
@@ -105,9 +131,12 @@ describe("selectionToLink", () => {
   });
 
   it("flattens intervals to [lo, hi] pairs", () => {
-    expect(selectionToLink({ tensorId: "A", region: fromBox(box([1, 5])) })).toEqual({
-      t: "A",
-      boxes: [[[1, 5]]],
-    });
+    expect(selectionToLink({ parts: [{ tensorId: "A", box: box([1, 5]) }] })).toEqual([
+      { t: "A", box: [[1, 5]] },
+    ]);
+  });
+
+  it("is null for a selection with no parts", () => {
+    expect(selectionToLink({ parts: [] })).toBeNull();
   });
 });
