@@ -2,6 +2,7 @@ import { z } from "zod";
 import { Box, Region, canonicalize, count, fromBox, iv } from "../region";
 import { normAxis } from "./reduce";
 import { DependencyNoteDraft, NoteCtx, OpCtx, OpSpec, uniformDTypeOutputs } from "./types";
+import { sameAxisNames } from "./axis-names";
 
 type ScanAttrs = { axis: number; reverse: boolean };
 
@@ -59,6 +60,7 @@ export const cumsumOp: OpSpec = {
   name: "cumsum",
   attrSchema: z.object({ axis: z.number().int(), reverse: z.boolean().default(false) }),
   arity: { inputs: 1, outputs: 1 },
+  inferAxisNames: sameAxisNames,
   dependencyNote: cumsumDependencyNote,
   inferDTypes: uniformDTypeOutputs("cumsum"),
   inferShapes: (inShapes, attrs) => {

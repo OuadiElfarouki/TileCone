@@ -9,6 +9,7 @@ import {
 } from "./elementwise";
 import { normAxis } from "./reduce";
 import { OpSpec, STRIDED_ENUM_CAP, uniformDTypeOutputs } from "./types";
+import { broadcastAxisNames, firstNamedAxis, sameAxisNames } from "./axis-names";
 
 const zero = () => 0;
 
@@ -40,6 +41,9 @@ export const transposeOp: OpSpec = {
   name: "transpose",
   attrSchema: z.object({ perm: z.array(z.number().int()) }),
   arity: { inputs: 1, outputs: 1 },
+  inferAxisNames: (inNames, ctx) => [
+    (ctx.attrs as { perm: number[] }).perm.map((axis) => inNames[0][axis]),
+  ],
   inferDTypes: uniformDTypeOutputs("transpose"),
   inferShapes: (inShapes, attrs) => {
     const perm = attrs.perm as number[];
@@ -79,6 +83,7 @@ export const sliceOp: OpSpec = {
     steps: z.array(z.number().int().min(1)),
   }),
   arity: { inputs: 1, outputs: 1 },
+  inferAxisNames: sameAxisNames,
   inferDTypes: uniformDTypeOutputs("slice"),
   inferShapes: (inShapes, attrs) => {
     const { starts, stops, steps } = attrs as SliceAttrs;
@@ -168,6 +173,7 @@ export const padOp: OpSpec = {
     mode: z.enum(["constant", "reflect", "replicate"]).default("constant"),
   }),
   arity: { inputs: 1, outputs: 1 },
+  inferAxisNames: sameAxisNames,
   inferDTypes: uniformDTypeOutputs("pad"),
   inferShapes: (inShapes, attrs) => {
     const { pads, mode } = attrs as PadAttrs;
@@ -258,6 +264,7 @@ export const concatOp: OpSpec = {
   name: "concat",
   attrSchema: z.object({ axis: z.number().int() }),
   arity: { inputs: { min: 1 }, outputs: 1 },
+  inferAxisNames: (inNames, ctx) => [firstNamedAxis(inNames, ctx.outShapes[0].length)],
   inferDTypes: uniformDTypeOutputs("concat"),
   inferShapes: (inShapes, attrs) => {
     const ax = normAxis(attrs.axis as number, inShapes[0].length);
@@ -316,6 +323,7 @@ export const splitOp: OpSpec = {
   name: "split",
   attrSchema: z.object({ axis: z.number().int(), sizes: z.array(z.number().int().min(1)).min(1) }),
   arity: { inputs: 1, outputs: { min: 1 } },
+  inferAxisNames: (inNames, ctx) => ctx.outShapes.map(() => inNames[0].slice()),
   validateArity: (_inputCount, outputCount, attrs) => {
     const sizeCount = (attrs.sizes as number[]).length;
     if (outputCount !== sizeCount)
@@ -370,6 +378,9 @@ export const expandOp: OpSpec = {
   name: "expand",
   attrSchema: z.object({ shape: z.array(z.union([z.string(), z.number().int().min(1)])) }),
   arity: { inputs: 1, outputs: 1 },
+  inferAxisNames: (inNames, ctx) => [
+    broadcastAxisNames(inNames, ctx.inShapes, ctx.outShapes[0]),
+  ],
   inferDTypes: uniformDTypeOutputs("expand"),
   inferShapes: (inShapes, attrs, params) => {
     const target = resolveShape(attrs.shape as (string | number)[], params ?? {});
@@ -397,6 +408,7 @@ export function identityLike(name: string): OpSpec {
     name,
     attrSchema: z.object({}),
     arity: { inputs: 1, outputs: 1 },
+    inferAxisNames: sameAxisNames,
     inferDTypes: uniformDTypeOutputs(name),
     inferShapes: (inShapes) => [inShapes[0].slice()],
     backward: (_s, outBox) => [fromBox(outBox.map((I) => ({ ...I })))],

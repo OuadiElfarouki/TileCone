@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { Box, Region, coversAxisFully, empty, fromBox, iv, canonicalize } from "../region";
 import { Attrs, DependencyNoteDraft, DIAG_ENUM_CAP, OpCtx, OpSpec, uniformDTypeOutputs, NoteCtx } from "./types";
+import { AxisNames } from "./types";
 
 type ParsedEquation = { operands: string[][]; output: string[] };
 
@@ -230,10 +231,30 @@ function einsumDependencyNote(eq: string, ctx: NoteCtx): DependencyNoteDraft | n
 
 const eqOf = (attrs: Attrs) => attrs.equation as string;
 
+/**
+ * An einsum output axis is the same axis as any operand axis sharing its label,
+ * so a label carries its name through the contraction. Labels that appear only
+ * on the operands are contracted away and take their names with them.
+ */
+function einsumAxisNames(eq: string, inNames: AxisNames[], nInputs: number): AxisNames[] {
+  const pe = parseEquation(eq, nInputs);
+  return [
+    pe.output.map((label) => {
+      for (let slot = 0; slot < pe.operands.length; slot++) {
+        const axis = pe.operands[slot].indexOf(label);
+        if (axis >= 0 && inNames[slot]?.[axis] !== undefined) return inNames[slot][axis];
+      }
+      return undefined;
+    }),
+  ];
+}
+
 export const einsumOp: OpSpec = {
   name: "einsum",
   attrSchema: z.object({ equation: z.string() }),
   arity: { inputs: { min: 1 }, outputs: 1 },
+  inferAxisNames: (inNames, ctx) =>
+    einsumAxisNames(eqOf(ctx.attrs), inNames, ctx.inShapes.length),
   validateArity: (inputCount, _outputCount, attrs) => {
     const parts = eqOf(attrs).replace(/\s+/g, "").split("->");
     if (parts.length !== 2) return; // equation syntax is diagnosed by shape inference
@@ -263,6 +284,8 @@ function einsumSugar(
     name,
     attrSchema: z.object({}),
     arity: { inputs: nInputs, outputs: 1 },
+    inferAxisNames: (inNames, ctx) =>
+      einsumAxisNames(makeEq(ctx.inShapes), inNames, ctx.inShapes.length),
     inferDTypes: uniformDTypeOutputs(name),
     inferShapes: (inShapes) => einsumInferShapes(makeEq(inShapes), inShapes),
     backward: (_s, outBox, ctx) => einsumBackward(eqFor(ctx), outBox, ctx),

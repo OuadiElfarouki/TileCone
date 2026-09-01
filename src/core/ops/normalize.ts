@@ -2,6 +2,7 @@ import { z } from "zod";
 import { Box, Region, canonicalize, count, coversAxisFully, fromBox, iv } from "../region";
 import { normAxes } from "./reduce";
 import { DependencyNoteDraft, OpCtx, OpSpec, uniformDTypeOutputs, NoteCtx } from "./types";
+import { sameAxisNames } from "./axis-names";
 
 type NAttrs = { kind: "layernorm" | "rmsnorm"; axes: number[]; hasWeight: boolean; hasBias: boolean };
 
@@ -88,6 +89,7 @@ export const normalizeOp: OpSpec = {
     hasBias: z.boolean().default(false),
   }),
   arity: { inputs: { min: 1, max: 3 }, outputs: 1 },
+  inferAxisNames: sameAxisNames,
   validateArity: (inputCount, _outputCount, attrs) => {
     const typed = attrs as NAttrs;
     const expected = 1 + Number(typed.hasWeight) + Number(typed.hasBias);

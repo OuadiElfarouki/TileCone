@@ -119,7 +119,11 @@ The parser creates the structural graph. Declared inputs and weights already hav
    narrowing happens once at the registry boundary rather than in each `OpSpec`, so a new
    operation cannot forget it.
 6. Tensor producers are unique and the node graph is acyclic.
-7. Symbolic dimensions resolve to concrete shapes.
+7. Symbolic dimensions resolve to concrete shapes. A dimension may be arithmetic over
+   parameters (`H*D`, `E/H`, `(H+D)*2`), so a relationship holds where it is used rather
+   than being precomputed into a literal that silently stops agreeing. Division must come
+   out whole: an axis is a whole number of elements, so an inexact one means the stated
+   relationship does not actually hold.
 8. Each operation infers the expected number of output shapes and dtypes.
 9. All inferred extents are non-negative safe integers and all dtypes are supported.
 10. Consumer indexes, producer links, and a stable topological order are built.
@@ -177,8 +181,16 @@ text
 The DSL is line-oriented and intentionally small:
 
 - `input`, `weight`, and `param` declare typed tensors with symbolic or literal dimensions.
+- An axis may be labelled in place: `input X [batch: B, seq: S, emb: E] f16`. A declaration
+  names every axis or none, because a half-named declaration is a slip rather than a
+  statement; propagated names may legitimately have holes.
 - Assignments create operation nodes and one or more output tensors.
 - Positional arguments refer to tensors; named arguments become operation attributes.
+- A dimension is an expression over parameters, not just a name: `input X [B, S, H*D]`, and
+  the same language works in shape-valued attributes such as `reshape(X, shape=[B, S, H, E/H])`.
+  `Sym` remains `string | number` — the string simply holds the expression, a bare parameter
+  being the one-symbol case — so nothing downstream had to learn a new shape type and the
+  text the author wrote is what `notes.ts` and `toDSL` see.
 - Lists, numbers, booleans, strings, and identifiers are accepted attribute values. Numbers
   accept decimals and scientific notation, so `toDSL` cannot emit a literal the parser then
   rejects.
@@ -202,6 +214,7 @@ Every operation is described by an `OpSpec` in `src/core/ops/types.ts` and regis
 - static input and output cardinality;
 - optional attribute-dependent arity validation;
 - output shape inference;
+- optional axis-name propagation, defaulting to unnamed;
 - output dtype inference;
 - backward region mapping from an output box to input regions;
 - forward region mapping from an input box to output regions;
@@ -237,6 +250,14 @@ Metrics are derived from the backward dependency result in `src/core/metrics.ts`
 - **Intermediate bytes:** bytes associated with contributing produced tensors, optionally included in arithmetic intensity.
 - **Output bytes:** bytes in the selected producer output.
 - **Arithmetic intensity:** FLOPs divided by the configured byte denominator.
+
+Axis names travel the same path as shapes and dtypes. A declaration names its axes, and each
+operation decides what survives it: an einsum label carries a name across a contraction, a
+transpose permutes names with their axes, a reduction drops the name of an axis it collapses,
+and a reshape names only the axes a group maps one-to-one — splitting an embedding into heads
+produces axes the source never named. `inferAxisNames` is optional and defaults to unnamed,
+because the inspector and the notes layer present a name as the source's own word for an axis,
+so a wrong name misinforms where no name merely omits.
 
 Byte estimates use the dtype inferred during graph resolution, so dtype propagation and metrics share one source of truth. Per-tensor readouts include element count, bytes, boxes, exactness, approximation reasons, slice expressions, and propagation depth.
 
@@ -385,6 +406,9 @@ npx tsc --noEmit
 1. Implement an `OpSpec` under `src/core/ops/`.
 2. Define its attribute schema and static or dependent arity.
 3. Implement shape and dtype inference.
+3a. Map axis names where an output axis is genuinely the input's own axis, and leave it
+    unnamed otherwise. A borrowed name is worse than none: the inspector prints it as the
+    source's own word for that axis.
 4. Implement conservative backward and forward region mappings.
 5. Add a pointwise oracle where practical and define FLOP semantics.
 6. Register the spec in `src/core/ops/index.ts`.

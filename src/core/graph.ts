@@ -4,7 +4,7 @@ import { ZodObject, ZodType, ZodIssue } from "zod";
 import { getOp } from "./ops/index";
 import { GraphError, resolveShape, Shape } from "./shapes";
 import { DTYPES, DType } from "./dtypes";
-import type { Cardinality } from "./ops/types";
+import type { AxisNames, Cardinality } from "./ops/types";
 
 export type { Shape, Sym } from "./shapes";
 export type { DType } from "./dtypes";
@@ -16,7 +16,8 @@ export type Tensor = {
   resolved?: number[]; // populated by resolveGraph
   /** Inputs declare this; produced tensors are canonicalized by `inferDTypes` during resolution. */
   dtype: DType;
-  axisNames?: string[];
+  /** One name per axis, parallel to `shape`; holes are axes with no name. */
+  axisNames?: AxisNames;
   /** Display-only: distinguishes a learned parameter from an activation. */
   role?: "activation" | "weight";
   producer?: { nodeId: string; slot: number }; // absent => graph input
@@ -121,6 +122,13 @@ export function graphOutputs(graph: ResolvedGraph): Tensor[] {
   return Object.values(graph.tensors).filter(
     (tensor) => tensor.producer && !graph.consumers[tensor.id]?.length
   );
+}
+
+/** An input's names as a full-length array, so an op's mapping can index by
+ * axis without first checking whether the tensor was named at all. */
+function axisNamesOf(tensor: Tensor, rank: number): AxisNames {
+  const declared = tensor.axisNames ?? [];
+  return Array.from({ length: rank }, (_, axis) => declared[axis]);
 }
 
 /** Narrow an object attribute schema so unknown keys are rejected instead of
@@ -250,6 +258,39 @@ export function resolveGraph(source: Graph): ResolvedGraph {
         id,
       });
     t.producer = producers.get(id);
+    if (t.producer) {
+      // Produced names are derived metadata. Ignore any serialized copy and
+      // recompute it from the operation, just like resolved shapes and dtypes.
+      delete t.axisNames;
+    } else if (t.axisNames) {
+      if (t.axisNames.length !== t.shape.length)
+        throw new GraphError(
+          `tensor "${id}": ${t.axisNames.length} axis names for rank ${t.shape.length}`,
+          "GRAPH_DEFINITION",
+          { kind: "tensor", id }
+        );
+      if (t.axisNames.some((name) => name !== undefined && typeof name !== "string"))
+        throw new GraphError(
+          `tensor "${id}": axis names must be strings`,
+          "GRAPH_DEFINITION",
+          { kind: "tensor", id }
+        );
+      const named = t.axisNames.filter((name): name is string => name !== undefined);
+      if (named.length && named.length !== t.axisNames.length)
+        throw new GraphError(
+          `tensor "${id}": name every axis or none`,
+          "GRAPH_DEFINITION",
+          { kind: "tensor", id }
+        );
+      if (new Set(named).size !== named.length)
+        throw new GraphError(
+          `tensor "${id}": duplicate axis name`,
+          "GRAPH_DEFINITION",
+          { kind: "tensor", id }
+        );
+      // An all-hole wire representation is equivalent to no names at all.
+      if (!named.length) delete t.axisNames;
+    }
     if (!DTYPES.includes(t.dtype))
       throw new GraphError(`tensor "${id}": invalid dtype "${String(t.dtype)}"`, "GRAPH_DTYPE", {
         kind: "tensor",
@@ -348,6 +389,47 @@ export function resolveGraph(source: Graph): ResolvedGraph {
           );
       }
     }
+    let outNames: AxisNames[] | null = null;
+    if (spec.inferAxisNames) {
+      // A bad mapping is an operation bug, not a bad graph, so it is reported
+      // the same way a bad `inferShapes` is rather than silently dropping names.
+      try {
+        outNames = spec.inferAxisNames(
+          n.inputs.map((id, slot) => axisNamesOf(g.tensors[id], inShapes[slot].length)),
+          { inShapes, outShapes, attrs: n.attrs }
+        );
+      } catch (e) {
+        throw new GraphError(
+          `node "${n.id}" (${n.op}): axis-name inference failed: ${(e as Error).message}`,
+          "GRAPH_INVALID",
+          { kind: "node", id: n.id }
+        );
+      }
+      if (outNames.length !== n.outputs.length)
+        throw new GraphError(
+          `node "${n.id}" (${n.op}): inferAxisNames returned ${outNames.length} name sets for ${n.outputs.length} outputs`,
+          "GRAPH_INVALID",
+          { kind: "node", id: n.id }
+        );
+      for (let slot = 0; slot < outNames.length; slot++) {
+        const names = outNames[slot];
+        if (!Array.isArray(names) || names.length !== outShapes[slot].length)
+          throw new GraphError(
+            `node "${n.id}" (${n.op}): inferAxisNames returned ` +
+              `${Array.isArray(names) ? names.length : "a non-array"} names for output ${slot} ` +
+              `of rank ${outShapes[slot].length}`,
+            "GRAPH_INVALID",
+            { kind: "node", id: n.id }
+          );
+        if (names.some((name) => name !== undefined && typeof name !== "string"))
+          throw new GraphError(
+            `node "${n.id}" (${n.op}): inferAxisNames returned an invalid name for output ${slot}`,
+            "GRAPH_INVALID",
+            { kind: "node", id: n.id }
+          );
+      }
+    }
+
     let outDTypes: DType[];
     try {
       outDTypes = spec.inferDTypes(
@@ -396,6 +478,10 @@ export function resolveGraph(source: Graph): ResolvedGraph {
       }
       t.resolved = inferred;
       t.dtype = outDTypes[s];
+      const names = outNames?.[s];
+      if (names && names.some((v) => v !== undefined))
+        t.axisNames = names.slice();
+      else delete t.axisNames;
     }
   }
 

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { Box, Interval, Region, boundingBox, canonicalize, iv, MAX_BOXES } from "../region";
 import { resolveShape } from "../shapes";
 import { DependencyNoteDraft, NoteCtx, OpSpec, uniformDTypeOutputs } from "./types";
+import { AxisNames } from "./types";
 
 const MAX_RESHAPE_RUNS = 4096;
 
@@ -235,11 +236,33 @@ function reshapeDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
   return null; // one run in, one run out — the reshape really is a relabel here
 }
 
+/**
+ * A reshape only preserves an axis where a group maps one input axis to exactly
+ * one output axis. Splitting an embedding into heads, or folding two axes into
+ * one, produces axes the source never named, and guessing there would put a
+ * borrowed word on an axis that is not the one it described.
+ */
+function reshapeAxisNames(inNames: AxisNames, fromShape: number[], toShape: number[]): AxisNames {
+  const out: AxisNames = toShape.map(() => undefined);
+  let from = 0;
+  let to = 0;
+  for (const group of groupAxes(fromShape, toShape)) {
+    if (group.from.length === 1 && group.to.length === 1) out[to] = inNames[from];
+    from += group.from.length;
+    to += group.to.length;
+  }
+  return out;
+}
+
 export const reshapeOp: OpSpec = {
+
   name: "reshape",
   dependencyNote: reshapeDependencyNote,
   attrSchema: z.object({ shape: z.array(z.union([z.string(), z.number().int().min(1)])) }),
   arity: { inputs: 1, outputs: 1 },
+  inferAxisNames: (inNames, ctx) => [
+    reshapeAxisNames(inNames[0], ctx.inShapes[0], ctx.outShapes[0]),
+  ],
   inferDTypes: uniformDTypeOutputs("reshape"),
   inferShapes: (inShapes, attrs, params) => {
     const target = resolveShape((attrs as ReshapeAttrs).shape, params ?? {});

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { Box, fromBox, iv } from "../region";
 import { OpSpec, uniformDTypeOutputs } from "./types";
+import { broadcastAxisNames } from "./axis-names";
 
 function broadcastShapes(shapes: number[][]): number[] {
   const rank = Math.max(...shapes.map((s) => s.length));
@@ -43,6 +44,9 @@ export const elementwiseOp: OpSpec = {
   name: "elementwise",
   attrSchema: z.object({ fn: z.string(), nary: z.number().int().min(1) }),
   arity: { inputs: { min: 1 }, outputs: 1 },
+  inferAxisNames: (inNames, ctx) => [
+    broadcastAxisNames(inNames, ctx.inShapes, ctx.outShapes[0]),
+  ],
   validateArity: (inputCount, _outputCount, attrs) => {
     const nary = attrs.nary as number;
     if (nary !== inputCount)

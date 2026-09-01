@@ -8,7 +8,7 @@
 
 import { Graph, Node, Tensor } from "../core/graph";
 import { DTYPES, DType } from "../core/dtypes";
-import { Sym } from "../core/shapes";
+import { NUMBER_RE, readDimExpr, Sym } from "../core/shapes";
 import { documentSpan, DSLSourceMap, lineSpan, SourceSpan } from "./source";
 
 export class DSLError extends Error {
@@ -31,6 +31,9 @@ export class DSLError extends Error {
 }
 
 const DTYPE_SET = new Set<string>(DTYPES);
+
+/** Anchored `NUMBER_RE`: does this expression consist of one literal? */
+const NUMBER_ONLY = new RegExp(`${NUMBER_RE.source}$`);
 
 /**
  * Keywords that declare a graph input. `weight` and `param` are the same thing
@@ -102,10 +105,10 @@ class LineParser {
   }
   number(): number | null {
     this.ws();
-    // Accepts scientific notation, so an attribute like eps=1e-5 is expressible
+    // Scientific notation included, so an attribute like eps=1e-5 is expressible
     // and `toDSL` cannot emit a literal (String(1e-21) === "1e-21") that this
-    // parser then rejects.
-    const m = /^-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?/.exec(this.src.slice(this.pos));
+    // parser then rejects. Shared with dimension expressions.
+    const m = NUMBER_RE.exec(this.src.slice(this.pos));
     if (!m) return null;
     this.pos += m[0].length;
     return Number(m[0]);
@@ -150,13 +153,20 @@ class LineParser {
       }
       return arr;
     }
-    const n = this.number();
-    if (n !== null) return n;
-    const id = this.ident();
-    if (id === "true") return true;
-    if (id === "false") return false;
-    if (id !== null) return { ident: id };
-    this.error("expected value");
+    // Booleans are identifiers but are values, not one-symbol dimensions.
+    const save = this.pos;
+    const word = this.ident();
+    if (word === "true") return true;
+    if (word === "false") return false;
+    this.pos = save;
+    // Everything else is read as a dimension expression, so a shape attribute
+    // can say `shape=[B, S, H, E/H]` in the same language a declaration uses.
+    // A lone literal is still a number; anything else keeps its written form.
+    const parsed = readDimExpr(this.src, this.pos);
+    if (!parsed) this.error("expected value");
+    const text = this.src.slice(this.pos, parsed.end).trim();
+    this.pos = parsed.end;
+    return NUMBER_ONLY.test(text) ? Number(text) : { ident: text };
   }
   atEnd(): boolean {
     this.ws();
@@ -243,14 +253,46 @@ export function parseDSLWithSource(text: string): ParsedDSL {
       const name = p.identReq("tensor name");
       p.expect("[");
       const shape: Sym[] = [];
+      const axisNames: (string | undefined)[] = [];
       if (!p.eat("]")) {
         do {
-          const n = p.number();
-          if (n !== null) shape.push(n);
-          else shape.push(p.identReq("dim"));
+          // `name: dim` labels the axis. A bare identifier is the dimension
+          // itself, so a leading identifier only becomes a name once a colon
+          // confirms it; otherwise the parser backs up and reads it as the dim.
+          const save = p.pos;
+          const candidate = p.ident();
+          if (candidate !== null && p.eat(":")) axisNames.push(candidate);
+          else {
+            p.pos = save;
+            axisNames.push(undefined);
+          }
+          const parsed = readDimExpr(p.src, p.pos);
+          if (!parsed) throw new DSLError("expected a dimension", p.span());
+          const text = p.src.slice(p.pos, parsed.end).trim();
+          p.pos = parsed.end;
+          // A lone literal stays a number; anything else keeps the form the
+          // author wrote, so `H*D` survives into the IR, the notes, and toDSL.
+          shape.push(NUMBER_ONLY.test(text) ? Number(text) : text);
         } while (p.eat(","));
         p.expect("]");
       }
+      const named = axisNames.filter((axis): axis is string => axis !== undefined);
+      // Propagation legitimately produces partly-named tensors; a hand-written
+      // declaration that names some axes and not others is a slip, so it is
+      // refused rather than stored with holes.
+      if (named.length && named.length !== axisNames.length)
+        throw new DSLError(
+          `tensor "${name}": axis ${axisNames.indexOf(undefined)} is unnamed — ` +
+            `name every axis or none`,
+          statementSpan,
+          "DSL_PARTIAL_AXIS_NAMES"
+        );
+      if (new Set(named).size !== named.length)
+        throw new DSLError(
+          `tensor "${name}": duplicate axis name`,
+          statementSpan,
+          "DSL_DUPLICATE_AXIS_NAME"
+        );
       let dtype: DType = "f32";
       const dt = p.ident();
       if (dt) {
@@ -264,7 +306,14 @@ export function parseDSLWithSource(text: string): ParsedDSL {
         p.error(`unexpected input after declaration (dtype must be one of ${DTYPES.join(", ")})`);
       if (tensors[name])
         throw new DSLError(`tensor "${name}" redefined`, statementSpan, "DSL_DUPLICATE_TENSOR");
-      tensors[name] = { id: name, name, shape, dtype, ...(role === "weight" ? { role } : {}) };
+      tensors[name] = {
+        id: name,
+        name,
+        shape,
+        dtype,
+        ...(named.length ? { axisNames: named } : {}),
+        ...(role === "weight" ? { role } : {}),
+      };
       sourceMap.tensors[name] = statementSpan;
       lineOffset += physicalLine.length + (ln < lines.length - 1 ? 1 : 0);
       continue;
@@ -384,7 +433,11 @@ export function toDSL(g: Graph): string {
   for (const t of Object.values(g.tensors)) {
     if (t.producer || g.nodes.some((n) => n.outputs.includes(t.id))) continue;
     const kw = t.role === "weight" ? "weight" : "input";
-    lines.push(`${kw} ${t.name} [${t.shape.map(String).join(", ")}] ${t.dtype}`);
+    const dims = t.shape.map((dim, axis) => {
+      const axisName = t.axisNames?.[axis];
+      return axisName ? `${axisName}: ${String(dim)}` : String(dim);
+    });
+    lines.push(`${kw} ${t.name} [${dims.join(", ")}] ${t.dtype}`);
   }
   for (const n of g.nodes) {
     const outNames = n.outputs.map((o) => g.tensors[o].name);

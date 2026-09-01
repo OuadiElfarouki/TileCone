@@ -2,6 +2,7 @@ import { z } from "zod";
 import { Box, Interval, Region, canonicalize, empty, fromBox, iv } from "../region";
 import { productBoxes } from "./shape-ops";
 import { DependencyNoteDraft, NoteCtx, OpCtx, OpSpec, STRIDED_ENUM_CAP, uniformDTypeOutputs } from "./types";
+import { sameAxisNames } from "./axis-names";
 
 /**
  * Layout: NC* (batch, channels, spatial...). Weight: [Cout, Cin/groups, *kernel].
@@ -176,6 +177,16 @@ export const convOp: OpSpec = {
     groups: z.number().int().min(1).default(1),
   }),
   arity: { inputs: 2, outputs: 1 },
+  inferAxisNames: (inNames) => [
+    [
+      // Batch and spatial coordinates remain the activation's axes. The
+      // channel coordinate does not: output channels are weight axis 0, not
+      // the activation's input-channel axis.
+      inNames[0][0],
+      inNames[1][0],
+      ...inNames[0].slice(2),
+    ],
+  ],
   dependencyNote: convDependencyNote,
   inferDTypes: uniformDTypeOutputs("conv"),
   inferShapes: (inShapes, attrs) => {
@@ -307,6 +318,7 @@ export const poolOp: OpSpec = {
     dilation: z.array(z.number().int().min(1)).optional(),
   }),
   arity: { inputs: 1, outputs: 1 },
+  inferAxisNames: sameAxisNames,
   inferDTypes: uniformDTypeOutputs("pool"),
   inferShapes: (inShapes, attrs) => {
     const a = attrs as PoolAttrs;

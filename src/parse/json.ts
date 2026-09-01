@@ -9,7 +9,12 @@ const tensorSchema = z.object({
   name: z.string(),
   shape: z.array(symSchema),
   dtype: z.enum(DTYPES),
-  axisNames: z.array(z.string()).optional(),
+  // A hole is an axis with no name; JSON.stringify already writes `undefined`
+  // array entries as null, so null is the wire form of a hole in both directions.
+  axisNames: z
+    .array(z.string().nullable())
+    .optional()
+    .transform((names) => names?.map((name) => name ?? undefined)),
   role: z.enum(["activation", "weight"]).optional(),
 });
 

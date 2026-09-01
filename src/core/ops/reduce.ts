@@ -57,6 +57,13 @@ export const reduceOp: OpSpec = {
     keepdim: z.boolean().default(false),
   }),
   arity: { inputs: 1, outputs: 1 },
+  inferAxisNames: (inNames, ctx) => {
+    const { axes, keepdim } = attrs(ctx);
+    // With keepdim the axis survives at extent 1 and still means what it
+    // meant; without it the axis is gone, and so is its name.
+    const names = inNames[0];
+    return [keepdim ? names.slice() : names.filter((_, axis) => !axes.includes(axis))];
+  },
   inferDTypes: uniformDTypeOutputs("reduce"),
   inferShapes: (inShapes, a) => {
     const sh = inShapes[0];

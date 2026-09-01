@@ -88,6 +88,14 @@ describe("oracle corpus: single ops", () => {
     checkGraph(G({ A: [3, 4], B: [1, 4] }, [["n", "elementwise", ["A", "B"], ["C"], { fn: "mul", nary: 2 }]]));
     checkGraph(G({ A: [2, 3, 4], B: [4] }, [["n", "elementwise", ["A", "B"], ["C"], { fn: "add", nary: 2 }]]));
     checkGraph(G({ A: [2, 1, 4], B: [1, 3, 1] }, [["n", "elementwise", ["A", "B"], ["C"], { fn: "add", nary: 2 }]]));
+    // A rank-2 operand trailing-aligned against rank 4: how an attention mask
+    // reaches [B, H, Q, K].
+    checkGraph(G({ A: [2, 2, 3, 4], B: [3, 4] }, [["n", "elementwise", ["A", "B"], ["C"], { fn: "add", nary: 2 }]]));
+    // Rank 0 on either side, and on both. The offset arithmetic in the
+    // broadcast box mappings is at its most degenerate here.
+    checkGraph(G({ A: [2, 3], s: [] }, [["n", "elementwise", ["A", "s"], ["C"], { fn: "mul", nary: 2 }]]));
+    checkGraph(G({ s: [], A: [2, 3, 2] }, [["n", "elementwise", ["s", "A"], ["C"], { fn: "add", nary: 2 }]]));
+    checkGraph(G({ s: [], t: [] }, [["n", "elementwise", ["s", "t"], ["C"], { fn: "add", nary: 2 }]]));
   });
 
   it("reduce variants", () => {

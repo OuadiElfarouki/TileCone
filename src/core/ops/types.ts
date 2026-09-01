@@ -27,6 +27,13 @@ export type DependencyNoteDraft = {
   flags?: NoteFlag[];
 };
 
+/**
+ * One name per axis, parallel to that tensor's shape. `undefined` is an axis
+ * with no name to inherit, which propagation produces routinely — a reshape
+ * that splits an embedding into heads knows neither new axis by name.
+ */
+export type AxisNames = (string | undefined)[];
+
 export type Attrs = Record<string, unknown>;
 export type Cardinality = number | { min: number; max?: number };
 
@@ -75,6 +82,19 @@ export interface OpSpec {
   validateArity?(inputCount: number, outputCount: number, attrs: Attrs): void;
 
   inferShapes(inShapes: number[][], attrs: Attrs, params?: Record<string, number>): number[][];
+
+  /**
+   * Carry declared axis names across this operation: one `AxisNames` per output,
+   * each parallel to that output's shape. `inNames` is parallel to `inShapes`
+   * and always full length, so an unnamed input reads as an array of undefined.
+   *
+   * Omitting the hook leaves every output unnamed, and that is the right default
+   * rather than a stub to fill in later: the inspector and the notes layer
+   * present a name as the source's own word for that axis, so a wrong name is
+   * worse than none. Name an output axis only where it is genuinely the same
+   * axis as the input one it came from.
+   */
+  inferAxisNames?(inNames: AxisNames[], ctx: OpCtx): AxisNames[];
 
   /** Infer canonical output dtypes and validate input dtype compatibility. */
   inferDTypes(inDTypes: DType[], attrs: Attrs, outShapes: number[][]): DType[];

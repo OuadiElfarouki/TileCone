@@ -34,6 +34,14 @@ export const gatherOp: OpSpec = {
     indexValues: z.array(z.number().int().min(0)).optional(),
   }),
   arity: { inputs: 2, outputs: 1 },
+  inferAxisNames: (inNames, ctx) => {
+    const axis = normAxis((ctx.attrs as GatherAttrs).axis, ctx.inShapes[0].length);
+    const names = inNames[0].slice();
+    // The gathered coordinate indexes positions in the indices tensor. It no
+    // longer denotes the data axis whose values those positions look up.
+    names[axis] = inNames[1][0];
+    return [names];
+  },
   inferDTypes: (inDTypes, _attrs, outShapes) => {
     const [data, indices] = inDTypes;
     if (indices !== "i32")
