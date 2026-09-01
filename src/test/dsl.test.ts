@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveGraph, Graph } from "../core/graph";
 import { EXAMPLES } from "../examples/index";
-import { parseDSL, toDSL } from "../parse/dsl";
+import { DSLError, parseDSL, toDSL } from "../parse/dsl";
 import { graphToJSON, parseGraphJSON } from "../parse/json";
 import { propagateBackward } from "../core/propagate";
 import { box, fromBox } from "../core/region";
@@ -188,5 +188,68 @@ input B [K, N] f32
 C = matmul(A, B)
 `);
     checkGraph(miniGemm);
+  });
+});
+
+/* The parser used to accept several things quietly. Each of these is a case
+   where it changed the program instead of refusing it. */
+describe("what the parser refuses", () => {
+  const parseFails = (src: string) => {
+    try {
+      parseDSL(src);
+    } catch (error) {
+      return error as DSLError;
+    }
+    throw new Error("expected a DSLError, but the source parsed");
+  };
+
+  it("rejects trailing input on a declaration", () => {
+    const error = parseFails("input X [4, 8] f32 THIS_IS_GARBAGE\n");
+    expect(error).toBeInstanceOf(DSLError);
+    expect(error.detail).toContain("unexpected input after declaration");
+    expect(error.line).toBe(1);
+  });
+
+  it("rejects a number where the dtype belongs, rather than defaulting to f32", () => {
+    // This is the one that mattered: the tensor used to resolve as f32 and the
+    // wrong width then sized every byte estimate downstream.
+    const error = parseFails("input X [4, 8] 32\n");
+    expect(error.detail).toContain("dtype must be one of");
+  });
+
+  it("still allows a declaration with no dtype at all", () => {
+    const graph = parseDSL("input X [4, 8]\n");
+    expect(graph.tensors.X.dtype).toBe("f32");
+  });
+});
+
+describe("numeric literals", () => {
+  it("reads scientific notation in attributes", () => {
+    // Asserted on the unresolved graph: no operation declares a float attribute
+    // today, and whether one is accepted is the resolver's business, not the
+    // lexer's.
+    const graph = parseDSL('input X [4] f32\nY = identity(X, probe=1e-5)');
+    expect(graph.nodes[0].attrs.probe).toBe(1e-5);
+  });
+
+  it("reads exponents and leading-dot decimals", () => {
+    const graph = parseDSL('input X [4] f32\nY = identity(X, a=2.5E+3, b=.5, c=-1.5e-2)');
+    expect(graph.nodes[0].attrs).toMatchObject({ a: 2500, b: 0.5, c: -0.015 });
+  });
+
+  it("reads scientific notation in params and shapes", () => {
+    const graph = parseDSL("params N=2e3\ninput X [N, 1e2] f32\n");
+    expect(graph.params.N).toBe(2000);
+    expect(graph.tensors.X.shape).toEqual(["N", 100]);
+  });
+});
+
+describe("toDSL keeps what the call does not already say", () => {
+  it("writes out elementwise attributes beyond fn and nary", () => {
+    // `fn` and `nary` are recovered from the call itself; anything else has to
+    // be serialized, or expanding a composite and recompiling loses it.
+    const graph = parseDSL("input X [4] f32\nY = relu(X, alpha=0.2)\n");
+    expect(toDSL(graph)).toContain("relu(X, alpha=0.2)");
+    expect(parseDSL(toDSL(graph)).nodes[0].attrs).toMatchObject({ alpha: 0.2 });
   });
 });

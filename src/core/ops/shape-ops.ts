@@ -395,7 +395,7 @@ export const expandOp: OpSpec = {
 export function identityLike(name: string): OpSpec {
   return {
     name,
-    attrSchema: z.object({}).passthrough(),
+    attrSchema: z.object({}),
     arity: { inputs: 1, outputs: 1 },
     inferDTypes: uniformDTypeOutputs(name),
     inferShapes: (inShapes) => [inShapes[0].slice()],

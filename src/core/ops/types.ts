@@ -62,6 +62,12 @@ export type NoteCtx = OpCtx & {
 
 export interface OpSpec {
   name: string;
+  /** Attribute schema. A plain object schema is narrowed to `.strict()` at graph
+   * resolution, so an attribute this schema does not name is a hard error rather
+   * than silently stripped: a misspelling must not quietly change what the graph
+   * computes. `.passthrough()` is therefore not honoured on an object schema —
+   * an operation that genuinely accepts open attributes needs a non-object
+   * schema such as `z.record(...)`. */
   attrSchema: ZodType<unknown>;
   arity: { inputs: Cardinality; outputs: Cardinality };
 

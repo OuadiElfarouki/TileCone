@@ -408,9 +408,56 @@ Y = softmax(X, axis=0, axis=-1)
   });
 
   it("preserves hashes and escaped quotes inside string attributes", () => {
-    const program = compileDSL(`input X [4] f32
+    // A lexer test: `#` inside a string is not a comment, `\"` survives, and the
+    // trailing comment is still stripped. Asserted on the unresolved graph,
+    // because whether an op *accepts* the attribute is the resolver's business
+    // and no operation declares a free-form string attribute to carry it.
+    const graph = parseDSL(`input X [4] f32
 Y = identity(X, note="a#b \\"quoted\\"") # an actual comment
 `);
-    expect(program.graph.nodes[0].attrs.note).toBe('a#b "quoted"');
+    expect(graph.nodes[0].attrs.note).toBe('a#b "quoted"');
+  });
+
+  it("rejects an attribute the operation does not declare", () => {
+    const result = tryCompileDSL(`input X [4] f32
+Y = identity(X, note="whatever")
+`);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0].code).toBe("SEM_INVALID_ATTRIBUTES");
+    expect(result.diagnostics[0].message).toContain('unknown attribute "note"');
+    expect(result.diagnostics[0].span.start.line).toBe(2);
+  });
+
+  it("names the near miss when an attribute is misspelled", () => {
+    // `keepdims` is the NumPy spelling of torch's `keepdim`. It used to be
+    // stripped in silence, resolving Y to [4] instead of [4, 1].
+    const result = tryCompileDSL(`input X [4, 8] f32
+Y = sum(X, axes=[-1], keepdims=true)
+`);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0].message).toContain(
+      'unknown attribute "keepdims" (did you mean "keepdim"?)'
+    );
+  });
+
+  it("lists the accepted attributes when nothing is close", () => {
+    const result = tryCompileDSL(`input X [4, 8] f32
+Y = sum(X, axes=[-1], banana=true)
+`);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0].message).toContain('unknown attribute "banana"; this op takes');
+  });
+
+  it("rejects attributes on an op that declares none", () => {
+    const result = tryCompileDSL(`input A [4, 8] f32
+weight B [8, 4] f32
+C = matmul(A, B, transposeB=true)
+`);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0].message).toContain("this op takes no attributes");
   });
 });

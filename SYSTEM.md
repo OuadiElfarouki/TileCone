@@ -112,7 +112,12 @@ The parser creates the structural graph. Declared inputs and weights already hav
 2. Node and tensor IDs are unique and all references exist.
 3. Every operation exists in the registry.
 4. Static and attribute-dependent arity constraints hold.
-5. Attributes pass the operation's schema.
+5. Attributes pass the operation's schema, which is **closed**: an attribute the schema does
+   not name is an error, not a stripped key. A misspelling such as NumPy's `keepdims` for
+   torch's `keepdim` would otherwise resolve to a different shape without a diagnostic, and
+   every region and metric downstream would describe a graph the user did not write. The
+   narrowing happens once at the registry boundary rather than in each `OpSpec`, so a new
+   operation cannot forget it.
 6. Tensor producers are unique and the node graph is acyclic.
 7. Symbolic dimensions resolve to concrete shapes.
 8. Each operation infers the expected number of output shapes and dtypes.
@@ -174,10 +179,16 @@ The DSL is line-oriented and intentionally small:
 - `input`, `weight`, and `param` declare typed tensors with symbolic or literal dimensions.
 - Assignments create operation nodes and one or more output tensors.
 - Positional arguments refer to tensors; named arguments become operation attributes.
-- Lists, numbers, booleans, strings, and identifiers are accepted attribute values.
+- Lists, numbers, booleans, strings, and identifiers are accepted attribute values. Numbers
+  accept decimals and scientific notation, so `toDSL` cannot emit a literal the parser then
+  rejects.
 - `#` introduces a comment.
 
 The parser normalizes convenient spellings into a smaller internal operation set. For example, `relu(...)` becomes an `elementwise` node with `fn: "relu"`, reduction names become `reduce` nodes, and layer/RMS normalization become `normalize` nodes with explicit attributes.
+
+Both statement forms are closed at the end: an assignment and a declaration each refuse
+trailing input, so `input X [4, 8] 32` is a syntax error rather than an f32 tensor whose
+width silently sizes every byte estimate.
 
 The source map connects compiler errors back to declarations or operation calls. Parsing errors are reported as DSL diagnostics; graph, shape, dtype, and arity failures become semantic diagnostics with the most specific available source span.
 

@@ -261,7 +261,7 @@ function einsumSugar(
   const eqFor = (ctx: OpCtx) => makeEq(ctx.inShapes);
   return {
     name,
-    attrSchema: z.object({}).passthrough(),
+    attrSchema: z.object({}),
     arity: { inputs: nInputs, outputs: 1 },
     inferDTypes: uniformDTypeOutputs(name),
     inferShapes: (inShapes) => einsumInferShapes(makeEq(inShapes), inShapes),

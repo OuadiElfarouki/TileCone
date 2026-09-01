@@ -102,7 +102,10 @@ class LineParser {
   }
   number(): number | null {
     this.ws();
-    const m = /^-?\d+(\.\d+)?/.exec(this.src.slice(this.pos));
+    // Accepts scientific notation, so an attribute like eps=1e-5 is expressible
+    // and `toDSL` cannot emit a literal (String(1e-21) === "1e-21") that this
+    // parser then rejects.
+    const m = /^-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?/.exec(this.src.slice(this.pos));
     if (!m) return null;
     this.pos += m[0].length;
     return Number(m[0]);
@@ -254,6 +257,11 @@ export function parseDSLWithSource(text: string): ParsedDSL {
         if (!DTYPE_SET.has(dt)) p.error(`unknown dtype "${dt}"`);
         dtype = dt as DType;
       }
+      // Assignments already refuse trailing input; declarations used to accept
+      // it silently, so `input X [4, 8] 32` declared an f32 tensor and the wrong
+      // dtype went on to size every byte estimate.
+      if (!p.atEnd())
+        p.error(`unexpected input after declaration (dtype must be one of ${DTYPES.join(", ")})`);
       if (tensors[name])
         throw new DSLError(`tensor "${name}" redefined`, statementSpan, "DSL_DUPLICATE_TENSOR");
       tensors[name] = { id: name, name, shape, dtype, ...(role === "weight" ? { role } : {}) };
@@ -385,7 +393,12 @@ export function toDSL(g: Graph): string {
     const attrs = { ...n.attrs };
     if (n.op === "elementwise" && REVERSE_ELEMENTWISE.has(attrs.fn as string)) {
       const fn = attrs.fn as string;
-      call = `${fn}(${inNames.join(", ")})`;
+      // The call itself carries `fn` and `nary`; every other attribute has to be
+      // written out, or expanding a composite and recompiling drops it silently.
+      const named = Object.entries(attrs)
+        .filter(([k]) => k !== "fn" && k !== "nary")
+        .map(([k, v]) => `${k}=${attrValueToDSL(v)}`);
+      call = `${fn}(${[...inNames, ...named].join(", ")})`;
     } else if (n.op === "einsum") {
       const eq = attrs.equation as string;
       delete attrs.equation;

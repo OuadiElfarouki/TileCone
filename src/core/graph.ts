@@ -1,5 +1,6 @@
 /** Graph IR: types, validation, topological sort, symbolic shape resolution. */
 
+import { ZodObject, ZodType, ZodIssue } from "zod";
 import { getOp } from "./ops/index";
 import { GraphError, resolveShape, Shape } from "./shapes";
 import { DTYPES, DType } from "./dtypes";
@@ -122,6 +123,61 @@ export function graphOutputs(graph: ResolvedGraph): Tensor[] {
   );
 }
 
+/** Narrow an object attribute schema so unknown keys are rejected instead of
+ * stripped. Done here rather than in each `OpSpec` so a new operation cannot
+ * forget it; see the note on `OpSpec.attrSchema` for the escape hatch. */
+function strictAttrs(schema: ZodType<unknown>): ZodType<unknown> {
+  return schema instanceof ZodObject ? schema.strict() : schema;
+}
+
+function editDistance(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let diagonal = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const above = row[j];
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, diagonal + (a[i - 1] === b[j - 1] ? 0 : 1));
+      diagonal = above;
+    }
+  }
+  return row[b.length];
+}
+
+/** The nearest attribute the operation actually declares, when the unknown one
+ * is close enough to be a misspelling rather than a different idea. */
+function nearestKey(unknown: string, known: string[]): string | null {
+  let best: string | null = null;
+  let bestDistance = Infinity;
+  for (const candidate of known) {
+    const d = editDistance(unknown.toLowerCase(), candidate.toLowerCase());
+    if (d < bestDistance) {
+      best = candidate;
+      bestDistance = d;
+    }
+  }
+  return best !== null && bestDistance <= 2 && bestDistance < unknown.length ? best : null;
+}
+
+/** An unrecognized attribute is the failure worth explaining well: `keepdims`
+ * for `keepdim` used to resolve to a different shape without a word. */
+function describeAttrIssue(issue: ZodIssue, schema: ZodType<unknown>): string {
+  if (issue.code === "unrecognized_keys") {
+    const known = schema instanceof ZodObject ? Object.keys(schema.shape as object) : [];
+    return issue.keys
+      .map((key) => {
+        const suggestion = nearestKey(key, known);
+        if (suggestion) return `unknown attribute "${key}" (did you mean "${suggestion}"?)`;
+        return known.length
+          ? `unknown attribute "${key}"; this op takes ${known.join(", ")}`
+          : `unknown attribute "${key}"; this op takes no attributes`;
+      })
+      .join("; ");
+  }
+  const path = issue.path.join(".");
+  return path ? `${path}: ${issue.message}` : issue.message;
+}
+
 export function resolveGraph(source: Graph): ResolvedGraph {
   const g = cloneGraph(source);
   for (const [name, value] of Object.entries(g.params))
@@ -157,10 +213,12 @@ export function resolveGraph(source: Graph): ResolvedGraph {
         );
     validateCardinality(n, "input", n.inputs.length, spec.arity.inputs);
     validateCardinality(n, "output", n.outputs.length, spec.arity.outputs);
-    const parsed = spec.attrSchema.safeParse(n.attrs ?? {});
+    const parsed = strictAttrs(spec.attrSchema).safeParse(n.attrs ?? {});
     if (!parsed.success)
       throw new GraphError(
-        `node "${n.id}" (${n.op}): bad attrs: ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
+        `node "${n.id}" (${n.op}): bad attrs: ${parsed.error.issues
+          .map((issue) => describeAttrIssue(issue, spec.attrSchema))
+          .join("; ")}`,
         "GRAPH_INVALID_ATTRIBUTES",
         { kind: "node", id: n.id }
       );
