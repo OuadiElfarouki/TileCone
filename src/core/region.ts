@@ -24,6 +24,16 @@ export function box(...pairs: [number, number][]): Box {
   return pairs.map(([lo, hi]) => iv(lo, hi));
 }
 
+/** The index syntax every readout shares: a bare index when the interval covers
+ * one element, `lo:hi` otherwise. Delimiters belong to the caller — the
+ * inspector field wraps it in `[]`, a slice expression prefixes the tensor name,
+ * the hover readout uses `()` — but the terms are spelled once, because
+ * `ui/selection-range.ts` parses this syntax back and a second speller would
+ * drift from the parser rather than merely from another printer. */
+export function formatBoxIndices(b: Box): string {
+  return b.map((i) => (i.hi - i.lo === 1 ? `${i.lo}` : `${i.lo}:${i.hi}`)).join(", ");
+}
+
 export function empty(rank: number): Region {
   void rank;
   return { boxes: [], exact: true, reasons: [] };

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { cardSize, selectionBoxFromDrag, visibleApproximation } from "../ui/TensorCard";
+import { box, fromBox } from "../core/region";
 import { gridGeometry } from "../ui/grid";
 import { graphScale } from "../ui/tiling";
 
@@ -29,24 +30,18 @@ describe("drawing through higher-rank tensor views", () => {
     const cfg = { sliders: [1, 2, 0, 0], projection: true };
     const geom = gridGeometry(shape, cfg, 0, 8);
 
-    expect(selectionBoxFromDrag(shape, cfg, geom, drag, false)).toEqual([
-      [0, 3],
-      [0, 5],
-      [2, 7],
-      [3, 10],
-    ]);
+    expect(selectionBoxFromDrag(shape, cfg, geom, drag, false)).toEqual(
+      box([0, 3], [0, 5], [2, 7], [3, 10])
+    );
   });
 
   it("selects only the displayed hidden-axis slice in slice mode", () => {
     const cfg = { sliders: [1, 2, 0, 0], projection: false };
     const geom = gridGeometry(shape, cfg, 0, 8);
 
-    expect(selectionBoxFromDrag(shape, cfg, geom, drag, false)).toEqual([
-      [1, 2],
-      [2, 3],
-      [2, 7],
-      [3, 10],
-    ]);
+    expect(selectionBoxFromDrag(shape, cfg, geom, drag, false)).toEqual(
+      box([1, 2], [2, 3], [2, 7], [3, 10])
+    );
   });
 });
 
@@ -61,32 +56,28 @@ describe("the box a single-cell gesture commits", () => {
     const cfg = { sliders: [1, 2, 0, 0], projection: true };
     const geom = gridGeometry(shape, cfg, 0, 8);
 
-    expect(selectionBoxFromDrag(shape, cfg, geom, hover(6, 9), false)).toEqual([
-      [0, 3],
-      [0, 5],
-      [6, 7],
-      [9, 10],
-    ]);
+    expect(selectionBoxFromDrag(shape, cfg, geom, hover(6, 9), false)).toEqual(
+      box([0, 3], [0, 5], [6, 7], [9, 10])
+    );
   });
 
   it("covers the whole tile under the pointer while snapping", () => {
     const cfg = { sliders: [1, 2, 0, 0], projection: false };
     const geom = gridGeometry(shape, cfg, 0, 8);
-    const box = selectionBoxFromDrag(shape, cfg, geom, hover(6, 9), true);
+    const selected = selectionBoxFromDrag(shape, cfg, geom, hover(6, 9), true);
 
-    expect(box[2][1] - box[2][0]).toBe(geom.tile);
-    expect(box[3][1] - box[3][0]).toBe(geom.tile);
-    expect(box[0]).toEqual([1, 2]);
+    expect(selected[2].hi - selected[2].lo).toBe(geom.tile);
+    expect(selected[3].hi - selected[3].lo).toBe(geom.tile);
+    expect(selected[0]).toEqual({ lo: 1, hi: 2 });
   });
 });
 
 /* ---------------- what the canvas paints ---------------- */
 
 import { buildLayers, LayerInputs } from "../ui/TensorCard";
-import { box, fromBox } from "../core/region";
 import type { BoxProp } from "../ui/store";
 
-const region = (...iv: [number, number][]) => fromBox(iv.map(([lo, hi]) => ({ lo, hi })));
+const region = (...pairs: [number, number][]) => fromBox(box(...pairs));
 
 /** A per-box result placing `id` in both cones at depth 1. */
 const bothCones = (id: string): BoxProp => ({

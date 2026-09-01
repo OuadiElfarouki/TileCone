@@ -242,7 +242,7 @@ type State = {
   /** Preview the cone of the box a click would commit, not of one element:
    * a projection gesture selects whole hidden axes, so a cell-sized preview
    * would understate the cone the same gesture goes on to produce. */
-  setPreviewBox: (tensorId: string | null, box?: [number, number][]) => void;
+  setPreviewBox: (tensorId: string | null, box?: Box) => void;
   expandNodeInPlace: (nodeId: string) => void;
 };
 
@@ -800,11 +800,9 @@ export const useStore = create<State>((set, get) => ({
       return;
     }
     try {
-      const region: Region = {
-        boxes: [box.map(([lo, hi]) => ({ lo, hi }))],
-        exact: true,
-        reasons: [],
-      };
+      // `executeQuery` validates and defensively copies before propagating, so
+      // the caller's box is never aliased into stored state.
+      const region: Region = { boxes: [box], exact: true, reasons: [] };
       set({
         preview: executeQuery(resolved, { tensorId, region, direction: "backward" }).backward,
       });

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Tensor } from "../core/graph";
 import { DTYPE_BYTES } from "../core/dtypes";
-import { Box, fromBox, Region } from "../core/region";
+import { Box, formatBoxIndices, fromBox, iv, Region } from "../core/region";
 import {
   drawGrid,
   elementFromEvent,
@@ -33,7 +33,7 @@ export function selectionBoxFromDrag(
   geom: GridGeom,
   drag: CellDrag,
   snapToGrid: boolean
-): [number, number][] {
+): Box {
   const [rLo, rHi] = snapToGrid
     ? snapSpan(drag.r0, drag.r1, geom.tile, geom.rows)
     : [Math.min(drag.r0, drag.r1), Math.max(drag.r0, drag.r1) + 1];
@@ -41,11 +41,11 @@ export function selectionBoxFromDrag(
     ? snapSpan(drag.c0, drag.c1, geom.tile, geom.cols)
     : [Math.min(drag.c0, drag.c1), Math.max(drag.c0, drag.c1) + 1];
   return shape.map((extent, ax) => {
-    if (ax === geom.rowAxis) return [rLo, rHi];
-    if (ax === geom.colAxis) return [cLo, cHi];
-    if (cfg.projection) return [0, extent];
+    if (ax === geom.rowAxis) return iv(rLo, rHi);
+    if (ax === geom.colAxis) return iv(cLo, cHi);
+    if (cfg.projection) return iv(0, extent);
     const slider = cfg.sliders[ax] ?? 0;
-    return [slider, slider + 1];
+    return iv(slider, slider + 1);
   });
 }
 
@@ -279,9 +279,7 @@ export function TensorCard({
       back,
       fwd,
       prev,
-      dragRegion: drag
-        ? fromBox(dragToBox(drag).map(([lo, hi]) => ({ lo, hi })))
-        : null,
+      dragRegion: drag ? fromBox(dragToBox(drag)) : null,
     });
     drawGrid(canvas, shape, cfg, geom, layers, dark, renderScale);
   });
@@ -308,7 +306,7 @@ export function TensorCard({
   }, [focusTensor, tensor.id]);
 
   /** Drag rectangle in tile-cell coordinates -> element-space box. */
-  function dragToBox(d: CellDrag): [number, number][] {
+  function dragToBox(d: CellDrag): Box {
     // The drag is tracked in elements; snapping is a presentation choice applied
     // at the end, so turning it off costs no precision that was ever available.
     return selectionBoxFromDrag(shape, cfg, geom, d, snapToGrid);
@@ -321,8 +319,8 @@ export function TensorCard({
     return undefined;
   }
 
-  function commit(box: [number, number][], e: React.MouseEvent) {
-    setSelection(tensor.id, fromBox(box.map(([lo, hi]) => ({ lo, hi }))), composeOf(e));
+  function commit(box: Box, e: React.MouseEvent) {
+    setSelection(tensor.id, fromBox(box), composeOf(e));
   }
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -343,8 +341,7 @@ export function TensorCard({
       // preview cone are therefore built from the box that click would commit,
       // by the same function the commit uses, so neither can drift from it.
       const box = dragToBox({ r0: cell.row, c0: cell.col, r1: cell.row, c1: cell.col });
-      const label = box.map(([lo, hi]) => (hi - lo === 1 ? `${lo}` : `${lo}:${hi}`));
-      setHover(`(${label.join(", ")})`);
+      setHover(`(${formatBoxIndices(box)})`);
       if (!drag) setPreviewBox(tensor.id, box);
     } else {
       setHover(null);

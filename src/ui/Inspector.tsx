@@ -312,7 +312,7 @@ function FootprintBar({
 
 /** Slice expressions minus the over-approximation comment the readout appends. */
 const sliceLines = (row: TensorReadout) =>
-  row.sliceExprsNumpy.filter((line) => !line.startsWith("#"));
+  row.sliceExprs.filter((line) => !line.startsWith("#"));
 type CopyFeedback = { key: string; state: "copied" | "failed" } | null;
 
 /**

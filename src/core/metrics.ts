@@ -3,7 +3,7 @@ import { DTYPE_BYTES } from "./dtypes";
 import { getOp } from "./ops/index";
 import { OpCtx } from "./ops/types";
 import { PropResult } from "./propagate";
-import { Region, count } from "./region";
+import { Region, count, formatBoxIndices } from "./region";
 
 export type TensorReadout = {
   tensorId: string;
@@ -16,8 +16,10 @@ export type TensorReadout = {
   exact: boolean;
   reasons: string[];
   isInput: boolean;
-  sliceExprsNumpy: string[];
-  sliceExprsTorch: string[];
+  /** Copyable `name[i, lo:hi]` lines, plus a trailing `#` comment when the
+   * region is an over-approximation. The syntax is index notation both NumPy
+   * and torch accept, so there is one list rather than one per framework. */
+  sliceExprs: string[];
 };
 
 export type AggregateReadout = {
@@ -29,12 +31,10 @@ export type AggregateReadout = {
   tensors: TensorReadout[];
 };
 
-function regionSliceExprs(name: string, r: Region): { numpy: string[]; torch: string[] } {
-  const mk = (b: { lo: number; hi: number }[]) =>
-    `${name}[` + b.map((I) => (I.hi - I.lo === 1 ? `${I.lo}` : `${I.lo}:${I.hi}`)).join(", ") + "]";
-  const lines = r.boxes.map(mk);
+function regionSliceExprs(name: string, r: Region): string[] {
+  const lines = r.boxes.map((b) => `${name}[${formatBoxIndices(b)}]`);
   const suffix = r.exact ? [] : [`# over-approximation: ${r.reasons.join(", ")}`];
-  return { numpy: [...lines, ...suffix], torch: [...lines, ...suffix] };
+  return [...lines, ...suffix];
 }
 
 /**
@@ -62,8 +62,7 @@ export function coneReadout(graph: ResolvedGraph, prop: PropResult): TensorReado
       exact: tr.region.exact,
       reasons: tr.region.reasons,
       isInput: !t.producer,
-      sliceExprsNumpy: exprs.numpy,
-      sliceExprsTorch: exprs.torch,
+      sliceExprs: exprs,
     });
   }
   tensors.sort((a, b) => a.depth - b.depth || a.name.localeCompare(b.name));

@@ -1,14 +1,10 @@
-import { Box } from "../core/region";
+import { Box, formatBoxIndices } from "../core/region";
 
-/** Compact, rank-preserving selection syntax used by the inspector. */
+/** Compact, rank-preserving selection syntax used by the inspector. This is the
+ * printed form `parseSelectionBox` below reads back, so it delegates the terms
+ * rather than spelling them a second time. */
 export function formatSelectionBox(box: Box): string {
-  return `[${box
-    .map((interval) =>
-      interval.hi - interval.lo === 1
-        ? `${interval.lo}`
-        : `${interval.lo}:${interval.hi}`
-    )
-    .join(", ")}]`;
+  return `[${formatBoxIndices(box)}]`;
 }
 
 /**
