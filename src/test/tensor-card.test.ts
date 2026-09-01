@@ -50,6 +50,36 @@ describe("drawing through higher-rank tensor views", () => {
   });
 });
 
+/* A hover readout and its preview cone are built from the box a click would
+   commit, so they are the degenerate case of the same gesture. These pin what
+   that box is; the card has no other definition of it to drift towards. */
+describe("the box a single-cell gesture commits", () => {
+  const shape = [3, 5, 16, 24];
+  const hover = (row: number, col: number) => ({ r0: row, c0: col, r1: row, c1: col });
+
+  it("covers whole hidden axes in projection mode, not the slider slice", () => {
+    const cfg = { sliders: [1, 2, 0, 0], projection: true };
+    const geom = gridGeometry(shape, cfg, 0, 8);
+
+    expect(selectionBoxFromDrag(shape, cfg, geom, hover(6, 9), false)).toEqual([
+      [0, 3],
+      [0, 5],
+      [6, 7],
+      [9, 10],
+    ]);
+  });
+
+  it("covers the whole tile under the pointer while snapping", () => {
+    const cfg = { sliders: [1, 2, 0, 0], projection: false };
+    const geom = gridGeometry(shape, cfg, 0, 8);
+    const box = selectionBoxFromDrag(shape, cfg, geom, hover(6, 9), true);
+
+    expect(box[2][1] - box[2][0]).toBe(geom.tile);
+    expect(box[3][1] - box[3][0]).toBe(geom.tile);
+    expect(box[0]).toEqual([1, 2]);
+  });
+});
+
 /* ---------------- what the canvas paints ---------------- */
 
 import { buildLayers, LayerInputs } from "../ui/TensorCard";

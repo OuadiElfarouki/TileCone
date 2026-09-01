@@ -9,7 +9,6 @@ import {
   GridGeom,
   Layer,
   snapSpan,
-  tileSpan,
 } from "./grid";
 import { aggregateColors, boxColor } from "./palette";
 import { BoxProp, Direction, partsOn, useStore, ViewCfg, viewAxes } from "./store";
@@ -233,7 +232,7 @@ export function TensorCard({
   const forwardRes = useStore((s) => s.forwardRes);
   const preview = useStore((s) => s.preview);
   const setSelection = useStore((s) => s.setSelection);
-  const setPreviewCell = useStore((s) => s.setPreviewCell);
+  const setPreviewBox = useStore((s) => s.setPreviewBox);
   const focusTensor = useStore((s) => s.focusTensor);
   const perBox = useStore((s) => s.perBox);
   const focusedBox = useStore((s) => s.focusedBox);
@@ -340,28 +339,16 @@ export function TensorCard({
       setDrag({ ...drag, r1: cell.row, c1: cell.col });
     }
     if (cell) {
-      // The readout follows the gesture: whole cells when snapping, the element
-      // under the pointer when not.
-      const [rLo, rHi] = snapToGrid
-        ? tileSpan(Math.floor(cell.row / geom.tile), Math.floor(cell.row / geom.tile), geom.tile, geom.rows)
-        : [cell.row, cell.row + 1];
-      const [cLo, cHi] = snapToGrid
-        ? tileSpan(Math.floor(cell.col / geom.tile), Math.floor(cell.col / geom.tile), geom.tile, geom.cols)
-        : [cell.col, cell.col + 1];
-      const label = shape.map((_, ax) => {
-        if (ax === rowAxis) return rHi - rLo === 1 ? `${rLo}` : `${rLo}:${rHi}`;
-        if (ax === colAxis) return cHi - cLo === 1 ? `${cLo}` : `${cLo}:${cHi}`;
-        return `${cfg.sliders[ax] ?? 0}`;
-      });
+      // A hover is the click that has not happened yet. Both the readout and the
+      // preview cone are therefore built from the box that click would commit,
+      // by the same function the commit uses, so neither can drift from it.
+      const box = dragToBox({ r0: cell.row, c0: cell.col, r1: cell.row, c1: cell.col });
+      const label = box.map(([lo, hi]) => (hi - lo === 1 ? `${lo}` : `${lo}:${hi}`));
       setHover(`(${label.join(", ")})`);
-      if (!drag)
-        setPreviewCell(
-          tensor.id,
-          shape.map((_, ax) => (ax === rowAxis ? rLo : ax === colAxis ? cLo : cfg.sliders[ax] ?? 0))
-        );
+      if (!drag) setPreviewBox(tensor.id, box);
     } else {
       setHover(null);
-      setPreviewCell(null);
+      setPreviewBox(null);
     }
   };
 
@@ -379,7 +366,7 @@ export function TensorCard({
 
   const onLeave = () => {
     setHover(null);
-    setPreviewCell(null);
+    setPreviewBox(null);
   };
 
   const totalBytes = shape.reduce((a, b) => a * b, 1) * DTYPE_BYTES[tensor.dtype];

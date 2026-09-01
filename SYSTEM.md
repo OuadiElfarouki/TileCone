@@ -80,6 +80,8 @@ src/
 │   ├── palette.ts        validated categorical hues and canvas surfaces
 │   ├── share.ts          workspace link encoding and decoding
 │   ├── selection-range.ts  range syntax for editable selection parts
+│   ├── ShortcutsDialog.tsx  grouped inventory of global bindings
+│   ├── clipboard.ts      copy helper with success/failure feedback
 │   ├── useKeyboard.ts    global key bindings
 │   └── useDragGuard.ts   text-selection suppression during drags
 ├── examples/             built-in DSL examples
@@ -295,6 +297,14 @@ Tensor cards use a fixed row-major projection:
 One canvas cell represents one **tile**, not necessarily one element. `src/ui/tiling.ts` chooses a shape-aware base tile and applies the global detail scale. Card dimensions remain stable while detail changes.
 
 The detail control is global but its ordinary scale values may settle differently per tensor. `effectiveTileScaleStops` removes adjacent scale values that produce the same graph-wide lattice, because power-of-two fitting inside bounded cards otherwise leaves much of the raw range inert. The leftmost **None** stop is a semantic exception: `tileFor` returns 1 unconditionally, so it means one logical tile per element for snapping, hover, starter tiles, and keyboard movement even when a large card cannot display every boundary. Dense boundary lines are omitted by the renderer; the underlying grid is never coarsened. None and Auto remain separate stops when Auto also happens to yield 1×1, and `effectiveTileScaleIndex` preserves the exact stored intent before considering equivalent legacy plateaus.
+
+A gesture only ever names two axes, so the card has one rule for the rest and
+`selectionBoxFromDrag` is the only place that applies it: in projection mode a drag selects the
+**full extent** of every hidden axis, because projection draws the union across them and a gesture
+must select what it appears to touch; in slice mode it stays pinned to the sliders. The hover
+readout and the hover cone preview are the degenerate single-cell case of that same call, not a
+parallel derivation — a hover is the click that has not happened yet, and when the two were
+computed separately the tooltip named a slider slice that the following click did not select.
 
 **Snapping (`snapToGrid`) is a property of future gestures and movement, not stored selection geometry or analysis.** A drag is tracked in elements throughout and expanded to whole current-grid tiles only when it commits. The inspector's text range is an explicit element-space edit and is never rounded, whether snap is on or off. Toggling snap or changing detail leaves every existing box and the workspace undo depth untouched. A keyboard nudge uses `nudgeUnit`: the current tile while snapping, one element when not. Moving an explicitly typed, off-grid box preserves its extent and its offset modulo that stride; only a boundary clamp may use a shorter final delta so the whole box lands flush without shrinking. Changing detail changes the next snapped gesture and nudge, never the current box.
 

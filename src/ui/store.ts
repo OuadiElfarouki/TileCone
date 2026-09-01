@@ -239,7 +239,10 @@ type State = {
   setTensorOffset: (tensorId: string, offset: TensorOffset) => void;
   /** Record one completed drag, restoring `before` when workspace undo runs. */
   commitTensorMove: (tensorId: string, before: TensorOffset) => void;
-  setPreviewCell: (tensorId: string | null, cell?: number[]) => void;
+  /** Preview the cone of the box a click would commit, not of one element:
+   * a projection gesture selects whole hidden axes, so a cell-sized preview
+   * would understate the cone the same gesture goes on to produce. */
+  setPreviewBox: (tensorId: string | null, box?: [number, number][]) => void;
   expandNodeInPlace: (nodeId: string) => void;
 };
 
@@ -790,15 +793,15 @@ export const useStore = create<State>((set, get) => ({
     });
   },
 
-  setPreviewCell: (tensorId, cell) => {
+  setPreviewBox: (tensorId, box) => {
     const { resolved } = get();
-    if (!tensorId || !cell || !resolved || resolved.nodes.length > 400) {
+    if (!tensorId || !box || !resolved || resolved.nodes.length > 400) {
       if (get().preview) set({ preview: null });
       return;
     }
     try {
       const region: Region = {
-        boxes: [cell.map((v) => ({ lo: v, hi: v + 1 }))],
+        boxes: [box.map(([lo, hi]) => ({ lo, hi }))],
         exact: true,
         reasons: [],
       };
