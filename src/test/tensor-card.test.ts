@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { cardSize, visibleApproximation } from "../ui/TensorCard";
+import { cardSize, selectionBoxFromDrag, visibleApproximation } from "../ui/TensorCard";
+import { gridGeometry } from "../ui/grid";
 import { graphScale } from "../ui/tiling";
 
 describe("frameless tensor footprint", () => {
@@ -17,6 +18,35 @@ describe("frameless tensor footprint", () => {
     const px = graphScale([{ rows: 16, cols: 16 }]);
     const size = cardSize(shape, px, "X");
     expect(size.h).toBeGreaterThan(16 * px); // numeric label sits above the grid
+  });
+});
+
+describe("drawing through higher-rank tensor views", () => {
+  const shape = [3, 5, 16, 24];
+  const drag = { r0: 2, c0: 3, r1: 6, c1: 9 };
+
+  it("selects the full hidden-axis union in projection mode", () => {
+    const cfg = { sliders: [1, 2, 0, 0], projection: true };
+    const geom = gridGeometry(shape, cfg, 0, 8);
+
+    expect(selectionBoxFromDrag(shape, cfg, geom, drag, false)).toEqual([
+      [0, 3],
+      [0, 5],
+      [2, 7],
+      [3, 10],
+    ]);
+  });
+
+  it("selects only the displayed hidden-axis slice in slice mode", () => {
+    const cfg = { sliders: [1, 2, 0, 0], projection: false };
+    const geom = gridGeometry(shape, cfg, 0, 8);
+
+    expect(selectionBoxFromDrag(shape, cfg, geom, drag, false)).toEqual([
+      [1, 2],
+      [2, 3],
+      [2, 7],
+      [3, 10],
+    ]);
   });
 });
 

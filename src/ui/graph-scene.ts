@@ -39,6 +39,11 @@ export type BaseGraphLayout = {
 export type GraphScene = {
   nodes: PlacedGraphNode[];
   edges: RoutedGraphEdge[];
+  /** World-space origin of the full scene bounds. User-moved cards may make
+   * either value negative; node coordinates themselves stay unnormalised so a
+   * live drag never shifts its peers. */
+  left: number;
+  top: number;
   width: number;
   height: number;
 };
@@ -166,10 +171,23 @@ export function buildGraphScene(
     });
   }
 
+  const left = Math.min(0, ...nodes.map((node) => node.x - WORLD_MARGIN));
+  const top = Math.min(0, ...nodes.map((node) => node.y - WORLD_MARGIN));
+  const right = Math.max(
+    base.width,
+    ...nodes.map((node) => node.x + node.w + WORLD_MARGIN)
+  );
+  const bottom = Math.max(
+    base.height,
+    ...nodes.map((node) => node.y + node.h + WORLD_MARGIN)
+  );
+
   return {
     nodes,
     edges,
-    width: Math.max(base.width, ...nodes.map((node) => node.x + node.w + WORLD_MARGIN)),
-    height: Math.max(base.height, ...nodes.map((node) => node.y + node.h + WORLD_MARGIN)),
+    left,
+    top,
+    width: right - left,
+    height: bottom - top,
   };
 }

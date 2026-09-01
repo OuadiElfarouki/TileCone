@@ -2,9 +2,17 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Tensor } from "../core/graph";
 import { DTYPE_BYTES } from "../core/dtypes";
 import { Box, fromBox, Region } from "../core/region";
-import { drawGrid, elementFromEvent, gridGeometry, Layer, snapSpan, tileSpan } from "./grid";
+import {
+  drawGrid,
+  elementFromEvent,
+  gridGeometry,
+  GridGeom,
+  Layer,
+  snapSpan,
+  tileSpan,
+} from "./grid";
 import { aggregateColors, boxColor } from "./palette";
-import { BoxProp, Direction, partsOn, useStore, viewAxes } from "./store";
+import { BoxProp, Direction, partsOn, useStore, ViewCfg, viewAxes } from "./store";
 import { cardPx, planeExtents } from "./tiling";
 
 export function formatBytes(n: number): string {
@@ -12,6 +20,34 @@ export function formatBytes(n: number): string {
   if (n < 1 << 20) return `${(n / 1024).toFixed(1)} KB`;
   if (n < 1 << 30) return `${(n / (1 << 20)).toFixed(1)} MB`;
   return `${(n / (1 << 30)).toFixed(2)} GB`;
+}
+
+type CellDrag = { r0: number; c0: number; r1: number; c1: number };
+
+/** Convert a visible-plane drag to the tensor region it visually promises.
+ * Projection represents the union across hidden axes, so a projection gesture
+ * must select their full extent; slice mode remains pinned to its sliders. */
+/** @internal Pure interaction seam exported for tensor-card tests. */
+export function selectionBoxFromDrag(
+  shape: number[],
+  cfg: ViewCfg,
+  geom: GridGeom,
+  drag: CellDrag,
+  snapToGrid: boolean
+): [number, number][] {
+  const [rLo, rHi] = snapToGrid
+    ? snapSpan(drag.r0, drag.r1, geom.tile, geom.rows)
+    : [Math.min(drag.r0, drag.r1), Math.max(drag.r0, drag.r1) + 1];
+  const [cLo, cHi] = snapToGrid
+    ? snapSpan(drag.c0, drag.c1, geom.tile, geom.cols)
+    : [Math.min(drag.c0, drag.c1), Math.max(drag.c0, drag.c1) + 1];
+  return shape.map((extent, ax) => {
+    if (ax === geom.rowAxis) return [rLo, rHi];
+    if (ax === geom.colAxis) return [cLo, cHi];
+    if (cfg.projection) return [0, extent];
+    const slider = cfg.sliders[ax] ?? 0;
+    return [slider, slider + 1];
+  });
 }
 
 /** Combine exactness across every cone currently visible on a tensor card. */
@@ -273,20 +309,10 @@ export function TensorCard({
   }, [focusTensor, tensor.id]);
 
   /** Drag rectangle in tile-cell coordinates -> element-space box. */
-  function dragToBox(d: { r0: number; c0: number; r1: number; c1: number }): [number, number][] {
+  function dragToBox(d: CellDrag): [number, number][] {
     // The drag is tracked in elements; snapping is a presentation choice applied
     // at the end, so turning it off costs no precision that was ever available.
-    const [rLo, rHi] = snapToGrid
-      ? snapSpan(d.r0, d.r1, geom.tile, geom.rows)
-      : [Math.min(d.r0, d.r1), Math.max(d.r0, d.r1) + 1];
-    const [cLo, cHi] = snapToGrid
-      ? snapSpan(d.c0, d.c1, geom.tile, geom.cols)
-      : [Math.min(d.c0, d.c1), Math.max(d.c0, d.c1) + 1];
-    return shape.map((e, ax) => {
-      if (ax === rowAxis) return [rLo, rHi];
-      if (ax === colAxis) return [cLo, cHi];
-      return [cfg.sliders[ax] ?? 0, (cfg.sliders[ax] ?? 0) + 1];
-    });
+    return selectionBoxFromDrag(shape, cfg, geom, d, snapToGrid);
   }
 
   /** Direct drawing adds by default; Alt turns the gesture into subtraction. */

@@ -61,6 +61,16 @@ describe("live graph scene projection", () => {
     expect(scene.height).toBe(tensor.y + tensor.h + WORLD_MARGIN);
   });
 
+  it("includes cards moved left or above the original scene origin", () => {
+    const scene = buildGraphScene(base, { X: { dx: -150, dy: -100 } });
+    const tensor = scene.nodes.find((node) => node.id === "X")!;
+
+    expect(scene.left).toBe(tensor.x - WORLD_MARGIN);
+    expect(scene.top).toBe(tensor.y - WORLD_MARGIN);
+    expect(scene.left + scene.width).toBe(base.width);
+    expect(scene.top + scene.height).toBe(base.height);
+  });
+
   it("fans repeated links into independently keyed routes", () => {
     const repeated: BaseGraphLayout = {
       ...base,

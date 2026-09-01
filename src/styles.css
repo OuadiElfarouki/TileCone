@@ -126,10 +126,10 @@ button.copy-failed { color: var(--err); border-color: var(--err); }
   font: 600 var(--t-brand)/1 var(--mono);
   letter-spacing: -0.01em;
 }
-/* The mark's slash is deliberately not --accent: chrome hue differs by theme
-   (magenta / amber), and the product should not change identity when the theme
-   changes. --muted is stable and keeps the accent purely functional. */
-.brand span { color: var(--muted); }
+/* The mark's slash carries the accent, so it is magenta in light and amber in
+   dark. The mark reads as part of the theme rather than as a fixed logo, which
+   is the intent. */
+.brand span { color: var(--accent); }
 .product-tag {
   border: 1px solid var(--line); padding: 1px 5px; color: var(--muted);
   font: var(--t-micro)/1.45 var(--mono);

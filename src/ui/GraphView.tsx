@@ -4,6 +4,7 @@ import { constrainRectMotion, Rect } from "./graph-geometry";
 import {
   buildBaseGraphLayout,
   buildGraphScene,
+  GraphScene,
   PlacedGraphNode,
 } from "./graph-scene";
 import { cardSize, TensorCard } from "./TensorCard";
@@ -18,7 +19,25 @@ type CardDrag = {
   before: TensorOffset;
   blockers: Rect[];
   moved: boolean;
+  viewportMovedBefore: boolean;
 };
+
+/** @internal Pure fit seam for viewport regression tests. */
+export function fittedTransform(
+  scene: Pick<GraphScene, "left" | "top" | "width" | "height">,
+  viewport: { width: number; height: number }
+): { x: number; y: number; k: number } {
+  const k = Math.min(
+    viewport.width / (scene.width + 40),
+    viewport.height / (scene.height + 40),
+    1.25
+  );
+  return {
+    x: (20 - scene.left) * k,
+    y: (20 - scene.top) * k,
+    k,
+  };
+}
 
 /** Elements that own their pointer gesture instead of panning the viewport. */
 const GRAPH_PAN_BLOCKERS = ".card-slot, .op-node, .zoom-controls";
@@ -123,12 +142,7 @@ export function GraphView(): React.ReactElement {
     if (!el) return;
     const current = sceneRef.current;
     if (!current) return;
-    const k = Math.min(
-      el.clientWidth / (current.width + 40),
-      el.clientHeight / (current.height + 40),
-      1.25
-    );
-    setTf({ x: 20 * k, y: 20 * k, k });
+    setTf(fittedTransform(current, { width: el.clientWidth, height: el.clientHeight }));
     movedRef.current = false;
   }, []);
 
@@ -238,6 +252,7 @@ export function GraphView(): React.ReactElement {
         .filter((other) => !(other.kind === "tensor" && other.id === placed.id))
         .map(({ x, y, w, h }) => ({ x, y, w, h })),
       moved: false,
+      viewportMovedBefore: movedRef.current,
     };
     setMovingTensor(placed.id);
     setDragging(true);
@@ -258,6 +273,7 @@ export function GraphView(): React.ReactElement {
     drag.rect = rect;
     if (accepted.x === 0 && accepted.y === 0) return;
     drag.moved = true;
+    movedRef.current = true;
     drag.offset = { dx: drag.offset.dx + accepted.x, dy: drag.offset.dy + accepted.y };
     setTensorOffset(drag.id, drag.offset);
   };
@@ -267,7 +283,10 @@ export function GraphView(): React.ReactElement {
     if (!drag) return;
     cardDragRef.current = null;
     if (commit && drag.moved) commitTensorMove(drag.id, drag.before);
-    else if (!commit && drag.moved) setTensorOffset(drag.id, drag.before);
+    else if (!commit && drag.moved) {
+      setTensorOffset(drag.id, drag.before);
+      movedRef.current = drag.viewportMovedBefore;
+    }
     setMovingTensor(null);
     setDragging(false);
   }, [commitTensorMove, setDragging, setTensorOffset]);
