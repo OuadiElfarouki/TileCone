@@ -3,6 +3,8 @@ import { Box, Region, canonicalize, count, fromBox, iv } from "../region";
 import { normAxis } from "./reduce";
 import { DependencyNoteDraft, NoteCtx, OpCtx, OpSpec, uniformDTypeOutputs } from "./types";
 import { sameAxisNames } from "./axis-names";
+import { axisWord } from "./axis-names";
+import { sameSymShape } from "./sym-shape";
 
 type ScanAttrs = { axis: number; reverse: boolean };
 
@@ -46,13 +48,17 @@ function cumsumDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
     subject: ctx.outNames[0],
     severity: 1,
     flags: [
-      { tensorId: ctx.inIds[0], text: `triangular cone — prefix over axis ${axis}` },
+      {
+        tensorId: ctx.inIds[0],
+        text: `triangular cone — prefix over axis ${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)}`,
+      },
     ],
     text:
-      `cumsum is a prefix scan along axis ${axis} (${extent} wide), so element i of ` +
-      `${ctx.outNames[0]} depends on ${reverse ? "every later" : "every earlier"} element ` +
-      `of ${ctx.inNames[0]} — the cone is triangular, not rectangular. Tiles along axis ` +
-      `${axis} must run in order and carry the running value across the boundary.`,
+      `cumsum is a prefix scan along axis ${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)} ` +
+      `(${extent} wide), so element i of ${ctx.outNames[0]} depends on ` +
+      `${reverse ? "every later" : "every earlier"} element of ${ctx.inNames[0]} — the cone is ` +
+      `triangular, not rectangular. Tiles along axis ${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)} must ` +
+      `run in order and carry the running value across the boundary.`,
   };
 }
 
@@ -61,6 +67,7 @@ export const cumsumOp: OpSpec = {
   attrSchema: z.object({ axis: z.number().int(), reverse: z.boolean().default(false) }),
   arity: { inputs: 1, outputs: 1 },
   inferAxisNames: sameAxisNames,
+  inferSymShapes: sameSymShape,
   dependencyNote: cumsumDependencyNote,
   inferDTypes: uniformDTypeOutputs("cumsum"),
   inferShapes: (inShapes, attrs) => {

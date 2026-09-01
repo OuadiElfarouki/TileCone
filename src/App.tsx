@@ -39,6 +39,7 @@ export default function App(): React.ReactElement {
         direction: link.dir,
         tileScale: link.tile,
         snapToGrid: link.snap !== false,
+        axisMode: link.axes ?? "symbolic",
         parts:
           link.sel?.map((p) => ({
             tensorId: p.t,

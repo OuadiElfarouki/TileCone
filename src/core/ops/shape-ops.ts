@@ -10,6 +10,8 @@ import {
 import { normAxis } from "./reduce";
 import { OpSpec, STRIDED_ENUM_CAP, uniformDTypeOutputs } from "./types";
 import { broadcastAxisNames, firstNamedAxis, sameAxisNames } from "./axis-names";
+import { sameSymShape } from "./sym-shape";
+import { Sym } from "../shapes";
 
 const zero = () => 0;
 
@@ -43,6 +45,9 @@ export const transposeOp: OpSpec = {
   arity: { inputs: 1, outputs: 1 },
   inferAxisNames: (inNames, ctx) => [
     (ctx.attrs as { perm: number[] }).perm.map((axis) => inNames[0][axis]),
+  ],
+  inferSymShapes: (inSyms, ctx) => [
+    (ctx.attrs as { perm: number[] }).perm.map((axis) => inSyms[0][axis]),
   ],
   inferDTypes: uniformDTypeOutputs("transpose"),
   inferShapes: (inShapes, attrs) => {
@@ -265,6 +270,23 @@ export const concatOp: OpSpec = {
   attrSchema: z.object({ axis: z.number().int() }),
   arity: { inputs: { min: 1 }, outputs: 1 },
   inferAxisNames: (inNames, ctx) => [firstNamedAxis(inNames, ctx.outShapes[0].length)],
+  inferSymShapes: (inSyms, ctx) => {
+    const axis = normAxis(ctx.attrs.axis as number, ctx.inShapes[0].length);
+    const joined = inSyms.map((sym) => sym[axis]);
+    return [
+      inSyms[0].map((_sym, ax) =>
+        // `P+T` is a true statement about the joined axis, and one the
+        // dimension grammar can read back. It is only worth writing when a
+        // symbol is what met there; a sum of literals is just a literal.
+        ax === axis
+          ? joined.some((s) => typeof s === "string")
+            ? joined.join("+")
+            : ctx.outShapes[0][ax]
+          : inSyms.map((syms) => syms[ax]).find((sym) => typeof sym === "string") ??
+            ctx.outShapes[0][ax]
+      ),
+    ];
+  },
   inferDTypes: uniformDTypeOutputs("concat"),
   inferShapes: (inShapes, attrs) => {
     const ax = normAxis(attrs.axis as number, inShapes[0].length);
@@ -324,6 +346,9 @@ export const splitOp: OpSpec = {
   attrSchema: z.object({ axis: z.number().int(), sizes: z.array(z.number().int().min(1)).min(1) }),
   arity: { inputs: 1, outputs: { min: 1 } },
   inferAxisNames: (inNames, ctx) => ctx.outShapes.map(() => inNames[0].slice()),
+  // Only the axis being cut changes, and it becomes a literal size.
+  inferSymShapes: (inSyms, ctx) =>
+    ctx.outShapes.map((out) => inSyms[0].map((sym, ax) => (out[ax] === ctx.inShapes[0][ax] ? sym : out[ax]))),
   validateArity: (_inputCount, outputCount, attrs) => {
     const sizeCount = (attrs.sizes as number[]).length;
     if (outputCount !== sizeCount)
@@ -381,6 +406,11 @@ export const expandOp: OpSpec = {
   inferAxisNames: (inNames, ctx) => [
     broadcastAxisNames(inNames, ctx.inShapes, ctx.outShapes[0]),
   ],
+  // The requested shape is the author's own statement of the result.
+  inferSymShapes: (_inSyms, ctx) => {
+    const target = ctx.attrs.shape as Sym[];
+    return [ctx.outShapes[0].map((extent, axis) => target[axis] ?? extent)];
+  },
   inferDTypes: uniformDTypeOutputs("expand"),
   inferShapes: (inShapes, attrs, params) => {
     const target = resolveShape(attrs.shape as (string | number)[], params ?? {});
@@ -409,6 +439,7 @@ export function identityLike(name: string): OpSpec {
     attrSchema: z.object({}),
     arity: { inputs: 1, outputs: 1 },
     inferAxisNames: sameAxisNames,
+    inferSymShapes: sameSymShape,
     inferDTypes: uniformDTypeOutputs(name),
     inferShapes: (inShapes) => [inShapes[0].slice()],
     backward: (_s, outBox) => [fromBox(outBox.map((I) => ({ ...I })))],

@@ -3,6 +3,7 @@ import { Box, Interval, Region, boundingBox, canonicalize, iv, MAX_BOXES } from 
 import { resolveShape } from "../shapes";
 import { DependencyNoteDraft, NoteCtx, OpSpec, uniformDTypeOutputs } from "./types";
 import { AxisNames } from "./types";
+import { Sym } from "../shapes";
 
 const MAX_RESHAPE_RUNS = 4096;
 
@@ -263,6 +264,24 @@ export const reshapeOp: OpSpec = {
   inferAxisNames: (inNames, ctx) => [
     reshapeAxisNames(inNames[0], ctx.inShapes[0], ctx.outShapes[0]),
   ],
+  inferSymShapes: (inSyms, ctx) => {
+    const from = ctx.inShapes[0];
+    const to = ctx.outShapes[0];
+    const out: Sym[] = to.slice();
+    // A one-to-one group is the same axis on both sides, so its symbol carries.
+    let fi = 0;
+    let ti = 0;
+    for (const group of groupAxes(from, to)) {
+      if (group.from.length === 1 && group.to.length === 1) out[ti] = inSyms[0][fi];
+      fi += group.from.length;
+      ti += group.to.length;
+    }
+    // The target shape is the author's own statement of what the result is, so
+    // it outranks anything carried: `shape=[B, S, H, D]` names the split axes
+    // that no group could. The resolver checks each one before it is kept.
+    const target = (ctx.attrs as ReshapeAttrs).shape;
+    return [out.map((sym, axis) => (typeof target[axis] === "string" ? target[axis] : sym))];
+  },
   inferDTypes: uniformDTypeOutputs("reshape"),
   inferShapes: (inShapes, attrs, params) => {
     const target = resolveShape((attrs as ReshapeAttrs).shape, params ?? {});

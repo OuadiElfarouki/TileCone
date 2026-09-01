@@ -13,6 +13,7 @@ import {
 import { aggregateColors, boxColor } from "./palette";
 import { BoxProp, Direction, partsOn, useStore, ViewCfg, viewAxes } from "./store";
 import { cardPx, planeExtents } from "./tiling";
+import { shapeLabel, shapeReadings, symbolicExtentLabel } from "./shape-label";
 
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -239,6 +240,7 @@ export function TensorCard({
   const hiddenBoxes = useStore((s) => s.hiddenBoxes);
   const direction = useStore((s) => s.direction);
   const snapToGrid = useStore((s) => s.snapToGrid);
+  const axisMode = useStore((s) => s.axisMode);
   const tileScale = useStore((s) => s.tileScale);
   const graphPx = useStore((s) => s.graphPx);
   const theme = useStore((s) => s.theme);
@@ -368,7 +370,15 @@ export function TensorCard({
 
   const totalBytes = shape.reduce((a, b) => a * b, 1) * DTYPE_BYTES[tensor.dtype];
   const axisName = (ax: number) => tensor.axisNames?.[ax] ?? `ax${ax}`;
-  const numericShape = `[${shape.join(" × ")}]`;
+  // Keep the compact header to one reading. The details popover preserves the
+  // separate axis-label, symbolic-extent, and numeric-extent facts.
+  const symbolicShape = shapeLabel(tensor, "symbolic");
+  const symbolicExtents = symbolicExtentLabel(tensor);
+  const numericShape = shapeLabel(tensor, "numeric");
+  const shownShape = axisMode === "numeric" ? numericShape : symbolicShape;
+  const alternateShapes = [...new Set([symbolicShape, symbolicExtents, numericShape])]
+    .filter((label) => label !== shownShape)
+    .join(" · ");
   const roleTag = tensor.producer ? null : tensor.role === "weight" ? "weight" : "input";
   // Exactness is carried by hatching on the canvas; this repeats it in the
   // header because an over-approximation must never be mistakable for ground
@@ -389,12 +399,21 @@ export function TensorCard({
         <span className="tc-name-wrap">
           <span className="tc-name" tabIndex={0}>{tensor.name}</span>
           <span className="tc-info" role="tooltip">
-            <span>shape</span><b>{numericShape}</b>
+            {shapeReadings(tensor).map((reading) => (
+              <React.Fragment key={reading.label}>
+                <span>{reading.label}</span><b>{reading.value}</b>
+              </React.Fragment>
+            ))}
             <span>dtype</span><b>{tensor.dtype}</b>
             <span>size</span><b>{formatBytes(totalBytes)}</b>
           </span>
         </span>
-        <span className="tc-shape">{numericShape}</span>
+        <span
+          className="tc-shape"
+          title={alternateShapes || undefined}
+        >
+          {shownShape}
+        </span>
         {roleTag && <span className="tc-role">{roleTag}</span>}
         {approximation.approximate && (
           <span
@@ -458,7 +477,8 @@ export function TensorCard({
 export function cardSize(
   shape: number[],
   px: number,
-  name = ""
+  name = "",
+  alternateShapeLabels: string[] = []
 ): { w: number; h: number } {
   const rank = shape.length;
   const { rowAxis, colAxis } = viewAxes(shape);
@@ -468,8 +488,12 @@ export function cardSize(
   // Transparent label + optional higher-rank controls + canvas. There is no
   // decorative outer-card padding: this is the solid collision footprint.
   const h = 24 + (rank > 2 ? 24 : 0) + hiddenAxes * 20 + canvas.h;
-  const shapeLabel = `[${shape.join(" × ")}]`;
-  const labelW = name.length * 9 + shapeLabel.length * 6.5 + 12;
+  const numericShapeLabel = `[${shape.join(" × ")}]`;
+  // Reserve the longest available reading once. Switching the workspace mode
+  // must not move cards, and semantic labels may be wider than their numbers.
+  const widestShapeLabel = [numericShapeLabel, ...alternateShapeLabels]
+    .reduce((longest, label) => label.length > longest.length ? label : longest);
+  const labelW = name.length * 9 + widestShapeLabel.length * 6.5 + 12;
   const w = Math.max(canvas.w, labelW, 120);
   return { w, h };
 }

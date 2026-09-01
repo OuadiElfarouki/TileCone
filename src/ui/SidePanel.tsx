@@ -17,6 +17,7 @@ function ShareButton(): React.ReactElement {
   const direction = useStore((s) => s.direction);
   const tileScale = useStore((s) => s.tileScale);
   const snapToGrid = useStore((s) => s.snapToGrid);
+  const axisMode = useStore((s) => s.axisMode);
   const [copyState, setCopyState] = useState<"copied" | "failed" | null>(null);
 
   const copy = async () => {
@@ -25,6 +26,7 @@ function ShareButton(): React.ReactElement {
       dir: direction,
       tile: tileScale,
       snap: snapToGrid,
+      axes: axisMode,
       sel: selectionToLink(selection),
     });
     setCopyState((await copyText(target)) ? "copied" : "failed");

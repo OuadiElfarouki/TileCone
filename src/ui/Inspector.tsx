@@ -28,6 +28,7 @@ import {
 } from "./store";
 import { formatSelectionBox, parseSelectionBox } from "./selection-range";
 import { copyText } from "./clipboard";
+import { hasSymbolicShape } from "./shape-label";
 import {
   effectiveTileScaleIndex,
   effectiveTileScaleStops,
@@ -64,6 +65,8 @@ function SetupStrip(): React.ReactElement {
   const setTileScale = useStore((s) => s.setTileScale);
   const snapToGrid = useStore((s) => s.snapToGrid);
   const setSnapToGrid = useStore((s) => s.setSnapToGrid);
+  const axisMode = useStore((s) => s.axisMode);
+  const setAxisMode = useStore((s) => s.setAxisMode);
   const selection = useStore((s) => s.selection);
   const clearSelection = useStore((s) => s.clearSelection);
   const detail = useMemo(() => {
@@ -74,6 +77,7 @@ function SetupStrip(): React.ReactElement {
   }, [resolved, graphPx, tileScale]);
   const requested = detail.stops[detail.index];
   const { min, max } = detail.settled;
+  const hasSemanticLabels = Object.values(resolved.tensors).some(hasSymbolicShape);
 
   return (
     <section className="inspector-setup">
@@ -98,6 +102,15 @@ function SetupStrip(): React.ReactElement {
           title="snap a drawn box out to whole tiles; off cuts an exact element range"
         >
           snap
+        </button>
+        <button
+          className={`mini toggle${axisMode === "symbolic" ? " on" : ""}`}
+          aria-pressed={axisMode === "symbolic"}
+          onClick={() => setAxisMode(axisMode === "symbolic" ? "numeric" : "symbolic")}
+          disabled={!hasSemanticLabels}
+          title="read compact shapes as semantic labels or numeric extents; hover a tensor name for all readings"
+        >
+          {axisMode === "symbolic" ? "labels" : "extents"}
         </button>
         <button className="mini clear-all" onClick={clearSelection} disabled={!selection}>
           clear all

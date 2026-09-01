@@ -42,6 +42,12 @@ export const gatherOp: OpSpec = {
     names[axis] = inNames[1][0];
     return [names];
   },
+  inferSymShapes: (inSyms, ctx) => {
+    const axis = normAxis((ctx.attrs as GatherAttrs).axis, ctx.inShapes[0].length);
+    const syms = inSyms[0].slice();
+    syms[axis] = inSyms[1][0];
+    return [syms];
+  },
   inferDTypes: (inDTypes, _attrs, outShapes) => {
     const [data, indices] = inDTypes;
     if (indices !== "i32")

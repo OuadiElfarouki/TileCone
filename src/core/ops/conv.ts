@@ -187,6 +187,16 @@ export const convOp: OpSpec = {
       ...inNames[0].slice(2),
     ],
   ],
+  inferSymShapes: (inSyms, ctx) => [
+    [
+      // Only batch and output channels retain an unchanged symbolic extent.
+      // Spatial axes keep their identity via `inferAxisNames`, but their
+      // extents are derived by the convolution formula and remain literal.
+      inSyms[0][0],
+      inSyms[1][0],
+      ...ctx.outShapes[0].slice(2),
+    ],
+  ],
   dependencyNote: convDependencyNote,
   inferDTypes: uniformDTypeOutputs("conv"),
   inferShapes: (inShapes, attrs) => {
@@ -319,6 +329,9 @@ export const poolOp: OpSpec = {
   }),
   arity: { inputs: 1, outputs: 1 },
   inferAxisNames: sameAxisNames,
+  inferSymShapes: (inSyms, ctx) => [
+    [inSyms[0][0], inSyms[0][1], ...ctx.outShapes[0].slice(2)],
+  ],
   inferDTypes: uniformDTypeOutputs("pool"),
   inferShapes: (inShapes, attrs) => {
     const a = attrs as PoolAttrs;

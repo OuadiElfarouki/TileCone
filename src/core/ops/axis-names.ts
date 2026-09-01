@@ -9,6 +9,7 @@
  */
 
 import { AxisNames } from "./types";
+import { Sym } from "../shapes";
 
 /** The output has the input's own axes in order: rank-preserving operations
  * that change extents or values but not what each axis means. */
@@ -44,4 +45,19 @@ export function firstNamedAxis(inNames: AxisNames[], rank: number): AxisNames {
   return Array.from({ length: rank }, (_, axis) =>
     inNames.map((names) => names[axis]).find((name) => name !== undefined)
   );
+}
+
+/**
+ * The word a note should use for one axis: its semantic name, then its verified
+ * symbolic extent, then its position. Callers keep their own "axis"/"axes"
+ * prefix, so this returns a bare token that reads correctly either way —
+ * "full axis seq", "full axis K", "full axis 3".
+ */
+export function axisWord(
+  names: AxisNames | undefined,
+  dims: Sym[] | undefined,
+  axis: number
+): string {
+  const dim = dims?.[axis];
+  return names?.[axis] ?? (typeof dim === "string" ? dim : String(axis));
 }

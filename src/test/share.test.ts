@@ -14,6 +14,7 @@ const LINK: WorkspaceLink = {
   dir: "both",
   tile: -2,
   snap: false,
+  axes: "numeric",
   sel: [{ t: "B", box: [[0, 2], [1, 3]] }],
 };
 
@@ -156,5 +157,32 @@ describe("selectionToLink", () => {
 
   it("is null for a selection with no parts", () => {
     expect(selectionToLink({ parts: [] })).toBeNull();
+  });
+});
+
+describe("the shape view travels with the link", () => {
+  it("round-trips the chosen reading", () => {
+    const link = {
+      dsl: "input X [2] f32\n",
+      dir: "both" as const,
+      tile: 0,
+      snap: true,
+      axes: "numeric" as const,
+      sel: null,
+    };
+    expect(decodeWorkspace(`#s=${encodeWorkspace(link)}`)).toEqual(link);
+  });
+
+  it("keeps a link written before the setting existed on numeric shapes", () => {
+    // Absent is not malformed: a legacy field takes its documented default.
+    const legacy = { dsl: "input X [2] f32\n", dir: "both" as const, tile: 0, sel: null };
+    const decoded = decodeWorkspace(`#s=${encodeWorkspace(legacy)}`);
+    expect(decoded).not.toBeNull();
+    expect(decoded!.axes).toBe("numeric");
+  });
+
+  it("refuses a link whose shape view is not a known reading", () => {
+    const bad = { dsl: "input X [2] f32\n", dir: "both", tile: 0, axes: "hieroglyphs", sel: null };
+    expect(decodeWorkspace(`#s=${encodeWorkspace(bad as never)}`)).toBeNull();
   });
 });

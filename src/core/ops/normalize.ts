@@ -3,6 +3,8 @@ import { Box, Region, canonicalize, count, coversAxisFully, fromBox, iv } from "
 import { normAxes } from "./reduce";
 import { DependencyNoteDraft, OpCtx, OpSpec, uniformDTypeOutputs, NoteCtx } from "./types";
 import { sameAxisNames } from "./axis-names";
+import { axisWord } from "./axis-names";
+import { sameSymShape } from "./sym-shape";
 
 type NAttrs = { kind: "layernorm" | "rmsnorm"; axes: number[]; hasWeight: boolean; hasBias: boolean };
 
@@ -58,8 +60,10 @@ function normalizeDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
   if (!full.length) return null;
   const free = shape.map((_, axis) => axis).filter((axis) => !axes.includes(axis));
   const one = full.length === 1;
+  const word = (axis: number) => axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis);
+  const fullList = full.map(word).join(", ");
   const tail = free.length
-    ? `but ${free.length === 1 ? `axis ${free[0]} stays` : `axes ${free.join(", ")} stay`} ` +
+    ? `but ${free.length === 1 ? `axis ${word(free[0])} stays` : `axes ${free.map(word).join(", ")} stay`} ` +
       `independent — safe to fuse there.`
     : "and no free axis is left to fuse along.";
   return {
@@ -69,11 +73,11 @@ function normalizeDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
     flags: [
       {
         tensorId: ctx.inIds[0],
-        text: `full ${one ? `axis ${full[0]}` : `axes ${full.join(", ")}`} — ${attrs.kind} statistics span ${one ? "it" : "them"}`,
+        text: `full ${one ? `axis ${word(full[0])}` : `axes ${fullList}`} — ${attrs.kind} statistics span ${one ? "it" : "them"}`,
       },
     ],
     text:
-      `${attrs.kind} takes statistics over ${one ? "axis" : "axes"} ${full.join(", ")} of ` +
+      `${attrs.kind} takes statistics over ${one ? "axis" : "axes"} ${fullList} of ` +
       `${ctx.inNames[0]}, so a tile of ${ctx.outNames[0]} needs ` +
       `${one ? "that axis" : "those axes"} complete, ${tail}`,
   };
@@ -90,6 +94,7 @@ export const normalizeOp: OpSpec = {
   }),
   arity: { inputs: { min: 1, max: 3 }, outputs: 1 },
   inferAxisNames: sameAxisNames,
+  inferSymShapes: sameSymShape,
   validateArity: (inputCount, _outputCount, attrs) => {
     const typed = attrs as NAttrs;
     const expected = 1 + Number(typed.hasWeight) + Number(typed.hasBias);

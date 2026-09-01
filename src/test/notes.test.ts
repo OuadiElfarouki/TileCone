@@ -249,12 +249,13 @@ S1 = matmul(Q, Kt)
 Y = matmul(S1, V)
 `;
 
-  it("states one constraint once and names the tensors it also covers", () => {
+  it("merges parallel projections without merging a later equal-width contraction", () => {
     const { notes } = notesFor(QKV, "Y", [[0, 4], [0, 8]]);
     const contractionNotes = notes.filter((n) => n.text.includes("contracts E=32"));
-    expect(contractionNotes).toHaveLength(1);
-    expect(contractionNotes[0].alsoApplies?.length).toBeGreaterThan(0);
-    expect(contractionNotes[0].text).toContain("The same holds for");
+    const projection = contractionNotes.find((n) => ["Q", "K", "V"].includes(n.subject))!;
+    expect(projection.alsoApplies?.length).toBeGreaterThan(0);
+    expect(projection.text).toContain("The same holds for");
+    expect(contractionNotes.some((n) => n.subject === "S1")).toBe(true);
   });
 
   it("merging frees cap slots for genuinely different constraints", () => {
@@ -417,4 +418,76 @@ Y = add(X, X)
     expect(findings.flags.size).toBe(0);
   });
 
+});
+
+/* A note names an axis the way the source does. An axis name outranks the
+   declared dimension, because `emb` says what the axis is where `H*D` only says
+   how wide it is — and it is the only one of the two that survives onto a
+   produced tensor. If no name survives, the verified symbolic extent is the
+   next best source word before a bare position or internal einsum label. */
+describe("notes naming axes by their declared names", () => {
+  const NAMED = `params B=1 H=4 S=32 D=8
+input X  [batch: B, seq: S, emb: H*D] f16
+input Wq [emb: H*D, proj: H*D] f16
+input Kc [batch: B, head: H, kv: S, dim: D] f16
+Qp = einsum("bse,ef->bsf", X, Wq)
+Q4 = reshape(Qp, shape=[B, S, H, D])
+Qh = transpose(Q4, perm=[0, 2, 1, 3])
+Sc = einsum("bhqd,bhkd->bhqk", Qh, Kc)
+Pr = softmax(Sc, axis=-1)
+`;
+
+  it("prefers the axis name over the dimension it was declared with", () => {
+    const { notes } = notesFor(NAMED, "Qp", [[0, 1], [0, 4], [0, 32]]);
+    const contraction = notes.find((note) => note.subject === "Qp")!;
+    expect(contraction.text).toContain("contracts emb=32 in full");
+    expect(contraction.text).not.toContain("H*D");
+  });
+
+  it("names an axis carried onto a produced tensor, which has no declared shape", () => {
+    // The contracted axis sits on Qh, an intermediate whose `inDims` is empty.
+    // Its co-carrier Kc names that axis `dim`, so the note can say `dim` where
+    // it used to fall back to the einsum's internal label `d`.
+    const { notes } = notesFor(NAMED, "Sc", [[0, 1], [0, 4], [0, 4], [0, 4]]);
+    const contraction = notes.find((note) => note.subject === "Sc")!;
+    expect(contraction.text).toContain("contracts dim=8 in full");
+  });
+
+  it("names the normalised axis instead of its position", () => {
+    const { notes } = notesFor(NAMED, "Pr", [[0, 1], [0, 4], [0, 4], [0, 32]]);
+    const softmax = notes.find((note) => note.op === "softmax")!;
+    expect(softmax.text).toContain("along axis kv");
+    expect(softmax.text).not.toContain("along axis 3");
+  });
+
+  it("still falls back to the position when no axis is named", () => {
+    const UNNAMED = `input X [2, 4, 8] f32
+Y = softmax(X, axis=-1)
+`;
+    const { notes } = notesFor(UNNAMED, "Y", [[0, 2], [0, 4], [0, 8]]);
+    expect(notes[0].text).toContain("along axis 2");
+  });
+
+  it("uses a carried symbolic extent before falling back to the position", () => {
+    const SYMBOLIC = `params B=2 S=8
+input X [B, S] f32
+H = relu(X)
+Y = softmax(H, axis=-1)
+`;
+    const { notes } = notesFor(SYMBOLIC, "Y", [[0, 2], [0, 8]]);
+    expect(notes[0].text).toContain("along axis S");
+    expect(notes[0].text).not.toContain("along axis 1");
+  });
+
+  it("names a reduced axis in the flag as well as the note", () => {
+    const { back, resolved } = notesFor(
+      `input X [batch: 2, seq: 4, emb: 8] f32
+Y = sum(X, axis=1)
+`,
+      "Y",
+      [[0, 2], [0, 8]]
+    );
+    const { flags } = coneFindings(resolved, back);
+    expect(flags.get("X")!.join(" ")).toContain("full axis seq");
+  });
 });

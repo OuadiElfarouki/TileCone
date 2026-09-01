@@ -215,6 +215,7 @@ Every operation is described by an `OpSpec` in `src/core/ops/types.ts` and regis
 - optional attribute-dependent arity validation;
 - output shape inference;
 - optional axis-name propagation, defaulting to unnamed;
+- optional symbolic-extent propagation, defaulting to literal;
 - output dtype inference;
 - backward region mapping from an output box to input regions;
 - forward region mapping from an input box to output regions;
@@ -224,7 +225,12 @@ Every operation is described by an `OpSpec` in `src/core/ops/types.ts` and regis
 
 This is the main extensibility seam. The graph resolver and propagation engine do not switch on operation names; they dispatch through the registry.
 
-Operations currently cover LLM-oriented primitives such as matrix multiplication, linear layers, elementwise functions, reductions, normalization, softmax, reshape/transpose, indexing, gather, concatenation/splitting, expansion, scans, and layout operations. Convolution and pooling are supported but treated as secondary/experimental surfaces.
+Operations currently cover LLM-oriented primitives such as matrix multiplication, linear layers, elementwise functions, reductions, normalization, softmax, reshape/transpose, indexing, gather, concatenation/splitting, expansion, scans, and layout operations.
+
+Elementwise operations broadcast under the usual trailing-aligned rule, rank 0 included, and
+the region mappings broadcast with them: an axis of extent 1 maps back to `[0, 1)` and forward
+to the full output extent, so a bias or a mask shows the fan-out it really has. Both directions
+are checked against the brute-force oracle rather than argued for. Convolution and pooling are supported but treated as secondary/experimental surfaces.
 
 Some high-level operations are expandable. `src/core/expand.ts` rewrites `softmax` and supported normalization forms into primitive subgraphs, preserves the externally visible output tensor, then resolves the rewritten graph again. Expansion is a graph transformation, not a special execution mode.
 
@@ -251,6 +257,23 @@ Metrics are derived from the backward dependency result in `src/core/metrics.ts`
 - **Output bytes:** bytes in the selected producer output.
 - **Arithmetic intensity:** FLOPs divided by the configured byte denominator.
 
+Symbolic extents travel that path too, and are a **separate** propagation from axis names —
+`inferSymShapes` rather than `inferAxisNames`. A name says what an axis *is* and survives a change
+of extent; a symbol says how *wide* it is and does not. A convolution's height axis is still `h`
+after striding but is no longer `H` elements, so conv names it while leaving the derived spatial
+extent literal. It can still carry unchanged batch and output-channel symbols; pooling similarly
+carries batch/channel, and gather takes the replacement-axis extent from its indices input.
+A contraction carries its free axes (`[M, K] × [K, N] → [M, N]`), a transpose permutes symbols with
+their axes, a reduction drops the symbol of an axis it collapses, a concatenation states the joined
+axis as the sum that met there (`P+T`, which the dimension grammar can read back), and a reshape
+takes its split axes from the target shape the author wrote.
+
+Nothing here is taken on trust. `resolveGraph` evaluates every proposed symbol against the bound
+parameters and keeps it only if it comes out at the extent inference actually produced; anything
+else falls back to the literal. `Tensor.symShape` is therefore always full length and always
+evaluates to `resolved`, so a wrong mapping degrades to a number rather than asserting a shape the
+graph does not have.
+
 Axis names travel the same path as shapes and dtypes. A declaration names its axes, and each
 operation decides what survives it: an einsum label carries a name across a contraction, a
 transpose permutes names with their axes, a reduction drops the name of an axis it collapses,
@@ -265,7 +288,13 @@ Byte estimates use the dtype inferred during graph resolution, so dtype propagat
 
 `src/core/notes.ts` turns a backward result into short statements about what constrains the cone — the contraction that must be staged, the axis a softmax needs whole, the halo a convolution re-reads. These answer the question the numbers do not: not how much, but why the footprint has this shape, and what it implies for tiling or fusing across it.
 
-The text belongs to the operation, not the UI, because only the operation knows the reason. `OpSpec.dependencyNote` receives a `NoteCtx` — shapes, attributes, tensor names, the declared (possibly symbolic) dimensions, and the regions the current query actually produced — and returns a draft or null. Two rules govern it:
+The text belongs to the operation, not the UI, because only the operation knows the reason. `OpSpec.dependencyNote` receives a `NoteCtx` — shapes, attributes, tensor names, the verified
+symbolic dimensions, the propagated axis names, and the regions the current query
+actually produced — and returns a draft or null. A note names an axis the way the source does,
+preferring the axis's own name over the dimension it was declared with: `emb` says what the axis
+*is* where `H*D` only says how wide it is, and the name is the one of the two that survives onto a
+produced tensor. Without it a note about an intermediate falls back to a bare position or an
+operation-internal einsum label — which is exactly where a reader most needs the word. Two rules govern it:
 
 - **A note may only claim what the cone did.** A contraction note is withheld unless the region demonstrably spans the whole contracted axis, so a degenerate selection can never produce a false statement.
 - **Notes carry a `key`.** Drafts sharing a key describe one constraint about different tensors and are merged rather than repeated, which stops a family of look-alike notes from crowding a distinct one past the display cap.
@@ -292,7 +321,7 @@ The React layer is a projection over the headless compiler and executor.
 - **Selection:** ordered parts, each naming its own tensor, and the independently enabled Upstream / Downstream views. Their controls live on the matching inspector section heads; both may collapse into the explicitly labelled figures-only state without disabling analysis. Direct canvas gestures add by default and Alt subtracts; both compose against the drawn tensor's parts only, so a gesture on one tensor can never edit or discard a part on another. Replacement is reserved for controlled internal transitions. Composition retains object identity for untouched parts, allowing their index-based UI metadata to be remapped safely if another tensor loses parts.
 - **Attribution:** which part is focused (emphasised, one at a time) and which parts are enabled in the merged analysis (any number, sticky). Disabled parts retain a faint selection rectangle and an inspector row so they can be included again, but their cached propagation is excluded from directional rows, metrics, notes, contribution verdicts, segmented footprints, and graph dependency highlights. Disabling the focused part clears its focus. Metadata is cleared for edited parts and follows untouched parts by identity when their indices shift.
 - **Analysis:** aggregate backward/forward results, bounded per-box results, focus/pin state, and hover previews. **Both directions are always computed.** `direction` is a view filter over the analysis, not a gate on producing it: the inspector answers "what does this tile need" and "what does it feed" from one result, and a view choice must not decide whether a number exists. The filter is applied where highlights and directional rows are drawn, so switching it changes the picture without discarding the underlying analysis. `none` is the named figures-only combination: both section heads remain available to reopen either view while rows and graph highlights are hidden.
-- **View:** per-tensor projection settings, tile scale, gesture snapping, the graph's px-per-element scale, metric options, graph focus, panel layout, and tensor offsets. Selection edits and committed tensor moves share one chronological workspace history.
+- **View:** per-tensor projection settings, tile scale, gesture snapping, the shape reading, the graph's px-per-element scale, metric options, graph focus, panel layout, and tensor offsets. `axisMode` chooses whether a compact card states semantic labels or numeric extents. `ui/shape-label.ts` owns the label fallback — axis name, then verified symbolic extent, then number — while the tensor details keep all three readings separate (`emb`, `H*D`, and `512`), dropping any that a less symbolic reading below it already states, so the surviving row is named after what it actually is. A new workspace opens on labels; a shared link restores the reading it was written against rather than being reinterpreted by a later default, so the two defaults deliberately differ. Cards reserve the widest reading during base layout, so changing the mode cannot create overlap or move the graph. Selection edits and committed tensor moves share one chronological workspace history.
 
 Applying DSL recompiles the entire source into a new resolved graph. Changing a selection runs one bidirectional query per part, which serves both the per-part attribution and, merged, the aggregate the panels read. Past the per-part cap attribution is dropped and the queries are grouped by tensor instead, bounding the cost by the number of tensors drawn on rather than the number of tiles; the grouped result can only be equal or coarser, never tighter and never an under-approximation.
 

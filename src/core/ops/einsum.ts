@@ -2,6 +2,7 @@ import { z } from "zod";
 import { Box, Region, coversAxisFully, empty, fromBox, iv, canonicalize } from "../region";
 import { Attrs, DependencyNoteDraft, DIAG_ENUM_CAP, OpCtx, OpSpec, uniformDTypeOutputs, NoteCtx } from "./types";
 import { AxisNames } from "./types";
+import { Sym } from "../shapes";
 
 type ParsedEquation = { operands: string[][]; output: string[] };
 
@@ -201,17 +202,27 @@ function einsumDependencyNote(eq: string, ctx: NoteCtx): DependencyNoteDraft | n
     });
     if (pulledInFull.length !== carriers.length) continue;
 
-    // Prefer the name the source used for this axis over the einsum label.
+    // Prefer what the source called this axis over the einsum label, which is
+    // internal to the equation. The axis's own name comes first, then the
+    // dimension it was declared with: `emb` says what the axis is, `H*D` only
+    // says how wide it is, and a produced operand has no declared shape at all.
+    const named = carriers
+      .map(({ slot, axis }) => ctx.inAxisNames[slot]?.[axis])
+      .find((name) => name !== undefined);
     const declared = carriers
       .map(({ slot, axis }) => ctx.inDims[slot]?.[axis])
       .find((dim) => typeof dim === "string") as string | undefined;
-    const axisLabel = declared ?? label;
+    const axisLabel = named ?? declared ?? label;
 
     const names = carriers.map(({ slot }) => ctx.inNames[slot]);
     const listed =
       names.length === 2 ? `${names[0]} and ${names[1]}` : names.join(", ");
     return {
-      key: `contract:${axisLabel}:${extent}`,
+      // Equal labels and extents are not enough to make two contractions one
+      // constraint: a later E-wide matmul is independent of an earlier E-wide
+      // projection. Parallel projections merge when they contract the same
+      // carrier (for example Q/K/V all reading X's embedding axis).
+      key: `contract:${axisLabel}:${extent}:${ctx.inIds[carriers[0].slot]}`,
       subject: ctx.outNames[0],
       severity: 3,
       flags: carriers.map(({ slot, axis }) => ({
@@ -249,12 +260,29 @@ function einsumAxisNames(eq: string, inNames: AxisNames[], nInputs: number): Axi
   ];
 }
 
+/** An output label's extent is the extent of any operand axis wearing it, so a
+ * contraction carries `M` and `N` through even though `K` disappears. */
+function einsumSymShape(eq: string, inSyms: Sym[][], ctx: OpCtx, nInputs: number): Sym[][] {
+  const pe = parseEquation(eq, nInputs);
+  return [
+    pe.output.map((label, outAxis) => {
+      for (let slot = 0; slot < pe.operands.length; slot++) {
+        const axis = pe.operands[slot].indexOf(label);
+        if (axis >= 0 && typeof inSyms[slot]?.[axis] === "string") return inSyms[slot][axis];
+      }
+      return ctx.outShapes[0][outAxis];
+    }),
+  ];
+}
+
 export const einsumOp: OpSpec = {
   name: "einsum",
   attrSchema: z.object({ equation: z.string() }),
   arity: { inputs: { min: 1 }, outputs: 1 },
   inferAxisNames: (inNames, ctx) =>
     einsumAxisNames(eqOf(ctx.attrs), inNames, ctx.inShapes.length),
+  inferSymShapes: (inSyms, ctx) =>
+    einsumSymShape(eqOf(ctx.attrs), inSyms, ctx, ctx.inShapes.length),
   validateArity: (inputCount, _outputCount, attrs) => {
     const parts = eqOf(attrs).replace(/\s+/g, "").split("->");
     if (parts.length !== 2) return; // equation syntax is diagnosed by shape inference
@@ -286,6 +314,8 @@ function einsumSugar(
     arity: { inputs: nInputs, outputs: 1 },
     inferAxisNames: (inNames, ctx) =>
       einsumAxisNames(makeEq(ctx.inShapes), inNames, ctx.inShapes.length),
+    inferSymShapes: (inSyms, ctx) =>
+      einsumSymShape(makeEq(ctx.inShapes), inSyms, ctx, ctx.inShapes.length),
     inferDTypes: uniformDTypeOutputs(name),
     inferShapes: (inShapes) => einsumInferShapes(makeEq(inShapes), inShapes),
     backward: (_s, outBox, ctx) => einsumBackward(eqFor(ctx), outBox, ctx),

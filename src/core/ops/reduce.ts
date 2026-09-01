@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { Box, coversAxisFully, fromBox, iv } from "../region";
 import { DependencyNoteDraft, OpCtx, OpSpec, uniformDTypeOutputs, NoteCtx } from "./types";
+import { axisWord } from "./axis-names";
 
 /** Normalize one Python-style axis and reject anything outside the tensor rank. */
 export const normAxis = (a: number, rank: number): number => {
@@ -28,7 +29,9 @@ function reduceDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
   const axes = normAxes(attrs.axes, shape.length);
   const full = axes.filter((axis) => coversAxisFully(region, axis, shape[axis]));
   if (!full.length) return null;
-  const list = full.map((axis) => `${axis} (${shape[axis]} wide)`).join(", ");
+  const word = (axis: number) => axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis);
+  const list = full.map((axis) => `${word(axis)} (${shape[axis]} wide)`).join(", ");
+  const listed = full.map(word).join(", ");
   const one = full.length === 1;
   return {
     key: `reduce:${attrs.fn}:${full.join(",")}`,
@@ -37,7 +40,7 @@ function reduceDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
     flags: [
       {
         tensorId: ctx.inIds[0],
-        text: `full ${one ? `axis ${full[0]}` : `axes ${full.join(", ")}`} — reduced, needs an accumulator`,
+        text: `full ${one ? `axis ${word(full[0])}` : `axes ${listed}`} — reduced, needs an accumulator`,
       },
     ],
     text:
@@ -57,6 +60,15 @@ export const reduceOp: OpSpec = {
     keepdim: z.boolean().default(false),
   }),
   arity: { inputs: 1, outputs: 1 },
+  inferSymShapes: (inSyms, ctx) => {
+    const { axes, keepdim } = attrs(ctx);
+    // A kept axis is 1 wide, which is a literal, not the symbol it was.
+    return [
+      keepdim
+        ? inSyms[0].map((sym, axis) => (axes.includes(axis) ? 1 : sym))
+        : inSyms[0].filter((_, axis) => !axes.includes(axis)),
+    ];
+  },
   inferAxisNames: (inNames, ctx) => {
     const { axes, keepdim } = attrs(ctx);
     // With keepdim the axis survives at extent 1 and still means what it

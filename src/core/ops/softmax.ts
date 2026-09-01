@@ -2,7 +2,8 @@ import { z } from "zod";
 import { Box, Region, canonicalize, count, coversAxisFully, fromBox, iv } from "../region";
 import { normAxis } from "./reduce";
 import { DependencyNoteDraft, OpCtx, OpSpec, uniformDTypeOutputs, NoteCtx } from "./types";
-import { sameAxisNames } from "./axis-names";
+import { axisWord, sameAxisNames } from "./axis-names";
+import { sameSymShape } from "./sym-shape";
 
 const axisOf = (ctx: OpCtx) => normAxis(ctx.attrs.axis as number, ctx.inShapes[0].length);
 
@@ -37,12 +38,16 @@ function softmaxDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
     subject: ctx.outNames[0],
     severity: 2,
     flags: [
-      { tensorId: ctx.inIds[0], text: `full axis ${axis} — softmax normalises across it` },
+      {
+        tensorId: ctx.inIds[0],
+        text: `full axis ${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)} — softmax normalises across it`,
+      },
     ],
     text:
-      `softmax normalises ${ctx.inNames[0]} along axis ${axis} (${extent} wide), so a tile ` +
-      `of ${ctx.outNames[0]} needs that axis of ${ctx.inNames[0]} complete. Splitting ` +
-      `${ctx.inNames[0]} along axis ${axis} breaks fusion unless the reduction is done online.`,
+      `softmax normalises ${ctx.inNames[0]} along axis ${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)} ` +
+      `(${extent} wide), so a tile of ${ctx.outNames[0]} needs that axis of ${ctx.inNames[0]} ` +
+      `complete. Splitting ${ctx.inNames[0]} along axis ` +
+      `${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)} breaks fusion unless the reduction is done online.`,
   };
 }
 
@@ -53,6 +58,7 @@ export const softmaxOp: OpSpec = {
   attrSchema: z.object({ axis: z.number().int() }),
   arity: { inputs: 1, outputs: 1 },
   inferAxisNames: sameAxisNames,
+  inferSymShapes: sameSymShape,
   inferDTypes: uniformDTypeOutputs("softmax"),
   inferShapes: (inShapes, attrs) => {
     normAxis(attrs.axis as number, inShapes[0].length);

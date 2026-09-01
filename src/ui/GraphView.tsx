@@ -8,6 +8,7 @@ import {
   PlacedGraphNode,
 } from "./graph-scene";
 import { cardSize, TensorCard } from "./TensorCard";
+import { shapeLabel, symbolicExtentLabel } from "./shape-label";
 import { enabledPropResult, selectedTensorIds, TensorOffset, useStore } from "./store";
 
 type CardDrag = {
@@ -107,7 +108,10 @@ export function GraphView(): React.ReactElement {
     () =>
       resolved
         ? buildBaseGraphLayout(resolved, (tensor) =>
-            cardSize(tensor.resolved!, graphPx, tensor.name)
+            cardSize(tensor.resolved!, graphPx, tensor.name, [
+              shapeLabel(tensor, "symbolic"),
+              symbolicExtentLabel(tensor),
+            ])
           )
         : null,
     [resolved, graphPx]

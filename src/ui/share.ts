@@ -1,5 +1,6 @@
 import { Box } from "../core/region";
 import { Direction } from "./store";
+import { AxisMode } from "./shape-label";
 
 /**
  * Shareable workspace state.
@@ -16,6 +17,8 @@ export type WorkspaceLink = {
   tile: number;
   /** Optional: links written before snapping existed simply default to on. */
   snap?: boolean;
+  /** Optional: links written before the shape view existed keep numeric cards. */
+  axes?: AxisMode;
   /**
    * One entry per drawn part, in order, each naming its own tensor. The order
    * is load-bearing: it is what assigns hues and footprint rows, so parts are
@@ -41,6 +44,7 @@ const isBox = (box: unknown): box is [number, number][] =>
   );
 
 const DIRECTIONS: Direction[] = ["none", "backward", "forward", "both"];
+const AXIS_MODES: AxisMode[] = ["symbolic", "numeric"];
 
 /** Hash payloads above this are impractical as URLs; callers fall back to JSON. */
 /** @internal Exported so the URL/raw-payload boundary is tested directly. */
@@ -70,7 +74,16 @@ export function decodeWorkspace(hash: string): WorkspaceLink | null {
     const snap = raw.snap === undefined
       ? true
       : typeof raw.snap === "boolean" ? raw.snap : null;
-    if (dir === null || tile === null || snap === null) return null;
+    // Absent is a legacy link taking its documented default; present-but-wrong
+    // is a payload that cannot be trusted, and is refused like any other.
+    //
+    // This default is `numeric` while a fresh workspace opens on `symbolic`
+    // (`store.ts`), and the divergence is the point: a link should restore the
+    // cards it was written against, not be reinterpreted by a later default.
+    const axes = raw.axes === undefined
+      ? "numeric"
+      : AXIS_MODES.includes(raw.axes as AxisMode) ? (raw.axes as AxisMode) : null;
+    if (dir === null || tile === null || snap === null || axes === null) return null;
 
     let sel: WorkspaceLink["sel"] = null;
     const candidate: unknown = raw.sel;
@@ -90,7 +103,7 @@ export function decodeWorkspace(hash: string): WorkspaceLink | null {
         if (parts.length) sel = parts;
       } else return null;
     } else if (candidate !== undefined && candidate !== null) return null;
-    return { dsl: raw.dsl, dir, tile, snap, sel };
+    return { dsl: raw.dsl, dir, tile, snap, axes, sel };
   } catch {
     return null;
   }

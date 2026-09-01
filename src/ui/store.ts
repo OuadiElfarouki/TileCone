@@ -17,6 +17,7 @@ import { compileDSL } from "../parse/compiler";
 import { toDSL } from "../parse/dsl";
 import { graphScale, MAX_ELEM_PX, planeExtents, TILE_SCALE_MAX, TILE_SCALE_MIN } from "./tiling";
 import { tileOf } from "./grid";
+import { AxisMode } from "./shape-label";
 
 /** Which independently toggled views are active in the workspace. `none` is
  * the explicit figures-only state: analysis remains live while paint and rows hide. */
@@ -99,6 +100,8 @@ type WorkspaceRestore = {
   direction: Direction;
   tileScale: number;
   snapToGrid: boolean;
+  /** Whether a compact shape reads as semantic labels or numeric extents. */
+  axisMode: AxisMode;
   parts: SelPart[] | null;
 };
 
@@ -189,6 +192,12 @@ type State = {
    * been element-precise, only the gesture rounded.
    */
   snapToGrid: boolean;
+  /**
+   * Whether a compact shape reads as semantic labels or numeric extents. The
+   * tensor details retain axis identity, symbolic extent, and bound extent as
+   * separate facts without making every graph label carry all three.
+   */
+  axisMode: AxisMode;
   countIntermediates: boolean;
   focusTensor: string | null;
   /** Width in px of each side panel when open, and whether it is collapsed to a
@@ -227,6 +236,7 @@ type State = {
   setViewCfg: (tensorId: string, cfg: Partial<ViewCfg>) => void;
   setTileScale: (v: number) => void;
   setSnapToGrid: (v: boolean) => void;
+  setAxisMode: (v: AxisMode) => void;
   setCountIntermediates: (v: boolean) => void;
   setFocusTensor: (id: string | null) => void;
   /** Preview a panel resize, clamped to the usable open range. */
@@ -458,6 +468,10 @@ export const useStore = create<State>((set, get) => ({
   graphPx: MAX_ELEM_PX,
   tileScale: 0,
   snapToGrid: true,
+  // A new workspace opens on labels, because that is what the graph gained.
+  // A shared link deliberately defaults the other way: see `share.ts`, where an
+  // older payload keeps the numeric cards it was written against.
+  axisMode: "symbolic",
   countIntermediates: false,
   focusTensor: null,
   panelW: { left: 330, right: 300 },
@@ -503,12 +517,13 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
-  restoreWorkspace: ({ dsl, direction, tileScale, snapToGrid, parts }) => {
+  restoreWorkspace: ({ dsl, direction, tileScale, snapToGrid, axisMode, parts }) => {
     try {
       if (
         !["none", "backward", "forward", "both"].includes(direction) ||
         !Number.isFinite(tileScale) ||
-        typeof snapToGrid !== "boolean"
+        typeof snapToGrid !== "boolean" ||
+        !["symbolic", "numeric"].includes(axisMode)
       ) return false;
       const program = compileDSL(dsl);
       const base = loadResolvedGraph(program.graph, program.resolved);
@@ -534,6 +549,7 @@ export const useStore = create<State>((set, get) => ({
         direction,
         tileScale: clampedTile,
         snapToGrid,
+        axisMode,
         selection,
         ...recompute(program.resolved, selection),
       });
@@ -733,6 +749,7 @@ export const useStore = create<State>((set, get) => ({
     set((s) => ({ viewCfgs: { ...s.viewCfgs, [tensorId]: { ...s.viewCfgs[tensorId], ...cfg } } })),
 
   setSnapToGrid: (v) => set({ snapToGrid: v }),
+  setAxisMode: (v) => set({ axisMode: v }),
 
   setTileScale: (v) =>
     set({ tileScale: Math.max(TILE_SCALE_MIN, Math.min(TILE_SCALE_MAX, Math.round(v))) }),

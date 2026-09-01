@@ -20,6 +20,15 @@ describe("frameless tensor footprint", () => {
     const size = cardSize(shape, px, "X");
     expect(size.h).toBeGreaterThan(16 * px); // numeric label sits above the grid
   });
+
+  it("reserves the widest shape reading so changing modes cannot overlap cards", () => {
+    const shape = [4, 4];
+    const px = graphScale([{ rows: 4, cols: 4 }]);
+    const numeric = cardSize(shape, px, "X");
+    const labelled = cardSize(shape, px, "X", ["[long_sequence_axis × embedding_projection]"]);
+    expect(labelled.w).toBeGreaterThan(numeric.w);
+    expect(labelled.h).toBe(numeric.h);
+  });
 });
 
 describe("drawing through higher-rank tensor views", () => {

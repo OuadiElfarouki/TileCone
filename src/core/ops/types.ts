@@ -58,11 +58,20 @@ export type NoteCtx = OpCtx & {
   inIds: string[];
   outIds: string[];
   /**
-   * Declared (possibly symbolic) dimensions per input, parallel to `inShapes`.
-   * A note should name an axis the way the source does — a reader who wrote
-   * `input A [M, K]` is looking for `K`, not an internal einsum label.
+   * Verified symbolic dimensions per input, parallel to `inShapes`. For source
+   * tensors these are their declarations; for intermediates they are the
+   * expressions safely carried through prior operations. A reader who wrote
+   * `input A [M, K]` is looking for `K`, not an internal position.
    */
   inDims: Sym[][];
+  /**
+   * Declared axis names per input, parallel to `inShapes`. Where `inDims` names
+   * an axis's *extent* (`H*D`), this names the axis itself (`emb`). It is the
+   * more useful of the two for an intermediate tensor: a produced tensor has no
+   * declared shape, so without this a note about one falls back to a bare
+   * position — precisely where a reader most needs the word.
+   */
+  inAxisNames: AxisNames[];
   inRegions: (Region | undefined)[];
   outRegions: (Region | undefined)[];
 };
@@ -95,6 +104,24 @@ export interface OpSpec {
    * axis as the input one it came from.
    */
   inferAxisNames?(inNames: AxisNames[], ctx: OpCtx): AxisNames[];
+
+  /**
+   * Carry symbolic extents across this operation: one full-length `Sym[]` per
+   * output, an unknown axis written as its own literal extent.
+   *
+   * This is a different question from `inferAxisNames`, and the two must not be
+   * merged. A name says what an axis *is* and survives a change of extent; a
+   * symbol says how *wide* it is and does not. A convolution's height axis is
+   * still `h` by name, but it is no longer `H` elements after stride and
+   * padding, so conv names that axis and declines to give it a symbol.
+   *
+   * Omitting the hook leaves every output axis literal. Nothing here is taken
+   * on trust either way: `resolveGraph` evaluates whatever an operation returns
+   * against the bound parameters and drops any axis that does not come out at
+   * the extent actually inferred, so a wrong mapping degrades to the number
+   * rather than asserting a shape the graph does not have.
+   */
+  inferSymShapes?(inSyms: Sym[][], ctx: OpCtx): Sym[][];
 
   /** Infer canonical output dtypes and validate input dtype compatibility. */
   inferDTypes(inDTypes: DType[], attrs: Attrs, outShapes: number[][]): DType[];

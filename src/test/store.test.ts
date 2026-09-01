@@ -140,6 +140,7 @@ describe("transactional workspace restore", () => {
       direction: "both",
       tileScale: 2,
       snapToGrid: false,
+      axisMode: "symbolic",
       parts: [
         { tensorId: "Y", box: box([0, 2], [1, 3]) },
         { tensorId: "X", box: box([2, 4], [0, 1]) },
@@ -163,6 +164,7 @@ describe("transactional workspace restore", () => {
       direction: "none",
       tileScale: -3,
       snapToGrid: false,
+      axisMode: "symbolic",
       parts: null,
     });
 
@@ -176,6 +178,7 @@ describe("transactional workspace restore", () => {
       direction: "none",
       tileScale: 0,
       snapToGrid: true,
+      axisMode: "symbolic",
       parts: null,
     });
 
@@ -194,6 +197,7 @@ describe("transactional workspace restore", () => {
         direction: "none",
         tileScale: 0,
         snapToGrid: true,
+        axisMode: "symbolic",
         parts,
       });
       expect(restored).toBe(false);

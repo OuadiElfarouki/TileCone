@@ -199,7 +199,15 @@ function noteCtx(
     outIds: node.outputs,
     inNames: node.inputs.map((id) => graph.tensors[id].name),
     outNames: node.outputs.map((id) => graph.tensors[id].name),
-    inDims: node.inputs.map((id) => graph.tensors[id].shape),
+    inDims: node.inputs.map((id) => {
+      const tensor = graph.tensors[id];
+      return tensor.symShape ?? tensor.shape;
+    }),
+    inAxisNames: node.inputs.map((id) => {
+      const tensor = graph.tensors[id];
+      const names = tensor.axisNames ?? [];
+      return Array.from({ length: tensor.resolved!.length }, (_, axis) => names[axis]);
+    }),
     inRegions: node.inputs.map((id) => back.tensors.get(id)?.region),
     outRegions: node.outputs.map((id) => back.tensors.get(id)?.region),
   };

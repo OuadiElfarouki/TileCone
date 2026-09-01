@@ -18,6 +18,13 @@ export type Tensor = {
   dtype: DType;
   /** One name per axis, parallel to `shape`; holes are axes with no name. */
   axisNames?: AxisNames;
+  /**
+   * Symbolic extents for every axis, populated by resolution: a declared
+   * tensor's own dimensions, and for a produced tensor whatever its operation
+   * could carry across. An axis with no symbol holds its literal extent, so
+   * this is always full length and always evaluates to `resolved`.
+   */
+  symShape?: Shape;
   /** Display-only: distinguishes a learned parameter from an activation. */
   role?: "activation" | "weight";
   producer?: { nodeId: string; slot: number }; // absent => graph input
@@ -95,6 +102,7 @@ function cloneGraph(source: Graph): Graph {
       shape: tensor.shape.slice(),
       dtype: tensor.dtype,
       ...(tensor.axisNames ? { axisNames: tensor.axisNames.slice() } : {}),
+      ...(tensor.symShape ? { symShape: tensor.symShape.slice() } : {}),
       ...(tensor.role ? { role: tensor.role } : {}),
     };
   }
@@ -129,6 +137,31 @@ export function graphOutputs(graph: ResolvedGraph): Tensor[] {
 function axisNamesOf(tensor: Tensor, rank: number): AxisNames {
   const declared = tensor.axisNames ?? [];
   return Array.from({ length: rank }, (_, axis) => declared[axis]);
+}
+
+/**
+ * Keep only the symbolic extents that are actually true of this tensor.
+ *
+ * An operation proposes; the resolver checks. Every axis is evaluated against
+ * the bound parameters and kept only if it comes out at the extent inference
+ * actually produced — anything else falls back to the literal. A symbol is read
+ * as a claim about the graph, so a plausible-but-wrong one misinforms in a way
+ * a plain number cannot, and no mapping is trusted far enough to do that.
+ */
+function verifiedSymShape(
+  proposed: Shape | undefined,
+  extents: number[],
+  params: Record<string, number>
+): Shape {
+  return extents.map((extent, axis) => {
+    const sym = proposed?.[axis];
+    if (sym === undefined) return extent;
+    try {
+      return resolveShape([sym], params)[0] === extent ? sym : extent;
+    } catch {
+      return extent;
+    }
+  });
 }
 
 /** Narrow an object attribute schema so unknown keys are rejected instead of
@@ -334,6 +367,7 @@ export function resolveGraph(source: Graph): ResolvedGraph {
     if (t.producer) continue;
     try {
       t.resolved = resolveShape(t.shape, g.params);
+      t.symShape = verifiedSymShape(t.shape, t.resolved, g.params);
     } catch (e) {
       throw new GraphError(
         `tensor "${t.id}": shape resolution failed: ${(e as Error).message}`,
@@ -430,6 +464,46 @@ export function resolveGraph(source: Graph): ResolvedGraph {
       }
     }
 
+    let outSyms: Shape[] | null = null;
+    if (spec.inferSymShapes) {
+      try {
+        outSyms = spec.inferSymShapes(
+          n.inputs.map((id) => g.tensors[id].symShape ?? g.tensors[id].resolved!),
+          { inShapes, outShapes, attrs: n.attrs }
+        );
+      } catch (e) {
+        throw new GraphError(
+          `node "${n.id}" (${n.op}): symbolic shape inference failed: ${(e as Error).message}`,
+          "GRAPH_INVALID",
+          { kind: "node", id: n.id }
+        );
+      }
+      if (!Array.isArray(outSyms) || outSyms.length !== n.outputs.length)
+        throw new GraphError(
+          `node "${n.id}" (${n.op}): inferSymShapes returned ` +
+            `${Array.isArray(outSyms) ? outSyms.length : "a non-array"} shapes for ${n.outputs.length} outputs`,
+          "GRAPH_INVALID",
+          { kind: "node", id: n.id }
+        );
+      for (let slot = 0; slot < outSyms.length; slot++) {
+        const syms = outSyms[slot];
+        if (!Array.isArray(syms) || syms.length !== outShapes[slot].length)
+          throw new GraphError(
+            `node "${n.id}" (${n.op}): inferSymShapes returned ` +
+              `${Array.isArray(syms) ? syms.length : "a non-array"} dimensions for output ${slot} ` +
+              `of rank ${outShapes[slot].length}`,
+            "GRAPH_INVALID",
+            { kind: "node", id: n.id }
+          );
+        if (syms.some((sym) => typeof sym !== "string" && typeof sym !== "number"))
+          throw new GraphError(
+            `node "${n.id}" (${n.op}): inferSymShapes returned an invalid dimension for output ${slot}`,
+            "GRAPH_INVALID",
+            { kind: "node", id: n.id }
+          );
+      }
+    }
+
     let outDTypes: DType[];
     try {
       outDTypes = spec.inferDTypes(
@@ -478,6 +552,7 @@ export function resolveGraph(source: Graph): ResolvedGraph {
       }
       t.resolved = inferred;
       t.dtype = outDTypes[s];
+      t.symShape = verifiedSymShape(outSyms?.[s], inferred, g.params);
       const names = outNames?.[s];
       if (names && names.some((v) => v !== undefined))
         t.axisNames = names.slice();
