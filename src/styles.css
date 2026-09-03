@@ -278,10 +278,15 @@ textarea.source.error-state { border-color: var(--err); }
 .graph-canvas.panning { cursor: grabbing; }
 .canvas-empty { flex: 1; display: grid; place-items: center; color: var(--muted); }
 .graph-inner { position: absolute; transform-origin: 0 0; }
-.edges { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.edges {
+  position: absolute; inset: 0; z-index: 10; overflow: visible; pointer-events: none;
+  /* Free movement can put an unrelated card under a connector. Keeping the
+     edge layer above plates makes that read as a crossing, not a broken link. */
+}
 .edge {
   stroke: var(--muted); stroke-width: 1.4; fill: none; opacity: 0.7;
   stroke-linecap: round; stroke-linejoin: round;
+  filter: drop-shadow(0 0 1.5px var(--panel));
 }
 .edge.hot { stroke: var(--hot); stroke-width: 2.2; opacity: 1; }
 .edge.dim { opacity: var(--dim); }
@@ -297,6 +302,7 @@ textarea.source.error-state { border-color: var(--err); }
   display: inline-flex; align-items: center; gap: 4px; flex: none; pointer-events: auto;
 }
 .zoom-controls button { min-width: 28px; padding: 2px 8px; background: var(--panel); }
+.zoom-controls button:disabled { opacity: .4; cursor: default; }
 .zoom-controls span {
   min-width: 42px; padding-left: 3px; color: var(--muted);
   font: var(--t-small)/1.4 var(--mono);
@@ -320,6 +326,10 @@ textarea.source.error-state { border-color: var(--err); }
 .card-slot { position: absolute; cursor: default; }
 .card-slot.dim { opacity: var(--dim); }
 .card-slot.moving { z-index: 40; opacity: 1; }
+.card-slot.moving.blocked .tensor-grab { color: var(--warn-ink); opacity: 1; }
+.card-slot.moving.blocked .tc-canvas-wrap canvas {
+  outline-color: var(--warn-ink); box-shadow: 0 0 0 2px color-mix(in srgb, var(--warn-ink) 24%, transparent);
+}
 /* Pointer capture keeps the pan alive across nodes; keep its cursor equally
    stable instead of flashing back to a card's default/crosshair on the way by. */
 .graph-canvas.panning .card-slot,
@@ -352,6 +362,10 @@ textarea.source.error-state { border-color: var(--err); }
 .tc-name { font-size: var(--t-base); font-weight: 600; line-height: 1; cursor: help; outline: none; }
 .tc-name:focus-visible { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
 .tc-shape { color: var(--muted); font-size: var(--t-micro); font-variant-numeric: tabular-nums; }
+.tc-tile {
+  color: var(--muted); font: var(--t-micro)/1 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
 
 /* Compact details belong to the name, not the whole tensor plate. */
 .tc-info {
@@ -371,8 +385,8 @@ textarea.source.error-state { border-color: var(--err); }
 .badge.input { color: var(--muted); }
 .badge.approx { color: var(--warn-ink); }
 .tc-axes { display: flex; gap: 6px; align-items: center; margin: 3px 0; font-size: var(--t-small); color: var(--muted); }
-/* a hovered card floats above its neighbours so the info panel is not clipped */
-.card-slot:hover { z-index: 30; }
+/* The popover itself floats above connector crossings; lifting the whole card
+   would put its opaque canvas back over the edge layer. */
 .tc-slider { display: flex; align-items: center; gap: 5px; font-size: var(--t-small); color: var(--muted); }
 .tc-slider input { flex: 1; padding: 0; }
 .tc-slider-val { min-width: 18px; text-align: right; }
@@ -563,6 +577,13 @@ textarea.source.error-state { border-color: var(--err); }
   margin: 0 0 8px; font-size: var(--t-body); line-height: 1.62; color: var(--ink);
   text-wrap: pretty;
 }
+.note-severity {
+  display: inline-block; min-width: 25px; margin-right: 6px;
+  font-size: 6px; letter-spacing: 1px; vertical-align: 2px;
+}
+.note-severity.severity-1 { color: var(--muted); }
+.note-severity.severity-2 { color: var(--warn-ink); }
+.note-severity.severity-3 { color: var(--accent); }
 .notes-list li b {
   display: inline-block; margin-right: 6px; padding: 0 5px;
   font-family: var(--mono);
@@ -582,7 +603,8 @@ textarea.source.error-state { border-color: var(--err); }
   border: 1px solid var(--warn-ink); border-radius: var(--r); padding: 0 3px;
 }
 
-/* The slider states the request; this states what the graph settled on. */
+/* Both the slider's accessible text and this visible value state the lattice
+   the graph actually settled on. */
 .tile-settled {
   font-family: var(--mono);
   font-size: var(--t-small); color: var(--muted); font-variant-numeric: tabular-nums;

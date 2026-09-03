@@ -1,11 +1,15 @@
 import { useEffect } from "react";
 import { anchorTensorId, useStore, viewAxes } from "./store";
-import { nudgeUnit } from "./grid";
+import { nudgeDelta, nudgeUnit } from "./grid";
 
 const isTyping = (el: EventTarget | null) => {
   const t = el as HTMLElement | null;
   return !!t && ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName);
 };
+
+/** GraphView owns viewport geometry; the one global keyboard listener asks it
+ * to fit through this UI-local event rather than installing a second listener. */
+export const FIT_GRAPH_EVENT = "tilecone:fit-graph";
 
 /**
  * Global selection keybindings. Arrow keys move the selection in the plane the
@@ -62,6 +66,11 @@ export function useKeyboard({
         showShortcuts();
         return;
       }
+      if (e.key === "f") {
+        e.preventDefault();
+        window.dispatchEvent(new Event(FIT_GRAPH_EVENT));
+        return;
+      }
       // Arrow keys and slider keys act on one tensor's axes, so they follow the
       // anchor: the focused tile's tensor, else the last one drawn on.
       const anchor = anchorTensorId(s.selection, s.focusedBox);
@@ -81,7 +90,6 @@ export function useKeyboard({
       const { rowAxis: rowAx, colAxis: colAx } = viewAxes(shape);
       const visible = [rowAx, colAx].filter((a) => a >= 0);
       const unit = nudgeUnit(shape, s.tileScale, s.graphPx, s.snapToGrid);
-      const step = e.shiftKey ? unit * 8 : unit;
 
       const arrows: Record<string, [number, number]> = {
         ArrowLeft: [colAx, -1],
@@ -94,10 +102,23 @@ export function useKeyboard({
         const [axis, sign] = hit;
         if (axis < 0) return;
         e.preventDefault();
+        const parts = s.selection?.parts ?? [];
+        const anchorIndex = s.focusedBox !== null && parts[s.focusedBox]
+          ? s.focusedBox
+          : parts.length - 1;
+        const interval = parts[anchorIndex]?.box[axis];
+        if (!interval) return;
+        const delta = nudgeDelta(
+          interval,
+          sign as -1 | 1,
+          unit,
+          s.snapToGrid,
+          e.shiftKey ? 8 : 1
+        );
         // Auto-repeat records no undo entry, so holding an arrow is one step to
         // undo rather than forty — which would also evict the real history,
         // since it is capped at 40 entries.
-        s.moveSelection(axis, sign * step, !e.repeat);
+        s.moveSelection(axis, delta, !e.repeat);
         return;
       }
 

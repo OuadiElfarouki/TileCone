@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canStartGraphPan, fittedTransform } from "../ui/GraphView";
+import { canStartGraphPan, fittedTransform, graphZoomBounds } from "../ui/GraphView";
 
 const target = (blocked: boolean) => ({
   closest: (selector: string) => {
@@ -31,5 +31,24 @@ describe("graph viewport fit", () => {
     expect(tf.x + -100 * tf.k).toBe(20);
     expect(tf.y + -50 * tf.k).toBe(20);
     expect(tf.x + (-100 + 400) * tf.k).toBe(420);
+  });
+
+  it("keeps the smallest tensor legible and stops where supersampling stops", () => {
+    const bounds = graphZoomBounds([
+      { kind: "tensor", w: 120, h: 35 },
+      { kind: "tensor", w: 300, h: 200 },
+      { kind: "op", w: 64, h: 20 },
+    ]);
+    expect(bounds.min).toBe(14 / 35);
+    expect(bounds.max).toBe(4);
+  });
+
+  it("does not make fit shrink cards below the legibility floor", () => {
+    const tf = fittedTransform(
+      { left: 0, top: 0, width: 10_000, height: 10_000 },
+      { width: 400, height: 300 },
+      { min: 0.4, max: 4 }
+    );
+    expect(tf.k).toBe(0.4);
   });
 });

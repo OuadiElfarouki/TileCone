@@ -11,8 +11,6 @@ export type DependencyNote = {
   text: string;
   /** How hard this constraint binds a fused kernel; see `DependencyNoteDraft`. */
   severity: 1 | 2 | 3;
-  /** Other tensors the same statement covers, when notes were merged. */
-  alsoApplies?: string[];
 };
 
 /** Above this, the panel stops being a summary and becomes a wall. */
@@ -23,6 +21,8 @@ export const MAX_NOTES = 4;
 export type ConeFindings = {
   /** The surviving notes, in graph order. */
   notes: DependencyNote[];
+  /** All distinct constraints before the display cap is applied. */
+  constraintCount: number;
   elementwise: boolean;
   /** Tensor id -> its own short reasons, for annotating footprint rows. */
   flags: Map<string, string[]>;
@@ -102,7 +102,7 @@ function finalize({ note, others }: Group): DependencyNote {
     others.length === 1
       ? others[0]
       : `${others.slice(0, -1).join(", ")} and ${others[others.length - 1]}`;
-  return { ...note, text: `${note.text} The same holds for ${list}.`, alsoApplies: others };
+  return { ...note, text: `${note.text} The same holds for ${list}.` };
 }
 
 /**
@@ -182,7 +182,12 @@ export function coneFindings(
       } else flags.set(flag.tensorId, [flag.text]);
     }
 
-  return { notes: selectNotes(groups, limit), elementwise, flags };
+  return {
+    notes: selectNotes(groups, limit),
+    constraintCount: groups.length,
+    elementwise,
+    flags,
+  };
 }
 
 /** Everything an operation needs to describe its own constraint. */

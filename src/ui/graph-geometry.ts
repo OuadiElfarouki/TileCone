@@ -66,18 +66,15 @@ export function constrainRectMotion(
   rect: Rect,
   delta: Point,
   blockers: Rect[],
-  gap = NODE_GAP,
-  min: Point = { x: WORLD_MARGIN, y: WORLD_MARGIN }
+  gap = NODE_GAP
 ): Rect {
-  const dx = Math.max(delta.x, min.x - rect.x);
-  const dy = Math.max(delta.y, min.y - rect.y);
   let moved = rect;
-  if (Math.abs(dx) >= Math.abs(dy)) {
-    moved = moveX(moved, dx, blockers, gap);
-    moved = moveY(moved, dy, blockers, gap);
+  if (Math.abs(delta.x) >= Math.abs(delta.y)) {
+    moved = moveX(moved, delta.x, blockers, gap);
+    moved = moveY(moved, delta.y, blockers, gap);
   } else {
-    moved = moveY(moved, dy, blockers, gap);
-    moved = moveX(moved, dx, blockers, gap);
+    moved = moveY(moved, delta.y, blockers, gap);
+    moved = moveX(moved, delta.x, blockers, gap);
   }
   // A valid graph starts separated. This guard makes the invariant fail safe
   // if a future layout policy supplies an already-overlapping blocker set.

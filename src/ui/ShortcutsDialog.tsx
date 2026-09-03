@@ -14,8 +14,8 @@ const GROUPS = [
   {
     title: "View",
     items: [
-      ["U", "toggle Upstream"],
-      ["D", "toggle Downstream"],
+      ["U", "toggle What it needs"],
+      ["D", "toggle What it feeds"],
       ["F", "fit the graph to the viewport"],
       ["[ / ]", "scrub the first hidden tensor axis"],
       ["Scroll", "zoom around the pointer"],

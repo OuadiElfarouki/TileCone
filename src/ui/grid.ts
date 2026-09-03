@@ -8,9 +8,9 @@
  * honest at every zoom level instead of degrading into sub-pixel noise.
  */
 
-import { Box, Region } from "../core/region";
+import { Box, Interval, Region } from "../core/region";
 import { CARD_SURFACE } from "./palette";
-import { cardPx, planeExtents, tileFor } from "./tiling";
+import { cardPx, MIN_CELL_PX, planeExtents, tileFor } from "./tiling";
 import { viewAxes, ViewCfg } from "./store";
 
 export type GridGeom = {
@@ -237,7 +237,7 @@ export function drawGrid(
   }
 
   // tile boundaries — the cell grid *is* the tile grid
-  if (Math.min(geom.cellW, geom.cellH) >= 5) {
+  if (Math.min(geom.cellW, geom.cellH) >= MIN_CELL_PX) {
     ctx.strokeStyle = dark ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.10)";
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -280,6 +280,24 @@ export function nudgeUnit(
   snapToGrid: boolean
 ): number {
   return snapToGrid ? tileOf(shape, tileScale, px) : 1;
+}
+
+/** Delta for one arrow press. An off-lattice selection first lands an edge on
+ * the current lattice in the requested direction; once aligned, arrows advance
+ * by whole tiles. This preserves the box's exact extent while making a region
+ * drawn under an older/finer grid recoverable with the keyboard. */
+export function nudgeDelta(
+  interval: Interval,
+  sign: -1 | 1,
+  unit: number,
+  snapToGrid: boolean,
+  multiplier = 1
+): number {
+  if (!snapToGrid || unit <= 1) return sign * unit * multiplier;
+  const remainder = ((interval.lo % unit) + unit) % unit;
+  if (remainder !== 0)
+    return sign > 0 ? unit - remainder : -remainder;
+  return sign * unit * multiplier;
 }
 
 /**

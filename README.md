@@ -92,8 +92,8 @@ Use `tryCompileDSL` when diagnostics should be returned as data instead of throw
 
 ## Notes on the UI
 
-- **The inspector answers two adjacent questions.** Upstream” lists every tensor region the
-  tile reads; "Downstream” lists every region it influences. Their headings are also the
+- **The inspector answers two adjacent questions.** "What it needs" lists every tensor region the
+  tile reads; "What it feeds" lists every region it influences. Their headings are also the
   view controls (`u` / `d`), so collapsing a question removes the same paint from the graph. Both
   can be collapsed independently for an explicitly labelled figures-only view.
 - **Downstream reach is classified, not merely highlighted.** Each downstream row says whether the
@@ -115,9 +115,9 @@ Use `tryCompileDSL` when diagnostics should be returned as data instead of throw
 - **Typed ranges are exact and authoritative.** Editing a tile's range never snaps or rounds it,
   even while snap is enabled. Snap governs future canvas gestures and keyboard movement only:
   arrows move by the current grid tile while snap is on and by one element while it is off.
-  Toggling snap or changing grid detail never rewrites an existing range; a grid change only
-  changes the next snapped stride. At a tensor edge movement clamps the whole range without
-  shrinking it.
+  Toggling snap or changing grid detail never rewrites an existing range. If the current range is
+  off the new lattice, its first snapped nudge aligns one edge without resizing it; later nudges
+  use the whole tile. At a tensor edge movement clamps the whole range without shrinking it.
 - **One px-per-element for the whole graph.** The scale is a property of the graph, not of each
   card, so a dimension two tensors share is drawn at the same physical length in both: in
   `C[M,N] = A[M,K] @ B[K,N]`, `A`'s width and `B`'s height are equal because both are `K`. Sizing
@@ -132,12 +132,13 @@ Use `tryCompileDSL` when diagnostics should be returned as data instead of throw
   (`h`). Its faint selection rectangle remains available so the tile can be included again.
 - **Tensor placement is editable without weakening the layout.** Drag the dotted handle outside a
   card's top-left corner to reposition it. Curved connectors follow live; tensor cards and operation
-  nodes remain hard collision boundaries. A completed drag is one chronological workspace undo
-  step, and Escape cancels an in-progress move.
+  nodes remain hard collision boundaries, connector crossings stay visible over unrelated cards,
+  and a blocked drag is visibly marked. A completed drag and Reset layout are chronological
+  workspace undo steps, Escape cancels an in-progress move, and shared links retain the arrangement.
 
 Press `?` in the app for the complete shortcut sheet. The main bindings are:
 
-- `u` / `d`: toggle Upstream / Feeds downstream; `f`: fit the graph; `[` / `]`: scrub a hidden axis.
+- `u` / `d`: toggle What it needs / What it feeds; `f`: fit the graph; `[` / `]`: scrub a hidden axis.
 - Arrow keys move the focused tile; Shift+arrow moves eight steps; `h` toggles its paint; Escape cancels or unpins.
 - Ctrl/Cmd+Z undoes workspace movement; Alt+1 / Alt+2 toggle the panels; Ctrl/Cmd+Enter runs source edits.
 

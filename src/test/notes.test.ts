@@ -253,7 +253,6 @@ Y = matmul(S1, V)
     const { notes } = notesFor(QKV, "Y", [[0, 4], [0, 8]]);
     const contractionNotes = notes.filter((n) => n.text.includes("contracts E=32"));
     const projection = contractionNotes.find((n) => ["Q", "K", "V"].includes(n.subject))!;
-    expect(projection.alsoApplies?.length).toBeGreaterThan(0);
     expect(projection.text).toContain("The same holds for");
     expect(contractionNotes.some((n) => n.subject === "S1")).toBe(true);
   });
@@ -308,6 +307,7 @@ Y = matmul(H, V)
   it("keeps the hardest constraint when the cap has to drop one", () => {
     const { findings } = findingsFor(STACK, "Y", [[0, 4], [0, 4]]);
     expect(findings.notes).toHaveLength(MAX_NOTES);
+    expect(findings.constraintCount).toBeGreaterThan(findings.notes.length);
     // the contraction is the fifth and last in graph order: dropping by graph
     // order would lose the one constraint that forces staging or accumulation
     expect(findings.notes.some((note) => note.severity === 3)).toBe(true);
@@ -355,7 +355,7 @@ Y = matmul(Q, Kt)
     expect(dependencyNotes(resolved, back, 1)[0].subject).toBe("Y");
     expect(
       findings.notes.some(
-        (note) => note.subject === "Q" || note.alsoApplies?.includes("Q")
+        (note) => note.subject === "Q" || note.text.includes("same holds for Q")
       )
     ).toBe(true);
   });

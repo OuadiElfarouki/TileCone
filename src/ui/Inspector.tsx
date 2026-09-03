@@ -45,12 +45,17 @@ function fmt(n: number): string {
   return n.toFixed(n < 10 && !Number.isInteger(n) ? 2 : 0);
 }
 
-const scaleLabel = (scale: number) =>
-  scale === TILE_SCALE_NONE ? "none" : scale === 0 ? "auto" : `${scale > 0 ? "×" : "÷"}${2 ** Math.abs(scale)}`;
-
 /** What the graph actually settled on, which the request only asks for. */
 function settledLabel(min: number, max: number): string {
   return min === max ? `${min} × ${min}` : `${min} × ${min} – ${max} × ${max}`;
+}
+
+function stopLabel(
+  scale: number,
+  settled: { min: number; max: number }
+): string {
+  const lattice = settledLabel(settled.min, settled.max);
+  return scale === TILE_SCALE_NONE ? `none → ${lattice}` : lattice;
 }
 
 /**
@@ -73,16 +78,17 @@ function SetupStrip(): React.ReactElement {
     const planes = planesOf(resolved);
     const stops = effectiveTileScaleStops(planes, graphPx);
     const index = effectiveTileScaleIndex(planes, graphPx, stops, tileScale);
-    return { stops, index, settled: settledTiles(planes, stops[index], graphPx) };
+    const settled = stops.map((scale) => settledTiles(planes, scale, graphPx));
+    return { stops, index, settled, labels: stops.map((scale, i) => stopLabel(scale, settled[i])) };
   }, [resolved, graphPx, tileScale]);
   const requested = detail.stops[detail.index];
-  const { min, max } = detail.settled;
+  const { min, max } = detail.settled[detail.index];
   const hasSemanticLabels = Object.values(resolved.tensors).some(hasSymbolicShape);
 
   return (
     <section className="inspector-setup">
       <div className="setup-row">
-        <span className="setup-kicker">grid</span>
+        <span className="setup-kicker">grid · all tensors</span>
         <span
           className="tile-settled"
           title={
@@ -124,8 +130,8 @@ function SetupStrip(): React.ReactElement {
         value={detail.index}
         onChange={(event) => setTileScale(detail.stops[Number(event.target.value)])}
         aria-label="tile grid detail"
-        aria-valuetext={scaleLabel(detail.stops[detail.index])}
-        title={`global tile detail — ${detail.stops.map(scaleLabel).join(" · ")}`}
+        aria-valuetext={detail.labels[detail.index]}
+        title={`global tile detail — ${detail.labels.join(" · ")}`}
       />
     </section>
   );
@@ -192,6 +198,12 @@ function SelectionRangeInput({
  * Why the footprint has the shape it has. The numbers above say how much; this
  * says what constrains it, which is the part that transfers to writing a kernel.
  */
+const NOTE_SEVERITY = {
+  1: { word: "advisory", dots: "●" },
+  2: { word: "moderate", dots: "●●" },
+  3: { word: "strong", dots: "●●●" },
+} as const;
+
 function DependencyNotes({
   findings,
   hasSelection,
@@ -202,22 +214,32 @@ function DependencyNotes({
   hasSelection: boolean;
   focusedBox: number | null;
   attributed: boolean;
-}): React.ReactElement {
+}): React.ReactElement | null {
+  // The directional sections already explain an absent/disabled selection.
+  // Repeating that state here would make three parts of one panel teach the
+  // same two questions in different words.
+  if (!hasSelection || !findings) return null;
+  const capped = findings.constraintCount > findings.notes.length;
   return (
     <section className="ins-section notes-section">
       <div className="ins-title">
         Dependency notes
         {focusedBox !== null && attributed && <span className="muted"> · tile {focusedBox + 1}</span>}
+        {capped && (
+          <span className="muted"> · {findings.notes.length} of {findings.constraintCount} constraints</span>
+        )}
       </div>
-      {!hasSelection || !findings ? (
-        <p className="hint">
-          Draw or enable a tile to read its analysis. Notes here call out the reductions and contractions
-          that constrain a fused kernel.
-        </p>
-      ) : findings.notes.length ? (
+      {findings.notes.length ? (
         <ul className="notes-list">
           {findings.notes.map((note) => (
             <li key={`${note.nodeId}:${note.text}`}>
+              <span
+                className={`note-severity severity-${note.severity}`}
+                title={`${NOTE_SEVERITY[note.severity].word} constraint`}
+                aria-label={`${NOTE_SEVERITY[note.severity].word} constraint`}
+              >
+                <span aria-hidden>{NOTE_SEVERITY[note.severity].dots}</span>
+              </span>
               <b>{note.op}</b>
               {note.text}
             </li>
@@ -230,8 +252,7 @@ function DependencyNotes({
         </p>
       ) : (
         <p className="hint">
-          Nothing in Upstream reaches an operation, so no dependency
-          constrains it.
+          Nothing this tile needs reaches an operation, so no dependency constrains it.
         </p>
       )}
     </section>
@@ -577,7 +598,7 @@ function TileIdentity({
         <button
           className={`mini copy-cone${copyState === "failed" ? " copy-failed" : ""}`}
           onClick={onCopyAll}
-          title="copy all needs-upstream and feeds-downstream slice expressions"
+          title="copy slice expressions for everything this tile needs and feeds"
           aria-live="polite"
         >
           {copyState === "copied" ? "copied ✓" : copyState === "failed" ? "copy failed" : "copy all"}
@@ -656,8 +677,7 @@ function RegionEditor(): React.ReactElement | null {
       {overlap.summed > overlap.unique && (
         <p className="hint overlap">
           tiles overlap: {fmt(overlap.summed)} counted across parts,{" "}
-          <b>{fmt(overlap.unique)}</b> distinct elements, upstream and downstream use the
-          deduplicated set
+          <b>{fmt(overlap.unique)}</b> distinct elements; both analyses use the deduplicated set
         </p>
       )}
 
@@ -856,13 +876,13 @@ export function Inspector(): React.ReactElement {
   const upstreamEmpty = enabledBoxes === 0
     ? "No tiles are enabled — include one above to analyse it."
     : seedIds.some((id) => resolved.tensors[id].producer)
-      ? "Everything upstream of the selection is itself selected."
-      : "Every selected tensor is a graph input — there is nothing upstream to read.";
+      ? "Everything the selection needs is itself selected."
+      : "Every selected tensor is a graph input — it needs nothing earlier.";
   const downstreamEmpty = enabledBoxes === 0
     ? "No tiles are enabled — include one above to analyse it."
     : seedIds.some((id) => resolved.consumers[id]?.length)
       ? "Everything the selection feeds is itself selected."
-      : "Nothing consumes this selection — it is a graph output.";
+      : "Nothing consumes this selection — it feeds no later tensor.";
 
   const visibleRows = [...(showUpstream ? upstream : []), ...(showDownstream ? downstream : [])];
   const approxReasons = [
@@ -916,7 +936,7 @@ export function Inspector(): React.ReactElement {
             <ConeSection
               direction="backward"
               arrow="↑"
-              title="Upstream"
+              title="What it needs"
               rows={upstream}
               hue={coneHue("upstream")}
               flags={findings?.flags ?? new Map()}
@@ -934,7 +954,7 @@ export function Inspector(): React.ReactElement {
             <ConeSection
               direction="forward"
               arrow="↓"
-              title="Downstream"
+              title="What it feeds"
               rows={downstream}
               hue={coneHue("downstream")}
               flags={new Map()}
@@ -952,12 +972,12 @@ export function Inspector(): React.ReactElement {
             />
             {direction === "none" && (
               <p className="view-mode-note" role="status">
-                Figures only · Upstream and Downstream rows and graph highlights are hidden.
+                Figures only · What it needs and What it feeds are hidden.
               </p>
             )}
             {showDownstream && contrib?.capped && (
               <p className="hint">
-                more than {MAX_CONTRIBUTION_PROBES} tensors downstream — rows below do not say
+                more than {MAX_CONTRIBUTION_PROBES} tensors are fed — rows below do not say
                 whether this tile completes them or only feeds them
               </p>
             )}

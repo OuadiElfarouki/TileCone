@@ -1,5 +1,5 @@
 import { Box } from "../core/region";
-import { Direction } from "./store";
+import { Direction, MAX_TENSOR_OFFSET } from "./store";
 import { AxisMode } from "./shape-label";
 
 /**
@@ -19,6 +19,8 @@ export type WorkspaceLink = {
   snap?: boolean;
   /** Optional: links written before the shape view existed keep numeric cards. */
   axes?: AxisMode;
+  /** Optional: user displacement from the generated graph layout. */
+  pos?: Record<string, [number, number]>;
   /**
    * One entry per drawn part, in order, each naming its own tensor. The order
    * is load-bearing: it is what assigns hues and footprint rows, so parts are
@@ -85,6 +87,21 @@ export function decodeWorkspace(hash: string): WorkspaceLink | null {
       : AXIS_MODES.includes(raw.axes as AxisMode) ? (raw.axes as AxisMode) : null;
     if (dir === null || tile === null || snap === null || axes === null) return null;
 
+    let pos: WorkspaceLink["pos"];
+    if (raw.pos !== undefined) {
+      if (!raw.pos || typeof raw.pos !== "object" || Array.isArray(raw.pos)) return null;
+      const entries = Object.entries(raw.pos);
+      if (!entries.every(
+        ([id, offset]) =>
+          !!id && Array.isArray(offset) && offset.length === 2 &&
+          offset.every((value) =>
+            typeof value === "number" && Number.isFinite(value) &&
+            Math.abs(value) <= MAX_TENSOR_OFFSET
+          )
+      )) return null;
+      pos = Object.fromEntries(entries) as Record<string, [number, number]>;
+    }
+
     let sel: WorkspaceLink["sel"] = null;
     const candidate: unknown = raw.sel;
     if (Array.isArray(candidate)) {
@@ -103,7 +120,7 @@ export function decodeWorkspace(hash: string): WorkspaceLink | null {
         if (parts.length) sel = parts;
       } else return null;
     } else if (candidate !== undefined && candidate !== null) return null;
-    return { dsl: raw.dsl, dir, tile, snap, axes, sel };
+    return { dsl: raw.dsl, dir, tile, snap, axes, ...(pos ? { pos } : {}), sel };
   } catch {
     return null;
   }

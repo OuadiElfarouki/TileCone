@@ -12,7 +12,6 @@ import {
   NODE_GAP,
   rectsOverlap,
   Rect,
-  WORLD_MARGIN,
 } from "../ui/graph-geometry";
 
 const card: Rect = { x: 20, y: 40, w: 100, h: 80 };
@@ -38,10 +37,10 @@ describe("solid graph-node motion", () => {
     expect(rectsOverlap(moved, op)).toBe(false);
   });
 
-  it("enforces the top-left world boundary", () => {
+  it("allows movement into negative world coordinates", () => {
     const moved = constrainRectMotion(card, { x: -1000, y: -1000 }, []);
-    expect(moved.x).toBe(WORLD_MARGIN);
-    expect(moved.y).toBe(WORLD_MARGIN);
+    expect(moved.x).toBe(-980);
+    expect(moved.y).toBe(-960);
   });
 });
 

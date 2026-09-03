@@ -13,7 +13,7 @@ import {
 import { aggregateColors, boxColor } from "./palette";
 import { BoxProp, Direction, partsOn, useStore, ViewCfg, viewAxes } from "./store";
 import { cardPx, planeExtents } from "./tiling";
-import { shapeLabel, shapeReadings, symbolicExtentLabel } from "./shape-label";
+import { shapeLabel, shapeReadings } from "./shape-label";
 
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -231,10 +231,11 @@ export function TensorCard({
   const selection = useStore((s) => s.selection);
   const backwardRes = useStore((s) => s.backwardRes);
   const forwardRes = useStore((s) => s.forwardRes);
-  const preview = useStore((s) => s.preview);
+  // Subscribe only to this tensor's preview entry. A hover query can touch a
+  // subset of the graph; cards outside it retain `undefined` and do not render.
+  const prev = useStore((s) => s.preview?.tensors.get(tensor.id));
   const setSelection = useStore((s) => s.setSelection);
   const setPreviewBox = useStore((s) => s.setPreviewBox);
-  const focusTensor = useStore((s) => s.focusTensor);
   const perBox = useStore((s) => s.perBox);
   const focusedBox = useStore((s) => s.focusedBox);
   const hiddenBoxes = useStore((s) => s.hiddenBoxes);
@@ -247,7 +248,7 @@ export function TensorCard({
   const setDragging = useStore((s) => s.setDragging);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const previewKeyRef = useRef<string | null>(null);
   const [drag, setDrag] = useState<{ r0: number; c0: number; r1: number; c1: number } | null>(null);
   const [hover, setHover] = useState<string | null>(null);
 
@@ -261,8 +262,6 @@ export function TensorCard({
   const isSelected = parts.length > 0;
   const back = backwardRes?.tensors.get(tensor.id);
   const fwd = forwardRes?.tensors.get(tensor.id);
-  const prev = preview?.tensors.get(tensor.id);
-
   const dark = theme === "dark";
 
   useEffect(() => {
@@ -284,7 +283,26 @@ export function TensorCard({
       dragRegion: drag ? fromBox(dragToBox(drag)) : null,
     });
     drawGrid(canvas, shape, cfg, geom, layers, dark, renderScale);
-  });
+  }, [
+    back,
+    cfg,
+    dark,
+    direction,
+    drag,
+    focusedBox,
+    fwd,
+    geom,
+    hiddenBoxes,
+    isSelected,
+    parts,
+    perBox,
+    prev,
+    renderScale,
+    selection?.parts.length,
+    shape,
+    snapToGrid,
+    tensor.id,
+  ]);
 
   useEffect(() => {
     if (!drag) return;
@@ -301,11 +319,6 @@ export function TensorCard({
       setDragging(false);
     };
   }, [drag, setDragging]);
-
-  useEffect(() => {
-    if (focusTensor === tensor.id)
-      rootRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [focusTensor, tensor.id]);
 
   /** Drag rectangle in tile-cell coordinates -> element-space box. */
   function dragToBox(d: CellDrag): Box {
@@ -330,6 +343,8 @@ export function TensorCard({
     if (!cell) return;
     e.preventDefault();
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    if (previewKeyRef.current !== null) setPreviewBox(null);
+    previewKeyRef.current = null;
     setDrag({ r0: cell.row, c0: cell.col, r1: cell.row, c1: cell.col });
   };
 
@@ -343,11 +358,16 @@ export function TensorCard({
       // preview cone are therefore built from the box that click would commit,
       // by the same function the commit uses, so neither can drift from it.
       const box = dragToBox({ r0: cell.row, c0: cell.col, r1: cell.row, c1: cell.col });
-      setHover(`(${formatBoxIndices(box)})`);
-      if (!drag) setPreviewBox(tensor.id, box);
+      const key = formatBoxIndices(box);
+      setHover(`(${key})`);
+      if (!drag && previewKeyRef.current !== key) {
+        previewKeyRef.current = key;
+        setPreviewBox(tensor.id, box);
+      }
     } else {
       setHover(null);
-      setPreviewBox(null);
+      if (previewKeyRef.current !== null) setPreviewBox(null);
+      previewKeyRef.current = null;
     }
   };
 
@@ -365,7 +385,8 @@ export function TensorCard({
 
   const onLeave = () => {
     setHover(null);
-    setPreviewBox(null);
+    if (previewKeyRef.current !== null) setPreviewBox(null);
+    previewKeyRef.current = null;
   };
 
   const totalBytes = shape.reduce((a, b) => a * b, 1) * DTYPE_BYTES[tensor.dtype];
@@ -373,12 +394,10 @@ export function TensorCard({
   // Keep the compact header to one reading. The details popover preserves the
   // separate axis-label, symbolic-extent, and numeric-extent facts.
   const symbolicShape = shapeLabel(tensor, "symbolic");
-  const symbolicExtents = symbolicExtentLabel(tensor);
   const numericShape = shapeLabel(tensor, "numeric");
   const shownShape = axisMode === "numeric" ? numericShape : symbolicShape;
-  const alternateShapes = [...new Set([symbolicShape, symbolicExtents, numericShape])]
-    .filter((label) => label !== shownShape)
-    .join(" · ");
+  const tileSpanRows = Math.min(geom.rows, geom.tile);
+  const tileSpanCols = Math.min(geom.cols, geom.tile);
   const roleTag = tensor.producer ? null : tensor.role === "weight" ? "weight" : "input";
   // Exactness is carried by hatching on the canvas; this repeats it in the
   // header because an over-approximation must never be mistakable for ground
@@ -386,11 +405,7 @@ export function TensorCard({
   const approximation = visibleApproximation(back?.region, fwd?.region);
 
   return (
-    <div
-      ref={rootRef}
-      className={`tensor-card${isSelected ? " selected" : ""}`}
-      data-tensor={tensor.id}
-    >
+    <div className={`tensor-card${isSelected ? " selected" : ""}`} data-tensor={tensor.id}>
       {/* The tensor plate is deliberately frameless. Its persistent label is the
           name, the resolved numeric shape, and the two facts that change how the
           grid below should be read: where the tensor comes from, and whether its
@@ -408,11 +423,9 @@ export function TensorCard({
             <span>size</span><b>{formatBytes(totalBytes)}</b>
           </span>
         </span>
-        <span
-          className="tc-shape"
-          title={alternateShapes || undefined}
-        >
-          {shownShape}
+        <span className="tc-shape">{shownShape}</span>
+        <span className="tc-tile" title="current visible-plane tile size">
+          {tileSpanRows}×{tileSpanCols}
         </span>
         {roleTag && <span className="tc-role">{roleTag}</span>}
         {approximation.approximate && (
@@ -429,7 +442,7 @@ export function TensorCard({
         <div className="tc-axes">
           <button
             className={`mini ${cfg.projection ? "on" : ""}`}
-            title="projection: union over hidden axes; slice: membership at slider index only"
+            title="this tensor only — projection unions hidden axes; slice uses the slider index"
             onClick={() => setViewCfg(tensor.id, { projection: !cfg.projection })}
           >
             {cfg.projection ? "proj" : "slice"}
@@ -493,7 +506,11 @@ export function cardSize(
   // must not move cards, and semantic labels may be wider than their numbers.
   const widestShapeLabel = [numericShapeLabel, ...alternateShapeLabels]
     .reduce((longest, label) => label.length > longest.length ? label : longest);
-  const labelW = name.length * 9 + widestShapeLabel.length * 6.5 + 12;
+  // Reserve the longest possible clipped tile span too; changing lattice
+  // detail must re-rasterise in place rather than trigger a graph relayout.
+  const widestTileLabel = `${rows}×${cols}`;
+  const labelW = name.length * 9 +
+    (widestShapeLabel.length + widestTileLabel.length) * 6.5 + 22;
   const w = Math.max(canvas.w, labelW, 120);
   return { w, h };
 }

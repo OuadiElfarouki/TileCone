@@ -10,6 +10,8 @@ import {
 import { cardSize, TensorCard } from "./TensorCard";
 import { shapeLabel, symbolicExtentLabel } from "./shape-label";
 import { enabledPropResult, selectedTensorIds, TensorOffset, useStore } from "./store";
+import { MIN_SIDE_PX } from "./tiling";
+import { FIT_GRAPH_EVENT } from "./useKeyboard";
 
 type CardDrag = {
   id: string;
@@ -26,18 +28,33 @@ type CardDrag = {
 /** @internal Pure fit seam for viewport regression tests. */
 export function fittedTransform(
   scene: Pick<GraphScene, "left" | "top" | "width" | "height">,
-  viewport: { width: number; height: number }
+  viewport: { width: number; height: number },
+  bounds: { min: number; max: number } = { min: 0, max: 1.25 }
 ): { x: number; y: number; k: number } {
-  const k = Math.min(
+  const natural = Math.min(
     viewport.width / (scene.width + 40),
     viewport.height / (scene.height + 40),
     1.25
   );
+  const k = Math.min(bounds.max, Math.max(bounds.min, natural));
   return {
     x: (20 - scene.left) * k,
     y: (20 - scene.top) * k,
     k,
   };
+}
+
+/** Useful zoom is bounded by legibility at the low end and the canvas backing
+ * scale at the high end. Operators do not vote: tensor cards are what the user
+ * needs to inspect, and their smallest side determines the floor. */
+export function graphZoomBounds(
+  nodes: Pick<PlacedGraphNode, "kind" | "w" | "h">[]
+): { min: number; max: number } {
+  const tensorSides = nodes
+    .filter((node) => node.kind === "tensor")
+    .map((node) => Math.min(node.w, node.h));
+  const smallest = tensorSides.length ? Math.min(...tensorSides) : MIN_SIDE_PX;
+  return { min: Math.min(1, MIN_SIDE_PX / smallest), max: 4 };
 }
 
 /** Elements that own their pointer gesture instead of panning the viewport. */
@@ -64,13 +81,16 @@ export function GraphView(): React.ReactElement {
   const tensorOffsets = useStore((s) => s.tensorOffsets);
   const setTensorOffset = useStore((s) => s.setTensorOffset);
   const commitTensorMove = useStore((s) => s.commitTensorMove);
+  const resetTensorLayout = useStore((s) => s.resetTensorLayout);
 
   const [tf, setTf] = useState({ x: 20, y: 20, k: 1 });
   const [movingTensor, setMovingTensor] = useState<string | null>(null);
+  const [blockedTensor, setBlockedTensor] = useState<string | null>(null);
   const [panning, setPanning] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const panRef = useRef<{ x0: number; y0: number; tx: number; ty: number } | null>(null);
   const cardDragRef = useRef<CardDrag | null>(null);
+  const fitAfterResetRef = useRef(false);
   /** True once the user has panned or zoomed away from a fitted view. Resizing
    * the viewport re-fits only while this is false, so collapsing a panel keeps a
    * fitted graph fitted without throwing away a view someone deliberately set. */
@@ -125,6 +145,10 @@ export function GraphView(): React.ReactElement {
         : null,
     [baseLayout, tensorOffsets]
   );
+  const zoomBounds = useMemo(
+    () => graphZoomBounds(baseLayout?.nodes ?? []),
+    [baseLayout]
+  );
 
   const nodeById = useMemo(
     () => new Map(resolved?.nodes.map((node) => [node.id, node]) ?? []),
@@ -146,9 +170,13 @@ export function GraphView(): React.ReactElement {
     if (!el) return;
     const current = sceneRef.current;
     if (!current) return;
-    setTf(fittedTransform(current, { width: el.clientWidth, height: el.clientHeight }));
+    setTf(fittedTransform(
+      current,
+      { width: el.clientWidth, height: el.clientHeight },
+      zoomBounds
+    ));
     movedRef.current = false;
-  }, []);
+  }, [zoomBounds]);
 
   useEffect(() => {
     fit();
@@ -169,14 +197,16 @@ export function GraphView(): React.ReactElement {
   }, [fit]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement;
-      if (["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName)) return;
-      if (e.key === "f") fit(); // the rest of the bindings live in useKeyboard
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    const onFit = () => fit();
+    window.addEventListener(FIT_GRAPH_EVENT, onFit);
+    return () => window.removeEventListener(FIT_GRAPH_EVENT, onFit);
   }, [fit]);
+
+  useEffect(() => {
+    if (!fitAfterResetRef.current) return;
+    fitAfterResetRef.current = false;
+    fit();
+  }, [scene, fit]);
 
   useEffect(() => {
     if (!focusTensor) return;
@@ -200,7 +230,7 @@ export function GraphView(): React.ReactElement {
     const my = e.clientY - rect.top;
     movedRef.current = true;
     setTf((t) => {
-      const k = Math.min(12, Math.max(0.08, t.k * Math.exp(-e.deltaY * 0.0012)));
+      const k = Math.min(zoomBounds.max, Math.max(zoomBounds.min, t.k * Math.exp(-e.deltaY * 0.0012)));
       const scale = k / t.k;
       return { k, x: mx - (mx - t.x) * scale, y: my - (my - t.y) * scale };
     });
@@ -213,7 +243,7 @@ export function GraphView(): React.ReactElement {
     const mx = el.clientWidth / 2;
     const my = el.clientHeight / 2;
     setTf((t) => {
-      const k = Math.min(12, Math.max(0.08, t.k * factor));
+      const k = Math.min(zoomBounds.max, Math.max(zoomBounds.min, t.k * factor));
       const scale = k / t.k;
       return { k, x: mx - (mx - t.x) * scale, y: my - (my - t.y) * scale };
     });
@@ -259,6 +289,7 @@ export function GraphView(): React.ReactElement {
       viewportMovedBefore: movedRef.current,
     };
     setMovingTensor(placed.id);
+    setBlockedTensor(null);
     setDragging(true);
   };
 
@@ -275,7 +306,11 @@ export function GraphView(): React.ReactElement {
     const accepted = { x: rect.x - drag.rect.x, y: rect.y - drag.rect.y };
     drag.lastClient = { x: e.clientX, y: e.clientY };
     drag.rect = rect;
-    if (accepted.x === 0 && accepted.y === 0) return;
+    if (accepted.x === 0 && accepted.y === 0) {
+      if (Math.abs(delta.x) > 0.1 || Math.abs(delta.y) > 0.1) setBlockedTensor(drag.id);
+      return;
+    }
+    setBlockedTensor(null);
     drag.moved = true;
     movedRef.current = true;
     drag.offset = { dx: drag.offset.dx + accepted.x, dy: drag.offset.dy + accepted.y };
@@ -292,6 +327,7 @@ export function GraphView(): React.ReactElement {
       movedRef.current = drag.viewportMovedBefore;
     }
     setMovingTensor(null);
+    setBlockedTensor(null);
     setDragging(false);
   }, [commitTensorMove, setDragging, setTensorOffset]);
 
@@ -304,6 +340,13 @@ export function GraphView(): React.ReactElement {
     window.addEventListener("keydown", cancel);
     return () => window.removeEventListener("keydown", cancel);
   }, [finishCardDrag]);
+
+  const resetLayout = () => {
+    if (!Object.keys(tensorOffsets).length) return;
+    fitAfterResetRef.current = true;
+    movedRef.current = false;
+    resetTensorLayout();
+  };
 
   if (!resolved || !scene) return <div className="canvas-empty">no graph loaded</div>;
 
@@ -368,13 +411,13 @@ export function GraphView(): React.ReactElement {
           return (
             <div
               key={`t:${p.id}`}
-              className={`${hot ? "card-slot" : "card-slot dim"}${movingTensor === p.id ? " moving" : ""}`}
+              className={`${hot ? "card-slot" : "card-slot dim"}${movingTensor === p.id ? " moving" : ""}${blockedTensor === p.id ? " blocked" : ""}`}
               style={{ left: p.x, top: p.y, width: p.w, height: p.h }}
             >
               <button
                 className="tensor-grab"
                 aria-label={`move tensor ${t.name}`}
-                title={`drag to reposition ${t.name}`}
+                title={blockedTensor === p.id ? `${t.name} is blocked by a neighbouring node` : `drag to reposition ${t.name}`}
                 onPointerDown={(e) => startCardDrag(e, p)}
                 onPointerMove={moveCard}
                 onPointerUp={() => finishCardDrag(true)}
@@ -391,6 +434,7 @@ export function GraphView(): React.ReactElement {
           <button onClick={() => zoomBy(1 / 1.25)} title="zoom out">−</button>
           <button onClick={() => zoomBy(1.25)} title="zoom in">+</button>
           <button onClick={fit} title="fit to view (f)">fit</button>
+          <button onClick={resetLayout} disabled={!Object.keys(tensorOffsets).length} title="restore generated tensor layout (undoable)">reset</button>
           <span>{Math.round(tf.k * 100)}%</span>
         </div>
         <div className="graph-help" title="canvas interaction shortcuts">

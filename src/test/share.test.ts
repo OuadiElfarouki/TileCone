@@ -15,6 +15,7 @@ const LINK: WorkspaceLink = {
   tile: -2,
   snap: false,
   axes: "numeric",
+  pos: { B: [35, -20] },
   sel: [{ t: "B", box: [[0, 2], [1, 3]] }],
 };
 
@@ -114,6 +115,13 @@ describe("a link that cannot be trusted is refused, not repaired", () => {
   it("rejects explicitly malformed settings while defaulting absent legacy ones", () => {
     for (const patch of [{ tile: "large" }, { tile: Infinity }, { snap: "yes" }]) {
       const bad = btoa(JSON.stringify({ ...LINK, ...patch }));
+      expect(decodeWorkspace(`#s=${bad}`)).toBeNull();
+    }
+  });
+
+  it("rejects malformed tensor layout offsets", () => {
+    for (const pos of [{ B: [1] }, { B: [1, Infinity] }, { B: [1e20, 0] }, { B: "near" }]) {
+      const bad = btoa(JSON.stringify({ ...LINK, pos }));
       expect(decodeWorkspace(`#s=${bad}`)).toBeNull();
     }
   });

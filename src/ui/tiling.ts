@@ -33,7 +33,9 @@ export const TILE_SCALE_MAX = 5;
 export const TILE_SCALE_NONE = TILE_SCALE_MIN;
 
 /** Rendering budget. */
-export const MIN_CELL_PX = 3;
+/** Keep the binding lattice at least as large as drawGrid's stroke threshold,
+ * so snapping is never governed by boundaries too dense to display. */
+export const MIN_CELL_PX = 5;
 /** Px budget for the widest / tallest tensor in the graph. Soft: the floors
  * below may override them, because a tensor nobody can see is worse than a
  * tensor that needs a pan. */

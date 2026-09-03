@@ -8,7 +8,7 @@ import {
   planesOf, startingTiles, useStore, viewAxes,
 } from "../ui/store";
 import { cardPx, graphScale, MAX_ELEM_PX, planeExtents, TILE_SCALE_NONE } from "../ui/tiling";
-import { nudgeUnit, snapSpan, tileOf } from "../ui/grid";
+import { nudgeDelta, nudgeUnit, snapSpan, tileOf } from "../ui/grid";
 
 const S = () => useStore.getState();
 const sel = () => S().selection;
@@ -141,6 +141,7 @@ describe("transactional workspace restore", () => {
       tileScale: 2,
       snapToGrid: false,
       axisMode: "symbolic",
+      tensorOffsets: { X: { dx: -30, dy: 25 } },
       parts: [
         { tensorId: "Y", box: box([0, 2], [1, 3]) },
         { tensorId: "X", box: box([2, 4], [0, 1]) },
@@ -152,6 +153,7 @@ describe("transactional workspace restore", () => {
     expect(S().direction).toBe("both");
     expect(S().tileScale).toBe(2);
     expect(S().snapToGrid).toBe(false);
+    expect(S().tensorOffsets).toEqual({ X: { dx: -30, dy: 25 } });
     expect(selTensors()).toEqual(["Y", "X"]);
     expect(S().workspaceHistory).toEqual([]);
     expect(S().exampleIndex).toBe(-1);
@@ -204,6 +206,21 @@ describe("transactional workspace restore", () => {
       expect(S()).toBe(before);
     }
   });
+
+  it("rejects layout offsets for tensors outside the shared graph", () => {
+    const before = S();
+    const restored = S().restoreWorkspace({
+      dsl: "input X [4, 4] f32\nY = relu(X)\n",
+      direction: "both",
+      tileScale: 0,
+      snapToGrid: true,
+      axisMode: "symbolic",
+      tensorOffsets: { missing: { dx: 20, dy: 10 } },
+      parts: null,
+    });
+    expect(restored).toBe(false);
+    expect(S()).toBe(before);
+  });
 });
 
 describe("tensor layout transactions", () => {
@@ -224,6 +241,28 @@ describe("tensor layout transactions", () => {
   it("does not record a pointer gesture that produced no displacement", () => {
     const depth = S().workspaceHistory.length;
     S().commitTensorMove("A", { dx: 0, dy: 0 });
+    expect(S().workspaceHistory).toHaveLength(depth);
+  });
+
+  it("resets every tensor to generated placement as one undoable action", () => {
+    S().setTensorOffset("A", { dx: 80, dy: -30 });
+    S().commitTensorMove("A", { dx: 0, dy: 0 });
+    S().setTensorOffset("B", { dx: -45, dy: 60 });
+    S().commitTensorMove("B", { dx: 0, dy: 0 });
+    const before = S().tensorOffsets;
+    const depth = S().workspaceHistory.length;
+
+    S().resetTensorLayout();
+    expect(S().tensorOffsets).toEqual({});
+    expect(S().workspaceHistory).toHaveLength(depth + 1);
+
+    S().undoWorkspace();
+    expect(S().tensorOffsets).toEqual(before);
+  });
+
+  it("does not record resetting an untouched layout", () => {
+    const depth = S().workspaceHistory.length;
+    S().resetTensorLayout();
     expect(S().workspaceHistory).toHaveLength(depth);
   });
 
@@ -269,6 +308,14 @@ describe("snapping is a gesture setting, not an analysis one", () => {
 
   it("defaults to on", () => {
     expect(S().snapToGrid).toBe(true);
+  });
+
+  it("aligns an off-grid nudge in its requested direction before using full strides", () => {
+    const interval = { lo: 65, hi: 129 };
+    expect(nudgeDelta(interval, -1, 64, true)).toBe(-1);
+    expect(nudgeDelta(interval, 1, 64, true)).toBe(63);
+    expect(nudgeDelta({ lo: 64, hi: 128 }, 1, 64, true, 8)).toBe(512);
+    expect(nudgeDelta(interval, 1, 1, false, 8)).toBe(8);
   });
 
   it("toggles without disturbing the selection or its cone", () => {
@@ -332,7 +379,7 @@ describe("snapping is a gesture setting, not an analysis one", () => {
     expect(selBoxes()).toEqual([box([65, 129], [3, 67])]);
   });
 
-  it("a snapped nudge uses the current grid but preserves a typed extent and offset", () => {
+  it("the first snapped nudge aligns an off-grid box without changing its extent", () => {
     const typed = box([65, 129], [3, 67]);
     S().setSelection("C", fromBox(typed), "replace");
     S().setTileScale(2);
@@ -341,12 +388,16 @@ describe("snapping is a gesture setting, not an analysis one", () => {
     const step = nudgeUnit(shape, S().tileScale, S().graphPx, S().snapToGrid);
     expect(step).toBeGreaterThan(1);
 
-    S().moveSelection(0, step);
+    const delta = nudgeDelta(typed[0], 1, step, true);
+    expect(delta).toBeLessThan(step);
+    S().moveSelection(0, delta);
     const moved = selBoxes()[0];
     expect(moved[0].hi - moved[0].lo).toBe(64);
-    expect(moved[0].lo).toBe(65 + step);
-    expect(moved[0].lo % step).toBe(65 % step);
+    expect(moved[0].lo % step).toBe(0);
     expect(moved[1]).toEqual(typed[1]);
+
+    S().moveSelection(0, nudgeDelta(moved[0], 1, step, true));
+    expect(selBoxes()[0][0].lo).toBe(moved[0].lo + step);
   });
 
   it("changing detail changes only the next snapped stride", () => {
@@ -363,8 +414,9 @@ describe("snapping is a gesture setting, not an analysis one", () => {
     const coarse = nudgeUnit(shape, S().tileScale, S().graphPx, true);
     expect(coarse).toBeGreaterThan(1);
     expect(selBoxes()).toEqual([typed]);
-    S().moveSelection(0, coarse);
-    expect(selBoxes()[0][0]).toEqual({ lo: 65 + coarse, hi: 129 + coarse });
+    const delta = nudgeDelta(typed[0], 1, coarse, true);
+    S().moveSelection(0, delta);
+    expect(selBoxes()[0][0].lo % coarse).toBe(0);
   });
 
   it("a coarse nudge clamps a typed range flush to an edge without resizing it", () => {

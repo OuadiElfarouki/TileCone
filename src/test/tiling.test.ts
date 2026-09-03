@@ -145,7 +145,7 @@ describe("the global detail scale", () => {
     const stops = effectiveTileScaleStops(planes, px);
     // TILE_SCALE_MIN leads as the explicit "no tiling" request; the rest are
     // the scales that genuinely change the graph-wide lattice.
-    expect(stops).toEqual([TILE_SCALE_MIN, -1, 0, 1, 2, 3]);
+    expect(stops).toEqual([TILE_SCALE_MIN, 0, 1, 2, 3]);
     const state = (scale: number) =>
       planes.map(({ rows, cols }) => tileFor(rows, cols, scale, px));
     for (let i = 2; i < stops.length; i++) expect(state(stops[i])).not.toEqual(state(stops[i - 1]));

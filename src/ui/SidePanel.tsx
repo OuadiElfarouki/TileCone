@@ -18,6 +18,7 @@ function ShareButton(): React.ReactElement {
   const tileScale = useStore((s) => s.tileScale);
   const snapToGrid = useStore((s) => s.snapToGrid);
   const axisMode = useStore((s) => s.axisMode);
+  const tensorOffsets = useStore((s) => s.tensorOffsets);
   const [copyState, setCopyState] = useState<"copied" | "failed" | null>(null);
 
   const copy = async () => {
@@ -27,6 +28,9 @@ function ShareButton(): React.ReactElement {
       tile: tileScale,
       snap: snapToGrid,
       axes: axisMode,
+      pos: Object.fromEntries(
+        Object.entries(tensorOffsets).map(([id, { dx, dy }]) => [id, [dx, dy]])
+      ),
       sel: selectionToLink(selection),
     });
     setCopyState((await copyText(target)) ? "copied" : "failed");
@@ -37,7 +41,7 @@ function ShareButton(): React.ReactElement {
     <button
       className={`mini share-btn${copyState === "failed" ? " copy-failed" : ""}`}
       onClick={copy}
-      title="copy a link that restores this source, selection, needs-upstream view and feeds-downstream view"
+      title="copy a link that restores this source, selection, graph layout, needs view and feeds view"
       aria-live="polite"
     >
       {copyState === "copied" ? "copied ✓" : copyState === "failed" ? "copy failed" : "share"}

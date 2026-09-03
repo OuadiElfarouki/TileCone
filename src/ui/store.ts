@@ -26,7 +26,10 @@ export type ConeDirection = "backward" | "forward";
 export type PanelSide = "left" | "right";
 export type Theme = "light" | "dark";
 export type TensorOffset = { dx: number; dy: number };
-type TensorOffsets = Record<string, TensorOffset>;
+export type TensorOffsets = Record<string, TensorOffset>;
+/** Defensive share-state bound; far beyond any usable graph arrangement while
+ * preventing finite-but-overflowing coordinates from poisoning scene bounds. */
+export const MAX_TENSOR_OFFSET = 1_000_000;
 /**
  * One drawn tile. The tensor travels with the part rather than sitting above
  * the list, so tiles on different tensors coexist: comparing what two tensors
@@ -102,6 +105,7 @@ type WorkspaceRestore = {
   snapToGrid: boolean;
   /** Whether a compact shape reads as semantic labels or numeric extents. */
   axisMode: AxisMode;
+  tensorOffsets?: TensorOffsets;
   parts: SelPart[] | null;
 };
 
@@ -249,6 +253,8 @@ type State = {
   setTensorOffset: (tensorId: string, offset: TensorOffset) => void;
   /** Record one completed drag, restoring `before` when workspace undo runs. */
   commitTensorMove: (tensorId: string, before: TensorOffset) => void;
+  /** Restore Dagre's generated placement as one undoable workspace action. */
+  resetTensorLayout: () => void;
   /** Preview the cone of the box a click would commit, not of one element:
    * a projection gesture selects whole hidden axes, so a cell-sized preview
    * would understate the cone the same gesture goes on to produce. */
@@ -517,7 +523,7 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
-  restoreWorkspace: ({ dsl, direction, tileScale, snapToGrid, axisMode, parts }) => {
+  restoreWorkspace: ({ dsl, direction, tileScale, snapToGrid, axisMode, tensorOffsets, parts }) => {
     try {
       if (
         !["none", "backward", "forward", "both"].includes(direction) ||
@@ -537,6 +543,15 @@ export const useStore = create<State>((set, get) => ({
         return { tensorId: checked.tensorId, box: checked.region.boxes[0] };
       });
       const selection = checkedParts.length ? { parts: checkedParts } : null;
+      const checkedOffsets: TensorOffsets = {};
+      for (const [tensorId, offset] of Object.entries(tensorOffsets ?? {})) {
+        if (!program.resolved.tensors[tensorId] ||
+            !Number.isFinite(offset.dx) || !Number.isFinite(offset.dy) ||
+            Math.abs(offset.dx) > MAX_TENSOR_OFFSET || Math.abs(offset.dy) > MAX_TENSOR_OFFSET)
+          throw new Error(`invalid layout offset for tensor "${tensorId}"`);
+        if (Math.abs(offset.dx) >= 1e-6 || Math.abs(offset.dy) >= 1e-6)
+          checkedOffsets[tensorId] = { dx: offset.dx, dy: offset.dy };
+      }
       const clampedTile = Math.max(
         TILE_SCALE_MIN,
         Math.min(TILE_SCALE_MAX, Math.round(tileScale))
@@ -550,6 +565,7 @@ export const useStore = create<State>((set, get) => ({
         tileScale: clampedTile,
         snapToGrid,
         axisMode,
+        tensorOffsets: checkedOffsets,
         selection,
         ...recompute(program.resolved, selection),
       });
@@ -807,6 +823,15 @@ export const useStore = create<State>((set, get) => ({
     else previousOffsets[tensorId] = before;
     set({
       workspaceHistory: [...workspaceHistory, { selection, tensorOffsets: previousOffsets }].slice(-40),
+    });
+  },
+
+  resetTensorLayout: () => {
+    const { selection, tensorOffsets, workspaceHistory } = get();
+    if (!Object.keys(tensorOffsets).length) return;
+    set({
+      tensorOffsets: {},
+      workspaceHistory: [...workspaceHistory, { selection, tensorOffsets }].slice(-40),
     });
   },
 
