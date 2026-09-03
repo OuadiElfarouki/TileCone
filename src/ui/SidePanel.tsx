@@ -5,6 +5,7 @@ import { tileOf } from "./grid";
 import { selectionToLink, shareTarget } from "./share";
 import { copyText } from "./clipboard";
 import { enabledPropResult, useStore, viewAxes } from "./store";
+import { matchesShortcut, SHORTCUTS } from "./shortcuts";
 
 /**
  * Copies a link that restores this workspace — source, selection, cone direction
@@ -83,7 +84,7 @@ function SourceEditor(): React.ReactElement {
         spellCheck={false}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+          if (matchesShortcut(e.nativeEvent, SHORTCUTS.run)) {
             e.preventDefault();
             run();
           }

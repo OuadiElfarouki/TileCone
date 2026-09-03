@@ -25,6 +25,19 @@ type CardDrag = {
   viewportMovedBefore: boolean;
 };
 
+type EdgePresentation = {
+  className: "edge" | "edge hot" | "edge dim";
+  layer: "behind" | "front";
+};
+
+/** Dim connectors are context, so cards should occlude them. Connectors in the
+ * active answer stay above cards and read as crossings instead of broken links. */
+/** @internal Pure stacking seam for graph-view tests. */
+export function edgePresentation(hasResult: boolean, hot: boolean): EdgePresentation {
+  if (hasResult && !hot) return { className: "edge dim", layer: "behind" };
+  return { className: hot ? "edge hot" : "edge", layer: "front" };
+}
+
 /** @internal Pure fit seam for viewport regression tests. */
 export function fittedTransform(
   scene: Pick<GraphScene, "left" | "top" | "width" | "height">,
@@ -66,7 +79,18 @@ export function canStartGraphPan(target: unknown): boolean {
   return !(target as { closest: (selector: string) => unknown }).closest(GRAPH_PAN_BLOCKERS);
 }
 
-export function GraphView(): React.ReactElement {
+/** The header is the card's drag surface, so the one thing in it that owns a
+ * click has to be carved back out: the name is the focus target for the shape
+ * popover, and starting a drag there would swallow the gesture that opens it. */
+const CARD_DRAG_BLOCKERS = ".tc-name-wrap";
+
+/** @internal DOM-light hit-test seam for the card gesture tests. */
+export function canStartCardDrag(target: unknown): boolean {
+  if (!target || typeof (target as { closest?: unknown }).closest !== "function") return true;
+  return !(target as { closest: (selector: string) => unknown }).closest(CARD_DRAG_BLOCKERS);
+}
+
+export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }): React.ReactElement {
   const resolved = useStore((s) => s.resolved);
   const graphPx = useStore((s) => s.graphPx);
   const backwardRes = useStore((s) => s.backwardRes);
@@ -120,6 +144,12 @@ export function GraphView(): React.ReactElement {
   // re-renders the cards sharply without redrawing on every wheel tick.
   const renderScale = useMemo(
     () => Math.min(4, Math.max(1, 2 ** Math.ceil(Math.log2(Math.max(1, tf.k))))),
+    [tf.k]
+  );
+  // Pattern pitch follows zoom in coarse buckets. This keeps rulings close to a
+  // constant screen size without re-rasterising every card on every wheel tick.
+  const paintScale = useMemo(
+    () => Math.min(4, Math.max(0.25, 2 ** Math.round(Math.log2(Math.max(0.25, tf.k))))),
     [tf.k]
   );
 
@@ -270,7 +300,8 @@ export function GraphView(): React.ReactElement {
     setDragging(false);
   };
 
-  const startCardDrag = (e: React.PointerEvent<HTMLButtonElement>, placed: PlacedGraphNode) => {
+  const startCardDrag = (e: React.PointerEvent<HTMLElement>, placed: PlacedGraphNode) => {
+    if (!canStartCardDrag(e.target)) return;
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -293,7 +324,7 @@ export function GraphView(): React.ReactElement {
     setDragging(true);
   };
 
-  const moveCard = (e: React.PointerEvent<HTMLButtonElement>) => {
+  const moveCard = (e: React.PointerEvent<HTMLElement>) => {
     const drag = cardDragRef.current;
     if (!drag || drag.pointerId !== e.pointerId) return;
     e.preventDefault();
@@ -350,6 +381,24 @@ export function GraphView(): React.ReactElement {
 
   if (!resolved || !scene) return <div className="canvas-empty">no graph loaded</div>;
 
+  const renderEdges = (layer: EdgePresentation["layer"]) => (
+    <svg className={`edges ${layer}`} width={scene.width} height={scene.height} aria-hidden>
+      {scene.edges.map((edge) => {
+        const hot = contributing.has(edge.tensorId) && hotNodes.has(edge.opId);
+        const presentation = edgePresentation(hasResult, hot);
+        if (presentation.layer !== layer) return null;
+        return (
+          <g key={edge.key}>
+            <path d={edge.path} className={presentation.className} />
+            {/* Flow direction. Structural, so it is drawn whether or not a
+                query is live. */}
+            {edge.mark && <path d={edge.mark} className={`${presentation.className} edge-arrow`} />}
+          </g>
+        );
+      })}
+    </svg>
+  );
+
   return (
     <div
       ref={containerRef}
@@ -365,20 +414,7 @@ export function GraphView(): React.ReactElement {
         className="graph-inner"
         style={{ transform: `translate(${tf.x}px, ${tf.y}px) scale(${tf.k})`, width: scene.width, height: scene.height }}
       >
-        <svg className="edges" width={scene.width} height={scene.height}>
-          {scene.edges.map((e) => {
-            const hot = contributing.has(e.tensorId) && hotNodes.has(e.opId);
-            const cls = hasResult ? (hot ? "edge hot" : "edge dim") : "edge";
-            return (
-              <g key={e.key}>
-                <path d={e.path} className={cls} />
-                {/* Flow direction. Structural, so it is drawn whether or not a
-                    query is live. */}
-                {e.mark && <path d={e.mark} className={`${cls} edge-arrow`} />}
-              </g>
-            );
-          })}
-        </svg>
+        {renderEdges("behind")}
         {scene.nodes.map((p) => {
           if (p.kind === "op") {
             const node = nodeById.get(p.id)!;
@@ -424,10 +460,22 @@ export function GraphView(): React.ReactElement {
                 onPointerCancel={() => finishCardDrag(false)}
                 onLostPointerCapture={() => finishCardDrag(false)}
               />
-              <TensorCard tensor={t} renderScale={renderScale} />
+              <TensorCard
+                tensor={t}
+                renderScale={renderScale}
+                paintScale={paintScale}
+                moveHandlers={{
+                  onPointerDown: (e) => startCardDrag(e, p),
+                  onPointerMove: moveCard,
+                  onPointerUp: () => finishCardDrag(true),
+                  onPointerCancel: () => finishCardDrag(false),
+                  onLostPointerCapture: () => finishCardDrag(false),
+                }}
+              />
             </div>
           );
         })}
+        {renderEdges("front")}
       </div>
       <div className="graph-hud">
         <div className="zoom-controls">
@@ -435,10 +483,8 @@ export function GraphView(): React.ReactElement {
           <button onClick={() => zoomBy(1.25)} title="zoom in">+</button>
           <button onClick={fit} title="fit to view (f)">fit</button>
           <button onClick={resetLayout} disabled={!Object.keys(tensorOffsets).length} title="restore generated tensor layout (undoable)">reset</button>
+          <button onClick={onShowShortcuts} title="keyboard shortcuts (?)" aria-label="show keyboard shortcuts">?</button>
           <span>{Math.round(tf.k * 100)}%</span>
-        </div>
-        <div className="graph-help" title="canvas interaction shortcuts">
-          dotted handle moves tensors · drag the grid to select · esc cancels · ctrl/cmd+z undoes · scroll zooms
         </div>
       </div>
     </div>

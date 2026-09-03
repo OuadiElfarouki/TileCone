@@ -99,7 +99,16 @@ Use `tryCompileDSL` when diagnostics should be returned as data instead of throw
 - **Downstream reach is classified, not merely highlighted.** Each downstream row says whether the
   tile completes that region or contributes only partially, and the section heading rolls those
   verdicts up. A partial verdict derived from an approximate region may over-warn, never
-  under-warn.
+  under-warn. On the cards, uniform fill means **What it needs**, a diagonal ruling means **What it
+  feeds**, and a `/` hatch means an approximate bound; the inspector headings carry the same
+  miniature treatments as an inline legend. The spacing of a ruling is uniform: it is held for a
+  supplied-share measurement the engine does not expose yet, and reading it as a quantity today
+  would be reading a placeholder. Completed versus partial is stated on the row, not in the paint.
+  Each selected tile rules its downstream reach at its own angle, so where two tiles feed the same
+  elements the rulings cross instead of one hiding the other.
+  A ruled region is delimited by a hairline, because a ruling has no crisp edge of its own. Thin
+  points and lines drop both the ruling and any perimeter stroke, so emphasis cannot invent a wider
+  region than the analysis returned.
 - **Row-major everywhere.** Rows are the second-to-last axis, columns the last. There is no per-card
   axis remapping: a different view of a tensor is a `transpose` node in the graph, where it is part
   of the computation being explained.
@@ -130,10 +139,11 @@ Use `tryCompileDSL` when diagnostics should be returned as data instead of throw
   The peers fade but stay legible, because comparing tiles is the point of a multi-tile selection.
   Excluding one tile from the merged analysis and dependency paint is a separate, explicit toggle
   (`h`). Its faint selection rectangle remains available so the tile can be included again.
-- **Tensor placement is editable without weakening the layout.** Drag the dotted handle outside a
-  card's top-left corner to reposition it. Curved connectors follow live; tensor cards and operation
-  nodes remain hard collision boundaries, connector crossings stay visible over unrelated cards,
-  and a blocked drag is visibly marked. A completed drag and Reset layout are chronological
+- **Tensor placement is editable without weakening the layout.** Drag a card's header—or its dotted
+  handle—to reposition it; the tensor name keeps its own click for the shape popover. Curved connectors follow live; tensor cards and operation
+  nodes remain hard collision boundaries, active connector crossings stay visible over cards while
+  dim context stays behind the data, and a blocked drag is visibly marked. A completed drag and
+  Reset layout are chronological
   workspace undo steps, Escape cancels an in-progress move, and shared links retain the arrangement.
 
 Press `?` in the app for the complete shortcut sheet. The main bindings are:

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { anchorTensorId, useStore, viewAxes } from "./store";
 import { nudgeDelta, nudgeUnit } from "./grid";
+import { matchesShortcut, SHORTCUTS } from "./shortcuts";
 
 const isTyping = (el: EventTarget | null) => {
   const t = el as HTMLElement | null;
@@ -34,7 +35,7 @@ export function useKeyboard({
        * selection — clearing the tiles is the right panel's "clear all", an
        * explicit act, not a side effect of pressing cancel.
        */
-      if (e.key === "Escape") {
+      if (matchesShortcut(e, SHORTCUTS.escape)) {
         if (shortcutsOpen) {
           e.preventDefault();
           closeShortcuts();
@@ -55,18 +56,18 @@ export function useKeyboard({
 
       // Panel shortcuts remain global even while focus is inside the source or
       // an inspector control. They do not modify the field's contents.
-      if (e.altKey && (e.key === "1" || e.key === "2")) {
+      if (matchesShortcut(e, SHORTCUTS.leftPanel) || matchesShortcut(e, SHORTCUTS.rightPanel)) {
         e.preventDefault();
-        return s.togglePanel(e.key === "1" ? "left" : "right");
+        return s.togglePanel(matchesShortcut(e, SHORTCUTS.leftPanel) ? "left" : "right");
       }
 
       if (isTyping(e.target)) return;
-      if (e.key === "?") {
+      if (matchesShortcut(e, SHORTCUTS.help)) {
         e.preventDefault();
         showShortcuts();
         return;
       }
-      if (e.key === "f") {
+      if (matchesShortcut(e, SHORTCUTS.fit)) {
         e.preventDefault();
         window.dispatchEvent(new Event(FIT_GRAPH_EVENT));
         return;
@@ -78,9 +79,9 @@ export function useKeyboard({
       const shape = anchor ? s.resolved?.tensors[anchor].resolved : null;
 
       // direction / view
-      if (e.key === "u") return s.toggleDirection("backward");
-      if (e.key === "d") return s.toggleDirection("forward");
-      if (e.key === "z" && (e.ctrlKey || e.metaKey)) {
+      if (matchesShortcut(e, SHORTCUTS.needs)) return s.toggleDirection("backward");
+      if (matchesShortcut(e, SHORTCUTS.feeds)) return s.toggleDirection("forward");
+      if (matchesShortcut(e, SHORTCUTS.undo)) {
         e.preventDefault();
         return s.undoWorkspace();
       }
@@ -97,7 +98,7 @@ export function useKeyboard({
         ArrowUp: [rowAx, -1],
         ArrowDown: [rowAx, 1],
       };
-      const hit = arrows[e.key];
+      const hit = matchesShortcut(e, SHORTCUTS.move) ? arrows[e.key] : undefined;
       if (hit) {
         const [axis, sign] = hit;
         if (axis < 0) return;
@@ -113,7 +114,7 @@ export function useKeyboard({
           sign as -1 | 1,
           unit,
           s.snapToGrid,
-          e.shiftKey ? 8 : 1
+          matchesShortcut(e, SHORTCUTS.moveFast) ? 8 : 1
         );
         // Auto-repeat records no undo entry, so holding an arrow is one step to
         // undo rather than forty — which would also evict the real history,
@@ -123,14 +124,14 @@ export function useKeyboard({
       }
 
       // include/exclude the focused part from merged analysis and paint
-      if (e.key === "h" && s.focusedBox !== null && s.perBox) {
+      if (matchesShortcut(e, SHORTCUTS.toggleTile) && s.focusedBox !== null && s.perBox) {
         e.preventDefault();
         s.toggleBoxHidden(s.focusedBox);
         return;
       }
 
       // hidden-axis scrub
-      if (e.key === "[" || e.key === "]") {
+      if (matchesShortcut(e, SHORTCUTS.scrub)) {
         const hidden = shape.map((_, ax) => ax).filter((ax) => !visible.includes(ax));
         if (!hidden.length) return;
         const ax = hidden[0];

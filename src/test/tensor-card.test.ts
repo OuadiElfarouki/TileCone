@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { cardSize, selectionBoxFromDrag, visibleApproximation } from "../ui/TensorCard";
+import {
+  cardSize,
+  DEFAULT_DOWNSTREAM_DENSITY,
+  selectionBoxFromDrag,
+  visibleApproximation,
+} from "../ui/TensorCard";
 import { box, fromBox } from "../core/region";
-import { gridGeometry } from "../ui/grid";
+import { gridGeometry, stripeAngleDeg } from "../ui/grid";
 import { graphScale } from "../ui/tiling";
 
 describe("frameless tensor footprint", () => {
@@ -109,18 +114,20 @@ const inputs = (over: Partial<LayerInputs> = {}): LayerInputs => ({
 });
 
 describe("direction stays readable once hue means box identity", () => {
-  it("fills upstream and outlines downstream when both cones are shown", () => {
+  it("fills upstream uniformly and rules downstream", () => {
     const layers = buildLayers(inputs({ direction: "both" }));
     expect(layers).toHaveLength(2);
-    expect(layers[0].strokeOnly).toBeFalsy(); // upstream: filled
-    expect(layers[1].strokeOnly).toBe(true); // downstream: outlined
+    expect(layers[0].pattern).toBeUndefined();
+    expect(layers[1].pattern).toEqual({
+      kind: "stripe",
+      density: DEFAULT_DOWNSTREAM_DENSITY,
+      angle: stripeAngleDeg(0),
+    });
   });
 
-  it("fills both when only one direction is on, since nothing needs telling apart", () => {
-    for (const direction of ["backward", "forward"] as const) {
-      const layers = buildLayers(inputs({ direction }));
-      expect(layers.every((l) => !l.strokeOnly), direction).toBe(true);
-    }
+  it("keeps direction encoded even when only one cone is shown", () => {
+    expect(buildLayers(inputs({ direction: "backward" }))[0].pattern).toBeUndefined();
+    expect(buildLayers(inputs({ direction: "forward" }))[0].pattern?.kind).toBe("stripe");
   });
 
   it("paints only the cone the direction asks for, though both were analysed", () => {
@@ -149,12 +156,46 @@ describe("direction stays readable once hue means box identity", () => {
     expect(layers[0].color).toEqual(layers[1].color);
   });
 
-  it("keeps fill versus outline encoding after per-box attribution is capped", () => {
+  it("keeps uniform versus ruled encoding after per-box attribution is capped", () => {
     const back = { region: region([0, 4]), depth: 1 };
     const fwd = { region: region([4, 8]), depth: 1 };
     const layers = buildLayers(inputs({ perBox: null, back, fwd, direction: "both" }));
-    expect(layers[0].strokeOnly).toBeFalsy();
-    expect(layers[1].strokeOnly).toBe(true);
+    expect(layers[0].pattern).toBeUndefined();
+    expect(layers[1].pattern?.kind).toBe("stripe");
+  });
+
+  it("gives each box its own ruling angle, so overlapping cones cross", () => {
+    const layers = buildLayers(
+      inputs({ perBox: [bothCones("T"), bothCones("T"), bothCones("T")], direction: "forward" })
+    );
+    const angles = layers.map((l) => l.pattern!.angle);
+    expect(new Set(angles).size).toBe(angles.length);
+    // Hue runs out before the angles do: every box past the third shares one
+    // neutral colour, so the slope has to keep separating them.
+    expect(stripeAngleDeg(3)).not.toBe(stripeAngleDeg(2));
+  });
+
+  it("keeps every ruling clear of the lattice and of the approximation hatch", () => {
+    for (let i = 0; i < 8; i++) {
+      const angle = stripeAngleDeg(i);
+      // Mod 180: a line at 15 degrees and one at 195 are the same ruling.
+      const from = (ref: number) => {
+        const d = Math.abs(((angle - ref) % 180 + 180) % 180);
+        return Math.min(d, 180 - d);
+      };
+      expect(from(0), `box ${i} vs the lattice`).toBeGreaterThanOrEqual(15);
+      expect(from(90), `box ${i} vs the lattice`).toBeGreaterThanOrEqual(15);
+      expect(from(45), `box ${i} vs the hatch`).toBeGreaterThanOrEqual(30);
+    }
+  });
+
+  it("does not overload downstream alpha with graph depth", () => {
+    const shallow = bothCones("T");
+    const deep = bothCones("T");
+    deep.forward!.tensors.get("T")!.depth = 6;
+    const a = buildLayers(inputs({ perBox: [shallow], direction: "forward" }))[0].alpha;
+    const b = buildLayers(inputs({ perBox: [deep], direction: "forward" }))[0].alpha;
+    expect(b).toBe(a);
   });
 });
 
@@ -181,6 +222,12 @@ describe("focus fades peers and never removes them", () => {
     const emphasised = layers[layers.length - 1];
     expect(emphasised.outline).toBe(true);
     expect(emphasised.lineWidth).toBeGreaterThan(1.5);
+  });
+
+  it("never brings a downstream perimeter back for focus", () => {
+    const layers = buildLayers(inputs({ focusedBox: 0, direction: "forward" }));
+    expect(layers[0].pattern?.kind).toBe("stripe");
+    expect(layers[0].outline).toBeFalsy();
   });
 });
 
@@ -220,6 +267,21 @@ describe("inexact regions are hatched", () => {
     };
     const layers = buildLayers(inputs({ perBox: [inexact], direction: "backward" }));
     expect(layers[0].hatch).toBe(true);
+  });
+
+  it("composes the downstream ruling with the approximation hatch", () => {
+    const inexact: BoxProp = {
+      backward: null,
+      forward: {
+        tensors: new Map([
+          ["T", { region: { boxes: [box([4, 8])], exact: false, reasons: ["conservative"] }, depth: 2 }],
+        ]),
+        depth: 2,
+      } as never,
+    };
+    const [layer] = buildLayers(inputs({ perBox: [inexact], direction: "forward" }));
+    expect(layer.pattern?.kind).toBe("stripe");
+    expect(layer.hatch).toBe(true);
   });
 
   it("reports an inexact forward cone even when the backward cone is exact", () => {

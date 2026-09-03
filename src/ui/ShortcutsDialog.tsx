@@ -1,36 +1,5 @@
 import React, { useEffect, useRef } from "react";
-
-const GROUPS = [
-  {
-    title: "Selection",
-    items: [
-      ["Arrow keys", "move the focused tile"],
-      ["Shift + arrow", "move it eight steps"],
-      ["H", "show or hide the focused tile's needs and feeds"],
-      ["Esc", "cancel a gesture, unpin a tile, or leave a field"],
-      ["Ctrl/Cmd + Z", "undo the last tile or tensor move"],
-    ],
-  },
-  {
-    title: "View",
-    items: [
-      ["U", "toggle What it needs"],
-      ["D", "toggle What it feeds"],
-      ["F", "fit the graph to the viewport"],
-      ["[ / ]", "scrub the first hidden tensor axis"],
-      ["Scroll", "zoom around the pointer"],
-      ["?", "open this shortcut sheet"],
-    ],
-  },
-  {
-    title: "Panels",
-    items: [
-      ["Alt + 1", "toggle the source panel"],
-      ["Alt + 2", "toggle the tile inspector"],
-      ["Ctrl/Cmd + Enter", "run edited graph source"],
-    ],
-  },
-] as const;
+import { SHORTCUT_GROUPS } from "./shortcuts";
 
 export function ShortcutsDialog({
   open,
@@ -59,14 +28,14 @@ export function ShortcutsDialog({
           <button ref={closeRef} className="mini" onClick={onClose} aria-label="close shortcuts">×</button>
         </header>
         <div className="shortcut-groups">
-          {GROUPS.map((group) => (
+          {SHORTCUT_GROUPS.map((group) => (
             <section key={group.title}>
               <h3>{group.title}</h3>
               <dl>
-                {group.items.map(([keys, action]) => (
-                  <React.Fragment key={keys}>
-                    <dt><kbd>{keys}</kbd></dt>
-                    <dd>{action}</dd>
+                {group.items.map((item) => (
+                  <React.Fragment key={item.id}>
+                    <dt><kbd>{item.label}</kbd></dt>
+                    <dd>{item.action}</dd>
                   </React.Fragment>
                 ))}
               </dl>

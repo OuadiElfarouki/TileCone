@@ -62,7 +62,7 @@ export default function App(): React.ReactElement {
         <PanelFrame side="left" label="source">
           <SidePanel />
         </PanelFrame>
-        {resolved ? <GraphView /> : <div className="canvas-empty">loading…</div>}
+        {resolved ? <GraphView onShowShortcuts={showShortcuts} /> : <div className="canvas-empty">loading…</div>}
         <PanelFrame side="right" label="tiles">
           <Inspector />
         </PanelFrame>

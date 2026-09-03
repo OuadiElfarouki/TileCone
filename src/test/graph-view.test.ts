@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { canStartGraphPan, fittedTransform, graphZoomBounds } from "../ui/GraphView";
+import {
+  canStartCardDrag,
+  canStartGraphPan,
+  edgePresentation,
+  fittedTransform,
+  graphZoomBounds,
+} from "../ui/GraphView";
 
 const target = (blocked: boolean) => ({
   closest: (selector: string) => {
@@ -17,6 +23,32 @@ describe("graph viewport pan hit-testing", () => {
 
   it("leaves tensor cards, operation nodes, and controls in charge of their gestures", () => {
     expect(canStartGraphPan(target(true))).toBe(false);
+  });
+});
+
+describe("card drag hit-testing", () => {
+  const headerTarget = (onName: boolean) => ({
+    closest: (selector: string) => {
+      expect(selector).toContain(".tc-name-wrap");
+      return onName ? {} : null;
+    },
+  });
+
+  it("drags from anywhere on the header chrome", () => {
+    expect(canStartCardDrag(null)).toBe(true);
+    expect(canStartCardDrag(headerTarget(false))).toBe(true);
+  });
+
+  it("leaves the tensor name its click, so the shape popover stays reachable", () => {
+    expect(canStartCardDrag(headerTarget(true))).toBe(false);
+  });
+});
+
+describe("connector stacking", () => {
+  it("puts inactive context behind cards and active connectors in front", () => {
+    expect(edgePresentation(true, false)).toEqual({ className: "edge dim", layer: "behind" });
+    expect(edgePresentation(true, true)).toEqual({ className: "edge hot", layer: "front" });
+    expect(edgePresentation(false, false)).toEqual({ className: "edge", layer: "front" });
   });
 });
 

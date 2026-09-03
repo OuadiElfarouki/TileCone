@@ -21,7 +21,15 @@ import {
   TILE_SCALE_MAX,
   TILE_SCALE_MIN,
 } from "../ui/tiling";
-import { gridGeometry, MIN_MARK_PX, regionRects } from "../ui/grid";
+import {
+  gridGeometry,
+  MIN_MARK_PX,
+  outlineFitsRect,
+  patternFitsRect,
+  regionRects,
+  rulingSegments,
+  stripePitchPx,
+} from "../ui/grid";
 import { box, fromBox } from "../core/region";
 import { viewAxes } from "../ui/store";
 import type { ViewCfg } from "../ui/store";
@@ -362,5 +370,103 @@ describe("regions are drawn at element precision, not tile precision", () => {
 
   it("an empty region paints nothing", () => {
     expect(rectsOf({ boxes: [], exact: true, reasons: [] }, [16, 16])).toEqual([]);
+  });
+});
+
+describe("thin-region paint fallbacks", () => {
+  it("drops an outline that would be wider than the mark", () => {
+    expect(outlineFitsRect({ w: 1, h: 20 }, 1.5, 1)).toBe(false);
+    expect(outlineFitsRect({ w: 8, h: 20 }, 1.5, 1)).toBe(true);
+  });
+
+  it("uses solid paint for thin ruled regions and fitted-out views", () => {
+    expect(patternFitsRect({ w: 1, h: 20 }, 1)).toBe(false);
+    expect(patternFitsRect({ w: 20, h: 20 }, 0.5)).toBe(false);
+    expect(patternFitsRect({ w: 20, h: 20 }, 1)).toBe(true);
+  });
+
+  it("delimits a ruled region wherever it rules it", () => {
+    // The hairline and the ruling share a 3px floor, so a rect never draws one
+    // without the other — a ruled fill is never left without its edge.
+    for (const rect of [{ w: 3, h: 20 }, { w: 20, h: 20 }, { w: 2, h: 20 }])
+      expect(outlineFitsRect(rect, 0.75, 1)).toBe(patternFitsRect(rect, 1));
+  });
+});
+
+describe("downstream density is spacing", () => {
+  it("closes the gap as the share grows", () => {
+    expect(stripePitchPx(1)).toBeLessThan(stripePitchPx(0.5));
+    expect(stripePitchPx(0.5)).toBeLessThan(stripePitchPx(0));
+  });
+
+  it("stays a ruling at both ends of the scale", () => {
+    // Wide enough at the floor to read as separate lines, tight enough at the
+    // ceiling to read as dense — but never so tight it fills in as solid.
+    expect(stripePitchPx(0)).toBeLessThanOrEqual(12);
+    expect(stripePitchPx(1)).toBeGreaterThanOrEqual(2.5);
+  });
+
+  it("clamps out-of-range densities instead of inverting the ruling", () => {
+    expect(stripePitchPx(-1)).toBe(stripePitchPx(0));
+    expect(stripePitchPx(4)).toBe(stripePitchPx(1));
+  });
+});
+
+describe("ruled fills", () => {
+  const rect = { x: 0, y: 0, w: 40, h: 40 };
+  const perpendicular = (a: { x1: number; y1: number; x2: number; y2: number }, pitch: number) => {
+    // Distance between neighbouring lines, measured along their shared normal.
+    const dx = a.x2 - a.x1;
+    const dy = a.y2 - a.y1;
+    const len = Math.hypot(dx, dy);
+    return { nx: -dy / len, ny: dx / len, pitch };
+  };
+
+  it("spaces lines at the requested perpendicular pitch", () => {
+    for (const angle of [15, 75, 135, 165]) {
+      const segs = rulingSegments(rect, angle, 5);
+      expect(segs.length, `angle ${angle}`).toBeGreaterThan(1);
+      const { nx, ny } = perpendicular(segs[0], 5);
+      const offsets = segs.map((s) => s.x1 * nx + s.y1 * ny);
+      for (let i = 1; i < offsets.length; i++)
+        expect(Math.abs(offsets[i] - offsets[i - 1]), `angle ${angle}`).toBeCloseTo(5, 6);
+    }
+  });
+
+  it("anchors phase to the canvas, so neighbouring regions stay on one ruling", () => {
+    // Two rects side by side on the same card must not each restart the pattern:
+    // a seam at the boundary would read as a change in the encoded quantity.
+    const left = rulingSegments({ x: 0, y: 0, w: 20, h: 40 }, 135, 5);
+    const right = rulingSegments({ x: 20, y: 0, w: 20, h: 40 }, 135, 5);
+    const { nx, ny } = perpendicular(left[0], 5);
+    const offsetOf = (s: { x1: number; y1: number }) => s.x1 * nx + s.y1 * ny;
+    for (const s of right) {
+      const gap = (offsetOf(s) - offsetOf(left[0])) / 5;
+      expect(Math.abs(gap - Math.round(gap))).toBeLessThan(1e-6);
+    }
+  });
+
+  it("covers the rect at every angle", () => {
+    // Every corner has to fall inside the span the lines cross, or one end of
+    // the region would be left unpainted.
+    for (const angle of [15, 75, 135, 165]) {
+      const segs = rulingSegments(rect, angle, 5);
+      const { nx, ny } = perpendicular(segs[0], 5);
+      const offsets = segs.map((s) => s.x1 * nx + s.y1 * ny);
+      const corners = [
+        [rect.x, rect.y],
+        [rect.x + rect.w, rect.y],
+        [rect.x, rect.y + rect.h],
+        [rect.x + rect.w, rect.y + rect.h],
+      ].map(([cx, cy]) => cx * nx + cy * ny);
+      expect(Math.min(...offsets) - Math.min(...corners), `angle ${angle}`).toBeLessThanOrEqual(5);
+      expect(Math.max(...corners) - Math.max(...offsets), `angle ${angle}`).toBeLessThanOrEqual(5);
+    }
+  });
+
+  it("refuses a degenerate or unpayable ruling instead of stalling the frame", () => {
+    expect(rulingSegments(rect, 135, 0)).toEqual([]);
+    expect(rulingSegments(rect, 135, -1)).toEqual([]);
+    expect(rulingSegments({ x: 0, y: 0, w: 8192, h: 8192 }, 135, 0.001)).toEqual([]);
   });
 });

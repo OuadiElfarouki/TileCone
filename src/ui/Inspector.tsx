@@ -102,7 +102,7 @@ function SetupStrip(): React.ReactElement {
           {settledLabel(min, max)}
         </span>
         <button
-          className={`mini toggle snap-btn${snapToGrid ? " on" : ""}`}
+          className={`mini toggle${snapToGrid ? " on" : ""}`}
           aria-pressed={snapToGrid}
           onClick={() => setSnapToGrid(!snapToGrid)}
           title="snap a drawn box out to whole tiles; off cuts an exact element range"
@@ -199,9 +199,9 @@ function SelectionRangeInput({
  * says what constrains it, which is the part that transfers to writing a kernel.
  */
 const NOTE_SEVERITY = {
-  1: { word: "advisory", dots: "●" },
-  2: { word: "moderate", dots: "●●" },
-  3: { word: "strong", dots: "●●●" },
+  1: { word: "advisory" },
+  2: { word: "moderate" },
+  3: { word: "strong" },
 } as const;
 
 function DependencyNotes({
@@ -232,13 +232,13 @@ function DependencyNotes({
       {findings.notes.length ? (
         <ul className="notes-list">
           {findings.notes.map((note) => (
-            <li key={`${note.nodeId}:${note.text}`}>
-              <span
-                className={`note-severity severity-${note.severity}`}
-                title={`${NOTE_SEVERITY[note.severity].word} constraint`}
-                aria-label={`${NOTE_SEVERITY[note.severity].word} constraint`}
-              >
-                <span aria-hidden>{NOTE_SEVERITY[note.severity].dots}</span>
+            <li
+              key={`${note.nodeId}:${note.text}`}
+              className={`severity-${note.severity}`}
+              title={`${NOTE_SEVERITY[note.severity].word} constraint · severity ${note.severity} of 3`}
+            >
+              <span className="sr-only">
+                {NOTE_SEVERITY[note.severity].word} constraint, severity {note.severity} of 3. {" "}
               </span>
               <b>{note.op}</b>
               {note.text}
@@ -505,6 +505,10 @@ function ConeSection({
           aria-expanded={enabled}
           title={`${enabled ? "hide" : "show"} ${title.toLowerCase()} (${direction === "backward" ? "u" : "d"})`}
         >
+          <span
+            className={`cone-key ${direction === "backward" ? "needs" : "feeds"}`}
+            aria-hidden
+          />
           <span className="cone-arrow" aria-hidden>{arrow}</span>
           <span>{title}</span>
         </button>

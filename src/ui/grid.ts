@@ -65,12 +65,14 @@ export type Layer = {
   /** Outline weight. Emphasis uses a heavier stroke than the 1.5 default. */
   lineWidth?: number;
   /**
-   * Draw only a border, no fill. This is how *direction* stays readable once
-   * hue is spoken for by box identity: in "both" mode the upstream cone is
-   * filled and the downstream cone is outlined, so a region that is each can be
-   * told apart without a second hue.
+   * Direction is fill geometry, not a perimeter: hue belongs to tile identity,
+   * solid fill means "needs", and a diagonal ruling means "feeds". `density`
+   * sets the spacing between rulings — further apart for a smaller share — and
+   * stays explicit so supplied-share can own it later without changing the
+   * layer contract. `angle` separates one box's ruling from another's, so two
+   * cones that reach the same elements cross there instead of hiding.
    */
-  strokeOnly?: boolean;
+  pattern?: { kind: "stripe"; density: number; angle: number };
 };
 
 /** Fraction of a box's hidden-axis volume that is currently visible. */
@@ -144,29 +146,183 @@ export function regionRects(
 /** Conservative cross-browser ceiling on a canvas backing-store side. */
 const MAX_CANVAS_DIM = 8192;
 
-const hatchCache = new Map<string, CanvasPattern | null>();
+/** Weight of the hairline that delimits a ruled region, in screen CSS px. */
+const PATTERN_EDGE_PX = 0.75;
 
-function hatchPattern(
+/** Ink coverage at the ends of the density scale. The floor stays clearly a set
+ * of separate lines; the ceiling stays clearly ruled rather than solid, so a
+ * complete contribution is representable without spending the top of the scale
+ * to keep the two directions apart. */
+const STRIPE_COVERAGE_MIN = 0.11;
+const STRIPE_COVERAGE_MAX = 0.34;
+/** Ruling weight in screen CSS px, held constant: spacing carries the quantity. */
+const STRIPE_WIDTH_PX = 1;
+
+/**
+ * Perpendicular spacing between downstream rulings, in screen CSS px.
+ *
+ * Density is read as *ink*, so coverage is what moves linearly and the spacing
+ * is derived from it: a larger share closes the gap, a smaller one opens it.
+ * The quantity therefore lives in a geometric property that survives greyscale,
+ * thumbnails, and the hue already spent on tile identity.
+ */
+/** @internal Pure encoding rule for renderer tests. */
+export function stripePitchPx(density: number): number {
+  const bounded = Math.min(1, Math.max(0, density));
+  const coverage = STRIPE_COVERAGE_MIN + bounded * (STRIPE_COVERAGE_MAX - STRIPE_COVERAGE_MIN);
+  return STRIPE_WIDTH_PX / coverage;
+}
+
+/** A perimeter wider than its rectangle invents area. Drop it until both axes
+ * have enough screen extent to contain the full stroke plus a visible centre. */
+/** @internal Pure renderer rule for thin-region tests. */
+export function outlineFitsRect(
+  rect: Pick<RegionRect, "w" | "h">,
+  lineWidth: number,
+  paintScale = 1
+): boolean {
+  const minimum = Math.max(3, lineWidth * 2 + 1);
+  return Math.min(rect.w, rect.h) * paintScale >= minimum;
+}
+
+/** Below this paint scale a ruling falls under a pixel and greys into a wash,
+ * which reads as a smaller share rather than a smaller region. The caller
+ * buckets zoom to powers of two, so this is the "anything under 1:1" bucket
+ * rather than a tunable fraction; moving it has no effect until it crosses 0.5. */
+export const MIN_PATTERN_SCALE = 1;
+/** A pattern cannot represent a region narrower than one useful pattern mark. */
+export const MIN_PATTERN_EXTENT_PX = 3;
+
+/** @internal Pure fallback rule for renderer tests. */
+export function patternFitsRect(
+  rect: Pick<RegionRect, "w" | "h">,
+  paintScale = 1
+): boolean {
+  return paintScale >= MIN_PATTERN_SCALE &&
+    Math.min(rect.w, rect.h) * paintScale >= MIN_PATTERN_EXTENT_PX;
+}
+
+/**
+ * Ruling angle per selection box, in degrees counter-clockwise from horizontal.
+ *
+ * Two boxes whose downstream cones overlap used to draw the same ruling at the
+ * same phase, so the later one landed exactly on the earlier and the shared
+ * area read as a single region. Hue cannot resolve that — the two hues are
+ * painted over each other — so the angle has to. Given its own slope, an
+ * overlap crosses itself and says "both of these reach here", which is a fact
+ * the panel otherwise only states as two separate rows.
+ *
+ * Angles run 30 degrees apart, skipping the 45 the approximation hatch owns and
+ * staying clear of 0/90, where a ruling would run parallel to the tile lattice.
+ * There are more slots than the three categorical hues on purpose: every box
+ * past the third shares one neutral colour, so past that point the angle is the
+ * only thing still telling them apart.
+ */
+const STRIPE_ANGLES_DEG = [135, 165, 15, 75];
+
+/** @internal Pure encoding rule for renderer tests. */
+export function stripeAngleDeg(boxIndex: number): number {
+  const n = STRIPE_ANGLES_DEG.length;
+  return STRIPE_ANGLES_DEG[((Math.trunc(boxIndex) % n) + n) % n];
+}
+
+/** The slope reserved for over-approximation, kept out of the box rotation. */
+export const HATCH_ANGLE_DEG = 45;
+/** Perpendicular spacing of the approximation hatch, in screen CSS px. */
+const HATCH_PITCH_PX = 8 / Math.SQRT2;
+/** Weight of a hatch line, in screen CSS px. */
+const HATCH_WIDTH_PX = 1.6;
+
+/** Beyond this many lines a ruling is denser than the region is wide in pixels;
+ * the caller paints solid instead of spending the frame on invisible strokes. */
+const MAX_RULING_LINES = 4096;
+
+type Segment = { x1: number; y1: number; x2: number; y2: number };
+
+/**
+ * A ruled fill as line segments in canvas pixels.
+ *
+ * The lines are stroked rather than tiled as a repeating bitmap. A bitmap tile
+ * only repeats seamlessly at angles commensurate with its own edges, which is
+ * what limited the fill to 45 degrees; stroking accepts any angle, is rasterised
+ * at full resolution instead of resampled, and drops the pattern cache with it.
+ *
+ * Phase is anchored to the canvas origin, not to the rect, so every region of a
+ * card lies on one continuous ruling: two regions at the same angle line up
+ * instead of stepping, and two at different angles cross the same way wherever
+ * they meet.
+ *
+ * Pure and DOM-free so spacing, angle and phase can be asserted directly.
+ */
+/** @internal Pure geometry seam for ruled fills. */
+export function rulingSegments(
+  rect: Pick<RegionRect, "x" | "y" | "w" | "h">,
+  angleDeg: number,
+  pitch: number
+): Segment[] {
+  if (!(pitch > 0)) return [];
+  const theta = (angleDeg * Math.PI) / 180;
+  // Canvas y grows downward, so a counter-clockwise visual angle negates it.
+  const dx = Math.cos(theta);
+  const dy = -Math.sin(theta);
+  // Unit normal: the axis the lines are spaced along.
+  const nx = -dy;
+  const ny = dx;
+  const { x, y, w, h } = rect;
+  const corners = [
+    x * nx + y * ny,
+    (x + w) * nx + y * ny,
+    x * nx + (y + h) * ny,
+    (x + w) * nx + (y + h) * ny,
+  ];
+  const lo = Math.min(...corners);
+  const hi = Math.max(...corners);
+  if ((hi - lo) / pitch > MAX_RULING_LINES) return [];
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const centre = cx * nx + cy * ny;
+  // Long enough to cross the rect from any offset; the caller clips.
+  const reach = Math.hypot(w, h) / 2 + pitch;
+  const out: Segment[] = [];
+  for (let s = Math.ceil(lo / pitch) * pitch; s <= hi; s += pitch) {
+    const ox = cx + (s - centre) * nx;
+    const oy = cy + (s - centre) * ny;
+    out.push({
+      x1: ox - dx * reach,
+      y1: oy - dy * reach,
+      x2: ox + dx * reach,
+      y2: oy + dy * reach,
+    });
+  }
+  return out;
+}
+
+/** Stroke one ruled rect. Screen-CSS sizes are divided by the zoom bucket, so
+ * spacing and weight stay constant on screen as the graph scales. */
+function strokeRuling(
   ctx: CanvasRenderingContext2D,
-  color: [number, number, number]
-): CanvasPattern | null {
-  const key = color.join(",");
-  if (hatchCache.has(key)) return hatchCache.get(key)!;
-  const c = document.createElement("canvas");
-  c.width = 8;
-  c.height = 8;
-  const g = c.getContext("2d")!;
-  g.strokeStyle = `rgba(${color[0]},${color[1]},${color[2]},0.9)`;
-  g.lineWidth = 1.6;
-  g.beginPath();
-  g.moveTo(-2, 6);
-  g.lineTo(6, -2);
-  g.moveTo(2, 10);
-  g.lineTo(10, 2);
-  g.stroke();
-  const p = ctx.createPattern(c, "repeat");
-  hatchCache.set(key, p);
-  return p;
+  rect: RegionRect,
+  color: [number, number, number],
+  spec: { angle: number; pitch: number; width: number; alpha: number },
+  paintScale: number
+): boolean {
+  const segments = rulingSegments(rect, spec.angle, spec.pitch / paintScale);
+  if (!segments.length) return false;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(rect.x, rect.y, rect.w, rect.h);
+  ctx.clip();
+  ctx.globalAlpha = spec.alpha;
+  ctx.strokeStyle = `rgb(${color[0]},${color[1]},${color[2]})`;
+  ctx.lineWidth = spec.width / paintScale;
+  ctx.beginPath();
+  for (const s of segments) {
+    ctx.moveTo(s.x1, s.y1);
+    ctx.lineTo(s.x2, s.y2);
+  }
+  ctx.stroke();
+  ctx.restore();
+  return true;
 }
 
 export function drawGrid(
@@ -176,7 +332,8 @@ export function drawGrid(
   geom: GridGeom,
   layers: Layer[],
   dark: boolean,
-  renderScale = 1
+  renderScale = 1,
+  paintScale = 1
 ): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -204,35 +361,73 @@ export function drawGrid(
     const [r, g, b] = layer.color;
     const rects = regionRects(layer.region, shape, cfg, geom);
 
-    if (layer.strokeOnly) {
-      ctx.strokeStyle = `rgba(${r},${g},${b},${Math.min(1, layer.alpha + 0.25)})`;
-      ctx.lineWidth = layer.lineWidth ?? 2;
-      for (const q of rects) ctx.strokeRect(q.x + 0.5, q.y + 0.5, q.w - 1, q.h - 1);
-      continue;
-    }
-
     for (const q of rects) {
-      ctx.fillStyle = `rgba(${r},${g},${b},${Math.min(1, layer.alpha * q.alpha)})`;
+      const alpha = Math.min(1, layer.alpha * q.alpha);
+      const ruled =
+        layer.pattern?.kind === "stripe" &&
+        patternFitsRect(q, paintScale) &&
+        strokeRuling(
+          ctx,
+          q,
+          [r, g, b],
+          {
+            angle: layer.pattern.angle,
+            pitch: stripePitchPx(layer.pattern.density),
+            width: STRIPE_WIDTH_PX,
+            alpha,
+          },
+          paintScale
+        );
+      if (ruled) {
+        // A ruled fill has no edge of its own: the eye stops at the last line
+        // inside the region, not at its bound, so the extent reads as ragged.
+        // A hairline restores the shape at a fraction of the weight of the
+        // perimeter that used to carry direction — thin enough that it stays a
+        // delimiter and cannot be read as an encoding of its own. Solid fills
+        // are already crisp, so only ruled rects get one.
+        if (outlineFitsRect(q, PATTERN_EDGE_PX, paintScale)) {
+          ctx.save();
+          ctx.globalAlpha = Math.min(1, alpha + 0.12);
+          ctx.strokeStyle = `rgb(${r},${g},${b})`;
+          ctx.lineWidth = PATTERN_EDGE_PX / paintScale;
+          const inset = ctx.lineWidth / 2;
+          ctx.strokeRect(q.x + inset, q.y + inset, q.w - ctx.lineWidth, q.h - ctx.lineWidth);
+          ctx.restore();
+        }
+        continue;
+      }
+      // Thin marks stay present, and fitted-out views avoid a ruling that would
+      // collapse into a wash. Lower alpha keeps the low-zoom fallback distinct
+      // from solid upstream.
+      const fallbackAlpha = layer.pattern && paintScale < MIN_PATTERN_SCALE ? alpha * 0.55 : alpha;
+      ctx.fillStyle = `rgba(${r},${g},${b},${fallbackAlpha})`;
       ctx.fillRect(q.x, q.y, q.w, q.h);
     }
 
-    if (layer.hatch) {
-      const p = hatchPattern(ctx, [r, g, b]);
-      if (p) {
-        ctx.save();
-        ctx.fillStyle = p;
-        for (const q of rects) {
-          ctx.globalAlpha = Math.min(1, layer.alpha * q.alpha);
-          ctx.fillRect(q.x, q.y, q.w, q.h);
-        }
-        ctx.restore();
-      }
-    }
+    // Over-approximation rides the same routine at its own reserved slope, so
+    // it composes with a downstream ruling as a crossing rather than as a
+    // second texture that has to be told apart from the first.
+    if (layer.hatch)
+      for (const q of rects)
+        strokeRuling(
+          ctx,
+          q,
+          [r, g, b],
+          {
+            angle: HATCH_ANGLE_DEG,
+            pitch: HATCH_PITCH_PX,
+            width: HATCH_WIDTH_PX,
+            alpha: Math.min(1, layer.alpha * q.alpha) * 0.9,
+          },
+          paintScale
+        );
 
     if (layer.outline) {
       ctx.strokeStyle = `rgba(${r},${g},${b},0.95)`;
       ctx.lineWidth = layer.lineWidth ?? 1.5;
-      for (const q of rects) ctx.strokeRect(q.x + 0.5, q.y + 0.5, q.w - 1, q.h - 1);
+      for (const q of rects)
+        if (outlineFitsRect(q, ctx.lineWidth, paintScale))
+          ctx.strokeRect(q.x + 0.5, q.y + 0.5, q.w - 1, q.h - 1);
     }
   }
 

@@ -9,6 +9,7 @@ import {
   GridGeom,
   Layer,
   snapSpan,
+  stripeAngleDeg,
 } from "./grid";
 import { aggregateColors, boxColor } from "./palette";
 import { BoxProp, Direction, partsOn, useStore, ViewCfg, viewAxes } from "./store";
@@ -70,6 +71,10 @@ const depthAlpha = (depth: number, base = 0.72) => base / (1 + 0.35 * Math.max(0
 const PEER_FADE = 0.4;
 /** Outline weight on the focused box's cone. */
 const EMPHASIS_LINE_PX = 2.7;
+/** Placeholder until supplied-share is quantitative. Direction owns the ruling's
+ * slope; a later analysis may vary this full 0–1 channel, which the renderer
+ * spends on the spacing between lines rather than on their weight. */
+export const DEFAULT_DOWNSTREAM_DENSITY = 0.46;
 
 /** Everything the canvas needs to decide what to paint, as plain data. */
 /** @internal Input contract for the directly tested layer builder. */
@@ -145,10 +150,8 @@ export function buildLayers({
       const bTr = bp.backward?.tensors.get(tensorId);
       const fTr = bp.forward?.tensors.get(tensorId);
       const into = emph ? emphasised : plain;
-      // With both cones on screen at once, hue already means "which box", so
-      // fill vs outline is what is left to carry up- versus downstream. With a
-      // single direction there is nothing to disambiguate, so it stays filled.
-      const outlineDownstream = direction === "both";
+      // Hue means "which box", so direction lives in fill geometry in every
+      // view: required input is uniform; downstream reach is ruled.
       if (showBack && bTr && !(isSelected && bTr.depth === 0))
         into.push({
           region: bTr.region,
@@ -162,13 +165,15 @@ export function buildLayers({
         into.push({
           region: fTr.region,
           color,
-          alpha: depthAlpha(fTr.depth) * alphaScale,
+          // Distance is already stated exactly as dN in the inspector. Keeping
+          // it out of downstream alpha leaves alpha to hidden-axis coverage and
+          // density to the future supplied-share measurement.
+          alpha: 0.72 * alphaScale,
           hatch: !fTr.region.exact,
-          strokeOnly: outlineDownstream,
-          // a stroke-only layer never reaches drawGrid's outline branch, so
-          // emphasis rides on the stroke width instead
-          outline: emph && !outlineDownstream,
-          lineWidth: emph ? EMPHASIS_LINE_PX : undefined,
+          // Angle follows the box index, like the hue does. Where two boxes
+          // reach the same elements the rulings cross instead of the later one
+          // hiding the earlier, which is the only place that overlap is visible.
+          pattern: { kind: "stripe", density: DEFAULT_DOWNSTREAM_DENSITY, angle: stripeAngleDeg(i) },
         });
     });
     // The emphasised cone draws last so it sits over its faded peers. Scoped
@@ -183,9 +188,10 @@ export function buildLayers({
       layers.push({
         region: fwd.region,
         color: agg.downstream,
-        alpha: depthAlpha(fwd.depth),
+        alpha: 0.72,
         hatch: !fwd.region.exact,
-        strokeOnly: direction === "both",
+        // One merged cone, so there is nothing to tell apart: the base slope.
+        pattern: { kind: "stripe", density: DEFAULT_DOWNSTREAM_DENSITY, angle: stripeAngleDeg(0) },
       });
   }
 
@@ -220,9 +226,16 @@ export function buildLayers({
 export function TensorCard({
   tensor,
   renderScale = 1,
+  paintScale = 1,
+  moveHandlers,
 }: {
   tensor: Tensor;
   renderScale?: number;
+  paintScale?: number;
+  moveHandlers?: Pick<
+    React.HTMLAttributes<HTMLDivElement>,
+    "onPointerDown" | "onPointerMove" | "onPointerUp" | "onPointerCancel" | "onLostPointerCapture"
+  >;
 }): React.ReactElement {
   const shape = tensor.resolved!;
   const rank = shape.length;
@@ -282,7 +295,7 @@ export function TensorCard({
       prev,
       dragRegion: drag ? fromBox(dragToBox(drag)) : null,
     });
-    drawGrid(canvas, shape, cfg, geom, layers, dark, renderScale);
+    drawGrid(canvas, shape, cfg, geom, layers, dark, renderScale, paintScale);
   }, [
     back,
     cfg,
@@ -296,6 +309,7 @@ export function TensorCard({
     isSelected,
     parts,
     perBox,
+    paintScale,
     prev,
     renderScale,
     selection?.parts.length,
@@ -410,7 +424,7 @@ export function TensorCard({
           name, the resolved numeric shape, and the two facts that change how the
           grid below should be read: where the tensor comes from, and whether its
           highlight is exact. */}
-      <div className="tc-header">
+      <div className={`tc-header${moveHandlers ? " movable" : ""}`} {...moveHandlers}>
         <span className="tc-name-wrap">
           <span className="tc-name" tabIndex={0}>{tensor.name}</span>
           <span className="tc-info" role="tooltip">
