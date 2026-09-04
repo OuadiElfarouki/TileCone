@@ -56,9 +56,14 @@ export function useKeyboard({
 
       // Panel shortcuts remain global even while focus is inside the source or
       // an inspector control. They do not modify the field's contents.
-      if (matchesShortcut(e, SHORTCUTS.leftPanel) || matchesShortcut(e, SHORTCUTS.rightPanel)) {
+      const panel = matchesShortcut(e, SHORTCUTS.leftPanel)
+        ? "left"
+        : matchesShortcut(e, SHORTCUTS.rightPanel)
+          ? "right"
+          : null;
+      if (panel) {
         e.preventDefault();
-        return s.togglePanel(matchesShortcut(e, SHORTCUTS.leftPanel) ? "left" : "right");
+        return s.togglePanel(panel);
       }
 
       if (isTyping(e.target)) return;

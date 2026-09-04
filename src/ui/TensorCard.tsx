@@ -64,7 +64,9 @@ export function visibleApproximation(...regions: (Region | undefined)[]): {
   };
 }
 
-const depthAlpha = (depth: number, base = 0.72) => base / (1 + 0.35 * Math.max(0, depth - 1));
+const CONE_ALPHA = 0.72;
+const depthAlpha = (depth: number, base = CONE_ALPHA) =>
+  base / (1 + 0.35 * Math.max(0, depth - 1));
 
 /** How far a non-focused box's cone fades. Fading, never hiding: the peers have
  * to stay legible or there is nothing to compare the focused one against. */
@@ -75,6 +77,12 @@ const EMPHASIS_LINE_PX = 2.7;
  * slope; a later analysis may vary this full 0–1 channel, which the renderer
  * spends on the spacing between lines rather than on their weight. */
 export const DEFAULT_DOWNSTREAM_DENSITY = 0.46;
+
+const downstreamPattern = (boxIndex: number): NonNullable<Layer["pattern"]> => ({
+  kind: "stripe",
+  density: DEFAULT_DOWNSTREAM_DENSITY,
+  angle: stripeAngleDeg(boxIndex),
+});
 
 /** Everything the canvas needs to decide what to paint, as plain data. */
 /** @internal Input contract for the directly tested layer builder. */
@@ -168,12 +176,12 @@ export function buildLayers({
           // Distance is already stated exactly as dN in the inspector. Keeping
           // it out of downstream alpha leaves alpha to hidden-axis coverage and
           // density to the future supplied-share measurement.
-          alpha: 0.72 * alphaScale,
+          alpha: CONE_ALPHA * alphaScale,
           hatch: !fTr.region.exact,
           // Angle follows the box index, like the hue does. Where two boxes
           // reach the same elements the rulings cross instead of the later one
           // hiding the earlier, which is the only place that overlap is visible.
-          pattern: { kind: "stripe", density: DEFAULT_DOWNSTREAM_DENSITY, angle: stripeAngleDeg(i) },
+          pattern: downstreamPattern(i),
         });
     });
     // The emphasised cone draws last so it sits over its faded peers. Scoped
@@ -188,10 +196,10 @@ export function buildLayers({
       layers.push({
         region: fwd.region,
         color: agg.downstream,
-        alpha: 0.72,
+        alpha: CONE_ALPHA,
         hatch: !fwd.region.exact,
         // One merged cone, so there is nothing to tell apart: the base slope.
-        pattern: { kind: "stripe", density: DEFAULT_DOWNSTREAM_DENSITY, angle: stripeAngleDeg(0) },
+        pattern: downstreamPattern(0),
       });
   }
 
@@ -226,12 +234,12 @@ export function buildLayers({
 export function TensorCard({
   tensor,
   renderScale = 1,
-  paintScale = 1,
+  viewScale = 1,
   moveHandlers,
 }: {
   tensor: Tensor;
   renderScale?: number;
-  paintScale?: number;
+  viewScale?: number;
   moveHandlers?: Pick<
     React.HTMLAttributes<HTMLDivElement>,
     "onPointerDown" | "onPointerMove" | "onPointerUp" | "onPointerCancel" | "onLostPointerCapture"
@@ -295,7 +303,7 @@ export function TensorCard({
       prev,
       dragRegion: drag ? fromBox(dragToBox(drag)) : null,
     });
-    drawGrid(canvas, shape, cfg, geom, layers, dark, renderScale, paintScale);
+    drawGrid(canvas, shape, cfg, geom, layers, dark, renderScale, viewScale);
   }, [
     back,
     cfg,
@@ -309,7 +317,7 @@ export function TensorCard({
     isSelected,
     parts,
     perBox,
-    paintScale,
+    viewScale,
     prev,
     renderScale,
     selection?.parts.length,

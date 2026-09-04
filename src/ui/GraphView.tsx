@@ -146,13 +146,6 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
     () => Math.min(4, Math.max(1, 2 ** Math.ceil(Math.log2(Math.max(1, tf.k))))),
     [tf.k]
   );
-  // Pattern pitch follows zoom in coarse buckets. This keeps rulings close to a
-  // constant screen size without re-rasterising every card on every wheel tick.
-  const paintScale = useMemo(
-    () => Math.min(4, Math.max(0.25, 2 ** Math.round(Math.log2(Math.max(0.25, tf.k))))),
-    [tf.k]
-  );
-
   /** Dagre placement depends only on graph structure and tensor footprints. */
   const baseLayout = useMemo(
     () =>
@@ -444,6 +437,13 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
           }
           const t = resolved.tensors[p.id];
           const hot = !hasResult || contributing.has(p.id);
+          const moveHandlers = {
+            onPointerDown: (e: React.PointerEvent<HTMLElement>) => startCardDrag(e, p),
+            onPointerMove: moveCard,
+            onPointerUp: () => finishCardDrag(true),
+            onPointerCancel: () => finishCardDrag(false),
+            onLostPointerCapture: () => finishCardDrag(false),
+          };
           return (
             <div
               key={`t:${p.id}`}
@@ -454,23 +454,13 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
                 className="tensor-grab"
                 aria-label={`move tensor ${t.name}`}
                 title={blockedTensor === p.id ? `${t.name} is blocked by a neighbouring node` : `drag to reposition ${t.name}`}
-                onPointerDown={(e) => startCardDrag(e, p)}
-                onPointerMove={moveCard}
-                onPointerUp={() => finishCardDrag(true)}
-                onPointerCancel={() => finishCardDrag(false)}
-                onLostPointerCapture={() => finishCardDrag(false)}
+                {...moveHandlers}
               />
               <TensorCard
                 tensor={t}
                 renderScale={renderScale}
-                paintScale={paintScale}
-                moveHandlers={{
-                  onPointerDown: (e) => startCardDrag(e, p),
-                  onPointerMove: moveCard,
-                  onPointerUp: () => finishCardDrag(true),
-                  onPointerCancel: () => finishCardDrag(false),
-                  onLostPointerCapture: () => finishCardDrag(false),
-                }}
+                viewScale={tf.k}
+                moveHandlers={moveHandlers}
               />
             </div>
           );

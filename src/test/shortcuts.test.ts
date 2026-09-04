@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchesShortcut, SHORTCUT_GROUPS, SHORTCUTS } from "../ui/shortcuts";
+import { matchesShortcut, SHORTCUT_GROUPS, SHORTCUTS, type Shortcut } from "../ui/shortcuts";
 
 const key = (
   value: string,
@@ -15,14 +15,15 @@ const key = (
 
 describe("shortcut manifest", () => {
   it("is the grouped inventory rendered by the help sheet", () => {
-    const grouped = SHORTCUT_GROUPS.flatMap((group) => group.items);
-    expect(grouped).toContain(SHORTCUTS.fit);
-    expect(grouped).toContain(SHORTCUTS.run);
+    const grouped = SHORTCUT_GROUPS.flatMap((group) => group.items as readonly Shortcut[]);
     expect(new Set(grouped.map((item) => item.id)).size).toBe(grouped.length);
+    expect(new Set(grouped)).toEqual(new Set(Object.values(SHORTCUTS)));
   });
 
   it("matches the modifiers advertised by local and global bindings", () => {
     expect(matchesShortcut(key("f"), SHORTCUTS.fit)).toBe(true);
+    expect(matchesShortcut(key("f", { ctrlKey: true }), SHORTCUTS.fit)).toBe(false);
+    expect(matchesShortcut(key("f", { altKey: true }), SHORTCUTS.fit)).toBe(false);
     expect(matchesShortcut(key("1", { altKey: true }), SHORTCUTS.leftPanel)).toBe(true);
     expect(matchesShortcut(key("1"), SHORTCUTS.leftPanel)).toBe(false);
     expect(matchesShortcut(key("Enter", { metaKey: true }), SHORTCUTS.run)).toBe(true);

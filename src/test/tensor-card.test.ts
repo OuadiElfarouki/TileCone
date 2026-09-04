@@ -89,7 +89,7 @@ describe("the box a single-cell gesture commits", () => {
 /* ---------------- what the canvas paints ---------------- */
 
 import { buildLayers, LayerInputs } from "../ui/TensorCard";
-import type { BoxProp } from "../ui/store";
+import { MAX_PER_BOX_PROPS, type BoxProp } from "../ui/store";
 
 const region = (...pairs: [number, number][]) => fromBox(box(...pairs));
 
@@ -165,18 +165,14 @@ describe("direction stays readable once hue means box identity", () => {
   });
 
   it("gives each box its own ruling angle, so overlapping cones cross", () => {
-    const layers = buildLayers(
-      inputs({ perBox: [bothCones("T"), bothCones("T"), bothCones("T")], direction: "forward" })
-    );
+    const perBox = Array.from({ length: MAX_PER_BOX_PROPS }, () => bothCones("T"));
+    const layers = buildLayers(inputs({ perBox, direction: "forward" }));
     const angles = layers.map((l) => l.pattern!.angle);
     expect(new Set(angles).size).toBe(angles.length);
-    // Hue runs out before the angles do: every box past the third shares one
-    // neutral colour, so the slope has to keep separating them.
-    expect(stripeAngleDeg(3)).not.toBe(stripeAngleDeg(2));
   });
 
   it("keeps every ruling clear of the lattice and of the approximation hatch", () => {
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < MAX_PER_BOX_PROPS; i++) {
       const angle = stripeAngleDeg(i);
       // Mod 180: a line at 15 degrees and one at 195 are the same ruling.
       const from = (ref: number) => {
