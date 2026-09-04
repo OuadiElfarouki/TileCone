@@ -12,7 +12,7 @@ import {
   subtract,
   union,
 } from "../core/region";
-import { formatBytes } from "./TensorCard";
+import { formatBytes } from "./format";
 import { useInspectorAnalysis } from "./inspector-analysis";
 import { aggregateColors, boxColor, MAX_DISTINCT_HUES, rgbCss } from "./palette";
 import {
@@ -24,7 +24,6 @@ import {
   selectedTensorIds,
   startingTiles,
   useStore,
-  viewAxes,
 } from "./store";
 import { formatSelectionBox, parseSelectionBox } from "./selection-range";
 import { copyText } from "./clipboard";
@@ -35,6 +34,7 @@ import {
   settledTiles,
   TILE_SCALE_NONE,
 } from "./tiling";
+import { viewAxes } from "./tensor-view";
 
 function fmt(n: number): string {
   if (n === 0) return "0";

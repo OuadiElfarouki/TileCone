@@ -8,6 +8,7 @@ import {
   type Rect,
   WORLD_MARGIN,
 } from "./graph-geometry";
+import type { TensorOffsets } from "./tensor-layout";
 
 export type GraphNodeKind = "tensor" | "op";
 
@@ -49,9 +50,6 @@ export type GraphScene = {
 };
 
 export type TensorMeasure = (tensor: Tensor) => Pick<Rect, "w" | "h">;
-export type TensorOffsets = Readonly<
-  Record<string, Readonly<{ dx: number; dy: number }>>
->;
 
 const graphId = (node: PlacedGraphNode): string =>
   `${node.kind === "tensor" ? "t" : "n"}:${node.id}`;
@@ -134,7 +132,7 @@ export function buildBaseGraphLayout(
  */
 export function buildGraphScene(
   base: BaseGraphLayout,
-  tensorOffsets: TensorOffsets
+  tensorOffsets: Readonly<TensorOffsets>
 ): GraphScene {
   const nodes = base.nodes.map((node) => {
     if (node.kind !== "tensor") return node;

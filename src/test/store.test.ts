@@ -5,10 +5,11 @@ import { EXAMPLES } from "../examples";
 import {
   enabledPropResult,
   MAX_PER_BOX_PROPS, PANEL_COLLAPSE_AT, PANEL_MAX, PANEL_MIN,
-  planesOf, startingTiles, useStore, viewAxes,
+  planesOf, startingTiles, useStore,
 } from "../ui/store";
 import { cardPx, graphScale, MAX_ELEM_PX, planeExtents, TILE_SCALE_NONE } from "../ui/tiling";
 import { nudgeDelta, nudgeUnit, snapSpan, tileOf } from "../ui/grid";
+import { viewAxes } from "../ui/tensor-view";
 
 const S = () => useStore.getState();
 const sel = () => S().selection;

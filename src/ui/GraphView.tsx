@@ -9,7 +9,8 @@ import {
 } from "./graph-scene";
 import { cardSize, TensorCard } from "./TensorCard";
 import { shapeLabel, symbolicExtentLabel } from "./shape-label";
-import { enabledPropResult, selectedTensorIds, TensorOffset, useStore } from "./store";
+import { enabledPropResult, selectedTensorIds, useStore } from "./store";
+import type { TensorOffset } from "./tensor-layout";
 import { MIN_SIDE_PX } from "./tiling";
 import { FIT_GRAPH_EVENT } from "./useKeyboard";
 

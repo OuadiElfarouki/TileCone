@@ -17,7 +17,9 @@ import { compileDSL } from "../parse/compiler";
 import { toDSL } from "../parse/dsl";
 import { graphScale, MAX_ELEM_PX, planeExtents, TILE_SCALE_MAX, TILE_SCALE_MIN } from "./tiling";
 import { tileOf } from "./grid";
-import { AxisMode } from "./shape-label";
+import type { AxisMode } from "./shape-label";
+import type { TensorOffset, TensorOffsets } from "./tensor-layout";
+import { defaultViewCfg, viewAxes, type ViewCfg } from "./tensor-view";
 
 /** Which independently toggled views are active in the workspace. `none` is
  * the explicit figures-only state: analysis remains live while paint and rows hide. */
@@ -25,8 +27,6 @@ export type Direction = "none" | "backward" | "forward" | "both";
 export type ConeDirection = "backward" | "forward";
 export type PanelSide = "left" | "right";
 export type Theme = "light" | "dark";
-export type TensorOffset = { dx: number; dy: number };
-export type TensorOffsets = Record<string, TensorOffset>;
 /** Defensive share-state bound; far beyond any usable graph arrangement while
  * preventing finite-but-overflowing coordinates from poisoning scene bounds. */
 export const MAX_TENSOR_OFFSET = 1_000_000;
@@ -98,6 +98,15 @@ export function anchorTensorId(selection: Selection, focusedBox: number | null):
   return parts[parts.length - 1].tensorId;
 }
 type WorkspaceSnapshot = { selection: Selection; tensorOffsets: TensorOffsets };
+const WORKSPACE_HISTORY_LIMIT = 40;
+
+function appendWorkspaceHistory(
+  history: WorkspaceSnapshot[],
+  snapshot: WorkspaceSnapshot
+): WorkspaceSnapshot[] {
+  return [...history, snapshot].slice(-WORKSPACE_HISTORY_LIMIT);
+}
+
 type WorkspaceRestore = {
   dsl: string;
   direction: Direction;
@@ -121,27 +130,6 @@ export const PANEL_RAIL = 30;
 /** Direct canvas gestures add by default; Alt subtracts. "replace" is internal
  * for examples, restored URL state, and operation-list probes. */
 type Compose = "union" | "subtract" | "replace";
-
-export type ViewCfg = {
-  sliders: number[]; // index per hidden axis (full rank length; row/col entries ignored)
-  projection: boolean; // union over hidden axes vs slice at slider
-};
-
-function defaultViewCfg(shape: number[]): ViewCfg {
-  return { sliders: shape.map(() => 0), projection: true };
-}
-
-/**
- * Which axes the grid draws, fixed row-major for every tensor: the last axis
- * (fastest-varying) is columns, the one before it is rows. There is no per-card
- * axis remapping — a different view of a tensor is a `transpose` node in the
- * graph, where it is part of the computation being explained rather than a
- * display setting that silently disagrees with the DSL.
- */
-export function viewAxes(shape: number[]): { rowAxis: number; colAxis: number } {
-  const rank = shape.length;
-  return { rowAxis: rank >= 2 ? rank - 2 : -1, colAxis: rank >= 1 ? rank - 1 : -1 };
-}
 
 type State = {
   dslText: string;
@@ -364,7 +352,7 @@ function editSelection(
   set({
     selection: sel,
     workspaceHistory: record
-      ? [...workspaceHistory, { selection, tensorOffsets }].slice(-40)
+      ? appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets })
       : workspaceHistory,
     focusedBox: nextFocus,
     pinnedBox: nextFocus === null ? null : get().pinnedBox,
@@ -624,7 +612,7 @@ export const useStore = create<State>((set, get) => ({
       selection: sel,
       // Null is a real workspace state: the first selection must be undoable
       // without also rewinding an earlier tensor move.
-      workspaceHistory: [...workspaceHistory, { selection, tensorOffsets }].slice(-40),
+      workspaceHistory: appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets }),
       focusedBox: nextPinned,
       pinnedBox: nextPinned,
       hiddenBoxes: nextHidden,
@@ -638,7 +626,7 @@ export const useStore = create<State>((set, get) => ({
     set({
       selection: null,
       workspaceHistory: selection
-        ? [...workspaceHistory, { selection, tensorOffsets }].slice(-40)
+        ? appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets })
         : workspaceHistory,
       backwardRes: null,
       forwardRes: null,
@@ -822,7 +810,10 @@ export const useStore = create<State>((set, get) => ({
     if (Math.abs(before.dx) < 1e-6 && Math.abs(before.dy) < 1e-6) delete previousOffsets[tensorId];
     else previousOffsets[tensorId] = before;
     set({
-      workspaceHistory: [...workspaceHistory, { selection, tensorOffsets: previousOffsets }].slice(-40),
+      workspaceHistory: appendWorkspaceHistory(workspaceHistory, {
+        selection,
+        tensorOffsets: previousOffsets,
+      }),
     });
   },
 
@@ -831,7 +822,7 @@ export const useStore = create<State>((set, get) => ({
     if (!Object.keys(tensorOffsets).length) return;
     set({
       tensorOffsets: {},
-      workspaceHistory: [...workspaceHistory, { selection, tensorOffsets }].slice(-40),
+      workspaceHistory: appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets }),
     });
   },
 

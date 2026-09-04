@@ -1,7 +1,8 @@
 import { useEffect } from "react";
-import { anchorTensorId, useStore, viewAxes } from "./store";
+import { anchorTensorId, useStore } from "./store";
 import { nudgeDelta, nudgeUnit } from "./grid";
 import { matchesShortcut, SHORTCUTS } from "./shortcuts";
+import { viewAxes } from "./tensor-view";
 
 const isTyping = (el: EventTarget | null) => {
   const t = el as HTMLElement | null;
@@ -122,8 +123,8 @@ export function useKeyboard({
           matchesShortcut(e, SHORTCUTS.moveFast) ? 8 : 1
         );
         // Auto-repeat records no undo entry, so holding an arrow is one step to
-        // undo rather than forty — which would also evict the real history,
-        // since it is capped at 40 entries.
+        // undo rather than many individual steps, which would also evict the
+        // meaningful history from the store's bounded undo stack.
         s.moveSelection(axis, delta, !e.repeat);
         return;
       }

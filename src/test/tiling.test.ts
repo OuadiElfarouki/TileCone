@@ -31,8 +31,7 @@ import {
   stripePitchPx,
 } from "../ui/grid";
 import { box, fromBox } from "../core/region";
-import { viewAxes } from "../ui/store";
-import type { ViewCfg } from "../ui/store";
+import { viewAxes, type ViewCfg } from "../ui/tensor-view";
 
 const cfg: ViewCfg = { sliders: [0, 0, 0, 0], projection: true };
 const isPow2 = (n: number) => n >= 1 && (n & (n - 1)) === 0;

@@ -70,13 +70,16 @@ src/
 │   ├── TensorCard.tsx    interactive tensor canvas
 │   ├── Inspector.tsx     tile grid, selection parts, footprint, cost, notes
 │   ├── inspector-analysis.ts  memoized inspector derivation and costly-probe gating
-│   ├── SidePanel.tsx     source, cone direction, examples, and operations
+│   ├── SidePanel.tsx     source, sharing, examples, and operations
 │   ├── PanelFrame.tsx    side-panel width, drag strip, collapse-to-rail
 │   ├── WorkspaceHeader.tsx  product identity and theme control
 │   ├── grid.ts           pure grid geometry and drawing
 │   ├── graph-geometry.ts collision constraints and connector routing
 │   ├── graph-scene.ts    structural layout and live routed-scene projection
 │   ├── tiling.ts         tile-size policy and slider stops
+│   ├── tensor-view.ts    visible-axis and hidden-axis view configuration
+│   ├── tensor-layout.ts  shared tensor-card offset contracts
+│   ├── format.ts         presentation-only numeric formatting
 │   ├── palette.ts        validated categorical hues and canvas surfaces
 │   ├── share.ts          workspace link encoding and decoding
 │   ├── selection-range.ts  range syntax for editable selection parts
@@ -412,7 +415,7 @@ The test suite checks the architecture at several levels:
 - composite expansion equivalence;
 - store behavior, tiling geometry, and slider-stop policy;
 - dependency notes: that a note claims only what the cone did, names axes as the source does, and merges look-alikes rather than crowding out distinct ones;
-- canvas encoding: filled versus outlined per direction, focus fading rather than hiding, and regions drawn at element precision rather than rounded to the lattice;
+- canvas encoding: solid upstream versus ruled downstream paint, approximation hatching, focus fading rather than hiding, and regions drawn at element precision rather than rounded to the lattice;
 - workspace link round-trips, including refusal of malformed payloads;
 - note severity, cap selection, and the per-tensor flags, including that the hardest constraint survives the cap and that a full-axis pull is still seen once its region is split into disjoint boxes;
 - partial versus complete downstream contribution, including the over-approximated case;

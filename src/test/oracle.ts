@@ -105,7 +105,6 @@ export function truthBackward(
 
 /** True influence set of `selection` on tensor `onTensor` (forward direction). */
 export function truthForward(
-  g: ResolvedGraph,
   oracle: Oracle,
   selTensor: string,
   selRegion: Region,

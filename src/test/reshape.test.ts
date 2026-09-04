@@ -11,7 +11,7 @@ function strides(sh: number[]): number[] {
 }
 
 /** Brute-force image of a box under reshape via linear indices. */
-function bruteMap(b: Box, from: number[], to: number[]): Set<number> {
+function bruteMap(b: Box, from: number[]): Set<number> {
   const out = new Set<number>();
   for (const p of points(fromBox(b))) {
     let lin = 0;
@@ -92,7 +92,7 @@ describe("reshapeMapBox", () => {
           return { lo, hi: randInt(r, lo + 1, e + 1) };
         });
         const mapped = reshapeMapBox(b, from, to);
-        const truth = bruteMap(b, from, to);
+        const truth = bruteMap(b, from);
         const got = regionFlat(mapped, to);
         if (mapped.exact) {
           expect(got, `exact ${from}->${to} box ${JSON.stringify(b)}`).toEqual(truth);

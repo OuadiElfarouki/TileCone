@@ -12,16 +12,11 @@ import {
   stripeAngleDeg,
 } from "./grid";
 import { aggregateColors, boxColor } from "./palette";
-import { BoxProp, Direction, partsOn, useStore, ViewCfg, viewAxes } from "./store";
+import { BoxProp, Direction, partsOn, useStore } from "./store";
 import { cardPx, planeExtents } from "./tiling";
 import { shapeLabel, shapeReadings } from "./shape-label";
-
-export function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1 << 20) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1 << 30) return `${(n / (1 << 20)).toFixed(1)} MB`;
-  return `${(n / (1 << 30)).toFixed(2)} GB`;
-}
+import { formatBytes } from "./format";
+import { viewAxes, type ViewCfg } from "./tensor-view";
 
 type CellDrag = { r0: number; c0: number; r1: number; c1: number };
 

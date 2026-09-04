@@ -11,7 +11,7 @@
 import { Box, Interval, Region } from "../core/region";
 import { CARD_SURFACE } from "./palette";
 import { cardPx, MIN_CELL_PX, planeExtents, tileFor } from "./tiling";
-import { viewAxes, ViewCfg } from "./store";
+import { viewAxes, type ViewCfg } from "./tensor-view";
 
 export type GridGeom = {
   rows: number; // element extent
@@ -537,11 +537,4 @@ export function snapSpan(e0: number, e1: number, tile: number, extent: number): 
     Math.max(0, Math.floor(lo / tile) * tile),
     Math.min(extent, (Math.floor(hi / tile) + 1) * tile),
   ];
-}
-
-/** Tile-cell range -> element interval on that axis, clamped to the extent. */
-export function tileSpan(t0: number, t1: number, tile: number, extent: number): [number, number] {
-  const lo = Math.max(0, Math.min(t0, t1) * tile);
-  const hi = Math.min(extent, (Math.max(t0, t1) + 1) * tile);
-  return [lo, hi];
 }

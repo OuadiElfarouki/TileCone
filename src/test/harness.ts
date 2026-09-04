@@ -133,7 +133,7 @@ export function checkGraph(graph: Graph, opts: CheckOpts = {}): void {
         assertAgainstTruth(
           g,
           res.tensors,
-          (on) => truthForward(g, oracle, t.id, sel, on),
+          (on) => truthForward(oracle, t.id, sel, on),
           `forward from ${t.id} ${selDesc}`
         );
       }

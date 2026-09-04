@@ -4,8 +4,9 @@ import { EXAMPLES } from "../examples";
 import { tileOf } from "./grid";
 import { selectionToLink, shareTarget } from "./share";
 import { copyText } from "./clipboard";
-import { enabledPropResult, useStore, viewAxes } from "./store";
+import { enabledPropResult, useStore } from "./store";
 import { matchesShortcut, SHORTCUTS } from "./shortcuts";
+import { viewAxes } from "./tensor-view";
 
 /**
  * Copies a link that restores this workspace — source, selection, cone direction
