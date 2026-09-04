@@ -472,8 +472,9 @@ textarea.source.error-state { border-color: var(--err); }
   border-radius: 1px; opacity: .78;
 }
 .cone-key.needs { background: currentColor; }
-/* Same slope as the downstream ruling on the cards, so the section head is the
-   legend for the canvas treatment below it. */
+/* CSS gradient angles describe the gradient axis, while canvas angles describe
+   the stroke itself: 45deg here produces the base box-0 `\` ruling. Later boxes
+   rotate the slope, but the chip teaches the stable ruled = feeds distinction. */
 .cone-key.feeds {
   background-image: repeating-linear-gradient(45deg, currentColor 0 1px, transparent 1px 4px);
 }

@@ -185,13 +185,24 @@ describe("direction stays readable once hue means box identity", () => {
     }
   });
 
-  it("does not overload downstream alpha with graph depth", () => {
+  it("does not overload persistent cone alpha with graph depth", () => {
     const shallow = bothCones("T");
     const deep = bothCones("T");
+    deep.backward!.tensors.get("T")!.depth = 6;
     deep.forward!.tensors.get("T")!.depth = 6;
-    const a = buildLayers(inputs({ perBox: [shallow], direction: "forward" }))[0].alpha;
-    const b = buildLayers(inputs({ perBox: [deep], direction: "forward" }))[0].alpha;
-    expect(b).toBe(a);
+    for (const direction of ["backward", "forward"] as const) {
+      const a = buildLayers(inputs({ perBox: [shallow], direction }))[0].alpha;
+      const b = buildLayers(inputs({ perBox: [deep], direction }))[0].alpha;
+      expect(b).toBe(a);
+    }
+  });
+
+  it("keeps depth fading only on the transient hover preview", () => {
+    const shallow = { region: region([0, 4]), depth: 1 };
+    const deep = { ...shallow, depth: 6 };
+    const a = buildLayers(inputs({ perBox: null, prev: shallow, direction: "backward" }))[0].alpha;
+    const b = buildLayers(inputs({ perBox: null, prev: deep, direction: "backward" }))[0].alpha;
+    expect(b).toBeLessThan(a);
   });
 });
 

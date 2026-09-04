@@ -23,7 +23,6 @@ import {
 } from "../ui/tiling";
 import {
   gridGeometry,
-  MIN_PATTERN_VIEW_SCALE,
   MIN_MARK_PX,
   outlineFitsRect,
   patternFitsRect,
@@ -380,10 +379,11 @@ describe("thin-region paint fallbacks", () => {
     expect(outlineFitsRect({ w: 8, h: 20 }, 1.5, 1)).toBe(true);
   });
 
-  it("uses solid paint for thin ruled regions and fitted-out views", () => {
+  it("uses solid paint only when the mark is too thin on screen", () => {
     expect(patternFitsRect({ w: 1, h: 20 }, 1)).toBe(false);
-    expect(patternFitsRect({ w: 20, h: 20 }, 0.5)).toBe(false);
-    expect(patternFitsRect({ w: 20, h: 20 }, MIN_PATTERN_VIEW_SCALE)).toBe(true);
+    expect(patternFitsRect({ w: 20, h: 20 }, 0.5)).toBe(true);
+    expect(patternFitsRect({ w: 100, h: 100 }, 0.1)).toBe(true);
+    expect(patternFitsRect({ w: 20, h: 20 }, 0.1)).toBe(false);
   });
 
   it("delimits a ruled region wherever it rules it", () => {

@@ -185,9 +185,6 @@ export function outlineFitsRect(
   return Math.min(rect.w, rect.h) * viewScale >= minimum;
 }
 
-/** Below this graph scale a ruling falls under a pixel and greys into a wash,
- * which reads as a smaller share rather than a smaller region. */
-export const MIN_PATTERN_VIEW_SCALE = 0.7;
 /** A pattern cannot represent a region narrower than one useful pattern mark. */
 export const MIN_PATTERN_EXTENT_PX = 3;
 
@@ -196,8 +193,10 @@ export function patternFitsRect(
   rect: Pick<RegionRect, "w" | "h">,
   viewScale = 1
 ): boolean {
-  return viewScale >= MIN_PATTERN_VIEW_SCALE &&
-    Math.min(rect.w, rect.h) * viewScale >= MIN_PATTERN_EXTENT_PX;
+  // Pitch and stroke weight are counter-scaled below, so zoom alone cannot
+  // destroy direction. Only the region's resulting screen extent may force a
+  // solid fallback: density degrades before direction does.
+  return Math.min(rect.w, rect.h) * viewScale >= MIN_PATTERN_EXTENT_PX;
 }
 
 /**
@@ -231,6 +230,9 @@ export const HATCH_ANGLE_DEG = 45;
 const HATCH_PITCH_PX = 8 / Math.SQRT2;
 /** Weight of a hatch line, in screen CSS px. */
 const HATCH_WIDTH_PX = 1.6;
+/** A broken stroke makes approximation a different texture kind from the solid
+ * downstream rulings it may cross. Values are screen CSS px. */
+const HATCH_DASH_PX = [2.4, 2.4] as const;
 
 /** Beyond this many lines a ruling is denser than the region is wide in pixels;
  * the caller paints solid instead of spending the frame on invisible strokes. */
@@ -302,7 +304,13 @@ function strokeRuling(
   ctx: CanvasRenderingContext2D,
   rect: RegionRect,
   color: [number, number, number],
-  spec: { angle: number; pitch: number; width: number; alpha: number },
+  spec: {
+    angle: number;
+    pitch: number;
+    width: number;
+    alpha: number;
+    dash?: readonly number[];
+  },
   viewScale: number
 ): boolean {
   const segments = rulingSegments(rect, spec.angle, spec.pitch / viewScale);
@@ -314,6 +322,7 @@ function strokeRuling(
   ctx.globalAlpha = spec.alpha;
   ctx.strokeStyle = `rgb(${color[0]},${color[1]},${color[2]})`;
   ctx.lineWidth = spec.width / viewScale;
+  ctx.setLineDash(spec.dash?.map((length) => length / viewScale) ?? []);
   ctx.beginPath();
   for (const s of segments) {
     ctx.moveTo(s.x1, s.y1);
@@ -395,10 +404,11 @@ export function drawGrid(
         }
         continue;
       }
-      // Thin marks stay present, and fitted-out views avoid a ruling that would
-      // collapse into a wash. Lower alpha keeps the low-zoom fallback distinct
-      // from solid upstream.
-      const fallbackAlpha = layer.pattern && viewScale < MIN_PATTERN_VIEW_SCALE ? alpha * 0.55 : alpha;
+      // Any failed requested pattern is the same degraded encoding, whether its
+      // cause is a thin region or the renderer's line-count safety cap. Alpha is
+      // otherwise reserved for hidden-axis coverage; the fallback borrows it
+      // because no geometric direction channel survives in a sub-3px mark.
+      const fallbackAlpha = layer.pattern ? alpha * 0.55 : alpha;
       ctx.fillStyle = `rgba(${r},${g},${b},${fallbackAlpha})`;
       ctx.fillRect(q.x, q.y, q.w, q.h);
     }
@@ -418,6 +428,7 @@ export function drawGrid(
               pitch: HATCH_PITCH_PX,
               width: HATCH_WIDTH_PX,
               alpha: Math.min(1, layer.alpha * q.alpha) * 0.9,
+              dash: HATCH_DASH_PX,
             },
             viewScale
           );

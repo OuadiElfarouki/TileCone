@@ -65,8 +65,8 @@ export function visibleApproximation(...regions: (Region | undefined)[]): {
 }
 
 const CONE_ALPHA = 0.72;
-const depthAlpha = (depth: number, base = CONE_ALPHA) =>
-  base / (1 + 0.35 * Math.max(0, depth - 1));
+const previewAlpha = (depth: number) =>
+  (0.22 * CONE_ALPHA) / (1 + 0.35 * Math.max(0, depth - 1));
 
 /** How far a non-focused box's cone fades. Fading, never hiding: the peers have
  * to stay legible or there is nothing to compare the focused one against. */
@@ -141,7 +141,7 @@ export function buildLayers({
 
   // Transient hover preview, drawn faintly under everything else.
   if (prev && !isSelected && showBack)
-    layers.push({ region: prev.region, color: agg.upstream, alpha: 0.22 * depthAlpha(prev.depth), hatch: false });
+    layers.push({ region: prev.region, color: agg.upstream, alpha: previewAlpha(prev.depth), hatch: false });
 
   if (perBox) {
     // Hue identifies which selected box produced this region.
@@ -164,7 +164,9 @@ export function buildLayers({
         into.push({
           region: bTr.region,
           color,
-          alpha: depthAlpha(bTr.depth) * alphaScale,
+          // Persistent cone alpha means hidden-axis coverage in both directions;
+          // graph distance is stated exactly by the inspector's dN badge.
+          alpha: CONE_ALPHA * alphaScale,
           hatch: !bTr.region.exact,
           outline: emph,
           lineWidth: emph ? EMPHASIS_LINE_PX : undefined,
@@ -191,7 +193,7 @@ export function buildLayers({
   } else {
     // Too many boxes to attribute: fall back to one hue per direction.
     if (showBack && back && !(isSelected && back.depth === 0))
-      layers.push({ region: back.region, color: agg.upstream, alpha: depthAlpha(back.depth), hatch: !back.region.exact });
+      layers.push({ region: back.region, color: agg.upstream, alpha: CONE_ALPHA, hatch: !back.region.exact });
     if (showFwd && fwd && !(isSelected && fwd.depth === 0))
       layers.push({
         region: fwd.region,

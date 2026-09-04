@@ -100,7 +100,7 @@ Use `tryCompileDSL` when diagnostics should be returned as data instead of throw
   tile completes that region or contributes only partially, and the section heading rolls those
   verdicts up. A partial verdict derived from an approximate region may over-warn, never
   under-warn. On the cards, uniform fill means **What it needs**, a diagonal ruling means **What it
-  feeds**, and a `/` hatch means an approximate bound; the inspector headings carry the same
+  feeds**, and a dashed `/` hatch means an approximate bound; the inspector headings carry the same
   miniature treatments as an inline legend. The spacing of a ruling is uniform: it is held for a
   supplied-share measurement the engine does not expose yet, and reading it as a quantity today
   would be reading a placeholder. Completed versus partial is stated on the row, not in the paint.
