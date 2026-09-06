@@ -6,9 +6,11 @@ import { box, fromBox, Region } from "../core/region";
 import { compileDSL } from "../parse/compiler";
 import { G } from "./harness";
 
-const MATMUL = `params S=8 K=12 N=8
-input P [S, K] f16
-input V [K, N] f16
+const MATMUL = `S = 8
+K = 12
+N = 8
+P = Tensor(S, K, dtype=fp16)
+V = Tensor(K, N, dtype=fp16)
 O = matmul(P, V)
 `;
 
@@ -44,8 +46,8 @@ describe("partial contribution", () => {
   });
 
   it("is complete through an elementwise chain", () => {
-    const dsl = `params S=8
-input X [S] f32
+    const dsl = `S = 8
+X = Tensor(S, dtype=fp32)
 Y = relu(X)
 Z = relu(Y)
 `;
@@ -57,8 +59,8 @@ Z = relu(Y)
   it("names the whole axis when that is what the consumer reads", () => {
     // a prefix scan reaches every later element, and each of those reads the
     // whole prefix -- so the honest statement is the axis, not a count
-    const dsl = `params S=16
-input X [S] f32
+    const dsl = `S = 16
+X = Tensor(S, dtype=fp32)
 Y = cumsum(X, axis=0, reverse=false)
 `;
     const { byTensor } = report(dsl, [["X", tile([4, 8])]]);
@@ -70,8 +72,8 @@ Y = cumsum(X, axis=0, reverse=false)
   it("counts the residue when no whole axis explains it", () => {
     // a conv halo: the neighbouring tiles supply the rest, and no axis is
     // consumed in full, so a count is the only true thing to say
-    const dsl = `input X [1, 1, 16, 16] f32
-input Kw [1, 1, 3, 3] f32
+    const dsl = `X = Tensor(1, 1, 16, 16, dtype=fp32)
+Kw = Tensor(1, 1, 3, 3, dtype=fp32)
 Y = conv(X, Kw, stride=[1, 1], pads=[[1, 1], [1, 1]], dilation=[1, 1], groups=1)
 `;
     const { byTensor } = report(dsl, [["X", tile([0, 1], [0, 1], [6, 10], [6, 10])]]);

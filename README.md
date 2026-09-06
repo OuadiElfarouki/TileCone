@@ -88,8 +88,8 @@ import { compileDSL } from "./src/parse/compiler";
 import { box, fromBox } from "./src/core/region";
 
 const program = compileDSL(`
-  input A [256, 512] f16
-  input B [512, 256] f16
+  A = Tensor(256, 512, dtype=fp16)
+  B = Tensor(512, 256, dtype=fp16)
   C = matmul(A, B)
 `);
 

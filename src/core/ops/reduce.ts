@@ -56,7 +56,9 @@ export const reduceOp: OpSpec = {
   dependencyNote: reduceDependencyNote,
   attrSchema: z.object({
     fn: z.enum(["sum", "max", "min", "mean", "prod", "logsumexp"]),
-    axes: z.array(z.number().int()),
+    // A reduce over no axes returns its input unchanged, which is never what
+    // the author meant by writing a reduction.
+    axes: z.array(z.number().int()).nonempty(),
     keepdim: z.boolean().default(false),
   }),
   arity: { inputs: 1, outputs: 1 },

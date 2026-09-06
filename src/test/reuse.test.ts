@@ -5,7 +5,7 @@ import { compileDSL } from "../parse/compiler";
 
 describe("reuse estimation", () => {
   it("is exact when every tile fits under the sample cap", () => {
-    const { resolved } = compileDSL("input X [4] f32\nY = identity(X)\n");
+    const { resolved } = compileDSL("X = Tensor(4, dtype=fp32)\nY = identity(X)\n");
     const result = estimateInputReuse(resolved, {
       tensorId: "Y",
       region: fromBox(box([0, 2])),
@@ -17,7 +17,7 @@ describe("reuse estimation", () => {
   });
 
   it("is reproducible when the estimate is sampled", () => {
-    const { resolved } = compileDSL("input X [100] f32\nY = identity(X)\n");
+    const { resolved } = compileDSL("X = Tensor(100, dtype=fp32)\nY = identity(X)\n");
     const root = { tensorId: "Y", region: fromBox(box([0, 2])) };
     const first = estimateInputReuse(resolved, root, { sampleCap: 12, seed: 1234 });
 

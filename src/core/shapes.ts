@@ -173,9 +173,16 @@ function evalDimExpr(node: DimNode, params: Record<string, number>): number {
   }
 }
 
+/* Zero is rejected on the same terms as a negative extent, and on the same
+   terms a parameter binding of 0 is already rejected above. A tensor with an
+   empty axis has no elements, so it has no regions, and this tool exists to
+   say which regions depend on which: an empty declaration is a slip in the
+   source rather than a question with an answer. Only authored dimensions pass
+   through here - declarations and reshape targets - so an operation that
+   genuinely infers an empty result is unaffected. */
 function resolveDim(s: Sym, params: Record<string, number>): number {
   if (typeof s === "number") {
-    if (!Number.isSafeInteger(s) || s < 0)
+    if (!Number.isSafeInteger(s) || s <= 0)
       throw new GraphError(`bad dimension ${s}`, "GRAPH_SHAPE");
     return s;
   }
@@ -183,7 +190,7 @@ function resolveDim(s: Sym, params: Record<string, number>): number {
   if (!parsed || skipWs(s, parsed.end) !== s.length)
     throw new GraphError(`bad dimension expression "${s}"`, "GRAPH_SHAPE");
   const value = evalDimExpr(parsed.node, params);
-  if (!Number.isSafeInteger(value) || value < 0)
+  if (!Number.isSafeInteger(value) || value <= 0)
     throw new GraphError(`dimension "${s}" resolves to ${value}`, "GRAPH_SHAPE");
   return value;
 }

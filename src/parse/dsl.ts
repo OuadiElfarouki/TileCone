@@ -1,13 +1,14 @@
 /** Text DSL (IDEA.md §6.2):
- *   params M=512 K=2048
- *   input A [M, K] f16
+ *   M = 512
+ *   K = 2048
+ *   A = Tensor(M, K, dtype=fp16)
  *   C = einsum("mk,kn->mn", A, B)
  *   Y0, Y1 = split(X, axis=0, sizes=[2, 2])
  * One statement per line, `#` comments. Round-trips losslessly via toDSL.
  */
 
 import { Graph, Node, Tensor } from "../core/graph";
-import { DTYPES, DType } from "../core/dtypes";
+import { DType } from "../core/dtypes";
 import { NUMBER_RE, readDimExpr, Sym } from "../core/shapes";
 import { documentSpan, DSLSourceMap, lineSpan, SourceSpan } from "./source";
 
@@ -30,21 +31,30 @@ export class DSLError extends Error {
   }
 }
 
-const DTYPE_SET = new Set<string>(DTYPES);
+export const DSL_DTYPES = ["fp32", "fp16", "bf16", "fp8", "int32", "int8", "bool"] as const;
+
+const DTYPE_FROM_DSL: Record<(typeof DSL_DTYPES)[number], DType> = {
+  fp32: "f32",
+  fp16: "f16",
+  bf16: "bf16",
+  fp8: "f8",
+  int32: "i32",
+  int8: "i8",
+  bool: "bool",
+};
+
+const DTYPE_TO_DSL: Record<DType, (typeof DSL_DTYPES)[number]> = {
+  f32: "fp32",
+  f16: "fp16",
+  bf16: "bf16",
+  f8: "fp8",
+  i32: "int32",
+  i8: "int8",
+  bool: "bool",
+};
 
 /** Anchored `NUMBER_RE`: does this expression consist of one literal? */
 const NUMBER_ONLY = new RegExp(`${NUMBER_RE.source}$`);
-
-/**
- * Keywords that declare a graph input. `weight` and `param` are the same thing
- * to the analysis — a tensor with no producer — but are tagged so the UI can
- * tell a learned parameter apart from an activation.
- */
-const DECLARATIONS: Record<string, "activation" | "weight"> = {
-  input: "activation",
-  weight: "weight",
-  param: "weight",
-};
 
 /** fn-name sugar -> op + fixed attrs */
 const ELEMENTWISE_FNS = new Set([
@@ -95,11 +105,6 @@ class LineParser {
   }
   identReq(what: string): string {
     const v = this.ident();
-    if (v === null) throw new DSLError(`expected ${what}`, this.span());
-    return v;
-  }
-  numberReq(what: string): number {
-    const v = this.number();
     if (v === null) throw new DSLError(`expected ${what}`, this.span());
     return v;
   }
@@ -180,6 +185,28 @@ function valueToAttr(v: Value): unknown {
   return v;
 }
 
+function dimensionValue(v: Value, p: LineParser): Sym {
+  if (typeof v === "number") return v;
+  if (typeof v === "object" && v !== null && !Array.isArray(v) && "ident" in v) {
+    // `Tensor(4, fp16)` is the shape of the removed grammar, where the dtype
+    // was a trailing positional word. Read as a dimension it is a symbol that
+    // happens to be spelled like a dtype, and the failure surfaces much later
+    // as an unbound symbol - naming a real mistake something it is not.
+    if (v.ident in DTYPE_FROM_DSL)
+      p.error(`dtype is an attribute here: write dtype=${v.ident}`);
+    return v.ident;
+  }
+  p.error("tensor dimensions must be numbers or symbolic expressions");
+}
+
+function dtypeValue(v: Value, p: LineParser): DType {
+  if (typeof v === "object" && v !== null && !Array.isArray(v) && "ident" in v) {
+    const dtype = DTYPE_FROM_DSL[v.ident as keyof typeof DTYPE_FROM_DSL];
+    if (dtype) return dtype;
+  }
+  p.error(`dtype must be one of ${DSL_DTYPES.join(", ")}`);
+}
+
 /** Remove a line comment without treating a # inside a string as a comment. */
 function stripComment(line: string): string {
   let quoted = false;
@@ -232,109 +259,111 @@ export function parseDSLWithSource(text: string): ParsedDSL {
     }
     const p = new LineParser(raw, ln + 1, lineOffset, columnOffset);
 
-    if (/^params(?:\s|$)/.test(raw)) {
-      p.expect("params");
-      while (!p.atEnd()) {
-        const name = p.identReq("param name");
-        p.expect("=");
-        if (params[name] !== undefined)
-          throw new DSLError(`parameter "${name}" redefined`, p.span(), "DSL_DUPLICATE_PARAM");
-        params[name] = p.numberReq("number");
-        sourceMap.params[name] = statementSpan;
-      }
-      lineOffset += physicalLine.length + (ln < lines.length - 1 ? 1 : 0);
-      continue;
+    // Every statement is an assignment: a scalar dimension, an input
+    // constructor, or an operation with one or more outputs.
+    const outs: string[] = [];
+    outs.push(p.identReq("statement"));
+    while (p.eat(",")) outs.push(p.identReq("output name"));
+    // `Tensor = Tensor(4)` parses, but the constructor always wins in call
+    // position, so the name can never be read back as the tensor it bound.
+    for (const out of outs)
+      if (out === "Tensor" || out === "Parameter")
+        throw new DSLError(
+          `"${out}" is a constructor and cannot name a tensor`,
+          statementSpan,
+          "DSL_RESERVED_NAME"
+        );
+    if (!p.eat("=")) {
+      throw new DSLError(
+        `expected an assignment: NAME = number, Tensor(...), Parameter(...), or op(...)`,
+        statementSpan,
+        "DSL_UNKNOWN_STATEMENT"
+      );
     }
 
-    const leading = /^([A-Za-z_]\w*)\s/.exec(raw)?.[1];
-    if (leading && leading in DECLARATIONS) {
-      p.expect(leading);
-      const role = DECLARATIONS[leading];
-      const name = p.identReq("tensor name");
-      p.expect("[");
+    const rhsStart = p.pos;
+    if (outs.length === 1) {
+      const scalar = p.number();
+      if (scalar !== null && p.atEnd()) {
+        const name = outs[0];
+        if (Object.prototype.hasOwnProperty.call(params, name) || tensors[name])
+          throw new DSLError(`symbol "${name}" redefined`, statementSpan, "DSL_DUPLICATE_PARAM");
+        params[name] = scalar;
+        sourceMap.params[name] = statementSpan;
+        lineOffset += physicalLine.length + (ln < lines.length - 1 ? 1 : 0);
+        continue;
+      }
+      p.pos = rhsStart;
+    }
+
+    const callee = p.identReq("op name");
+    p.expect("(");
+
+    if (callee === "Tensor" || callee === "Parameter") {
+      if (outs.length !== 1)
+        throw new DSLError(`${callee} declares exactly one tensor`, statementSpan);
       const shape: Sym[] = [];
       const axisNames: (string | undefined)[] = [];
-      if (!p.eat("]")) {
+      let dtype: DType = "f32";
+      let sawDType = false;
+      if (!p.eat(")")) {
         do {
-          // `name: dim` labels the axis. A bare identifier is the dimension
-          // itself, so a leading identifier only becomes a name once a colon
-          // confirms it; otherwise the parser backs up and reads it as the dim.
           const save = p.pos;
-          const candidate = p.ident();
-          if (candidate !== null && p.eat(":")) axisNames.push(candidate);
-          else {
+          const label = p.ident();
+          if (label && p.eat("=")) {
+            if (label === "dtype") {
+              if (sawDType)
+                throw new DSLError(
+                  `attribute "dtype" specified more than once`,
+                  statementSpan,
+                  "DSL_DUPLICATE_ATTRIBUTE"
+                );
+              dtype = dtypeValue(p.value(), p);
+              sawDType = true;
+            } else {
+              axisNames.push(label);
+              shape.push(dimensionValue(p.value(), p));
+            }
+          } else {
             p.pos = save;
             axisNames.push(undefined);
+            shape.push(dimensionValue(p.value(), p));
           }
-          const parsed = readDimExpr(p.src, p.pos);
-          if (!parsed) throw new DSLError("expected a dimension", p.span());
-          const text = p.src.slice(p.pos, parsed.end).trim();
-          p.pos = parsed.end;
-          // A lone literal stays a number; anything else keeps the form the
-          // author wrote, so `H*D` survives into the IR, the notes, and toDSL.
-          shape.push(NUMBER_ONLY.test(text) ? Number(text) : text);
         } while (p.eat(","));
-        p.expect("]");
+        p.expect(")");
       }
-      const named = axisNames.filter((axis): axis is string => axis !== undefined);
-      // Propagation legitimately produces partly-named tensors; a hand-written
-      // declaration that names some axes and not others is a slip, so it is
-      // refused rather than stored with holes.
-      if (named.length && named.length !== axisNames.length)
+      if (!p.atEnd()) p.error("trailing input");
+
+      const namedAxes = axisNames.filter((axis): axis is string => axis !== undefined);
+      if (namedAxes.length && namedAxes.length !== axisNames.length)
         throw new DSLError(
-          `tensor "${name}": axis ${axisNames.indexOf(undefined)} is unnamed — ` +
-            `name every axis or none`,
+          `tensor "${outs[0]}": name every axis or none`,
           statementSpan,
           "DSL_PARTIAL_AXIS_NAMES"
         );
-      if (new Set(named).size !== named.length)
+      if (new Set(namedAxes).size !== namedAxes.length)
         throw new DSLError(
-          `tensor "${name}": duplicate axis name`,
+          `tensor "${outs[0]}": duplicate axis name`,
           statementSpan,
           "DSL_DUPLICATE_AXIS_NAME"
         );
-      let dtype: DType = "f32";
-      const dt = p.ident();
-      if (dt) {
-        if (!DTYPE_SET.has(dt)) p.error(`unknown dtype "${dt}"`);
-        dtype = dt as DType;
-      }
-      // Assignments already refuse trailing input; declarations used to accept
-      // it silently, so `input X [4, 8] 32` declared an f32 tensor and the wrong
-      // dtype went on to size every byte estimate.
-      if (!p.atEnd())
-        p.error(`unexpected input after declaration (dtype must be one of ${DTYPES.join(", ")})`);
-      if (tensors[name])
-        throw new DSLError(`tensor "${name}" redefined`, statementSpan, "DSL_DUPLICATE_TENSOR");
+
+      const name = outs[0];
+      if (tensors[name] || Object.prototype.hasOwnProperty.call(params, name))
+        throw new DSLError(`symbol "${name}" redefined`, statementSpan, "DSL_DUPLICATE_TENSOR");
       tensors[name] = {
         id: name,
         name,
         shape,
         dtype,
-        ...(named.length ? { axisNames: named } : {}),
-        ...(role === "weight" ? { role } : {}),
+        ...(namedAxes.length ? { axisNames: namedAxes } : {}),
+        ...(callee === "Parameter" ? { role: "weight" as const } : {}),
       };
       sourceMap.tensors[name] = statementSpan;
       lineOffset += physicalLine.length + (ln < lines.length - 1 ? 1 : 0);
       continue;
     }
 
-    // assignment: NAME[, NAME...] = op(args)
-    const outs: string[] = [];
-    outs.push(p.identReq("statement"));
-    while (p.eat(",")) outs.push(p.identReq("output name"));
-    if (!p.eat("=")) {
-      // The most common cause is a declaration keyword we do not know, e.g.
-      // "tensor A [M, K]" — say so instead of demanding an "=".
-      throw new DSLError(
-        `unknown statement starting with "${outs[0]}". Expected either an assignment ` +
-          `\`NAME = op(...)\`, or a declaration \`${Object.keys(DECLARATIONS).join("|")} NAME [dims] dtype\``,
-        statementSpan,
-        "DSL_UNKNOWN_STATEMENT"
-      );
-    }
-    const callee = p.identReq("op name");
-    p.expect("(");
     const positional: Value[] = [];
     const named: Record<string, unknown> = {};
     if (!p.eat(")")) {
@@ -348,7 +377,8 @@ export function parseDSLWithSource(text: string): ParsedDSL {
               statementSpan,
               "DSL_DUPLICATE_ATTRIBUTE"
             );
-          named[id] = valueToAttr(p.value());
+          const value = p.value();
+          named[id] = id === "dtype" ? dtypeValue(value, p) : valueToAttr(value);
         }
         else {
           p.pos = save;
@@ -402,8 +432,8 @@ export function parseDSLWithSource(text: string): ParsedDSL {
       if (!tensors[t])
         throw new DSLError(`unknown tensor "${t}"`, statementSpan, "DSL_UNKNOWN_TENSOR");
     for (const o of outs) {
-      if (tensors[o])
-        throw new DSLError(`tensor "${o}" redefined`, statementSpan, "DSL_DUPLICATE_TENSOR");
+      if (tensors[o] || Object.prototype.hasOwnProperty.call(params, o))
+        throw new DSLError(`symbol "${o}" redefined`, statementSpan, "DSL_DUPLICATE_TENSOR");
       tensors[o] = { id: o, name: o, shape: [], dtype: tensors[inputs[0]]?.dtype ?? "f32" };
       sourceMap.tensors[o] = statementSpan;
     }
@@ -417,8 +447,10 @@ export function parseDSLWithSource(text: string): ParsedDSL {
 
 // ------------------------------------------------------------------- toDSL
 
-function attrValueToDSL(v: unknown): string {
-  if (Array.isArray(v)) return `[${v.map(attrValueToDSL).join(", ")}]`;
+function attrValueToDSL(v: unknown, name?: string): string {
+  if (Array.isArray(v)) return `[${v.map((item) => attrValueToDSL(item)).join(", ")}]`;
+  if (name === "dtype" && typeof v === "string" && v in DTYPE_TO_DSL)
+    return DTYPE_TO_DSL[v as DType];
   if (typeof v === "string") return /^[A-Za-z_][A-Za-z0-9_]*$/.test(v) ? v : JSON.stringify(v);
   return String(v);
 }
@@ -427,17 +459,17 @@ const REVERSE_ELEMENTWISE = ELEMENTWISE_FNS;
 
 export function toDSL(g: Graph): string {
   const lines: string[] = [];
-  const paramKeys = Object.keys(g.params);
-  if (paramKeys.length)
-    lines.push("params " + paramKeys.map((k) => `${k}=${g.params[k]}`).join(" "));
+  for (const [name, value] of Object.entries(g.params)) lines.push(`${name} = ${value}`);
   for (const t of Object.values(g.tensors)) {
     if (t.producer || g.nodes.some((n) => n.outputs.includes(t.id))) continue;
-    const kw = t.role === "weight" ? "weight" : "input";
+    const constructor = t.role === "weight" ? "Parameter" : "Tensor";
     const dims = t.shape.map((dim, axis) => {
       const axisName = t.axisNames?.[axis];
-      return axisName ? `${axisName}: ${String(dim)}` : String(dim);
+      return axisName ? `${axisName}=${String(dim)}` : String(dim);
     });
-    lines.push(`${kw} ${t.name} [${dims.join(", ")}] ${t.dtype}`);
+    lines.push(
+      `${t.name} = ${constructor}(${[...dims, `dtype=${DTYPE_TO_DSL[t.dtype]}`].join(", ")})`
+    );
   }
   for (const n of g.nodes) {
     const outNames = n.outputs.map((o) => g.tensors[o].name);
@@ -450,27 +482,27 @@ export function toDSL(g: Graph): string {
       // written out, or expanding a composite and recompiling drops it silently.
       const named = Object.entries(attrs)
         .filter(([k]) => k !== "fn" && k !== "nary")
-        .map(([k, v]) => `${k}=${attrValueToDSL(v)}`);
+        .map(([k, v]) => `${k}=${attrValueToDSL(v, k)}`);
       call = `${fn}(${[...inNames, ...named].join(", ")})`;
     } else if (n.op === "einsum") {
       const eq = attrs.equation as string;
       delete attrs.equation;
-      const rest = Object.entries(attrs).map(([k, v]) => `${k}=${attrValueToDSL(v)}`);
+      const rest = Object.entries(attrs).map(([k, v]) => `${k}=${attrValueToDSL(v, k)}`);
       call = `einsum(${[`"${eq}"`, ...inNames, ...rest].join(", ")})`;
     } else if (n.op === "normalize") {
       const kind = attrs.kind as string;
       const named = Object.entries(attrs)
         .filter(([k]) => !["kind", "hasWeight", "hasBias"].includes(k))
-        .map(([k, v]) => `${k}=${attrValueToDSL(v)}`);
+        .map(([k, v]) => `${k}=${attrValueToDSL(v, k)}`);
       call = `${kind}(${[...inNames, ...named].join(", ")})`;
     } else if (n.op === "reduce" && ["sum", "mean", "prod"].includes(attrs.fn as string)) {
       const fn = attrs.fn as string;
       const named = Object.entries(attrs)
         .filter(([k]) => k !== "fn")
-        .map(([k, v]) => `${k}=${attrValueToDSL(v)}`);
+        .map(([k, v]) => `${k}=${attrValueToDSL(v, k)}`);
       call = `${fn}(${[...inNames, ...named].join(", ")})`;
     } else {
-      const named = Object.entries(attrs).map(([k, v]) => `${k}=${attrValueToDSL(v)}`);
+      const named = Object.entries(attrs).map(([k, v]) => `${k}=${attrValueToDSL(v, k)}`);
       call = `${n.op}(${[...inNames, ...named].join(", ")})`;
     }
     lines.push(`${outNames.join(", ")} = ${call}`);

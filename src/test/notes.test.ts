@@ -18,9 +18,11 @@ const notesFor = (dsl: string, tensor: string, sel: [number, number][]) => {
   return { resolved, back, notes: dependencyNotes(resolved, back) };
 };
 
-const GEMM = `params M=64 N=64 K=128
-input A [M, K] f16
-input B [K, N] f16
+const GEMM = `M = 64
+N = 64
+K = 128
+A = Tensor(M, K, dtype=fp16)
+B = Tensor(K, N, dtype=fp16)
 C = matmul(A, B)
 `;
 
@@ -51,7 +53,7 @@ describe("contraction notes", () => {
 describe("reduction and normalization notes", () => {
   it("softmax names the axis it normalises over", () => {
     const { notes } = notesFor(
-      `input X [8, 32] f32
+      `X = Tensor(8, 32, dtype=fp32)
 Y = softmax(X, axis=-1)
 `,
       "Y",
@@ -66,9 +68,9 @@ Y = softmax(X, axis=-1)
     // the fusable half matters: reporting only the constraint would make
     // layernorm look less tileable than it is
     const { notes } = notesFor(
-      `input X [16, 32] f16
-input W [32] f16
-input Bb [32] f16
+      `X = Tensor(16, 32, dtype=fp16)
+W = Tensor(32, dtype=fp16)
+Bb = Tensor(32, dtype=fp16)
 H = layernorm(X, W, Bb, axes=[-1])
 `,
       "H",
@@ -82,9 +84,9 @@ H = layernorm(X, W, Bb, axes=[-1])
 
   it("agrees in number when several axes stay independent", () => {
     const { notes } = notesFor(
-      `input X [4, 8, 32] f16
-input W [32] f16
-input Bb [32] f16
+      `X = Tensor(4, 8, 32, dtype=fp16)
+W = Tensor(32, dtype=fp16)
+Bb = Tensor(32, dtype=fp16)
 H = layernorm(X, W, Bb, axes=[-1])
 `,
       "H",
@@ -95,7 +97,7 @@ H = layernorm(X, W, Bb, axes=[-1])
 
   it("a reduction names its collapsed axes", () => {
     const { notes } = notesFor(
-      `input X [8, 16] f32
+      `X = Tensor(8, 16, dtype=fp32)
 Y = sum(X, axes=[1])
 `,
       "Y",
@@ -107,7 +109,7 @@ Y = sum(X, axes=[1])
 
 describe("notes never over-claim", () => {
   it("a chain of elementwise ops produces no notes but is not 'no cone'", () => {
-    const dsl = `input X [8, 8] f32
+    const dsl = `X = Tensor(8, 8, dtype=fp32)
 Y = relu(X)
 Z = add(Y, X)
 `;
@@ -127,8 +129,8 @@ Z = add(Y, X)
   });
 
   it("is capped so the panel stays a summary", () => {
-    const dsl = `params S=32
-input X [S, S] f16
+    const dsl = `S = 32
+X = Tensor(S, S, dtype=fp16)
 A1 = softmax(X, axis=-1)
 A2 = softmax(A1, axis=-1)
 A3 = softmax(A2, axis=-1)
@@ -142,8 +144,8 @@ A6 = softmax(A5, axis=-1)
 
   it("identical statements are not repeated", () => {
     const { notes } = notesFor(
-      `params S=32
-input X [S, S] f16
+      `S = 32
+X = Tensor(S, S, dtype=fp16)
 A1 = softmax(X, axis=-1)
 A2 = softmax(A1, axis=-1)
 `,
@@ -158,9 +160,13 @@ A2 = softmax(A1, axis=-1)
 describe("shapes the prototype never covered", () => {
   it("convolution reports the halo neighbouring tiles re-read", () => {
     const { notes } = notesFor(
-      `params N=1 C=3 F=8 H=32 W=32
-input X [N, C, H, W] f16
-input W1 [F, C, 3, 3] f16
+      `N = 1
+C = 3
+F = 8
+H = 32
+W = 32
+X = Tensor(N, C, H, W, dtype=fp16)
+W1 = Tensor(F, C, 3, 3, dtype=fp16)
 Y = conv(X, W1, stride=[2, 2], pads=[[1, 1], [1, 1]], dilation=[1, 1], groups=1)
 `,
       "Y",
@@ -174,9 +180,13 @@ Y = conv(X, W1, stride=[2, 2], pads=[[1, 1], [1, 1]], dilation=[1, 1], groups=1)
   it("stays silent when the stride is wide enough to tile cleanly", () => {
     // stride 3 with a 3x3 kernel leaves no halo, so there is nothing to warn about
     const { notes } = notesFor(
-      `params N=1 C=3 F=8 H=33 W=33
-input X [N, C, H, W] f16
-input W1 [F, C, 3, 3] f16
+      `N = 1
+C = 3
+F = 8
+H = 33
+W = 33
+X = Tensor(N, C, H, W, dtype=fp16)
+W1 = Tensor(F, C, 3, 3, dtype=fp16)
 Y = conv(X, W1, stride=[3, 3], pads=[[0, 0], [0, 0]], dilation=[1, 1], groups=1)
 `,
       "Y",
@@ -187,7 +197,7 @@ Y = conv(X, W1, stride=[3, 3], pads=[[0, 0], [0, 0]], dilation=[1, 1], groups=1)
 
   it("a scan is described as triangular, and knows its direction", () => {
     const forward = notesFor(
-      `input X [32] f32
+      `X = Tensor(32, dtype=fp32)
 Y = cumsum(X, axis=0, reverse=false)
 `,
       "Y",
@@ -197,7 +207,7 @@ Y = cumsum(X, axis=0, reverse=false)
     expect(forward.notes[0].text).toContain("triangular");
 
     const backward = notesFor(
-      `input X [32] f32
+      `X = Tensor(32, dtype=fp32)
 Y = cumsum(X, axis=0, reverse=true)
 `,
       "Y",
@@ -208,7 +218,7 @@ Y = cumsum(X, axis=0, reverse=true)
 });
 
 describe("reshape, the op that looks free and is not", () => {
-  const TRAP = `input X [4, 4] f32
+  const TRAP = `X = Tensor(4, 4, dtype=fp32)
 F = reshape(X, shape=[16])
 `;
 
@@ -236,11 +246,12 @@ F = reshape(X, shape=[16])
 });
 
 describe("look-alike notes are merged, not repeated", () => {
-  const QKV = `params S=16 E=32
-input X [S, E] f16
-input Wq [E, E] f16
-input Wk [E, E] f16
-input Wv [E, E] f16
+  const QKV = `S = 16
+E = 32
+X = Tensor(S, E, dtype=fp16)
+Wq = Tensor(E, E, dtype=fp16)
+Wk = Tensor(E, E, dtype=fp16)
+Wv = Tensor(E, E, dtype=fp16)
 Q = matmul(X, Wq)
 K = matmul(X, Wk)
 V = matmul(X, Wv)
@@ -292,11 +303,12 @@ describe("cone findings: flags, and what survives the note cap", () => {
 
   // Five distinct constraints, with the hardest one produced by the *last* node
   // in graph order, so a verdict taken from the capped list would miss it.
-  const STACK = `params S=16 E=16
-input X [S, E] f16
-input W [E] f16
-input Bb [E] f16
-input V [E, E] f16
+  const STACK = `S = 16
+E = 16
+X = Tensor(S, E, dtype=fp16)
+W = Tensor(E, dtype=fp16)
+Bb = Tensor(E, dtype=fp16)
+V = Tensor(E, E, dtype=fp16)
 C1 = cumsum(X, axis=0, reverse=false)
 C2 = cumsum(C1, axis=0, reverse=true)
 P = softmax(C2, axis=-1)
@@ -340,10 +352,11 @@ Y = matmul(H, V)
   it("breaks a severity tie on the constraint nearest the tile", () => {
     // three equally hard contractions: the projections are four steps upstream,
     // the attention product one. The reader hits the near one first.
-    const QKV = `params S=16 E=32
-input X [S, E] f16
-input Wq [E, E] f16
-input Wk [E, E] f16
+    const QKV = `S = 16
+E = 32
+X = Tensor(S, E, dtype=fp16)
+Wq = Tensor(E, E, dtype=fp16)
+Wk = Tensor(E, E, dtype=fp16)
 Q = matmul(X, Wq)
 K = matmul(X, Wk)
 Kt = transpose(K, perm=[1, 0])
@@ -364,10 +377,12 @@ Y = matmul(Q, Kt)
     // matmul(D, D) contracts D against itself: one slot pulls whole rows, the
     // other whole columns. The union covers the axis; the disjoint boxes that
     // represent it do not, and the note used to vanish because of that.
-    const SELF = `params M=256 N=256 K=512
-input A [M, K] f16
-input B [K, N] f16
-input F [N, M] f16
+    const SELF = `M = 256
+N = 256
+K = 512
+A = Tensor(M, K, dtype=fp16)
+B = Tensor(K, N, dtype=fp16)
+F = Tensor(N, M, dtype=fp16)
 C = matmul(A, B)
 D = matmul(F, C)
 DD = matmul(D, D)
@@ -381,11 +396,12 @@ DD = matmul(D, D)
   });
 
   it("a merged note flags every tensor it was merged from", () => {
-    const QKV = `params S=16 E=32
-input X [S, E] f16
-input Wq [E, E] f16
-input Wk [E, E] f16
-input Wv [E, E] f16
+    const QKV = `S = 16
+E = 32
+X = Tensor(S, E, dtype=fp16)
+Wq = Tensor(E, E, dtype=fp16)
+Wk = Tensor(E, E, dtype=fp16)
+Wv = Tensor(E, E, dtype=fp16)
 Q = matmul(X, Wq)
 K = matmul(X, Wk)
 V = matmul(X, Wv)
@@ -400,8 +416,8 @@ Y = matmul(S1, V)
 
   it("states the elementwise finding as its own verdict, with no author", () => {
     const { findings } = findingsFor(
-      `params S=8
-input X [S] f32
+      `S = 8
+X = Tensor(S, dtype=fp32)
 Y = add(X, X)
 `,
       "Y",
@@ -426,10 +442,13 @@ Y = add(X, X)
    produced tensor. If no name survives, the verified symbolic extent is the
    next best source word before a bare position or internal einsum label. */
 describe("notes naming axes by their declared names", () => {
-  const NAMED = `params B=1 H=4 S=32 D=8
-input X  [batch: B, seq: S, emb: H*D] f16
-input Wq [emb: H*D, proj: H*D] f16
-input Kc [batch: B, head: H, kv: S, dim: D] f16
+  const NAMED = `B = 1
+H = 4
+S = 32
+D = 8
+X = Tensor(batch=B, seq=S, emb=H*D, dtype=fp16)
+Wq = Tensor(emb=H*D, proj=H*D, dtype=fp16)
+Kc = Tensor(batch=B, head=H, kv=S, dim=D, dtype=fp16)
 Qp = einsum("bse,ef->bsf", X, Wq)
 Q4 = reshape(Qp, shape=[B, S, H, D])
 Qh = transpose(Q4, perm=[0, 2, 1, 3])
@@ -461,7 +480,7 @@ Pr = softmax(Sc, axis=-1)
   });
 
   it("still falls back to the position when no axis is named", () => {
-    const UNNAMED = `input X [2, 4, 8] f32
+    const UNNAMED = `X = Tensor(2, 4, 8, dtype=fp32)
 Y = softmax(X, axis=-1)
 `;
     const { notes } = notesFor(UNNAMED, "Y", [[0, 2], [0, 4], [0, 8]]);
@@ -469,8 +488,9 @@ Y = softmax(X, axis=-1)
   });
 
   it("uses a carried symbolic extent before falling back to the position", () => {
-    const SYMBOLIC = `params B=2 S=8
-input X [B, S] f32
+    const SYMBOLIC = `B = 2
+S = 8
+X = Tensor(B, S, dtype=fp32)
 H = relu(X)
 Y = softmax(H, axis=-1)
 `;
@@ -481,7 +501,7 @@ Y = softmax(H, axis=-1)
 
   it("names a reduced axis in the flag as well as the note", () => {
     const { back, resolved } = notesFor(
-      `input X [batch: 2, seq: 4, emb: 8] f32
+      `X = Tensor(batch=2, seq=4, emb=8, dtype=fp32)
 Y = sum(X, axis=1)
 `,
       "Y",

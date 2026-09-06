@@ -103,7 +103,7 @@ describe("staging an example", () => {
 
   it("recognises an example typed or restored rather than picked", () => {
     const target = EXAMPLES.findIndex((ex) => ex.name === "Reshape trap");
-    S().applyDSL("input X [2, 3] f32\nY = relu(X)\n");
+    S().applyDSL("X = Tensor(2, 3, dtype=fp32)\nY = relu(X)\n");
     expect(S().exampleIndex).toBe(-1);
 
     S().applyDSL(EXAMPLES[target].dsl);
@@ -113,7 +113,7 @@ describe("staging an example", () => {
   it("keeps direct editor drafts separate from the built source", () => {
     const built = S().dslText;
     const resolved = S().resolved;
-    S().setDraftText("input X [2, 3] f32\nY = relu(X)\n");
+    S().setDraftText("X = Tensor(2, 3, dtype=fp32)\nY = relu(X)\n");
     expect(S().draftText).not.toBe(built);
     expect(S().dslText).toBe(built);
     expect(S().resolved).toBe(resolved);
@@ -133,7 +133,7 @@ describe("DSL compiler integration", () => {
   beforeEach(() => S().loadExample(0));
 
   it("loads a compiled program through the UI boundary", () => {
-    S().applyDSL(`input X [2, 3] f32
+    S().applyDSL(`X = Tensor(2, 3, dtype=fp32)
 Y = softmax(X, axis=-1)
 `);
     expect(S().loadError).toBeNull();
@@ -142,8 +142,8 @@ Y = softmax(X, axis=-1)
   });
 
   it("expands an intermediate composite and keeps the displayed DSL executable", () => {
-    S().applyDSL(`input A [2, 3] f32
-input B [3, 4] f32
+    S().applyDSL(`A = Tensor(2, 3, dtype=fp32)
+B = Tensor(3, 4, dtype=fp32)
 S = matmul(A, B)
 P = softmax(S, axis=-1)
 `);
@@ -166,8 +166,8 @@ P = softmax(S, axis=-1)
     const builtSource = S().dslText;
     const resolved = S().resolved;
     const selection = S().selection;
-    const invalid = `input A [2, 3] f32
-input B [4, 5] f32
+    const invalid = `A = Tensor(2, 3, dtype=fp32)
+B = Tensor(4, 5, dtype=fp32)
 C = matmul(A, B)
 `;
     S().applyDSL(invalid);
@@ -189,7 +189,7 @@ C = matmul(A, B)
 
     S().moveSelection(0, 1);
     expect(S().workspaceHistory.length).toBeGreaterThan(0);
-    S().applyDSL("input X [2, 3] f32\nY = identity(X)\n");
+    S().applyDSL("X = Tensor(2, 3, dtype=fp32)\nY = identity(X)\n");
     expect(S().workspaceHistory).toEqual([]);
     expect(S().selection).toBeNull();
     expect(() => S().undoWorkspace()).not.toThrow();
@@ -200,7 +200,7 @@ C = matmul(A, B)
     S().commitTensorMove("A", { dx: 0, dy: 0 });
     expect(S().tensorOffsets.A).toEqual({ dx: 80, dy: 25 });
 
-    S().applyDSL("input X [2, 3] f32\nY = identity(X)\n");
+    S().applyDSL("X = Tensor(2, 3, dtype=fp32)\nY = identity(X)\n");
     expect(S().tensorOffsets).toEqual({});
     expect(S().workspaceHistory).toEqual([]);
   });
@@ -211,7 +211,7 @@ describe("transactional workspace restore", () => {
 
   it("installs source, settings, and an ordered selection together", () => {
     const restored = S().restoreWorkspace({
-      dsl: "input X [4, 4] f32\nY = relu(X)\n",
+      dsl: "X = Tensor(4, 4, dtype=fp32)\nY = relu(X)\n",
       direction: "both",
       tileScale: 2,
       snapToGrid: false,
@@ -251,7 +251,7 @@ describe("transactional workspace restore", () => {
 
   it("restores a shared figures-only view", () => {
     const restored = S().restoreWorkspace({
-      dsl: "input X [4, 4] f32\nY = relu(X)\n",
+      dsl: "X = Tensor(4, 4, dtype=fp32)\nY = relu(X)\n",
       direction: "none",
       tileScale: 0,
       snapToGrid: true,
@@ -270,7 +270,7 @@ describe("transactional workspace restore", () => {
       [{ tensorId: "A", box: box([0, 999], [0, 1]) }],
     ]) {
       const restored = S().restoreWorkspace({
-        dsl: "input A [4, 4] f32\nB = relu(A)\n",
+        dsl: "A = Tensor(4, 4, dtype=fp32)\nB = relu(A)\n",
         direction: "none",
         tileScale: 0,
         snapToGrid: true,
@@ -285,7 +285,7 @@ describe("transactional workspace restore", () => {
   it("rejects layout offsets for tensors outside the shared graph", () => {
     const before = S();
     const restored = S().restoreWorkspace({
-      dsl: "input X [4, 4] f32\nY = relu(X)\n",
+      dsl: "X = Tensor(4, 4, dtype=fp32)\nY = relu(X)\n",
       direction: "both",
       tileScale: 0,
       snapToGrid: true,
@@ -363,7 +363,7 @@ describe("tensor layout transactions", () => {
   });
 
   it("can undo the first selection without disturbing tensor placement", () => {
-    S().applyDSL("input X [8, 8] f32\nY = identity(X)\n");
+    S().applyDSL("X = Tensor(8, 8, dtype=fp32)\nY = identity(X)\n");
     S().setTensorOffset("X", { dx: 45, dy: 20 });
     S().commitTensorMove("X", { dx: 0, dy: 0 });
     S().setSelection("Y", fromBox(box([0, 2], [0, 2])), "replace");
@@ -625,9 +625,9 @@ describe("the graph's render scale", () => {
   });
 
   it("is recomputed for a different graph", () => {
-    S().applyDSL("input X [4, 4] f32\nY = reshape(X, shape=[16])\n");
+    S().applyDSL("X = Tensor(4, 4, dtype=fp32)\nY = reshape(X, shape=[16])\n");
     const small = S().graphPx;
-    S().applyDSL("input X [1024, 1024] f16\ninput W [1024, 1024] f16\nZ = matmul(X, W)\n");
+    S().applyDSL("X = Tensor(1024, 1024, dtype=fp16)\nW = Tensor(1024, 1024, dtype=fp16)\nZ = matmul(X, W)\n");
     expect(S().graphPx).toBeLessThan(small);
   });
 
@@ -1340,7 +1340,7 @@ describe("offered starting tiles", () => {
 
 describe("bidirectional hover probes", () => {
   it("retains both answers across view changes and clears on exit or invalid input", () => {
-    S().applyDSL("input A [8, 8] f32\nB = relu(A)\nC = relu(B)");
+    S().applyDSL("A = Tensor(8, 8, dtype=fp32)\nB = relu(A)\nC = relu(B)");
     S().setDirection("forward");
     S().setPreviewBox("B", box([0, 2], [0, 2]));
     const preview = S().preview;

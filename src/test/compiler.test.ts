@@ -9,9 +9,11 @@ import { resolveGraph } from "../core/graph";
 
 describe("DSL compiler facade", () => {
   it("produces source, unresolved IR, resolved IR, source map, and executor", () => {
-    const source = `params M=2 K=3 N=4
-input A [M, K] f16
-weight B [K, N] f16
+    const source = `M = 2
+K = 3
+N = 4
+A = Tensor(M, K, dtype=fp16)
+B = Parameter(K, N, dtype=fp16)
 C = matmul(A, B)
 `;
     const program = compileDSL(source);
@@ -21,13 +23,13 @@ C = matmul(A, B)
     expect(program.graph.tensors.C.producer).toBeUndefined();
     expect(program.resolved.tensors.C.resolved).toEqual([2, 4]);
     expect(program.resolved.tensors.C.producer).toEqual({ nodeId: "matmul_C", slot: 0 });
-    expect(program.sourceMap.nodes.matmul_C.start.line).toBe(4);
-    expect(program.sourceMap.tensors.B.start.line).toBe(3);
+    expect(program.sourceMap.nodes.matmul_C.start.line).toBe(6);
+    expect(program.sourceMap.tensors.B.start.line).toBe(5);
     expect(program.executor.graph).toBe(program.resolved);
   });
 
   it("keeps resolveGraph referentially transparent", () => {
-    const graph = parseDSL(`input X [2, 3] f32
+    const graph = parseDSL(`X = Tensor(2, 3, dtype=fp32)
 Y = softmax(X, axis=-1)
 `);
     const before = JSON.stringify(graph);
@@ -41,7 +43,7 @@ Y = softmax(X, axis=-1)
   });
 
   it("normalizes syntax errors with precise source coordinates", () => {
-    const result = tryCompileDSL("  input X [4] f32\n  Y = softmax(X, axis=)\n");
+    const result = tryCompileDSL("  X = Tensor(4, dtype=fp32)\n  Y = softmax(X, axis=)\n");
     expect(result.ok).toBe(false);
     if (result.ok) return;
 
@@ -56,7 +58,7 @@ Y = softmax(X, axis=-1)
   });
 
   it("maps an unknown op diagnostic back to its DSL statement", () => {
-    const result = tryCompileDSL(`input X [4] f32
+    const result = tryCompileDSL(`X = Tensor(4, dtype=fp32)
 
 Y = mystery(X)
 `);
@@ -71,7 +73,7 @@ Y = mystery(X)
   });
 
   it("maps invalid attrs back to the operation statement", () => {
-    const result = tryCompileDSL(`input X [4] f32
+    const result = tryCompileDSL(`X = Tensor(4, dtype=fp32)
 Y = softmax(X, axiz=-1)
 `);
     expect(result.ok).toBe(false);
@@ -105,10 +107,10 @@ Y = softmax(X, axiz=-1)
   });
 
   it("enforces the maximum normalize input count", () => {
-    const result = tryCompileDSL(`input X [4] f32
-input W [4] f32
-input B [4] f32
-input Extra [4] f32
+    const result = tryCompileDSL(`X = Tensor(4, dtype=fp32)
+W = Tensor(4, dtype=fp32)
+B = Tensor(4, dtype=fp32)
+Extra = Tensor(4, dtype=fp32)
 Y = normalize(X, W, B, Extra, kind=layernorm, axes=[0], hasWeight=true, hasBias=true)
 `);
     expect(result.ok).toBe(false);
@@ -122,7 +124,7 @@ Y = normalize(X, W, B, Extra, kind=layernorm, axes=[0], hasWeight=true, hasBias=
   });
 
   it("checks elementwise nary against its actual input count", () => {
-    const result = tryCompileDSL(`input X [4] f32
+    const result = tryCompileDSL(`X = Tensor(4, dtype=fp32)
 Y = elementwise(X, fn=relu, nary=2)
 `);
     expect(result.ok).toBe(false);
@@ -136,7 +138,7 @@ Y = elementwise(X, fn=relu, nary=2)
   });
 
   it("checks einsum equation operands against its actual input count", () => {
-    const result = tryCompileDSL(`input A [2, 3] f32
+    const result = tryCompileDSL(`A = Tensor(2, 3, dtype=fp32)
 Y = einsum("ij,jk->ik", A)
 `);
     expect(result.ok).toBe(false);
@@ -152,8 +154,8 @@ Y = einsum("ij,jk->ik", A)
   });
 
   it("checks normalize flags against its actual input count", () => {
-    const result = tryCompileDSL(`input X [4] f32
-input W [4] f32
+    const result = tryCompileDSL(`X = Tensor(4, dtype=fp32)
+W = Tensor(4, dtype=fp32)
 Y = normalize(X, W, kind=layernorm, axes=[0], hasWeight=false, hasBias=false)
 `);
     expect(result.ok).toBe(false);
@@ -167,7 +169,7 @@ Y = normalize(X, W, kind=layernorm, axes=[0], hasWeight=false, hasBias=false)
   });
 
   it("checks split output count against sizes", () => {
-    const result = tryCompileDSL(`input X [4] f32
+    const result = tryCompileDSL(`X = Tensor(4, dtype=fp32)
 A, B = split(X, axis=0, sizes=[4])
 `);
     expect(result.ok).toBe(false);
@@ -181,8 +183,8 @@ A, B = split(X, axis=0, sizes=[4])
   });
 
   it("maps shape-inference failures back to the operation statement", () => {
-    const result = tryCompileDSL(`input A [2, 3] f32
-input B [4, 5] f32
+    const result = tryCompileDSL(`A = Tensor(2, 3, dtype=fp32)
+B = Tensor(4, 5, dtype=fp32)
 C = matmul(A, B)
 `);
     expect(result.ok).toBe(false);
@@ -197,8 +199,8 @@ C = matmul(A, B)
   it.each([
     [
       "conv",
-      `input X [2, 3] f32
-input W [4, 3] f32
+      `X = Tensor(2, 3, dtype=fp32)
+W = Tensor(4, 3, dtype=fp32)
 Y = conv(X, W, stride=[], pads=[], dilation=[], groups=1)
 `,
       2,
@@ -206,7 +208,7 @@ Y = conv(X, W, stride=[], pads=[], dilation=[], groups=1)
     ],
     [
       "pool",
-      `input X [1, 2, 3, 4, 5, 6] f32
+      `X = Tensor(1, 2, 3, 4, 5, 6, dtype=fp32)
 Y = pool(X, kind=max, kernelShape=[1,1,1,1], stride=[1,1,1,1], pads=[[0,0],[0,0],[0,0],[0,0]])
 `,
       6,
@@ -227,8 +229,8 @@ Y = pool(X, kind=max, kernelShape=[1,1,1,1], stride=[1,1,1,1], pads=[[0,0],[0,0]
   });
 
   it("requires convolution weight rank to match activation rank", () => {
-    const result = tryCompileDSL(`input X [1, 3, 8, 8] f32
-input W [4, 3, 3] f32
+    const result = tryCompileDSL(`X = Tensor(1, 3, 8, 8, dtype=fp32)
+W = Tensor(4, 3, 3, dtype=fp32)
 Y = conv(X, W, stride=[1,1], pads=[[1,1],[1,1]], dilation=[1,1], groups=1)
 `);
     expect(result.ok).toBe(false);
@@ -244,8 +246,8 @@ Y = conv(X, W, stride=[1,1], pads=[[1,1],[1,1]], dilation=[1,1], groups=1)
   });
 
   it("infers cast dtypes through subsequent preserving operations", () => {
-    const program = compileDSL(`input X [4] f32
-Y = cast(X, dtype=f16)
+    const program = compileDSL(`X = Tensor(4, dtype=fp32)
+Y = cast(X, dtype=fp16)
 Z = contiguous(Y)
 `);
 
@@ -255,14 +257,14 @@ Z = contiguous(Y)
   });
 
   it("infers gather output dtype from data and requires i32 indices", () => {
-    const valid = compileDSL(`input D [8, 4] f16
-input I [3] i32
+    const valid = compileDSL(`D = Tensor(8, 4, dtype=fp16)
+I = Tensor(3, dtype=int32)
 Y = gather(D, I, axis=0, indexValues=[1, 5, 2])
 `);
     expect(valid.resolved.tensors.Y.dtype).toBe("f16");
 
-    const invalid = tryCompileDSL(`input D [8, 4] f16
-input I [3] f32
+    const invalid = tryCompileDSL(`D = Tensor(8, 4, dtype=fp16)
+I = Tensor(3, dtype=fp32)
 Y = gather(D, I, axis=0)
 `);
     expect(invalid.ok).toBe(false);
@@ -276,8 +278,8 @@ Y = gather(D, I, axis=0)
   });
 
   it("rejects ambiguous mixed-dtype compute inputs", () => {
-    const result = tryCompileDSL(`input A [4] f16
-input B [4] f32
+    const result = tryCompileDSL(`A = Tensor(4, dtype=fp16)
+B = Tensor(4, dtype=fp32)
 Y = add(A, B)
 `);
     expect(result.ok).toBe(false);
@@ -290,15 +292,32 @@ Y = add(A, B)
     expect(result.diagnostics[0].message).toMatch(/input dtypes must match.*f16, f32/);
   });
 
-  it("rejects an unknown cast target as an invalid attribute", () => {
-    const result = tryCompileDSL("input X [4] f32\nY = cast(X, dtype=f64)\n");
+  /* `dtype` is the one attribute the parser reads rather than passes through,
+     because the DSL spells dtypes `fp32` and the IR spells them `f32`. Owning
+     the conversion means owning the rejection: an unknown spelling cannot reach
+     the op's attribute schema, so it is a parse error with a span on the value
+     rather than a semantic one on the statement. `f64` is doubly wrong here -
+     an internal spelling, and not a dtype this system has. */
+  it("rejects an unknown cast target when it reads the dtype", () => {
+    const result = tryCompileDSL("X = Tensor(4, dtype=fp32)\nY = cast(X, dtype=f64)\n");
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.diagnostics[0]).toMatchObject({
-      phase: "semantic",
-      code: "SEM_INVALID_ATTRIBUTES",
+      phase: "parse",
+      code: "DSL_SYNTAX",
       span: { start: { line: 2 } },
     });
+    expect(result.diagnostics[0].message).toMatch(/dtype must be one of .*fp32/);
+  });
+
+  it("accepts a cast written in the DSL's own dtype spelling", () => {
+    // fp16, not bf16: the two spellings differ, so this shows the conversion
+    // happening rather than a name that survives either way.
+    const result = tryCompileDSL("X = Tensor(4, dtype=fp32)\nY = cast(X, dtype=fp16)\n");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.program.graph.nodes[0].attrs).toMatchObject({ dtype: "f16" });
+    expect(result.program.resolved.tensors.Y.dtype).toBe("f16");
   });
 
   it.each([
@@ -307,7 +326,7 @@ Y = add(A, B)
     ["reduce", "Y = sum(X, axes=[9])"],
     ["concat", "Y = concat(X, X, axis=9)"],
   ])("rejects an out-of-range %s axis during compilation", (_name, statement) => {
-    const result = tryCompileDSL(`input X [2, 8] f32\n${statement}\n`);
+    const result = tryCompileDSL(`X = Tensor(2, 8, dtype=fp32)\n${statement}\n`);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.diagnostics[0]).toMatchObject({
@@ -319,7 +338,7 @@ Y = add(A, B)
   });
 
   it("rejects mismatched slice attribute ranks", () => {
-    const result = tryCompileDSL(`input X [2, 8] f32
+    const result = tryCompileDSL(`X = Tensor(2, 8, dtype=fp32)
 Y = slice(X, starts=[0, 0], stops=[2], steps=[1, 1])
 `);
     expect(result.ok).toBe(false);
@@ -330,7 +349,7 @@ Y = slice(X, starts=[0, 0], stops=[2], steps=[1, 1])
 
   it("rejects non-representable inferred extents at the graph boundary", () => {
     const extent = Number.MAX_SAFE_INTEGER;
-    const result = tryCompileDSL(`input X [${extent}] f32
+    const result = tryCompileDSL(`X = Tensor(${extent}, dtype=fp32)
 Y = concat(X, X, axis=0)
 `);
     expect(result.ok).toBe(false);
@@ -340,7 +359,7 @@ Y = concat(X, X, axis=0)
   });
 
   it("maps unresolved input dimensions back to the declaration", () => {
-    const result = tryCompileDSL(`input X [Missing, 4] f32
+    const result = tryCompileDSL(`X = Tensor(Missing, 4, dtype=fp32)
 Y = softmax(X, axis=-1)
 `);
     expect(result.ok).toBe(false);
@@ -356,7 +375,7 @@ Y = softmax(X, axis=-1)
   it("throws a structured CompilationError from the convenience API", () => {
     let caught: unknown;
     try {
-      compileDSL("input X [4] f32\nY = nope(X)\n");
+      compileDSL("X = Tensor(4, dtype=fp32)\nY = nope(X)\n");
     } catch (error) {
       caught = error;
     }
@@ -365,26 +384,49 @@ Y = softmax(X, axis=-1)
     expect((caught as Error).message).toMatch(/^line 2:/);
   });
 
-  it("does not mistake identifiers beginning with params for a params statement", () => {
-    const program = compileDSL(`input X [4] f32
+  it("accepts identifiers beginning with params", () => {
+    const program = compileDSL(`X = Tensor(4, dtype=fp32)
 paramsResult = identity(X)
 `);
     expect(program.resolved.tensors.paramsResult.resolved).toEqual([4]);
   });
 
   it("rejects duplicate parameter definitions instead of silently overwriting", () => {
-    const result = tryCompileDSL("params M=4 M=8\ninput X [M] f32\n");
+    const result = tryCompileDSL("M = 4\nM = 8\nX = Tensor(M, dtype=fp32)\n");
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.diagnostics[0]).toMatchObject({
       phase: "parse",
       code: "DSL_DUPLICATE_PARAM",
-      span: { start: { line: 1 } },
+      span: { start: { line: 2 } },
     });
   });
 
+  /* Dimensions, tensors, and operation outputs are all assignments now, so they
+     share one namespace and can collide in ways the keyword-separated grammar
+     could not express. Silently letting the later binding win is the dangerous
+     outcome: a shape would then be resolved against a name whose value the
+     reader cannot see on the line that uses it. */
+  it.each([
+    ["a tensor over a dimension", "M = 4\nM = Tensor(4, dtype=fp32)\n", "DSL_DUPLICATE_TENSOR"],
+    ["a dimension over a tensor", "M = Tensor(4, dtype=fp32)\nM = 8\n", "DSL_DUPLICATE_PARAM"],
+    ["an operation output over a dimension", "M = 4\nX = Tensor(M, dtype=fp32)\nM = relu(X)\n", "DSL_DUPLICATE_TENSOR"],
+  ])("rejects %s claiming a name already bound", (_case, source, code) => {
+    const result = tryCompileDSL(source);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0]).toMatchObject({
+      phase: "parse",
+      code,
+      // The second binding is the error, not the first: the name was available
+      // when it was first used.
+      span: { start: { line: source.trimEnd().split("\n").length } },
+    });
+    expect(result.diagnostics[0].message).toMatch(/symbol "M" redefined/);
+  });
+
   it("validates parameter bindings even when they are not referenced", () => {
-    const result = tryCompileDSL("\nparams M=0\ninput X [4] f32\n");
+    const result = tryCompileDSL("\nM = 0\nX = Tensor(4, dtype=fp32)\n");
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.diagnostics[0]).toMatchObject({
@@ -394,8 +436,21 @@ paramsResult = identity(X)
     });
   });
 
+  it("rejects a reduction over no axes", () => {
+    // Accepted, it returns its input unchanged under a name that says a
+    // reduction happened, and the dependency note it would carry is silent.
+    const result = tryCompileDSL("X = Tensor(4, 6, dtype=fp32)\nY = sum(X, axes=[])\n");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0]).toMatchObject({
+      phase: "semantic",
+      code: "SEM_INVALID_ATTRIBUTES",
+      span: { start: { line: 2 } },
+    });
+  });
+
   it("rejects duplicate named attributes", () => {
-    const result = tryCompileDSL(`input X [4] f32
+    const result = tryCompileDSL(`X = Tensor(4, dtype=fp32)
 Y = softmax(X, axis=0, axis=-1)
 `);
     expect(result.ok).toBe(false);
@@ -412,14 +467,14 @@ Y = softmax(X, axis=0, axis=-1)
     // trailing comment is still stripped. Asserted on the unresolved graph,
     // because whether an op *accepts* the attribute is the resolver's business
     // and no operation declares a free-form string attribute to carry it.
-    const graph = parseDSL(`input X [4] f32
+    const graph = parseDSL(`X = Tensor(4, dtype=fp32)
 Y = identity(X, note="a#b \\"quoted\\"") # an actual comment
 `);
     expect(graph.nodes[0].attrs.note).toBe('a#b "quoted"');
   });
 
   it("rejects an attribute the operation does not declare", () => {
-    const result = tryCompileDSL(`input X [4] f32
+    const result = tryCompileDSL(`X = Tensor(4, dtype=fp32)
 Y = identity(X, note="whatever")
 `);
     expect(result.ok).toBe(false);
@@ -432,7 +487,7 @@ Y = identity(X, note="whatever")
   it("names the near miss when an attribute is misspelled", () => {
     // `keepdims` is the NumPy spelling of torch's `keepdim`. It used to be
     // stripped in silence, resolving Y to [4] instead of [4, 1].
-    const result = tryCompileDSL(`input X [4, 8] f32
+    const result = tryCompileDSL(`X = Tensor(4, 8, dtype=fp32)
 Y = sum(X, axes=[-1], keepdims=true)
 `);
     expect(result.ok).toBe(false);
@@ -443,7 +498,7 @@ Y = sum(X, axes=[-1], keepdims=true)
   });
 
   it("lists the accepted attributes when nothing is close", () => {
-    const result = tryCompileDSL(`input X [4, 8] f32
+    const result = tryCompileDSL(`X = Tensor(4, 8, dtype=fp32)
 Y = sum(X, axes=[-1], banana=true)
 `);
     expect(result.ok).toBe(false);
@@ -452,8 +507,8 @@ Y = sum(X, axes=[-1], banana=true)
   });
 
   it("rejects attributes on an op that declares none", () => {
-    const result = tryCompileDSL(`input A [4, 8] f32
-weight B [8, 4] f32
+    const result = tryCompileDSL(`A = Tensor(4, 8, dtype=fp32)
+B = Parameter(8, 4, dtype=fp32)
 C = matmul(A, B, transposeB=true)
 `);
     expect(result.ok).toBe(false);

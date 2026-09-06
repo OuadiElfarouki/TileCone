@@ -11,9 +11,12 @@ import { resolveShape } from "../core/shapes";
 const tensorIn = (dsl: string, id: string) => compileDSL(dsl).resolved.tensors[id];
 
 describe("reading a shape as names or extents", () => {
-  const NAMED = `params B=1 H=4 S=32 D=8
-input X  [batch: B, seq: S, emb: H*D] f16
-input Wq [emb: H*D, proj: H*D] f16
+  const NAMED = `B = 1
+H = 4
+S = 32
+D = 8
+X = Tensor(batch=B, seq=S, emb=H*D, dtype=fp16)
+Wq = Tensor(emb=H*D, proj=H*D, dtype=fp16)
 Qp = einsum("bse,ef->bsf", X, Wq)
 Q4 = reshape(Qp, shape=[B, S, H, D])
 `;
@@ -37,14 +40,16 @@ Q4 = reshape(Qp, shape=[B, S, H, D])
 
   it("falls back to the extent for an axis with nothing to say", () => {
     // A literal target leaves nothing symbolic behind.
-    const SPLIT = "input X [2, 12] f32\nY = reshape(X, shape=[2, 3, 4])\n";
+    const SPLIT = "X = Tensor(2, 12, dtype=fp32)\nY = reshape(X, shape=[2, 3, 4])\n";
     expect(shapeLabel(tensorIn(SPLIT, "Y"), "symbolic")).toBe("[2 × 3 × 4]");
   });
 
   it("falls back to the declared dimension when the axis is unnamed", () => {
-    const GEMM = `params M=64 N=64 K=128
-input A [M, K] f16
-input B [K, N] f16
+    const GEMM = `M = 64
+N = 64
+K = 128
+A = Tensor(M, K, dtype=fp16)
+B = Tensor(K, N, dtype=fp16)
 C = matmul(A, B)
 `;
     expect(shapeLabel(tensorIn(GEMM, "A"), "symbolic")).toBe("[M × K]");
@@ -56,7 +61,7 @@ C = matmul(A, B)
   });
 
   it("reads identically both ways when nothing is symbolic", () => {
-    const PLAIN = "input X [2, 4] f32\nY = relu(X)\n";
+    const PLAIN = "X = Tensor(2, 4, dtype=fp32)\nY = relu(X)\n";
     expect(shapeLabel(tensorIn(PLAIN, "X"), "symbolic")).toBe("[2 × 4]");
     expect(hasSymbolicShape(tensorIn(PLAIN, "X"))).toBe(false);
   });
@@ -67,9 +72,11 @@ C = matmul(A, B)
    points. Everything an operation proposes is verified against the extents
    resolution actually produced, so a wrong mapping degrades to the number. */
 describe("carrying symbolic extents downstream", () => {
-  const SYM = `params M=8 K=4 N=6
-input A [M, K] f32
-input B [K, N] f32
+  const SYM = `M = 8
+K = 4
+N = 6
+A = Tensor(M, K, dtype=fp32)
+B = Tensor(K, N, dtype=fp32)
 C = matmul(A, B)
 D = relu(C)
 E = transpose(D, perm=[1, 0])
@@ -90,9 +97,10 @@ F = sum(E, axis=1)
   });
 
   it("states a concatenated axis as the sum that met there", () => {
-    const CAT = `params P=6 T=2
-input A [4, P] f32
-input B [4, T] f32
+    const CAT = `P = 6
+T = 2
+A = Tensor(4, P, dtype=fp32)
+B = Tensor(4, T, dtype=fp32)
 C = concat(A, B, axis=1)
 `;
     expect(tensorIn(CAT, "C").symShape).toEqual([4, "P+T"]);
@@ -100,18 +108,26 @@ C = concat(A, B, axis=1)
   });
 
   it("can take an unchanged concat symbol from a later input", () => {
-    const CAT = `params Rows=4 P=6 T=2
-input A [4, P] f32
-input B [Rows, T] f32
+    const CAT = `Rows = 4
+P = 6
+T = 2
+A = Tensor(4, P, dtype=fp32)
+B = Tensor(Rows, T, dtype=fp32)
 C = concat(A, B, axis=1)
 `;
     expect(tensorIn(CAT, "C").symShape).toEqual(["Rows", "P+T"]);
   });
 
   it("carries only the unchanged extents through convolution and pooling", () => {
-    const SPATIAL = `params N=2 Cin=3 Cout=5 H=8 W=8 KH=3 KW=3
-input X [N, Cin, H, W] f32
-input K [Cout, Cin, KH, KW] f32
+    const SPATIAL = `N = 2
+Cin = 3
+Cout = 5
+H = 8
+W = 8
+KH = 3
+KW = 3
+X = Tensor(N, Cin, H, W, dtype=fp32)
+K = Tensor(Cout, Cin, KH, KW, dtype=fp32)
 Y = conv(X, K, stride=[1, 1], pads=[[1, 1], [1, 1]], dilation=[1, 1])
 Z = pool(Y, kind=max, kernelShape=[2, 2], stride=[2, 2], pads=[[0, 0], [0, 0]])
 `;
@@ -120,9 +136,11 @@ Z = pool(Y, kind=max, kernelShape=[2, 2], stride=[2, 2], pads=[[0, 0], [0, 0]])
   });
 
   it("takes a gather axis extent from the indices tensor", () => {
-    const GATHER = `params Rows=8 Cols=4 Picked=3
-input D [Rows, Cols] f32
-input I [Picked] i32
+    const GATHER = `Rows = 8
+Cols = 4
+Picked = 3
+D = Tensor(Rows, Cols, dtype=fp32)
+I = Tensor(Picked, dtype=int32)
 Y = gather(D, I, axis=0, indexValues=[1, 5, 2])
 `;
     expect(tensorIn(GATHER, "Y").symShape).toEqual(["Picked", "Cols"]);
@@ -146,7 +164,7 @@ describe("which readings a tensor's details are worth listing", () => {
     shapeReadings(tensorIn(dsl, id)).map((r) => `${r.label} ${r.value}`);
 
   it("lists all three when they are three different facts", () => {
-    const NAMED = "params E=8\ninput X [emb: E, w: 4] f32\n";
+    const NAMED = "E = 8\nX = Tensor(emb=E, w=4, dtype=fp32)\n";
     expect(readingsOf(NAMED, "X")).toEqual([
       "labels [emb × w]",
       "symbols [E × 4]",
@@ -156,16 +174,16 @@ describe("which readings a tensor's details are worth listing", () => {
 
   it("collapses to one row for a tensor with nothing symbolic about it", () => {
     // Naming this row "labels" would claim an identity the tensor has not got.
-    expect(readingsOf("input X [2, 4] f32\n", "X")).toEqual(["extents [2 × 4]"]);
+    expect(readingsOf("X = Tensor(2, 4, dtype=fp32)\n", "X")).toEqual(["extents [2 × 4]"]);
   });
 
   it("keeps the symbolic row when only the names are missing", () => {
-    const SYM = "params M=8 K=4\ninput A [M, K] f32\n";
+    const SYM = "M = 8\nK = 4\nA = Tensor(M, K, dtype=fp32)\n";
     expect(readingsOf(SYM, "A")).toEqual(["symbols [M × K]", "extents [8 × 4]"]);
   });
 
   it("keeps the label row when the names are the only symbol", () => {
-    expect(readingsOf("input X [rows: 2, cols: 4] f32\n", "X")).toEqual([
+    expect(readingsOf("X = Tensor(rows=2, cols=4, dtype=fp32)\n", "X")).toEqual([
       "labels [rows × cols]",
       "extents [2 × 4]",
     ]);

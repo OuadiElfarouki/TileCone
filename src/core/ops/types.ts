@@ -61,7 +61,7 @@ export type NoteCtx = OpCtx & {
    * Verified symbolic dimensions per input, parallel to `inShapes`. For source
    * tensors these are their declarations; for intermediates they are the
    * expressions safely carried through prior operations. A reader who wrote
-   * `input A [M, K]` is looking for `K`, not an internal position.
+   * `A = Tensor(M, K)` is looking for `K`, not an internal position.
    */
   inDims: Sym[][];
   /**

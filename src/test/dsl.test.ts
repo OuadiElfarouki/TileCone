@@ -19,11 +19,13 @@ function strip(g: Graph) {
 
 describe("DSL", () => {
   it("parses the spec's example", () => {
-    const g = parseDSL(`params M=8 N=8 K=16
+    const g = parseDSL(`M = 8
+N = 8
+K = 16
 
 # a comment
-input A [M, K] f16
-input B [K, N] f16
+A = Tensor(M, K, dtype=fp16)
+B = Tensor(K, N, dtype=fp16)
 
 C = einsum("mk,kn->mn", A, B)
 D = softmax(C, axis=-1)
@@ -35,7 +37,7 @@ D = softmax(C, axis=-1)
   });
 
   it("supports multi-output split and sugar names", () => {
-    const g = parseDSL(`input X [6, 4] f16
+    const g = parseDSL(`X = Tensor(6, 4, dtype=fp16)
 A, B = split(X, axis=0, sizes=[2, 4])
 C = add(A, A)
 S = sum(C, axes=[1], keepdim=true)
@@ -49,11 +51,13 @@ S = sum(C, axes=[1], keepdim=true)
     expect(rg.tensors["S"].dtype).toBe("f16");
   });
 
-  it("accepts weight/param as input declarations and tags them", () => {
-    const g = resolveGraph(parseDSL(`params M=4 K=6 N=8
-input A [M, K] f16
-weight B [K, N] f16
-param Bias [N] f16
+  it("uses Parameter for learned graph inputs", () => {
+    const g = resolveGraph(parseDSL(`M = 4
+K = 6
+N = 8
+A = Tensor(M, K, dtype=fp16)
+B = Parameter(K, N, dtype=fp16)
+Bias = Parameter(N, dtype=fp16)
 C = matmul(A, B)
 D = add(C, Bias)
 `));
@@ -66,7 +70,7 @@ D = add(C, Bias)
   });
 
   it("reduce accepts the singular axis= spelling", () => {
-    const g = resolveGraph(parseDSL(`input X [4, 6] f32
+    const g = resolveGraph(parseDSL(`X = Tensor(4, 6, dtype=fp32)
 s = sum(X, axis=-1)
 m = mean(X, axes=[0])
 `));
@@ -74,19 +78,20 @@ m = mean(X, axes=[0])
     expect(g.tensors["m"].resolved).toEqual([6]);
   });
 
-  it("names an unknown declaration keyword instead of demanding an =", () => {
-    const bad = () => parseDSL("input X [4] f32\ntensor Y [4] f32\n");
-    expect(bad).toThrow(/line 2/);
-    expect(bad).toThrow(/unknown statement starting with "tensor"/);
-    expect(bad).toThrow(/input\|weight\|param/);
+  it("rejects the removed declaration grammar", () => {
+    for (const source of ["params M=4\n", "input X [4] f32\n", "weight W [4] f16\n"]) {
+      const bad = () => parseDSL(source);
+      expect(bad).toThrow(DSLError);
+      expect(bad).toThrow(/expected an assignment/);
+    }
   });
 
   it("says which axis attribute a reduce is missing", () => {
-    expect(() => parseDSL("input X [4, 6] f32\ns = sum(X)\n")).toThrow(/sum\(\) needs an axis/);
+    expect(() => parseDSL("X = Tensor(4, 6, dtype=fp32)\ns = sum(X)\n")).toThrow(/sum\(\) needs an axis/);
   });
 
   it("reports line numbers on errors", () => {
-    expect(() => parseDSL(`input X [4] f32\nY = bogus_op_name(X`)).toThrow(/line 2/);
+    expect(() => parseDSL(`X = Tensor(4, dtype=fp32)\nY = bogus_op_name(X`)).toThrow(/line 2/);
   });
 
   it("round-trips JSON -> DSL -> JSON losslessly", () => {
@@ -137,26 +142,31 @@ describe("built-in examples", () => {
   it("examples validate against the oracle at miniature shapes", () => {
     // reshape trap + layernorm residual + cumsum are cheap enough to brute force as-is
     checkGraph(parseDSL(exampleNamed("Reshape trap").dsl), { perTensorElementCap: 16 });
-    const miniLN = parseDSL(`params S=4 E=6
-input X [S, E] f32
-input W [E] f32
-input Bb [E] f32
+    const miniLN = parseDSL(`S = 4
+E = 6
+X = Tensor(S, E, dtype=fp32)
+W = Tensor(E, dtype=fp32)
+Bb = Tensor(E, dtype=fp32)
 H = layernorm(X, W, Bb, axes=[-1])
 Y = add(H, X)
 `);
     checkGraph(miniLN, { perTensorElementCap: 12 });
-    const miniCumsum = parseDSL(`params S=7
-input X [S] f32
+    const miniCumsum = parseDSL(`S = 7
+X = Tensor(S, dtype=fp32)
 Y = cumsum(X, axis=0, reverse=false)
 Z = cumsum(Y, axis=0, reverse=false)
 `);
     checkGraph(miniCumsum);
-    const miniAttn = parseDSL(`params B=1 H=2 S=4 D=3 E=6
-input X  [B, S, E] f32
-input Wq [E, E] f32
-input Wk [E, E] f32
-input Wv [E, E] f32
-input Wo [E, E] f32
+    const miniAttn = parseDSL(`B = 1
+H = 2
+S = 4
+D = 3
+E = 6
+X = Tensor(B, S, E, dtype=fp32)
+Wq = Tensor(E, E, dtype=fp32)
+Wk = Tensor(E, E, dtype=fp32)
+Wv = Tensor(E, E, dtype=fp32)
+Wo = Tensor(E, E, dtype=fp32)
 Qp = einsum("bse,ef->bsf", X, Wq)
 Kp = einsum("bse,ef->bsf", X, Wk)
 Vp = einsum("bse,ef->bsf", X, Wv)
@@ -174,17 +184,24 @@ Zm = reshape(Zt, shape=[B, S, E])
 Out = einsum("bse,ef->bsf", Zm, Wo)
 `);
     checkGraph(miniAttn, { perTensorElementCap: 3, boxSelections: 1, forward: false });
-    const miniConv = parseDSL(`params N=1 C=2 F1=2 F2=2 H=6 W=6
-input X  [N, C, H, W] f32
-input W1 [F1, C, 3, 3] f32
-input W2 [F2, F1, 3, 3] f32
+    const miniConv = parseDSL(`N = 1
+C = 2
+F1 = 2
+F2 = 2
+H = 6
+W = 6
+X = Tensor(N, C, H, W, dtype=fp32)
+W1 = Tensor(F1, C, 3, 3, dtype=fp32)
+W2 = Tensor(F2, F1, 3, 3, dtype=fp32)
 Y1 = conv(X, W1, stride=[2, 2], pads=[[1, 1], [1, 1]], dilation=[1, 1], groups=1)
 Y2 = conv(Y1, W2, stride=[2, 2], pads=[[1, 1], [1, 1]], dilation=[1, 1], groups=1)
 `);
     checkGraph(miniConv, { perTensorElementCap: 4, boxSelections: 1, forward: false });
-    const miniGemm = parseDSL(`params M=4 N=4 K=5
-input A [M, K] f32
-input B [K, N] f32
+    const miniGemm = parseDSL(`M = 4
+N = 4
+K = 5
+A = Tensor(M, K, dtype=fp32)
+B = Tensor(K, N, dtype=fp32)
 C = matmul(A, B)
 `);
     checkGraph(miniGemm);
@@ -203,22 +220,61 @@ describe("what the parser refuses", () => {
     throw new Error("expected a DSLError, but the source parsed");
   };
 
-  it("rejects trailing input on a declaration", () => {
-    const error = parseFails("input X [4, 8] f32 THIS_IS_GARBAGE\n");
+  it("rejects trailing input after a constructor", () => {
+    const error = parseFails("X = Tensor(4, 8, dtype=fp32) THIS_IS_GARBAGE\n");
     expect(error).toBeInstanceOf(DSLError);
-    expect(error.detail).toContain("unexpected input after declaration");
+    expect(error.detail).toContain("trailing input");
     expect(error.line).toBe(1);
   });
 
-  it("rejects a number where the dtype belongs, rather than defaulting to f32", () => {
-    // This is the one that mattered: the tensor used to resolve as f32 and the
-    // wrong width then sized every byte estimate downstream.
-    const error = parseFails("input X [4, 8] 32\n");
+  it("rejects an internal dtype spelling from the removed grammar", () => {
+    const error = parseFails("X = Tensor(4, 8, dtype=f32)\n");
     expect(error.detail).toContain("dtype must be one of");
   });
 
+  /* The DSL and the IR spell dtypes differently, so the mapping is a seam with
+     two sides and no test can check one alone: every external spelling must
+     land on its internal name, and `toDSL` must put the external one back or a
+     saved graph reopens as a source the parser rejects. */
+  it.each([
+    ["fp32", "f32"],
+    ["fp16", "f16"],
+    ["bf16", "bf16"],
+    ["fp8", "f8"],
+    ["int32", "i32"],
+    ["int8", "i8"],
+    ["bool", "bool"],
+  ])("maps the dtype spelling %s to %s and back", (external, internal) => {
+    const graph = parseDSL(`X = Tensor(4, dtype=${external})\n`);
+    expect(graph.tensors.X.dtype).toBe(internal);
+    expect(toDSL(graph)).toContain(`dtype=${external}`);
+  });
+
+  /* The removed grammar put the dtype last as a bare word: `input A [M, K] f16`.
+     Read as a dimension that word is a symbol, and the mistake used to surface
+     three phases later as `unbound symbolic dim "fp16"` - a true statement
+     about a graph nobody meant to write. */
+  it("names the mistake when a dtype is written where a dimension belongs", () => {
+    expect(parseFails("X = Tensor(4, fp16)\n").detail).toContain("write dtype=fp16");
+    expect(parseFails("X = Tensor(a=4, b=fp16)\n").detail).toContain("write dtype=fp16");
+    // Only an exact spelling: a symbol may still be named after one.
+    expect(parseDSL("fp16x = 4\nX = Tensor(fp16x, dtype=fp32)\n").tensors.X.shape).toEqual([
+      "fp16x",
+    ]);
+  });
+
+  /* The constructor always wins in call position, so a tensor bound to one of
+     these names could never be read back. */
+  it.each([
+    ["Tensor = Tensor(4, dtype=fp32)\n"],
+    ["X = Tensor(4, dtype=fp32)\nParameter = relu(X)\n"],
+    ["X = Tensor(4, 4, dtype=fp32)\nA, Tensor = split(X, axis=0, sizes=[2, 2])\n"],
+  ])("refuses a constructor name as a tensor name: %s", (source) => {
+    expect(parseFails(source).detail).toContain("cannot name a tensor");
+  });
+
   it("still allows a declaration with no dtype at all", () => {
-    const graph = parseDSL("input X [4, 8]\n");
+    const graph = parseDSL("X = Tensor(4, 8)\n");
     expect(graph.tensors.X.dtype).toBe("f32");
   });
 });
@@ -228,17 +284,17 @@ describe("numeric literals", () => {
     // Asserted on the unresolved graph: no operation declares a float attribute
     // today, and whether one is accepted is the resolver's business, not the
     // lexer's.
-    const graph = parseDSL('input X [4] f32\nY = identity(X, probe=1e-5)');
+    const graph = parseDSL('X = Tensor(4, dtype=fp32)\nY = identity(X, probe=1e-5)');
     expect(graph.nodes[0].attrs.probe).toBe(1e-5);
   });
 
   it("reads exponents and leading-dot decimals", () => {
-    const graph = parseDSL('input X [4] f32\nY = identity(X, a=2.5E+3, b=.5, c=-1.5e-2)');
+    const graph = parseDSL('X = Tensor(4, dtype=fp32)\nY = identity(X, a=2.5E+3, b=.5, c=-1.5e-2)');
     expect(graph.nodes[0].attrs).toMatchObject({ a: 2500, b: 0.5, c: -0.015 });
   });
 
-  it("reads scientific notation in params and shapes", () => {
-    const graph = parseDSL("params N=2e3\ninput X [N, 1e2] f32\n");
+  it("reads scientific notation in dimensions and shapes", () => {
+    const graph = parseDSL("N = 2e3\nX = Tensor(N, 1e2, dtype=fp32)\n");
     expect(graph.params.N).toBe(2000);
     expect(graph.tensors.X.shape).toEqual(["N", 100]);
   });
@@ -248,7 +304,7 @@ describe("toDSL keeps what the call does not already say", () => {
   it("writes out elementwise attributes beyond fn and nary", () => {
     // `fn` and `nary` are recovered from the call itself; anything else has to
     // be serialized, or expanding a composite and recompiling loses it.
-    const graph = parseDSL("input X [4] f32\nY = relu(X, alpha=0.2)\n");
+    const graph = parseDSL("X = Tensor(4, dtype=fp32)\nY = relu(X, alpha=0.2)\n");
     expect(toDSL(graph)).toContain("relu(X, alpha=0.2)");
     expect(parseDSL(toDSL(graph)).nodes[0].attrs).toMatchObject({ alpha: 0.2 });
   });

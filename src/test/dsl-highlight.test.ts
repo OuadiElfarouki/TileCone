@@ -3,16 +3,16 @@ import { highlightDSL } from "../ui/dsl-highlight";
 
 describe("DSL source highlighting", () => {
   it("preserves source text byte for byte", () => {
-    const source = `params M=8\ninput X [M] f16\nY = relu(X) # selected output\n`;
+    const source = `M = 8\nX = Tensor(M, dtype=fp16)\nY = relu(X) # selected output\n`;
     expect(highlightDSL(source).map((token) => token.text).join("")).toBe(source);
   });
 
-  it("highlights declarations, dtypes, literals, and operation calls", () => {
-    const source = `params M=8\nweight W [M] bf16\nY = matmul(W, W, keepdim=true)\n`;
+  it("highlights constructors, dtypes, literals, and operation calls", () => {
+    const source = `M = 8\nW = Parameter(M, dtype=bf16)\nY = matmul(W, W, keepdim=true)\n`;
     const keywords = highlightDSL(source)
       .filter((token) => token.kind === "keyword")
       .map((token) => token.text);
-    expect(keywords).toEqual(["params", "weight", "bf16", "matmul", "true"]);
+    expect(keywords).toEqual(["Parameter", "bf16", "matmul", "true"]);
   });
 
   it("starts comments only at hashes outside strings", () => {

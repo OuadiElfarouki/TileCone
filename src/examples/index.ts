@@ -8,10 +8,12 @@ type Example = {
 export const EXAMPLES: Example[] = [
   {
     name: "Plain GEMM",
-    dsl: `params M=256 N=256 K=512
+    dsl: `M = 256
+N = 256
+K = 512
 
-input A [M, K] f16
-input B [K, N] f16
+A = Tensor(M, K, dtype=fp16)
+B = Tensor(K, N, dtype=fp16)
 
 C = matmul(A, B)
 `,
@@ -19,13 +21,13 @@ C = matmul(A, B)
   },
   {
     name: "Shared operand (A @ A)",
-    dsl: `params N=256
+    dsl: `N = 256
 
 # A is read through both operand slots, so a tile of C needs a row band and a
 # column band of A. The bands share a square, and that square is read twice.
 # Both bands are reported whole; the shared elements are counted once.
 
-input A [N, N] f16
+A = Tensor(N, N, dtype=fp16)
 
 C = matmul(A, A)
 `,
@@ -33,13 +35,16 @@ C = matmul(A, A)
   },
   {
     name: "Multi-head attention",
-    dsl: `params B=1 H=4 S=128 D=32
+    dsl: `B = 1
+H = 4
+S = 128
+D = 32
 
-input X  [batch: B, seq: S, emb: H*D] f16
-input Wq [emb: H*D, proj: H*D] f16
-input Wk [emb: H*D, proj: H*D] f16
-input Wv [emb: H*D, proj: H*D] f16
-input Wo [emb: H*D, out: H*D] f16
+X = Tensor(batch=B, seq=S, emb=H*D, dtype=fp16)
+Wq = Parameter(emb=H*D, proj=H*D, dtype=fp16)
+Wk = Parameter(emb=H*D, proj=H*D, dtype=fp16)
+Wv = Parameter(emb=H*D, proj=H*D, dtype=fp16)
+Wo = Parameter(emb=H*D, out=H*D, dtype=fp16)
 
 Qp = einsum("bse,ef->bsf", X, Wq)
 Kp = einsum("bse,ef->bsf", X, Wk)
@@ -61,21 +66,25 @@ Out = einsum("bse,ef->bsf", Zm, Wo)
   },
   {
     name: "KV-cache decode step",
-    dsl: `params B=1 H=4 P=96 T=32 D=32
+    dsl: `B = 1
+H = 4
+P = 96
+T = 32
+D = 32
 
 # One decode step: T new tokens attend over a P-token cache and themselves.
 # Concatenating the cache is why a single new token's output depends on the
 # whole of it, and the mask and bias arrive by broadcast rather than as
 # full-sized tensors.
 
-input Kc [batch: B, head: H, kv: P, dim: D] f16
-input Vc [batch: B, head: H, kv: P, dim: D] f16
-input X  [batch: B, seq: T, emb: H*D] f16
-input Wq [emb: H*D, proj: H*D] f16
-input Wk [emb: H*D, proj: H*D] f16
-input Wv [emb: H*D, proj: H*D] f16
-input Bq [proj: H*D] f16
-input Mk [q: T, k: P+T] f16
+Kc = Tensor(batch=B, head=H, kv=P, dim=D, dtype=fp16)
+Vc = Tensor(batch=B, head=H, kv=P, dim=D, dtype=fp16)
+X = Tensor(batch=B, seq=T, emb=H*D, dtype=fp16)
+Wq = Parameter(emb=H*D, proj=H*D, dtype=fp16)
+Wk = Parameter(emb=H*D, proj=H*D, dtype=fp16)
+Wv = Parameter(emb=H*D, proj=H*D, dtype=fp16)
+Bq = Parameter(proj=H*D, dtype=fp16)
+Mk = Tensor(q=T, k=P+T, dtype=fp16)
 
 Qp = einsum("bse,ef->bsf", X, Wq)
 Qb = add(Qp, Bq)
@@ -100,11 +109,16 @@ Out = reshape(Zt, shape=[B, T, H*D])
   },
   {
     name: "Conv2d 3x3 stride 2 (stacked)",
-    dsl: `params N=1 C=3 F1=8 F2=16 H=64 W=64
+    dsl: `N = 1
+C = 3
+F1 = 8
+F2 = 16
+H = 64
+W = 64
 
-input X  [N, C, H, W] f16
-input W1 [F1, C, 3, 3] f16
-input W2 [F2, F1, 3, 3] f16
+X = Tensor(N, C, H, W, dtype=fp16)
+W1 = Parameter(F1, C, 3, 3, dtype=fp16)
+W2 = Parameter(F2, F1, 3, 3, dtype=fp16)
 
 Y1 = conv(X, W1, stride=[2, 2], pads=[[1, 1], [1, 1]], dilation=[1, 1], groups=1)
 Y2 = conv(Y1, W2, stride=[2, 2], pads=[[1, 1], [1, 1]], dilation=[1, 1], groups=1)
@@ -113,7 +127,7 @@ Y2 = conv(Y1, W2, stride=[2, 2], pads=[[1, 1], [1, 1]], dilation=[1, 1], groups=
   },
   {
     name: "Reshape trap",
-    dsl: `input X [4, 4] f32
+    dsl: `X = Tensor(4, 4, dtype=fp32)
 
 F = reshape(X, shape=[16])
 Y = reshape(F, shape=[2, 8])
@@ -122,11 +136,12 @@ Y = reshape(F, shape=[2, 8])
   },
   {
     name: "Layernorm + residual",
-    dsl: `params S=64 E=64
+    dsl: `S = 64
+E = 64
 
-input X [S, E] f16
-input W [E] f16
-input Bb [E] f16
+X = Tensor(S, E, dtype=fp16)
+W = Parameter(E, dtype=fp16)
+Bb = Parameter(E, dtype=fp16)
 
 H = layernorm(X, W, Bb, axes=[-1])
 Y = add(H, X)
@@ -135,9 +150,9 @@ Y = add(H, X)
   },
   {
     name: "Cumsum",
-    dsl: `params S=48
+    dsl: `S = 48
 
-input X [S] f32
+X = Tensor(S, dtype=fp32)
 
 Y = cumsum(X, axis=0, reverse=false)
 Z = cumsum(Y, axis=0, reverse=false)

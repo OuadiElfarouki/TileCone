@@ -356,8 +356,8 @@ export function SidePanel(): React.ReactElement {
         <header className="source-heading">
           <h2 className="panel-title">Graph source</h2>
           <p>
-            Declare dimensions in <code>params</code>, tensors as <code>input</code>, <code>weight</code>,
-            or <code>const</code>. Shapes are inferred when the graph is rendered.
+            Assign dimensions as numbers, graph inputs with <code>Tensor</code>, and learned weights
+            with <code>Parameter</code>. Shapes are inferred when the graph is rendered.
           </p>
         </header>
         <div className="source-workspace">

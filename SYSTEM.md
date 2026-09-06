@@ -126,7 +126,10 @@ The parser creates the structural graph. Declared inputs and weights already hav
    parameters (`H*D`, `E/H`, `(H+D)*2`), so a relationship holds where it is used rather
    than being precomputed into a literal that silently stops agreeing. Division must come
    out whole: an axis is a whole number of elements, so an inexact one means the stated
-   relationship does not actually hold.
+   relationship does not actually hold. An authored dimension is at least 1, whether it is
+   written as a literal, bound to a parameter, or falls out of arithmetic: a tensor with an
+   empty axis holds no elements, so it has no regions to relate, and declaring one is a slip
+   rather than a question with an answer.
 8. Each operation infers the expected number of output shapes and dtypes.
 9. All inferred extents are non-negative safe integers and all dtypes are supported.
 10. Consumer indexes, producer links, and a stable topological order are built.
@@ -199,13 +202,14 @@ text
 
 The DSL is line-oriented and intentionally small:
 
-- `input`, `weight`, and `param` declare typed tensors with symbolic or literal dimensions.
-- An axis may be labelled in place: `input X [batch: B, seq: S, emb: E] f16`. A declaration
+- Numeric assignments bind symbolic dimensions, such as `B = 1` and `D = 32`.
+- `Tensor(...)` declares a graph input and `Parameter(...)` declares a learned graph input.
+- An axis may be labelled in place: `X = Tensor(batch=B, seq=S, emb=E, dtype=fp16)`. A constructor
   names every axis or none, because a half-named declaration is a slip rather than a
   statement; propagated names may legitimately have holes.
 - Assignments create operation nodes and one or more output tensors.
 - Positional arguments refer to tensors; named arguments become operation attributes.
-- A dimension is an expression over parameters, not just a name: `input X [B, S, H*D]`, and
+- A dimension is an expression over parameters, not just a name: `X = Tensor(B, S, H*D)`, and
   the same language works in shape-valued attributes such as `reshape(X, shape=[B, S, H, E/H])`.
   `Sym` remains `string | number` - the string simply holds the expression, a bare parameter
   being the one-symbol case - so nothing downstream had to learn a new shape type and the
@@ -213,13 +217,15 @@ The DSL is line-oriented and intentionally small:
 - Lists, numbers, booleans, strings, and identifiers are accepted attribute values. Numbers
   accept decimals and scientific notation, so `toDSL` cannot emit a literal the parser then
   rejects.
+- Dtypes use the familiar external spellings `fp32`, `fp16`, `bf16`, `fp8`, `int32`, `int8`,
+  and `bool`; the graph IR retains its compact internal dtype names.
 - `#` introduces a comment.
 
 The parser normalizes convenient spellings into a smaller internal operation set. For example, `relu(...)` becomes an `elementwise` node with `fn: "relu"`, reduction names become `reduce` nodes, and layer/RMS normalization become `normalize` nodes with explicit attributes.
 
-Both statement forms are closed at the end: an assignment and a declaration each refuse
-trailing input, so `input X [4, 8] 32` is a syntax error rather than an f32 tensor whose
-width silently sizes every byte estimate.
+Every statement is an assignment and is closed at the end, so
+`X = Tensor(4, 8, dtype=fp32) garbage` is a syntax error rather than a tensor whose malformed
+suffix is silently discarded.
 
 The source map connects compiler errors back to declarations or operation calls. Parsing errors are reported as DSL diagnostics; graph, shape, dtype, and arity failures become semantic diagnostics with the most specific available source span.
 

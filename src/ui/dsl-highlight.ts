@@ -1,16 +1,12 @@
-import { DTYPES } from "../core/dtypes";
+import { DSL_DTYPES } from "../parse/dsl";
 
 export type DSLHighlightKind = "plain" | "comment" | "keyword";
 export type DSLHighlightToken = { kind: DSLHighlightKind; text: string };
 
 const RESERVED = new Set<string>([
-  "params",
-  "input",
-  "weight",
-  "param",
   "true",
   "false",
-  ...DTYPES,
+  ...DSL_DTYPES,
 ]);
 
 const IDENT_START = /[A-Za-z_]/;
