@@ -9,7 +9,7 @@ export type Contribution = {
   partial: boolean;
   /**
    * False when the probe ran on an over-approximated region, so `partial` may be
-   * an over-warning. Never the reverse — see the note on `contributions`.
+   * an over-warning. Never the reverse - see the note on `contributions`.
    */
   exact: boolean;
   /** What the downstream region needs beyond this tile. Null when complete. */
@@ -70,7 +70,7 @@ function residueClause(
  * Being in the forward cone means a tile influences a tensor, not that it
  * produces it: for `O = P @ V`, a tile spanning 128 of P's 384 columns reaches
  * `O[0:64, 0:64]` without determining a single element of it. The test asks the
- * question backwards — what does that downstream region actually read? — and
+ * question backwards - what does that downstream region actually read? - and
  * subtracts the tile. Anything left over is what the tile does not supply.
  *
  * The asymmetry matters: a backward region may be an over-approximation, so the

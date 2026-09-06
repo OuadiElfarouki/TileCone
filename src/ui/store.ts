@@ -163,7 +163,7 @@ type State = {
    * remap it by object identity for untouched parts on other tensors.
    */
   hiddenBoxes: Set<number>;
-  /** True while any drag is in progress — a card rubber-band or a canvas pan —
+  /** True while any drag is in progress : a card rubber-band or a canvas pan :
    * so Escape can cancel the band and text selection can be suppressed. */
   dragging: boolean;
   preview: { backward: PropResult | null; forward: PropResult | null } | null; // bidirectional hover probe
@@ -179,7 +179,7 @@ type State = {
   /**
    * Whether a drawn box is expanded to whole tiles. On, a drag reads as "these
    * cells", which is what the drawn lattice invites. Off, it cuts an arbitrary
-   * element range — the same reach the inspector's range field already has, but
+   * element range : the same reach the inspector's range field already has, but
    * from the gesture. Analysis is unaffected either way: regions have always
    * been element-precise, only the gesture rounded.
    */
@@ -207,7 +207,7 @@ type State = {
   clearSelection: () => void;
   undoWorkspace: () => void;
   /** Move the whole selection along one axis, clamped to the tensor.
-   * `record` false appends no undo entry — used for auto-repeat, so holding an
+   * `record` false appends no undo entry : used for auto-repeat, so holding an
    * arrow key is one undo step rather than forty. */
   moveSelection: (axis: number, delta: number, record?: boolean) => void;
   /** Replace one ordered selection part without renumbering its peers. */
@@ -270,8 +270,8 @@ function initialTheme(): Theme {
 /**
  * One propagation per part, merged into the aggregate the panels read.
  *
- * The executor stays a single-root primitive — a cone is defined from one
- * tensor — and multiplicity lives here, where it belongs: the workspace is what
+ * The executor stays a single-root primitive : a cone is defined from one
+ * tensor : and multiplicity lives here, where it belongs: the workspace is what
  * holds several probes at once. Merging is a per-tensor union, which is also
  * what the propagator already does internally when two paths reconverge.
  *

@@ -6,12 +6,12 @@
  * per-card setting.
  *
  * Sizing rule, in order:
- *   1. auto  — 5% of the smallest non-degenerate visible axis, snapped to a power
+ *   1. auto  : 5% of the smallest non-degenerate visible axis, snapped to a power
  *              of two: (100×200) -> 4, (200×214) -> 8.
- *   2. scale — the global slider shifts that by powers of two (2^tileScale).
- *   3. clamp — to [1, largest power of two <= minAxis/2], so the coarsest setting
+ *   2. scale : the global slider shifts that by powers of two (2^tileScale).
+ *   3. clamp : to [1, largest power of two <= minAxis/2], so the coarsest setting
  *              still leaves at least a 2x2 tile grid on the smallest axis.
- *   4. fit   — for ordinary scale values, raise the tile until the grid fits the
+ *   4. fit   : for ordinary scale values, raise the tile until the grid fits the
  *              card at >= MIN_CELL_PX per cell. None deliberately bypasses this:
  *              its logical tile is 1 even when individual boundaries are too
  *              dense to render.
@@ -20,7 +20,7 @@
  * *graph*, not of the tensor: `graphScale` picks one px-per-element for every
  * card, so a dimension two tensors share is drawn at the same physical length in
  * both. That is what makes a matmul's contraction dimension readable as one
- * axis. Sizing each card to its own budget instead — the obvious thing — renders
+ * axis. Sizing each card to its own budget instead (the obvious thing) renders
  * A[M,K] and B[K,N] with two different lengths for K, and the user reads
  * "different granularity" where the truth is "same axis".
  */
@@ -103,7 +103,7 @@ function clampTile(tile: number, rows: number, cols: number): number {
  * raises the scale if the budget would make it invisible. Degenerate axes are
  * excluded deliberately: they are drawn at a fixed `DEGENERATE_SIDE_PX` and have
  * no length to preserve, so counting them would peg `minD` at 1 and force the
- * whole graph to the `MAX_ELEM_PX` cap — one bias vector would blow every card
+ * whole graph to the `MAX_ELEM_PX` cap, one bias vector would blow every card
  * up by an order of magnitude.
  */
 export function graphScale(planes: { rows: number; cols: number }[]): number {
@@ -124,7 +124,7 @@ export function graphScale(planes: { rows: number; cols: number }[]): number {
 
 /**
  * On-screen size of a tensor's grid, in CSS pixels, at the graph's scale `px`.
- * Depends **only on the tensor's shape and `px`** — never on the tile size — so
+ * Depends **only on the tensor's shape and `px`** (never on the tile size) so
  * changing detail re-lattices the card in place instead of resizing it. Aspect
  * ratio follows the tensor.
  */
@@ -146,7 +146,7 @@ export function tileFor(rows: number, cols: number, tileScale: number, px: numbe
   // fit: the card is a fixed size, so refuse tiles that would draw cells below
   // MIN_CELL_PX inside it. This is the minimum elementary tile.
   //
-  // NOTE: clamping here is the common case, not the exception — a typical tensor
+  // NOTE: clamping here is the common case, not the exception - a typical tensor
   // has ~5 distinct tiles across the slider's 11 stops, so roughly half the
   // travel is inert. That predates the graph scale (measured: mean 4.69 distinct
   // stops before, 5.02 after) and is a property of snapping tiles to powers of
@@ -194,7 +194,7 @@ export function effectiveTileScaleStops(
   runs.push({ lo: runLo, hi: TILE_SCALE_MAX });
   const stops = runs.map(({ lo, hi }) => Math.max(lo, Math.min(hi, 0)));
 
-  // "none" — one logical tile per element — is always the leftmost stop and is
+  // "none" (one logical tile per element) is always the leftmost stop and is
   // distinct from fitted scale values even when its boundaries are too dense
   // to draw individually.
   return stops[0] === TILE_SCALE_MIN ? stops : [TILE_SCALE_MIN, ...stops];
@@ -203,7 +203,7 @@ export function effectiveTileScaleStops(
 /**
  * The tile every tensor actually settles on at this scale. A single number when
  * the graph agrees, a spread when the fit rule coarsens some tensors and not
- * others — the control is global but the outcome is per tensor, and saying one
+ * others, the control is global but the outcome is per tensor, and saying one
  * number for a graph that has two would be a lie.
  */
 export function settledTiles(

@@ -5,10 +5,10 @@
  * categorical slots below are the only ones used, because these regions are
  * compared all-pairs (any two can land side by side in one grid) and three is
  * the largest set that clears the all-pairs CVD and normal-vision floors on
- * both canvas surfaces — verified with the dataviz validator, all-pairs:
+ * both canvas surfaces : verified with the dataviz validator, all-pairs:
  *
- *   light (surface #f3f4f6): CVD ΔE 9.4, normal ΔE 22.0, contrast >= 3:1 — PASS
- *   dark  (surface #1c1f24): CVD ΔE 9.4, normal ΔE 20.9, contrast >= 3:1 — PASS
+ *   light (surface #f3f4f6): CVD ΔE 9.4, normal ΔE 22.0, contrast >= 3:1 : PASS
+ *   dark  (surface #1c1f24): CVD ΔE 9.4, normal ΔE 20.9, contrast >= 3:1 : PASS
  *
  * Separation is measured between the marks, so both ΔE figures are independent
  * of the surface. A surface move needs only the contrast check re-run; a *hue*
@@ -16,19 +16,19 @@
  *
  * Aqua is deeper in light than in dark rather than mirroring it. At the
  * original values orange and aqua sat at 2.91:1 and 2.56:1 against the light
- * surface — under the 3:1 floor. That was a relief condition, not a
+ * surface : under the 3:1 floor. That was a relief condition, not a
  * pass, and it could not be discharged the way relief usually is: a cone drawn
  * on a card carries no label, so out there hue *is* the identifier, and the
  * inspector's swatch-plus-index sits on a different surface entirely. Deepening
  * them (scaling linear RGB, which holds chromaticity exactly, so the hue is
- * unchanged) clears the floor and costs nothing elsewhere — the two palettes are
+ * unchanged) clears the floor and costs nothing elsewhere : the two palettes are
  * independent, and light's CVD separation improved 9.2 -> 9.4 in the process.
  *
  * Orange needs no such split: #e2603a clears the floor on both surfaces
  * (light 3.20:1, dark 4.70:1) and so is the same value in each theme. It
  * replaced a light #e56532 / dark #d95926 pair. The swap does not touch the
- * binding constraint — the all-pairs minimum is blue-vs-aqua in both themes,
- * and orange sits far above it — but it also moves orange further from the
+ * binding constraint : the all-pairs minimum is blue-vs-aqua in both themes,
+ * and orange sits far above it : but it also moves orange further from the
  * dark amber chrome (normal ΔE 22.4 -> 22.8) while raising both surface
  * contrasts. The CVD figures recorded above predate this change and were not
  * regenerated: they come from the dataviz validator, and re-running them needs

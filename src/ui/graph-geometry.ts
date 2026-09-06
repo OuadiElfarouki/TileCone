@@ -108,8 +108,8 @@ function fanRoom(from: Rect, to: Rect): number {
  * Anchor spacing for `count` connectors sharing this pair: as wide as the
  * facing sides allow, up to a cap.
  *
- * A fixed spacing has to assume the tightest case — an op node is only 30px
- * tall, so a horizontal bundle of three has barely any room — and then spends
+ * A fixed spacing has to assume the tightest case : an op node is only 30px
+ * tall, so a horizontal bundle of three has barely any room : and then spends
  * that same cramped gap on vertical bundles, where the op node's *width* is the
  * limit and there is several times more of it. Deriving the spacing lets each
  * bundle be as legible as its own geometry permits.
@@ -131,8 +131,8 @@ function clampLateral(lateral: number, from: number, to: number): number {
  *
  * `lateral` slides both anchors along their facing side, which is how several
  * connectors between the *same* pair of nodes stay distinguishable. An op may
- * legitimately take one tensor in more than one operand slot — `matmul(X, X)`
- * — and drawing that as a single line claims an arity the op does not have.
+ * legitimately take one tensor in more than one operand slot : `matmul(X, X)`
+ * : and drawing that as a single line claims an arity the op does not have.
  * Fanning is a lateral offset rather than a difference in bend so the lines
  * stay parallel and read as a bundle, in operand order.
  */
@@ -179,8 +179,8 @@ export const FLOW_MARK_PX = 4.5;
 /**
  * A chevron at the curve's midpoint, pointing the way values travel.
  *
- * Direction was already in the geometry — every connector runs producer to
- * consumer — but nothing on screen said so, and an upstream cone and a
+ * Direction was already in the geometry : every connector runs producer to
+ * consumer : but nothing on screen said so, and an upstream cone and a
  * downstream one drawn on the same edge look identical without it.
  *
  * It is a stroked chevron rather than a filled arrowhead for two reasons: the
@@ -229,7 +229,7 @@ export function flowMarkPath(c: Cubic, size = FLOW_MARK_PX, t = 0.5): string {
  * At the fan spacing the chevrons are exactly as tall as the gap between the
  * lines, so aligned marks abut and read as one continuous zigzag rather than as
  * N arrows. Staggering fixes that without widening the fan, which the op node's
- * own height caps anyway. Arc position is approximated from the chord — good
+ * own height caps anyway. Arc position is approximated from the chord : good
  * enough for spacing marks whenever the chord tracks the arc, which it does at
  * any separation dagre can produce (its ranksep exceeds the bend floor). The
  * range is clamped so marks stay off the endpoints; on a connector short enough
@@ -253,7 +253,7 @@ export function fannedFlowMark(
   const size = Math.min(FLOW_MARK_PX, spacing * 0.38);
   // Spread across a fixed band rather than a few percent either side of the
   // midpoint. Two connectors that share a pair are a translation of each other,
-  // so where the tangent runs parallel to the offset — the middle of an S — the
+  // so where the tangent runs parallel to the offset : the middle of an S : the
   // lines have no perpendicular separation at all and marks clustered there
   // overlap however small they are. They are furthest apart near the bends.
   const t = MARK_BAND[0] + ((slot + 0.5) / count) * (MARK_BAND[1] - MARK_BAND[0]);

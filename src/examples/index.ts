@@ -18,6 +18,20 @@ C = matmul(A, B)
     defaultSelection: { tensor: "C", box: [[64, 128], [0, 64]] },
   },
   {
+    name: "Shared operand (A @ A)",
+    dsl: `params N=256
+
+# A is read through both operand slots, so a tile of C needs a row band and a
+# column band of A. The bands share a square, and that square is read twice.
+# Both bands are reported whole; the shared elements are counted once.
+
+input A [N, N] f16
+
+C = matmul(A, A)
+`,
+    defaultSelection: { tensor: "C", box: [[64, 128], [32, 96]] },
+  },
+  {
     name: "Multi-head attention",
     dsl: `params B=1 H=4 S=128 D=32
 

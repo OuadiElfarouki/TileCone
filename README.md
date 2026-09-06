@@ -3,7 +3,7 @@
 *See what a tensor region depends on.*
 
 Takes a DAG of tensor operations plus input shapes, infers every intermediate and output shape, and
-lets you select any region of any tensor to see — highlighted in place — the exact set of upstream
+lets you select any region of any tensor to see - highlighted in place - the exact set of upstream
 regions it depends on, and the downstream regions it influences.
 
 The canonical example: for `C[M,N] = A[M,K] @ B[K,N]`, selecting the tile `C[64:128, 0:64]`
@@ -22,13 +22,25 @@ npm run build    # typecheck + production bundle
 
 A `Region` is a union of half-open axis-aligned boxes carrying an `exact` flag:
 
-- `exact: true` — the region is **precisely** the dependency set.
-- `exact: false` — the region is a **strict superset**, never a subset, and always carries a reason
+- `exact: true` - the region is **precisely** the dependency set.
+- `exact: false` - the region is a **strict superset**, never a subset, and always carries a reason
   (`"strided conv"`, `"diagonal einsum"`, `"reshape run cap exceeded"`, …). The UI hatches these so
   an over-approximation is never presented as ground truth.
 
 A region that is ever a strict *subset* of the truth is a critical bug: that is the case where the
 tool lies. The test suite exists mainly to make that impossible.
+
+**Those boxes may overlap, and that is the point.** In `C = matmul(A, A)` a tile of `C` reads a row
+band and a column band of `A`, and they share a square. Storing the region disjointly would clip
+that square out of one band and report three fragments, two of which are not regions anything
+reads. A box should stay what it looks like - an offset and an extent, the thing a kernel loads -
+so the bands are kept whole and the overlap is left in.
+
+The measurement rule that makes this safe is one sentence: **cardinality is measured on the set.**
+Element counts, bytes, percentages, and FLOPs all count a shared element once, by disjointifying
+internally at the point of measurement. Summing the boxes you can see will therefore exceed the
+element total whenever they overlap, so a row states that difference as `N shared` - for the case
+above it is exactly the square both operands read.
 
 ## Testing
 
@@ -52,7 +64,7 @@ src/
     graph.ts     IR, validation, topo sort, shape inference
     propagate.ts the backward/forward driver
     executor.ts  checked headless query API
-    ops/         the op registry — einsum is the heart of it
+    ops/         the op registry - einsum is the heart of it
     metrics.ts   flops, bytes, intensity
     reuse.ts     deterministic sampled reuse estimates
     expand.ts    composite ops -> primitive subgraphs
@@ -117,7 +129,7 @@ Use `tryCompileDSL` when diagnostics should be returned as data instead of throw
   axis remapping: a different view of a tensor is a `transpose` node in the graph, where it is part
   of the computation being explained.
 - **Tiles are the reading lattice, not the resolution.** One drawn cell is one tile, but a region is
-  painted at element precision as an exact rectangle — a selection that ends mid-tile shows a crisp
+  painted at element precision as an exact rectangle - a selection that ends mid-tile shows a crisp
   edge there, not a half-lit cell. Quantising the fill would read as "partly selected" when the
   truth is "these exact elements". One global detail slider sets the tile for every tensor (default ~5% of
   the smallest axis, snapped to a power of two). Card size depends only on the tensor's shape and
@@ -136,15 +148,15 @@ Use `tryCompileDSL` when diagnostics should be returned as data instead of throw
   `C[M,N] = A[M,K] @ B[K,N]`, `A`'s width and `B`'s height are equal because both are `K`. Sizing
   each card to its own budget instead makes the contraction axis read as two different lengths.
 - **Hue identifies which selected box a highlight came from**, capped at three validated
-  categorical colors — the largest set clearing all-pairs contrast floors on both canvas surfaces.
+  categorical colors - the largest set clearing all-pairs contrast floors on both canvas surfaces.
   Chrome deliberately sits outside those hues (amber in dark, magenta in light) so a hot edge is
   never mistaken for a cone.
 - **Hovering a box in the inspector emphasises what it needs and feeds; it never hides the others.**
   The peers fade but stay legible, because comparing tiles is the point of a multi-tile selection.
   Excluding one tile from the merged analysis and dependency paint is a separate, explicit toggle
   (`h`). Its faint selection rectangle remains available so the tile can be included again.
-- **Tensor placement is editable without weakening the layout.** Drag a card's header—or its dotted
-  handle—to reposition it; the tensor name keeps its own click for the shape popover. Curved connectors follow live; tensor cards and operation
+- **Tensor placement is editable without weakening the layout.** Drag a card's header-or its dotted
+  handle-to reposition it; the tensor name keeps its own click for the shape popover. Curved connectors follow live; tensor cards and operation
   nodes remain hard collision boundaries, active connector crossings stay visible over cards while
   dim context stays behind the data, and a blocked drag is visibly marked. A completed drag and
   Reset layout are chronological

@@ -11,8 +11,8 @@ import {
 /**
  * Width, collapse-to-rail, and the drag strip shared by both side panels.
  *
- * The strip always sits on the panel's *inner* edge — the one facing the canvas
- * — so the gesture reads as pushing the canvas boundary rather than dragging the
+ * The strip always sits on the panel's *inner* edge : the one facing the canvas
+ * : so the gesture reads as pushing the canvas boundary rather than dragging the
  * window frame. Dragging far enough inward collapses instead of clamping, which
  * is how VS Code behaves and means one gesture both resizes and closes.
  */

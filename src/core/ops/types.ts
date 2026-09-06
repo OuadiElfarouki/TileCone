@@ -29,7 +29,7 @@ export type DependencyNoteDraft = {
 
 /**
  * One name per axis, parallel to that tensor's shape. `undefined` is an axis
- * with no name to inherit, which propagation produces routinely — a reshape
+ * with no name to inherit, which propagation produces routinely : a reshape
  * that splits an embedding into heads knows neither new axis by name.
  */
 export type AxisNames = (string | undefined)[];
@@ -69,7 +69,7 @@ export type NoteCtx = OpCtx & {
    * an axis's *extent* (`H*D`), this names the axis itself (`emb`). It is the
    * more useful of the two for an intermediate tensor: a produced tensor has no
    * declared shape, so without this a note about one falls back to a bare
-   * position — precisely where a reader most needs the word.
+   * position : precisely where a reader most needs the word.
    */
   inAxisNames: AxisNames[];
   inRegions: (Region | undefined)[];
@@ -81,7 +81,7 @@ export interface OpSpec {
   /** Attribute schema. A plain object schema is narrowed to `.strict()` at graph
    * resolution, so an attribute this schema does not name is a hard error rather
    * than silently stripped: a misspelling must not quietly change what the graph
-   * computes. `.passthrough()` is therefore not honoured on an object schema —
+   * computes. `.passthrough()` is therefore not honoured on an object schema :
    * an operation that genuinely accepts open attributes needs a non-object
    * schema such as `z.record(...)`. */
   attrSchema: ZodType<unknown>;
@@ -144,14 +144,14 @@ export interface OpSpec {
 
   /**
    * A note plus the identity of the constraint it describes. Notes sharing a
-   * `key` are the same statement about different tensors — three QKV
-   * projections all contracting the same axis — and are merged rather than
+   * `key` are the same statement about different tensors : three QKV
+   * projections all contracting the same axis : and are merged rather than
    * repeated, so a handful of look-alike notes cannot crowd out a different one.
    */
 
   /**
    * One sentence naming the dependency constraint this operation imposes on the
-   * current cone — the thing a reader would need to know before trying to fuse
+   * current cone : the thing a reader would need to know before trying to fuse
    * or tile across it. Return null when the operation constrains nothing worth
    * saying, which is the common case: elementwise work says nothing.
    *

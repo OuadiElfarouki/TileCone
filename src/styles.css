@@ -7,13 +7,13 @@
   /* Chrome is magenta in light and amber in dark. That split is not a taste
      call, and since active controls became frames instead of fills it is no
      longer mainly a ΔE argument: the accent is now *foreground* everywhere it
-     appears — border, text, stroke — so it has to carry foreground contrast.
+     appears - border, text, stroke - so it has to carry foreground contrast.
      Amber does not, on this ground. #e39c3d is 2.31:1 on the panel and 2.16:1
      on the page: a failure for text and for a UI boundary alike. Magenta is
      6.04:1 on both. Dropping the fill did not free amber for light mode; it
      made amber's lightness a harder constraint, not a softer one.
      The older ΔE reason still stands underneath: hue carries selection-box
-     identity on the cards, so chrome must not land in a data hue — #2563eb sat
+     identity on the cards, so chrome must not land in a data hue - #2563eb sat
      at normal ΔE 6.5 from categorical blue #2a78d6, and a hot edge read as a
      box-1 cone. */
   --accent: #be185d;
@@ -62,7 +62,7 @@
     /* Chrome is amber, not blue, and that is a correctness constraint rather
        than a taste call: hue carries selection-box identity on the cards, so
        chrome must not land in a data hue. The previous #5b8def sat at normal
-       ΔE 3.9 from categorical blue #3987e5 — a hot edge and a box-1 cone were
+       ΔE 3.9 from categorical blue #3987e5 - a hot edge and a box-1 cone were
        the same color. Amber is normal ΔE 22.8 from the orange, and as
        foreground it reads 7.15:1 on the panel and 7.77:1 on the page. */
     --accent: #e39c3d;
@@ -498,6 +498,7 @@ textarea.source.error-state { border-color: var(--err); }
   margin-left: auto; color: var(--muted); font-size: var(--t-small);
   font-variant-numeric: tabular-nums;
 }
+.cone-row .row-shared { color: var(--muted); opacity: 0.75; }
 .badge.depth { color: var(--muted); border-color: var(--line); }
 /* The plain fallback is thinner than the segmented footprint used when
    per-tile attribution is available. */

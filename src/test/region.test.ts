@@ -14,7 +14,9 @@ import {
   iv,
   points,
   addPart,
+  disjointify,
   partsOverlap,
+  regionOverlap,
   subtractFromParts,
   translateAllParts,
   translatePart,
@@ -248,19 +250,30 @@ describe("selection parts (identity-stable, may overlap)", () => {
   });
 });
 
-describe("a full-axis pull survives being split into disjoint boxes", () => {
+describe("a full-axis pull is seen however the boxes are arranged", () => {
   // What `matmul(D, D)` produces: slot 0 asks for whole rows, slot 1 for whole
-  // columns, and canonicalization clips the overlap out of one of them. No box
-  // spans either axis afterwards, but the union still covers both.
+  // columns. Both bands survive whole, so both spanning boxes are present.
   const rowsAndCols = union(
     fromBox(box([0, 32], [0, 256])),
     fromBox(box([0, 256], [0, 32]))
   );
 
-  it("sees the axis the union covers, not the axis one box happens to span", () => {
-    expect(rowsAndCols.boxes.some((b) => b[0].hi - b[0].lo === 256)).toBe(false);
+  it("keeps each operand band as one box", () => {
+    expect(rowsAndCols.boxes).toHaveLength(2);
+    expect(rowsAndCols.boxes.some((b) => b[0].hi - b[0].lo === 256)).toBe(true);
+    expect(rowsAndCols.boxes.some((b) => b[1].hi - b[1].lo === 256)).toBe(true);
     expect(coversAxisFully(rowsAndCols, 0, 256)).toBe(true);
     expect(coversAxisFully(rowsAndCols, 1, 256)).toBe(true);
+  });
+
+  it("still proves containment rather than trusting a spanning box", () => {
+    // Two boxes cover axis 1 between them across the rows they share, and
+    // neither spans it. They differ on both axes, so no merge fuses them.
+    // `boxes.some(b => b spans)` would miss this; the union does not.
+    const between = union(fromBox(box([0, 4], [0, 130])), fromBox(box([2, 6], [120, 256])));
+    expect(between.boxes).toHaveLength(2);
+    expect(between.boxes.some((b) => b[1].hi - b[1].lo === 256)).toBe(false);
+    expect(coversAxisFully(between, 1, 256)).toBe(true);
   });
 
   it("refuses an axis no line covers", () => {
@@ -283,5 +296,101 @@ describe("a full-axis pull survives being split into disjoint boxes", () => {
       reasons: ["test bound"],
     };
     expect(coversAxisFully(bound, 1, 16)).toBe(false);
+  });
+});
+
+
+describe("boxes are kept whole, and measured on the set", () => {
+  // The shape this representation exists for: one tensor in two operand slots.
+  const bands = union(fromBox(box([64, 128], [0, 256])), fromBox(box([0, 256], [32, 96])));
+
+  it("names the two bands rather than three fragments", () => {
+    expect(bands.boxes).toHaveLength(2);
+    // Each is a band an operand actually reads, stated as an offset and extent.
+    expect(bands.boxes).toContainEqual(box([64, 128], [0, 256]));
+    expect(bands.boxes).toContainEqual(box([0, 256], [32, 96]));
+  });
+
+  it("counts the shared corner once", () => {
+    // 64*256 + 256*64 would be 32768; the bands share a 64x64 square.
+    expect(count(bands)).toBe(28672);
+    const { unique, summed } = regionOverlap(bands);
+    expect(unique).toBe(28672);
+    expect(summed).toBe(32768);
+    expect(summed - unique).toBe(64 * 64);
+  });
+
+  it("reports no overlap when the boxes are disjoint", () => {
+    const apart = union(fromBox(box([0, 4], [0, 4])), fromBox(box([8, 12], [8, 12])));
+    const { unique, summed } = regionOverlap(apart);
+    expect(summed - unique).toBe(0);
+  });
+
+  it("still merges boxes that agree on every axis but one", () => {
+    expect(union(fromBox(box([0, 4], [0, 8])), fromBox(box([4, 9], [0, 8]))).boxes)
+      .toEqual([box([0, 9], [0, 8])]);
+    // overlapping, not merely adjacent
+    expect(union(fromBox(box([0, 6], [0, 8])), fromBox(box([4, 9], [0, 8]))).boxes)
+      .toEqual([box([0, 9], [0, 8])]);
+  });
+
+  it("drops a box contained in another", () => {
+    expect(union(fromBox(box([0, 10], [0, 10])), fromBox(box([2, 4], [2, 4]))).boxes)
+      .toEqual([box([0, 10], [0, 10])]);
+  });
+
+  it("runs the two simplifications to a fixpoint", () => {
+    // Merging the first two produces [0,8]x[0,8], which then swallows the third.
+    const r = canonicalize({
+      boxes: [box([0, 4], [0, 8]), box([4, 8], [0, 8]), box([2, 6], [1, 7])],
+      exact: true,
+      reasons: [],
+    });
+    expect(r.boxes).toEqual([box([0, 8], [0, 8])]);
+  });
+
+  it("falls back to a marked bounding box past the cap", () => {
+    const many = Array.from({ length: 40 }, (_, i) => box([i * 2, i * 2 + 1], [0, 4]));
+    const r = canonicalize({ boxes: many, exact: true, reasons: [] }, 8);
+    expect(r.boxes).toHaveLength(1);
+    expect(r.exact).toBe(false);
+    expect(r.reasons).toContain("box count cap");
+  });
+});
+
+describe("disjointify is a partition of the same set", () => {
+  const cases: Box[][] = [
+    [box([64, 128], [0, 256]), box([0, 256], [32, 96])],
+    [box([0, 4], [0, 10]), box([0, 10], [0, 4])],
+    [box([0, 8], [2, 4], [0, 8]), box([0, 8], [0, 8], [2, 4])],
+    [box([0, 1], [0, 1]), box([2, 3], [2, 3])],
+    [box([0, 6]), box([3, 9]), box([8, 12])],
+  ];
+
+  const key = (p: number[]) => p.join(",");
+
+  it("holds every element exactly once, and the same elements as the boxes", () => {
+    for (const boxes of cases) {
+      const stored = canonicalize({ boxes, exact: true, reasons: [] });
+      const flat = disjointify(stored);
+      // no element is in two disjoint boxes
+      const summed = flat.boxes.reduce(
+        (a, b) => a + b.reduce((v, i) => v * (i.hi - i.lo), 1),
+        0
+      );
+      expect(summed).toBe(count(stored));
+      // and the two forms enumerate the same set
+      const a = new Set([...points(stored)].map(key));
+      const b = new Set([...points(flat)].map(key));
+      expect(a).toEqual(b);
+      expect(a.size).toBe(count(stored));
+    }
+  });
+
+  it("leaves the stored form alone", () => {
+    const stored = canonicalize({ boxes: cases[0], exact: true, reasons: [] });
+    const before = JSON.parse(JSON.stringify(stored.boxes));
+    disjointify(stored);
+    expect(stored.boxes).toEqual(before);
   });
 });

@@ -8,7 +8,7 @@
  * honest at every zoom level instead of degrading into sub-pixel noise.
  */
 
-import { Box, Interval, Region } from "../core/region";
+import { Box, Interval, Region, disjointify } from "../core/region";
 import { CARD_SURFACE } from "./palette";
 import { cardPx, MIN_CELL_PX, planeExtents, tileFor } from "./tiling";
 import { viewAxes, type ViewCfg } from "./tensor-view";
@@ -68,7 +68,7 @@ export type Layer = {
   /**
    * Direction is fill geometry, not a perimeter: hue belongs to tile identity,
    * solid fill means "needs", and a diagonal ruling means "feeds". `density`
-   * sets the spacing between rulings — further apart for a smaller share — and
+   * sets the spacing between rulings : further apart for a smaller share : and
    * stays explicit so supplied-share can own it later without changing the
    * layer contract. `angle` separates one box's ruling from another's, so two
    * cones that reach the same elements cross there instead of hiding.
@@ -222,8 +222,8 @@ export function patternFitsRect(
  *
  * Two boxes whose downstream cones overlap used to draw the same ruling at the
  * same phase, so the later one landed exactly on the earlier and the shared
- * area read as a single region. Hue cannot resolve that — the two hues are
- * painted over each other — so the angle has to. Given its own slope, an
+ * area read as a single region. Hue cannot resolve that : the two hues are
+ * painted over each other : so the angle has to. Given its own slope, an
  * overlap crosses itself and says "both of these reach here", which is a fact
  * the panel otherwise only states as two separate rows.
  *
@@ -388,8 +388,22 @@ export function drawGrid(
 
   for (const layer of layers) {
     const [r, g, b] = layer.color;
-    const rects = regionRects(layer.region, shape, cfg, geom, viewScale);
+    // Fill is painted from the disjoint form. A region's boxes may overlap, and
+    // each rect is composited at the layer's alpha, so a shared element would
+    // otherwise be painted twice and read darker than its neighbours - which
+    // would make alpha mean multiplicity by accident, on the one channel this
+    // renderer deliberately holds constant. Splitting here is invisible: the
+    // painted set is identical, and no user-facing box count comes from it.
+    const rects = regionRects(disjointify(layer.region), shape, cfg, geom, viewScale);
+    // Perimeter marks take the region's own boxes instead. A border says "this
+    // is the region", and the region is the row band and the column band - two
+    // rectangles that cross. Tracing the split form instead outlines three
+    // shapes, one of which nothing reads, which is the artifact the stored form
+    // exists to avoid. Overlapping borders are the intended reading: they cross,
+    // one over the other. Fills cannot do this, because they composite.
+    const boundRects = regionRects(layer.region, shape, cfg, geom, viewScale);
 
+    let anyRuled = false;
     for (const q of rects) {
       const alpha = Math.min(1, layer.alpha * q.alpha);
       const ruled =
@@ -408,21 +422,7 @@ export function drawGrid(
           viewScale
         );
       if (ruled) {
-        // A ruled fill has no edge of its own: the eye stops at the last line
-        // inside the region, not at its bound, so the extent reads as ragged.
-        // A hairline restores the shape at a fraction of the weight of the
-        // perimeter that used to carry direction — thin enough that it stays a
-        // delimiter and cannot be read as an encoding of its own. Solid fills
-        // are already crisp, so only ruled rects get one.
-        if (outlineFitsRect(q, PATTERN_EDGE_PX, viewScale)) {
-          ctx.save();
-          ctx.globalAlpha = Math.min(1, alpha + 0.12);
-          ctx.strokeStyle = `rgb(${r},${g},${b})`;
-          ctx.lineWidth = PATTERN_EDGE_PX / viewScale;
-          const inset = ctx.lineWidth / 2;
-          ctx.strokeRect(q.x + inset, q.y + inset, q.w - ctx.lineWidth, q.h - ctx.lineWidth);
-          ctx.restore();
-        }
+        anyRuled = true;
         continue;
       }
       // Any failed requested pattern is the same degraded encoding, whether its
@@ -433,6 +433,28 @@ export function drawGrid(
       ctx.fillStyle = `rgba(${r},${g},${b},${fallbackAlpha})`;
       ctx.fillRect(q.x, q.y, q.w, q.h);
     }
+
+    // A ruled fill has no edge of its own: the eye stops at the last line inside
+    // the region, not at its bound, so the extent reads as ragged. A hairline
+    // restores the shape at a fraction of the weight of the perimeter that used
+    // to carry direction : thin enough that it stays a delimiter and cannot be
+    // read as an encoding of its own. Solid fills are already crisp and get
+    // none, and neither does a requested ruling that degraded to one - so this
+    // waits on a ruling having actually been stroked, not merely asked for. It
+    // bounds each stored box, so a region of two crossing bands is delimited as
+    // two bands.
+    if (anyRuled)
+      for (const q of boundRects) {
+        if (!patternFitsRect(q, viewScale)) continue;
+        if (!outlineFitsRect(q, PATTERN_EDGE_PX, viewScale)) continue;
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, Math.min(1, layer.alpha * q.alpha) + 0.12);
+        ctx.strokeStyle = `rgb(${r},${g},${b})`;
+        ctx.lineWidth = PATTERN_EDGE_PX / viewScale;
+        const inset = ctx.lineWidth / 2;
+        ctx.strokeRect(q.x + inset, q.y + inset, q.w - ctx.lineWidth, q.h - ctx.lineWidth);
+        ctx.restore();
+      }
 
     // Over-approximation rides the same routine at its own reserved slope, so
     // it composes with a downstream ruling as a crossing rather than as a
@@ -459,7 +481,7 @@ export function drawGrid(
       ctx.strokeStyle = `rgba(${r},${g},${b},0.95)`;
       const screenLineWidth = layer.lineWidth ?? 1.5;
       ctx.lineWidth = screenLineWidth / viewScale;
-      for (const q of rects) {
+      for (const q of boundRects) {
         if (!outlineFitsRect(q, screenLineWidth, viewScale)) continue;
         const inset = ctx.lineWidth / 2;
         ctx.strokeRect(q.x + inset, q.y + inset, q.w - ctx.lineWidth, q.h - ctx.lineWidth);
@@ -467,7 +489,7 @@ export function drawGrid(
     }
   }
 
-  // tile boundaries — the cell grid *is* the tile grid
+  // tile boundaries : the cell grid *is* the tile grid
   if (Math.min(geom.cellW, geom.cellH) * viewScale >= MIN_CELL_PX) {
     ctx.strokeStyle = dark ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.10)";
     ctx.lineWidth = 1 / viewScale;
@@ -494,6 +516,8 @@ export function drawGrid(
   // cannot cover them. They spend geometry, not a second fill treatment.
   for (const layer of layers) {
     if (!layer.seed) continue;
+    // Seeds keep their own boxes: a corner mark identifies a part the user drew,
+    // so it must sit at that part's bounds and not at a fragment of it.
     for (const rect of regionRects(layer.region, shape, cfg, geom, viewScale)) {
       ctx.save();
       ctx.globalAlpha = layer.alpha * rect.alpha;

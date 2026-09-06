@@ -15,7 +15,7 @@ export type PropResult = {
   direction: "backward" | "forward";
   /**
    * The seed. On a merged result this is the first contributing propagation's
-   * seed and nothing more — `roots` is the field that stays true after a merge,
+   * seed and nothing more - `roots` is the field that stays true after a merge,
    * and anything asking "was this tensor selected?" must use that one.
    */
   selection: Selection;
@@ -104,7 +104,7 @@ export function propagateForward(graph: ResolvedGraph, sel: Selection): PropResu
 /**
  * Combine cones seeded from different tensors into one readout.
  *
- * A cone is a per-tensor region, so combining is a per-tensor union — the same
+ * A cone is a per-tensor region, so combining is a per-tensor union - the same
  * operation the propagator already performs when two paths reconverge on one
  * tensor, applied one level up. Depth is the shortest hop to *any* seed, which
  * keeps the dim-by-distance rendering monotone: a tensor two hops from one

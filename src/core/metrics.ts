@@ -3,7 +3,7 @@ import { DTYPE_BYTES } from "./dtypes";
 import { getOp } from "./ops/index";
 import { OpCtx } from "./ops/types";
 import { PropResult } from "./propagate";
-import { Region, count, formatBoxIndices } from "./region";
+import { Region, count, disjointify, formatBoxIndices, regionOverlap } from "./region";
 
 export type TensorReadout = {
   tensorId: string;
@@ -13,6 +13,10 @@ export type TensorReadout = {
   totalElements: number;
   bytes: number;
   boxCount: number;
+  /** Elements this cone reads more than once, because two boxes share them.
+   * `elements` already counts them once; this is the difference between that
+   * and the sum of the listed boxes, so the slice expressions add up. */
+  overlap: number;
   exact: boolean;
   reasons: string[];
   isInput: boolean;
@@ -31,6 +35,10 @@ export type AggregateReadout = {
   tensors: TensorReadout[];
 };
 
+/** One line per box, in the boxes' own terms. They may overlap: two operand
+ * slots reading one tensor produce two bands that share a corner, and naming
+ * the bands is the point. The element total is measured on the union, so it is
+ * smaller than these lines summed whenever they do overlap. */
 function regionSliceExprs(name: string, r: Region): string[] {
   const lines = r.boxes.map((b) => `${name}[${formatBoxIndices(b)}]`);
   const suffix = r.exact ? [] : [`# over-approximation: ${r.reasons.join(", ")}`];
@@ -40,7 +48,7 @@ function regionSliceExprs(name: string, r: Region): string[] {
 /**
  * What one cone touches, per tensor, ordered by distance from the seed.
  *
- * Direction-neutral on purpose: a backward cone's rows say what a tile reads and
+ * Direction-neutral on purpose: a backward cone's rows say what a box reads and
  * a forward cone's rows say what it feeds, but they are the same measurement of
  * the same region algebra and the panel shows them side by side. `depth` is
  * therefore steps *along the cone*, not steps upstream.
@@ -59,6 +67,7 @@ export function coneReadout(graph: ResolvedGraph, prop: PropResult): TensorReado
       totalElements: (t.resolved ?? []).reduce((a, b) => a * b, 1),
       bytes: elements * DTYPE_BYTES[t.dtype],
       boxCount: tr.region.boxes.length,
+      overlap: regionOverlap(tr.region).summed - elements,
       exact: tr.region.exact,
       reasons: tr.region.reasons,
       isInput: !t.producer,
@@ -86,7 +95,10 @@ export function computeMetrics(
       const tr = back.tensors.get(tid);
       if (!tr) return;
       if (spec.flopsForRegion) flops += spec.flopsForRegion(slot, tr.region, ctx);
-      else for (const b of tr.region.boxes) flops += spec.flopsFor(slot, b, ctx);
+      // Per-box costs are summed, so they must be summed over a partition.
+      // Tiles may overlap, and a shared element would otherwise be paid for
+      // once per box that covers it.
+      else for (const b of disjointify(tr.region).boxes) flops += spec.flopsFor(slot, b, ctx);
     });
   }
 

@@ -110,8 +110,8 @@ function finalize({ note, others }: Group): DependencyNote {
  *
  * These answer the question the numbers do not: *why* is the footprint this
  * shape, and what does that mean for anyone trying to tile or fuse across it.
- * Each note is produced by the operation that causes the constraint — the only
- * place that knows the reason — and only when the cone actually exhibits it.
+ * Each note is produced by the operation that causes the constraint - the only
+ * place that knows the reason - and only when the cone actually exhibits it.
  *
  * Derived from a backward (upstream) result: a note describes what an output
  * tile had to pull in, which is a statement about dependencies, not about
@@ -130,8 +130,8 @@ export function dependencyNotes(
  *
  * The cap has to drop something; dropping by graph order would drop whichever
  * the topological walk reached last, which can be the hardest one. Selection is
- * therefore by severity, then by nearness to the tile — the constraint a reader
- * hits first among equals — while the surviving notes are *displayed* in graph
+ * therefore by severity, then by nearness to the tile - the constraint a reader
+ * hits first among equals - while the surviving notes are *displayed* in graph
  * order, because that is the order the computation happens in.
  */
 function selectNotes(groups: Group[], limit: number): DependencyNote[] {
@@ -150,7 +150,7 @@ function selectNotes(groups: Group[], limit: number): DependencyNote[] {
 
 /**
  * True when the cone reached at least one operation and none of them constrain
- * it — every step was elementwise, so any tiling of the selection fuses. This is
+ * it - every step was elementwise, so any tiling of the selection fuses. This is
  * a real finding rather than an absence, so it is distinguished from "no cone".
  */
 export function coneIsFullyElementwise(graph: ResolvedGraph, back: PropResult): boolean {

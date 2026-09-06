@@ -122,7 +122,7 @@ function cloneGraph(source: Graph): Graph {
 
 /** Validate structure, resolve shapes, infer intermediate/output shapes, topo sort. */
 /**
- * The tensors nothing consumes — what the graph is for. A produced tensor with
+ * The tensors nothing consumes - what the graph is for. A produced tensor with
  * no consumer is a result; an unused *input* is a loose end, not an output, so
  * it is not one of these.
  */
@@ -144,7 +144,7 @@ function axisNamesOf(tensor: Tensor, rank: number): AxisNames {
  *
  * An operation proposes; the resolver checks. Every axis is evaluated against
  * the bound parameters and kept only if it comes out at the extent inference
- * actually produced — anything else falls back to the literal. A symbol is read
+ * actually produced - anything else falls back to the literal. A symbol is read
  * as a claim about the graph, so a plausible-but-wrong one misinforms in a way
  * a plain number cannot, and no mapping is trusted far enough to do that.
  */

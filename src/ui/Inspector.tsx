@@ -60,7 +60,7 @@ function stopLabel(
 
 /**
  * Setup, pinned below the reading path. The lattice is chosen once and then
- * stops being read, so it earns a strip rather than the top of the panel — but
+ * stops being read, so it earns a strip rather than the top of the panel, but
  * it stays visible, because the slider changes what a drawn tile means.
  */
 function SetupStrip(): React.ReactElement {
@@ -131,7 +131,7 @@ function SetupStrip(): React.ReactElement {
         onChange={(event) => setTileScale(detail.stops[Number(event.target.value)])}
         aria-label="tile grid detail"
         aria-valuetext={detail.labels[detail.index]}
-        title={`global tile detail — ${detail.labels.join(" · ")}`}
+        title={`global tile detail - ${detail.labels.join(" · ")}`}
       />
     </section>
   );
@@ -351,7 +351,7 @@ type CopyFeedback = { key: string; state: "copied" | "failed" } | null;
 
 /**
  * One tensor in one direction: how much of it the tile touches, why it has that
- * shape, and — downstream — whether the tile finishes it or only feeds it.
+ * shape, and -downstream- whether the tile finishes it or only feeds it.
  */
 function ConeRow({
   row,
@@ -398,6 +398,19 @@ function ConeRow({
         </span>
         <span className="row-stats">
           {share.toFixed(1)}% · {formatBytes(row.bytes)} · {row.boxCount} box{row.boxCount === 1 ? "" : "es"}
+          {/* Boxes may overlap - two operand slots reading one tensor give two
+              bands sharing a corner. Without this the listed boxes visibly sum
+              past the element total and the row looks like it is miscounting,
+              when in fact the total is the union and the shared elements are
+              read twice. Stated only when there are some. */}
+          {row.overlap > 0 && (
+            <span
+              className="row-shared"
+              title={`${row.overlap.toLocaleString()} element${row.overlap === 1 ? "" : "s"} lie in more than one box, counted once in the total`}
+            >
+              {" "}· {row.overlap.toLocaleString()} shared
+            </span>
+          )}
         </span>
       </div>
       {perBox ? (
@@ -427,7 +440,7 @@ function ConeRow({
       ))}
       {contribution?.partial && (
         <span className="cone-flag">
-          partial — {contribution.detail}
+          partial : {contribution.detail}
           {!contribution.exact && " (from an over-approximated region)"}
         </span>
       )}
@@ -676,7 +689,7 @@ function RegionEditor(): React.ReactElement | null {
       <p className="hint">
         {perBox
           ? "hover an enabled tile to emphasise its analysis; click to pin it, then arrow keys move that tile alone"
-          : `too many tiles to trace individually (over ${MAX_PER_BOX_PROPS}) — showing merged needs and feeds`}
+          : `too many tiles to trace individually (over ${MAX_PER_BOX_PROPS}), showing merged needs and feeds`}
       </p>
       {overlap.summed > overlap.unique && (
         <p className="hint overlap">
@@ -748,7 +761,7 @@ function RegionEditor(): React.ReactElement | null {
       </div>
       {parts.length > MAX_DISTINCT_HUES && (
         <p className="hint">
-          tiles past the {MAX_DISTINCT_HUES}rd share a neutral color — only {MAX_DISTINCT_HUES} hues stay
+          tiles past the {MAX_DISTINCT_HUES}rd share a neutral color, only {MAX_DISTINCT_HUES} hues stay
           distinguishable side by side, so use hover to tell the rest apart.
         </p>
       )}
@@ -804,7 +817,7 @@ function EmptyPanel(): React.ReactElement {
                 className="mini"
                 onClick={() => setSelection(start.tensorId, fromBox(start.box), "replace")}
               >
-                {resolved.tensors[start.tensorId].name} — {start.label}
+                {resolved.tensors[start.tensorId].name} - {start.label}
               </button>
             ))}
           </div>
@@ -878,15 +891,15 @@ export function Inspector(): React.ReactElement {
   // and is therefore not something it reads or feeds.
   const seedIds = [...seeds.keys()];
   const upstreamEmpty = enabledBoxes === 0
-    ? "No tiles are enabled — include one above to analyse it."
+    ? "No tiles are enabled, include one above to analyse it."
     : seedIds.some((id) => resolved.tensors[id].producer)
       ? "Everything the selection needs is itself selected."
-      : "Every selected tensor is a graph input — it needs nothing earlier.";
+      : "Every selected tensor is a graph input, it needs nothing earlier.";
   const downstreamEmpty = enabledBoxes === 0
-    ? "No tiles are enabled — include one above to analyse it."
+    ? "No tiles are enabled, include one above to analyse it."
     : seedIds.some((id) => resolved.consumers[id]?.length)
       ? "Everything the selection feeds is itself selected."
-      : "Nothing consumes this selection — it feeds no later tensor.";
+      : "Nothing consumes this selection, it feeds no later tensor.";
 
   const visibleRows = [...(showUpstream ? upstream : []), ...(showDownstream ? downstream : [])];
   const approxReasons = [
@@ -895,8 +908,8 @@ export function Inspector(): React.ReactElement {
 
   /** Reuse factor (§5.5): sample selection-sized output tiles across the selected
    * tensor; count how many touch the current footprint on each input. The sweep
-   * is defined by one tile on one tensor, so it follows the anchor part — the
-   * focused one, else the last drawn — rather than mixing tensors. */
+   * is defined by one tile on one tensor, so it follows the anchor part (the
+   * focused one) else the last drawn rather than mixing tensors. */
   const computeReuse = () => {
     if (!selection || !resolved) return;
     const fallback = selection.parts
@@ -981,7 +994,7 @@ export function Inspector(): React.ReactElement {
             )}
             {showDownstream && contrib?.capped && (
               <p className="hint">
-                more than {MAX_CONTRIBUTION_PROBES} tensors are fed — rows below do not say
+                more than {MAX_CONTRIBUTION_PROBES} tensors are fed: rows below do not say
                 whether this tile completes them or only feeds them
               </p>
             )}
@@ -1031,7 +1044,7 @@ export function Inspector(): React.ReactElement {
                       ))}
                     </div>
                   ) : (
-                    <p className="hint">sampled sweep — run on demand to estimate selection-sized output tiles touching each input's current footprint</p>
+                    <p className="hint">sampled sweep: run on demand to estimate selection-sized output tiles touching each input's current footprint</p>
                   )}
                 </div>
               </>
