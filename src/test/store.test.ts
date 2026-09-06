@@ -63,6 +63,72 @@ describe("independent cone toggles", () => {
   });
 });
 
+describe("staging an example", () => {
+  beforeEach(() => S().loadExample(0));
+
+  it("fills the editor while preserving the built workspace", () => {
+    const target = EXAMPLES.findIndex((ex) => ex.name === "Multi-head attention");
+    const before = {
+      graph: S().graph,
+      resolved: S().resolved,
+      selection: S().selection,
+      backwardRes: S().backwardRes,
+      perBox: S().perBox,
+    };
+    S().stageExample(target);
+
+    expect(S().draftText).toBe(EXAMPLES[target].dsl);
+    expect(S().dslText).toBe(EXAMPLES[0].dsl);
+    expect(S().graph).toBe(before.graph);
+    expect(S().resolved).toBe(before.resolved);
+    expect(S().selection).toBe(before.selection);
+    expect(S().backwardRes).toBe(before.backwardRes);
+    expect(S().perBox).toBe(before.perBox);
+    // The accent still identifies the graph that remains on the canvas.
+    expect(S().exampleIndex).toBe(0);
+  });
+
+  it("builds and claims the example only once the source is run", () => {
+    const target = EXAMPLES.findIndex((ex) => ex.name === "Plain GEMM");
+    S().loadExample(EXAMPLES.findIndex((ex) => ex.name === "Reshape trap"));
+    S().stageExample(target);
+    expect(S().exampleIndex).not.toBe(target);
+
+    S().applyDSL(S().draftText);
+    expect(S().exampleIndex).toBe(target);
+    expect(S().resolved).not.toBeNull();
+    // Running an example's exact source still seeds its canonical selection.
+    expect(selTensors()).toEqual([EXAMPLES[target].defaultSelection!.tensor]);
+  });
+
+  it("recognises an example typed or restored rather than picked", () => {
+    const target = EXAMPLES.findIndex((ex) => ex.name === "Reshape trap");
+    S().applyDSL("input X [2, 3] f32\nY = relu(X)\n");
+    expect(S().exampleIndex).toBe(-1);
+
+    S().applyDSL(EXAMPLES[target].dsl);
+    expect(S().exampleIndex).toBe(target);
+  });
+
+  it("keeps direct editor drafts separate from the built source", () => {
+    const built = S().dslText;
+    const resolved = S().resolved;
+    S().setDraftText("input X [2, 3] f32\nY = relu(X)\n");
+    expect(S().draftText).not.toBe(built);
+    expect(S().dslText).toBe(built);
+    expect(S().resolved).toBe(resolved);
+  });
+
+  it("reselecting the running example is idempotent", () => {
+    const resolved = S().resolved;
+    const selection = S().selection;
+    S().stageExample(S().exampleIndex);
+    expect(S().resolved).toBe(resolved);
+    expect(S().selection).toBe(selection);
+    expect(S().draftText).toBe(S().dslText);
+  });
+});
+
 describe("DSL compiler integration", () => {
   beforeEach(() => S().loadExample(0));
 
@@ -97,11 +163,19 @@ P = softmax(S, axis=-1)
   });
 
   it("surfaces semantic failures with the originating DSL line", () => {
-    S().applyDSL(`input A [2, 3] f32
+    const builtSource = S().dslText;
+    const resolved = S().resolved;
+    const selection = S().selection;
+    const invalid = `input A [2, 3] f32
 input B [4, 5] f32
 C = matmul(A, B)
-`);
+`;
+    S().applyDSL(invalid);
     expect(S().loadError).toMatch(/^line 3: node "matmul_C".*shape inference failed/);
+    expect(S().draftText).toBe(invalid);
+    expect(S().dslText).toBe(builtSource);
+    expect(S().resolved).toBe(resolved);
+    expect(S().selection).toBe(selection);
   });
 
   it("starts a fresh undo history when the graph is replaced", () => {

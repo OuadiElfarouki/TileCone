@@ -9,6 +9,19 @@ const isTyping = (el: EventTarget | null) => {
   return !!t && ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName);
 };
 
+/**
+ * True when focus sits in a widget that consumes arrow keys itself. A text
+ * field is the obvious case; an open menu is the one that is easy to miss,
+ * because it is built from a div and a list rather than from a tag this guard
+ * would recognise. Without it the global bindings run *as well as* the widget:
+ * arrowing through the example menu also walked the selected tile across its
+ * tensor, which reads as the two being connected when they are not.
+ */
+const ownsArrowKeys = (el: EventTarget | null) => {
+  const t = el as HTMLElement | null;
+  return isTyping(t) || !!t?.closest?.('[role="listbox"], [role="menu"]');
+};
+
 /** GraphView owns viewport geometry; the one global keyboard listener asks it
  * to fit through this UI-local event rather than installing a second listener. */
 export const FIT_GRAPH_EVENT = "tilecone:fit-graph";
@@ -47,6 +60,7 @@ export function useKeyboard({
           el?.blur(); // leave text editing, keeping what was typed
           return;
         }
+        if (ownsArrowKeys(el)) return; // an open menu cancels itself
         if (s.dragging) return; // the card cancels its own rubber-band
         if (s.pinnedBox !== null || s.focusedBox !== null) {
           s.clearFocus();
@@ -67,7 +81,7 @@ export function useKeyboard({
         return s.togglePanel(panel);
       }
 
-      if (isTyping(e.target)) return;
+      if (ownsArrowKeys(e.target)) return;
       if (matchesShortcut(e, SHORTCUTS.help)) {
         e.preventDefault();
         showShortcuts();

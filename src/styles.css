@@ -22,6 +22,8 @@
   --hot: #be185d;
   --warn-ink: #92400e;
   --err: #dc2626;
+  --syntax-keyword: #be185d;
+  --syntax-comment: #89919e;
   /* There is deliberately no "ok" green. Green is a data hue, and a green
      chrome token failed the same check that rejected an amber accent: #047857
      sits at normal ΔE 14.1 from categorical aqua #189f6f (floor 15) and CVD
@@ -71,6 +73,8 @@
     --hot: #e39c3d;
     --warn-ink: #f6c073;
     --err: #ef7a54;
+    --syntax-keyword: #f0a64a;
+    --syntax-comment: #aeb7c4;
     --shadow-pop: 0 6px 18px rgba(0, 0, 0, 0.45);
 }
 
@@ -232,11 +236,80 @@ kbd {
 .side-kicker {
   font-size: var(--t-micro); letter-spacing: .09em; text-transform: uppercase; color: var(--muted);
 }
-.side-kicker { padding: 13px 12px 0; }
-.example-list { display: flex; flex-wrap: wrap; gap: 5px; padding: 5px 12px 0; }
-.example-list button { padding: 3px 8px; font-size: var(--t-small); }
+.example-picker { display: flex; align-items: center; gap: 9px; padding: 13px 12px 0; }
+/* The kicker keeps its own padding rule for headings that stand alone; inside
+   the picker row the row owns the spacing. */
+.example-picker .side-kicker { flex: none; padding: 0; }
+/* The anchor for the menu surface. It sits in a scrolling panel, so the list is
+   positioned rather than fixed: it must travel with the trigger. */
+.example-menu {
+  position: relative; flex: 1; min-width: 0;
+  /* One row height, declared once: the option box and the menu's own height cap
+     are the same measurement, so a partial row is exactly half a row. */
+  --example-row: 24px;
+}
+.example-trigger {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 3px 7px; font-size: var(--t-small); text-align: left;
+}
+/* The name is the value, so it takes the ink; the caret is chrome and stays
+   quiet. A long example name truncates rather than widening the panel. */
+.example-current { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.example-current.none { color: var(--muted); font-style: italic; }
+/* Accent is reserved for the example the *running* graph came from. A picked
+   example holds plain ink until the run button is pressed, so the menu can
+   never claim credit for a graph that is not on the canvas. */
+.example-current.built { color: var(--accent); }
+.example-trigger > i { flex: none; color: var(--muted); font-style: normal; line-height: 1; }
+.example-trigger.on > i { color: inherit; }
+.example-options {
+  position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0;
+  /* Three rows and the top of a fourth. The half row is the affordance: a list
+     cut cleanly at a row boundary looks finished, so nobody scrolls it. Sized
+     from the row metric rather than a round pixel count so it stays exactly
+     three-and-a-half rows if the type scale moves. */
+  max-height: calc(var(--example-row) * 3.5 + 6px);
+  overflow-y: auto;
+  /* The menu is a surface of its own, not a window onto the panel: without
+     this, a wheel that reaches either end of the list keeps going and slides
+     the whole source-to-operations column underneath it. */
+  overscroll-behavior: contain;
+  margin: 0; padding: 3px; list-style: none;
+  background: var(--panel); border: 1px solid var(--card-line);
+  border-radius: var(--r-pop); box-shadow: var(--shadow-pop);
+}
+.example-options:focus-visible { outline: none; }
+.example-option {
+  display: flex; align-items: center; gap: 6px; height: var(--example-row);
+  padding: 0 7px; border-radius: var(--r); font-size: var(--t-small); cursor: pointer;
+}
+.example-option > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Two marks, two meanings: the keyboard/pointer row is a neutral wash, the
+   loaded example is accent. Hover is never accent anywhere else in this UI. */
+.example-option.active { background: var(--bg); }
+.example-option.on { color: var(--accent); }
+.example-option.on::after { content: "\2713"; margin-left: auto; }
+/* In the editor but not built. Named rather than coloured: a second hue here
+   would compete with the one mark that means "this is what you are looking
+   at", and the state is temporary by design. */
+.example-option.staged::after {
+  content: "loaded"; margin-left: auto;
+  color: var(--muted); font-size: var(--t-micro); letter-spacing: .06em; text-transform: uppercase;
+}
 .side-divider { height: 1px; margin: 14px 12px 0; background: var(--line); }
-.operations-heading { padding: 11px 12px 4px; }
+.operations-heading {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 11px 12px 4px;
+}
+.operations-pending {
+  color: var(--muted); font-size: var(--t-micro); letter-spacing: .06em;
+  text-transform: uppercase;
+}
+/* The list still describes and controls the live graph. Dimming it, with a
+   textual state label beside the heading, says that it has not caught up with
+   the editor draft without disabling the workspace it belongs to. */
+.operations-section.pending .operations-heading .panel-title,
+.operations-section.pending .operation-list { opacity: var(--dim-soft); }
 .operation-list { padding: 0 12px; }
 .operation-row {
   display: grid; grid-template-columns: 7px 1fr; gap: 8px; width: 100%;
@@ -251,13 +324,29 @@ kbd {
 .operation-row small { display: block; margin-top: 2px; color: var(--muted); font-size: var(--t-small); font-variant-numeric: tabular-nums; }
 
 /* source editor */
+.source-editor {
+  position: relative; flex: none; width: 100%; height: 250px; min-height: 120px;
+  resize: vertical; overflow: hidden;
+}
+.source-highlight,
 textarea.source {
-  flex: none; height: 250px; min-height: 120px; resize: vertical; width: 100%;
+  width: 100%; height: 100%; margin: 0;
   font: var(--t-body)/1.55 var(--mono);
-  tab-size: 2;
-  background: var(--bg); color: var(--ink);
+  tab-size: 2; white-space: pre-wrap; overflow-wrap: break-word;
   border: 1px solid var(--line); border-radius: var(--r); padding: 8px 9px;
 }
+.source-highlight {
+  position: absolute; inset: 0; z-index: 0; overflow: hidden;
+  background: var(--bg); color: var(--ink); pointer-events: none;
+}
+.syntax-keyword { color: var(--syntax-keyword); font-weight: 700; }
+.syntax-comment { color: var(--syntax-comment); }
+textarea.source {
+  position: relative; z-index: 1; resize: none;
+  background: transparent; color: transparent; caret-color: var(--ink);
+  border: 1px solid var(--line); border-radius: var(--r); padding: 8px 9px;
+}
+textarea.source::selection { background: color-mix(in srgb, var(--accent) 24%, transparent); }
 textarea.source:focus { outline: none; border-color: var(--accent); }
 textarea.source.error-state { border-color: var(--err); }
 .source-actions { display: flex; align-items: center; gap: 8px; flex: none; }

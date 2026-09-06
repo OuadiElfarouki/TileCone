@@ -132,7 +132,11 @@ export const PANEL_RAIL = 30;
 type Compose = "union" | "subtract" | "replace";
 
 type State = {
+  /** Source currently installed in `graph`/`resolved` and encoded by Share. */
   dslText: string;
+  /** Editable source. It may differ from `dslText` while the built workspace
+   * remains live; a successful `applyDSL` advances both together. */
+  draftText: string;
   exampleIndex: number;
   graph: Graph | null;
   resolved: ResolvedGraph | null;
@@ -199,7 +203,11 @@ type State = {
   /** User displacement from dagre's collision-free base placement. */
   tensorOffsets: TensorOffsets;
 
+  /** Compile and install an example immediately: app boot and tests. */
   loadExample: (i: number) => void;
+  /** Put an example in the editor without replacing the built workspace. */
+  stageExample: (i: number) => void;
+  setDraftText: (text: string) => void;
   applyDSL: (text: string) => void;
   /** Compile, validate, and install a shared workspace as one transaction. */
   restoreWorkspace: (workspace: WorkspaceRestore) => boolean;
@@ -464,6 +472,7 @@ function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
 
 export const useStore = create<State>((set, get) => ({
   dslText: EXAMPLES[0].dsl,
+  draftText: EXAMPLES[0].dsl,
   exampleIndex: 0,
   graph: null,
   resolved: null,
@@ -494,18 +503,40 @@ export const useStore = create<State>((set, get) => ({
   panelCollapsed: { left: false, right: false },
   tensorOffsets: {},
 
-  loadExample: (i) => {
-    const ex = EXAMPLES[i];
+  loadExample: (i) => get().applyDSL(EXAMPLES[i].dsl),
+
+  stageExample: (i) => {
+    set({
+      draftText: EXAMPLES[i].dsl,
+      loadError: null,
+    });
+  },
+
+  setDraftText: (text) => set({ draftText: text }),
+
+  applyDSL: (text) => {
     try {
-      const program = compileDSL(ex.dsl);
+      const program = compileDSL(text);
       const base = loadResolvedGraph(program.graph, program.resolved);
-      const st: Partial<State> = { ...base, dslText: ex.dsl, exampleIndex: i, focusTensor: null };
-      if (ex.defaultSelection && base.resolved) {
+      // A source that is exactly a built-in example *is* that example, however
+      // it got here - picked from the menu, restored from a link, or typed.
+      // Deriving this from the text keeps the picker honest after an edit is
+      // undone back to the original, which a remembered index could not.
+      const exampleIndex = EXAMPLES.findIndex((ex) => ex.dsl === text);
+      const example = exampleIndex >= 0 ? EXAMPLES[exampleIndex] : null;
+      const st: Partial<State> = {
+        ...base,
+        dslText: text,
+        draftText: text,
+        exampleIndex,
+        focusTensor: null,
+      };
+      if (example?.defaultSelection && base.resolved) {
         st.selection = {
           parts: [
             {
-              tensorId: ex.defaultSelection.tensor,
-              box: ex.defaultSelection.box.map(([lo, hi]) => ({ lo, hi })),
+              tensorId: example.defaultSelection.tensor,
+              box: example.defaultSelection.box.map(([lo, hi]) => ({ lo, hi })),
             },
           ],
         };
@@ -515,21 +546,7 @@ export const useStore = create<State>((set, get) => ({
       }
       set(st as State);
     } catch (e) {
-      set({ loadError: (e as Error).message });
-    }
-  },
-
-  applyDSL: (text) => {
-    try {
-      const program = compileDSL(text);
-      set({
-        ...loadResolvedGraph(program.graph, program.resolved),
-        dslText: text,
-        exampleIndex: -1,
-        focusTensor: null,
-      });
-    } catch (e) {
-      set({ loadError: (e as Error).message });
+      set({ draftText: text, loadError: (e as Error).message });
     }
   },
 
@@ -569,6 +586,7 @@ export const useStore = create<State>((set, get) => ({
       set({
         ...base,
         dslText: dsl,
+        draftText: dsl,
         exampleIndex: -1,
         focusTensor: null,
         direction,
@@ -879,6 +897,7 @@ export const useStore = create<State>((set, get) => ({
       set({
         ...loadResolvedGraph(program.graph, program.resolved),
         dslText: source,
+        draftText: source,
         exampleIndex: -1,
         focusTensor: null,
       });
