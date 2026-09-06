@@ -118,7 +118,8 @@ export function regionRects(
   region: Region,
   shape: number[],
   cfg: ViewCfg,
-  geom: GridGeom
+  geom: GridGeom,
+  viewScale = 1
 ): RegionRect[] {
   const { rowAxis, colAxis, rows, cols, canvasW, canvasH } = geom;
   const rects: RegionRect[] = [];
@@ -132,11 +133,13 @@ export function regionRects(
     const x1 = (Math.min(cols, cI.hi) / cols) * canvasW;
     const y1 = (Math.min(rows, rI.hi) / rows) * canvasH;
     if (x1 <= x || y1 <= y) continue;
+    const w = Math.min(Math.max(MIN_MARK_PX / viewScale, x1 - x), canvasW);
+    const h = Math.min(Math.max(MIN_MARK_PX / viewScale, y1 - y), canvasH);
     rects.push({
-      x,
-      y,
-      w: Math.min(Math.max(MIN_MARK_PX, x1 - x), canvasW - x),
-      h: Math.min(Math.max(MIN_MARK_PX, y1 - y), canvasH - y),
+      x: Math.min(x, canvasW - w),
+      y: Math.min(y, canvasH - h),
+      w,
+      h,
       alpha,
     });
   }
@@ -298,12 +301,12 @@ export function rulingSegments(
   return out;
 }
 
-/** Stroke one ruled rect. Sizes are divided by the exact graph scale, so CSS
+/** Stroke one ruled rect. Sizes are divided by the fine paint scale, so CSS
  * transforms do not change the screen-space meaning of spacing or weight. */
 function strokeRuling(
   ctx: CanvasRenderingContext2D,
   rect: RegionRect,
-  color: [number, number, number],
+  color: [number, number, number] | string,
   spec: {
     angle: number;
     pitch: number;
@@ -320,7 +323,7 @@ function strokeRuling(
   ctx.rect(rect.x, rect.y, rect.w, rect.h);
   ctx.clip();
   ctx.globalAlpha = spec.alpha;
-  ctx.strokeStyle = `rgb(${color[0]},${color[1]},${color[2]})`;
+  ctx.strokeStyle = typeof color === "string" ? color : `rgb(${color[0]},${color[1]},${color[2]})`;
   ctx.lineWidth = spec.width / viewScale;
   ctx.setLineDash(spec.dash?.map((length) => length / viewScale) ?? []);
   ctx.beginPath();
@@ -355,8 +358,11 @@ export function drawGrid(
     MAX_CANVAS_DIM / Math.max(1, geom.canvasW),
     MAX_CANVAS_DIM / Math.max(1, geom.canvasH)
   );
-  canvas.width = Math.ceil(geom.canvasW * res);
-  canvas.height = Math.ceil(geom.canvasH * res);
+  const width = Math.ceil(geom.canvasW * res);
+  const height = Math.ceil(geom.canvasH * res);
+  // Reuse the backing store when only the paint changes.
+  if (canvas.width !== width) canvas.width = width;
+  if (canvas.height !== height) canvas.height = height;
   ctx.setTransform(res, 0, 0, res, 0, 0);
   ctx.clearRect(0, 0, geom.canvasW, geom.canvasH);
 
@@ -367,7 +373,7 @@ export function drawGrid(
 
   for (const layer of layers) {
     const [r, g, b] = layer.color;
-    const rects = regionRects(layer.region, shape, cfg, geom);
+    const rects = regionRects(layer.region, shape, cfg, geom, viewScale);
 
     for (const q of rects) {
       const alpha = Math.min(1, layer.alpha * q.alpha);
@@ -415,14 +421,15 @@ export function drawGrid(
 
     // Over-approximation rides the same routine at its own reserved slope, so
     // it composes with a downstream ruling as a crossing rather than as a
-    // second texture that has to be told apart from the first.
+    // second texture that has to be told apart from the first. On solid fills,
+    // surface-coloured dashes give contrast without erasing underlying layers.
     if (layer.hatch)
       for (const q of rects)
         if (patternFitsRect(q, viewScale))
           strokeRuling(
             ctx,
             q,
-            [r, g, b],
+            layer.pattern ? [r, g, b] : (dark ? CARD_SURFACE.dark : CARD_SURFACE.light),
             {
               angle: HATCH_ANGLE_DEG,
               pitch: HATCH_PITCH_PX,
@@ -446,17 +453,17 @@ export function drawGrid(
   }
 
   // tile boundaries — the cell grid *is* the tile grid
-  if (Math.min(geom.cellW, geom.cellH) >= MIN_CELL_PX) {
+  if (Math.min(geom.cellW, geom.cellH) * viewScale >= MIN_CELL_PX) {
     ctx.strokeStyle = dark ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.10)";
-    ctx.lineWidth = 1;
+    ctx.lineWidth = 1 / viewScale;
     ctx.beginPath();
     for (let c = 1; c < tileCols; c++) {
-      const x = Math.round(c * geom.cellW) + 0.5;
+      const x = c * geom.cellW;
       ctx.moveTo(x, 0);
       ctx.lineTo(x, geom.canvasH);
     }
     for (let r = 1; r < tileRows; r++) {
-      const y = Math.round(r * geom.cellH) + 0.5;
+      const y = r * geom.cellH;
       ctx.moveTo(0, y);
       ctx.lineTo(geom.canvasW, y);
     }
@@ -464,8 +471,9 @@ export function drawGrid(
   }
 
   ctx.strokeStyle = dark ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.18)";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(0.5, 0.5, geom.canvasW - 1, geom.canvasH - 1);
+  ctx.lineWidth = Math.min(1 / viewScale, geom.canvasW, geom.canvasH);
+  const inset = ctx.lineWidth / 2;
+  ctx.strokeRect(inset, inset, geom.canvasW - ctx.lineWidth, geom.canvasH - ctx.lineWidth);
 }
 
 /** The tile size a tensor renders at, without building full geometry. */
@@ -537,4 +545,9 @@ export function snapSpan(e0: number, e1: number, tile: number, extent: number): 
     Math.max(0, Math.floor(lo / tile) * tile),
     Math.min(extent, (Math.floor(hi / tile) + 1) * tile),
   ];
+}
+
+/** Fine paint buckets limit redraws; rounding down preserves screen-space visibility floors. */
+export function paintScale(scale: number): number {
+  return 2 ** (Math.floor(Math.log2(scale) * 32) / 32);
 }

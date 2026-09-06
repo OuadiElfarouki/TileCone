@@ -4,6 +4,7 @@ import { DTYPE_BYTES } from "../core/dtypes";
 import { Box, formatBoxIndices, fromBox, iv, Region } from "../core/region";
 import {
   drawGrid,
+  paintScale,
   elementFromEvent,
   gridGeometry,
   GridGeom,
@@ -101,6 +102,7 @@ export type LayerInputs = {
   back?: { region: Region; depth: number };
   fwd?: { region: Region; depth: number };
   prev?: { region: Region; depth: number };
+  prevForward?: { region: Region; depth: number };
   /** The in-progress rubber band, already in element space. */
   dragRegion: Region | null;
 };
@@ -124,6 +126,7 @@ export function buildLayers({
   back,
   fwd,
   prev,
+  prevForward,
   dragRegion,
 }: LayerInputs): Layer[] {
   const layers: Layer[] = [];
@@ -136,7 +139,9 @@ export function buildLayers({
 
   // Transient hover preview, drawn faintly under everything else.
   if (prev && !isSelected && showBack)
-    layers.push({ region: prev.region, color: agg.upstream, alpha: previewAlpha(prev.depth), hatch: false });
+    layers.push({ region: prev.region, color: agg.upstream, alpha: previewAlpha(prev.depth), hatch: !prev.region.exact });
+  if (prevForward && !isSelected && showFwd)
+    layers.push({ region: prevForward.region, color: agg.downstream, alpha: previewAlpha(prevForward.depth), hatch: !prevForward.region.exact, pattern: downstreamPattern(0) });
 
   if (perBox) {
     // Hue identifies which selected box produced this region.
@@ -251,7 +256,9 @@ export function TensorCard({
   const forwardRes = useStore((s) => s.forwardRes);
   // Subscribe only to this tensor's preview entry. A hover query can touch a
   // subset of the graph; cards outside it retain `undefined` and do not render.
-  const prev = useStore((s) => s.preview?.tensors.get(tensor.id));
+  const prev = useStore((s) => s.preview?.backward?.tensors.get(tensor.id));
+  const prevForward = useStore((s) => s.preview?.forward?.tensors.get(tensor.id));
+  const drawScale = paintScale(viewScale);
   const setSelection = useStore((s) => s.setSelection);
   const setPreviewBox = useStore((s) => s.setPreviewBox);
   const perBox = useStore((s) => s.perBox);
@@ -298,9 +305,10 @@ export function TensorCard({
       back,
       fwd,
       prev,
+      prevForward,
       dragRegion: drag ? fromBox(dragToBox(drag)) : null,
     });
-    drawGrid(canvas, shape, cfg, geom, layers, dark, renderScale, viewScale);
+    drawGrid(canvas, shape, cfg, geom, layers, dark, renderScale, drawScale);
   }, [
     back,
     cfg,
@@ -314,8 +322,9 @@ export function TensorCard({
     isSelected,
     parts,
     perBox,
-    viewScale,
+    drawScale,
     prev,
+    prevForward,
     renderScale,
     selection?.parts.length,
     shape,
@@ -424,7 +433,7 @@ export function TensorCard({
   const approximation = visibleApproximation(back?.region, fwd?.region);
 
   return (
-    <div className={`tensor-card${isSelected ? " selected" : ""}`} data-tensor={tensor.id}>
+    <div className={`tensor-card${isSelected ? " selected" : ""}`} data-tensor={tensor.id} style={{ "--view-scale": viewScale } as React.CSSProperties}>
       {/* The tensor plate is deliberately frameless. Its persistent label is the
           name, the resolved numeric shape, and the two facts that change how the
           grid below should be read: where the tensor comes from, and whether its
@@ -444,7 +453,7 @@ export function TensorCard({
         </span>
         <span className="tc-shape">{shownShape}</span>
         <span className="tc-tile" title="current visible-plane tile size">
-          {tileSpanRows}×{tileSpanCols}
+          ⊞ {tileSpanRows}×{tileSpanCols}
         </span>
         {roleTag && <span className="tc-role">{roleTag}</span>}
         {approximation.approximate && (
@@ -527,7 +536,7 @@ export function cardSize(
     .reduce((longest, label) => label.length > longest.length ? label : longest);
   // Reserve the longest possible clipped tile span too; changing lattice
   // detail must re-rasterise in place rather than trigger a graph relayout.
-  const widestTileLabel = `${rows}×${cols}`;
+  const widestTileLabel = `⊞ ${rows}×${cols}`;
   const labelW = name.length * 9 +
     (widestShapeLabel.length + widestTileLabel.length) * 6.5 + 22;
   const w = Math.max(canvas.w, labelW, 120);

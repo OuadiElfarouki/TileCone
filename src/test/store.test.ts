@@ -1251,3 +1251,21 @@ describe("offered starting tiles", () => {
     expect(S().backwardRes).not.toBeNull();
   });
 });
+
+
+describe("bidirectional hover probes", () => {
+  it("retains both answers across view changes and clears on exit or invalid input", () => {
+    S().applyDSL("input A [8, 8] f32\nB = relu(A)\nC = relu(B)");
+    S().setDirection("forward");
+    S().setPreviewBox("B", box([0, 2], [0, 2]));
+    const preview = S().preview;
+    expect(preview?.backward?.tensors.has("A")).toBe(true);
+    expect(preview?.forward?.tensors.has("C")).toBe(true);
+    S().setDirection("backward");
+    expect(S().preview).toBe(preview);
+    S().setPreviewBox(null);
+    expect(S().preview).toBeNull();
+    S().setPreviewBox("B", box([0, 99], [0, 2]));
+    expect(S().preview).toBeNull();
+  });
+});

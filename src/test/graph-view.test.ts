@@ -75,12 +75,16 @@ describe("graph viewport fit", () => {
     expect(bounds.max).toBe(4);
   });
 
-  it("does not make fit shrink cards below the legibility floor", () => {
+  it("fits the entire scene even below the manual legibility floor", () => {
     const tf = fittedTransform(
       { left: 0, top: 0, width: 10_000, height: 10_000 },
       { width: 400, height: 300 },
       { min: 0.4, max: 4 }
     );
-    expect(tf.k).toBe(0.4);
+    expect(tf.k).toBeLessThan(0.4);
+    expect(tf.x).toBeGreaterThanOrEqual(0);
+    expect(tf.y).toBeGreaterThanOrEqual(0);
+    expect(tf.x + 10_000 * tf.k).toBeLessThanOrEqual(400);
+    expect(tf.y + 10_000 * tf.k).toBeLessThanOrEqual(300);
   });
 });

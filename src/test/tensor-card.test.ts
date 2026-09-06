@@ -302,3 +302,18 @@ describe("inexact regions are hatched", () => {
     });
   });
 });
+
+
+describe("hover direction filtering", () => {
+  it("shows both preview treatments, each direction alone, and neither in figures-only", () => {
+    const preview = { region: region([0, 4]), depth: 1 };
+    const args = inputs({ perBox: null, prev: preview, prevForward: preview });
+    const both = buildLayers(args);
+    expect(both).toHaveLength(2);
+    expect(both[0].pattern).toBeUndefined();
+    expect(both[1].pattern?.kind).toBe("stripe");
+    expect(buildLayers({ ...args, direction: "backward" })).toEqual([both[0]]);
+    expect(buildLayers({ ...args, direction: "forward" })).toEqual([both[1]]);
+    expect(buildLayers({ ...args, direction: "none" })).toEqual([]);
+  });
+});

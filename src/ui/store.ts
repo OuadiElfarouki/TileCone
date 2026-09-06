@@ -166,7 +166,7 @@ type State = {
   /** True while any drag is in progress — a card rubber-band or a canvas pan —
    * so Escape can cancel the band and text selection can be suppressed. */
   dragging: boolean;
-  preview: PropResult | null; // hover preview (backward only)
+  preview: { backward: PropResult | null; forward: PropResult | null } | null; // bidirectional hover probe
 
   viewCfgs: Record<string, ViewCfg>;
   /** Px per element for every card in this graph. A property of the resolved
@@ -837,7 +837,7 @@ export const useStore = create<State>((set, get) => ({
       // the caller's box is never aliased into stored state.
       const region: Region = { boxes: [box], exact: true, reasons: [] };
       set({
-        preview: executeQuery(resolved, { tensorId, region, direction: "backward" }).backward,
+        preview: executeQuery(resolved, { tensorId, region, direction: "both" }),
       });
     } catch {
       set({ preview: null });

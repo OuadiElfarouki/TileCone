@@ -395,14 +395,14 @@ textarea.source.error-state { border-color: var(--err); }
 .tc-canvas-wrap { position: relative; width: max-content; margin: 4px auto 0; }
 .tc-canvas-wrap canvas {
   display: block; image-rendering: auto;
-  outline: 1px solid var(--card-line); outline-offset: 0;
+  outline: none;
 }
 /* The selection outline competes with the cones drawn inside it, so it stays a
    hairline-plus: the ring is reserved for keyboard focus. */
-.tensor-card.selected .tc-canvas-wrap canvas { outline: 2px solid var(--accent); }
+.tensor-card.selected .tc-canvas-wrap canvas { outline: calc(2px / var(--view-scale, 1)) solid var(--accent); }
 .tc-tooltip {
   position: absolute; right: 0; top: calc(100% + 4px); font-size: var(--t-micro); color: var(--muted);
-  transform: scale(0.75); transform-origin: top right;
+  transform: scale(calc(1 / var(--view-scale, 1))); transform-origin: top right;
   background: var(--card); padding: 0 3px; border-radius: var(--r); pointer-events: none;
 }
 

@@ -470,3 +470,21 @@ describe("ruled fills", () => {
     expect(rulingSegments({ x: 0, y: 0, w: 8192, h: 8192 }, 135, 0.001)).toEqual([]);
   });
 });
+
+
+describe("screen-space minimum marks", () => {
+  it("preserves a full pixel at fitted zoom, including the far corner", () => {
+    const shape = [4096, 4096];
+    const cfg = { sliders: [], projection: true };
+    const geom = gridGeometry(shape, cfg, 0, 0.1);
+    for (const index of [0, 4095]) {
+      const [rect] = regionRects(fromBox(box([index, index + 1], [index, index + 1])), shape, cfg, geom, 0.3);
+      expect(rect.w * 0.3).toBeGreaterThanOrEqual(1);
+      expect(rect.h * 0.3).toBeGreaterThanOrEqual(1);
+      expect(rect.x).toBeGreaterThanOrEqual(0);
+      expect(rect.y).toBeGreaterThanOrEqual(0);
+      expect(rect.x + rect.w).toBeLessThanOrEqual(geom.canvasW);
+      expect(rect.y + rect.h).toBeLessThanOrEqual(geom.canvasH);
+    }
+  });
+});

@@ -50,7 +50,8 @@ export function fittedTransform(
     viewport.height / (scene.height + 40),
     1.25
   );
-  const k = Math.min(bounds.max, Math.max(bounds.min, natural));
+  // Fit is an overview: the manual legibility floor must not crop the scene.
+  const k = Math.min(bounds.max, natural);
   return {
     x: (20 - scene.left) * k,
     y: (20 - scene.top) * k,
@@ -142,7 +143,7 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
   const hasResult = contributing.size > 0;
 
   // Canvas backing-store multiplier, bucketed to powers of two so that zooming
-  // re-renders the cards sharply without redrawing on every wheel tick.
+  // reallocates only at bucket crossings. Fine paint buckets separately bound redraws.
   const renderScale = useMemo(
     () => Math.min(4, Math.max(1, 2 ** Math.ceil(Math.log2(Math.max(1, tf.k))))),
     [tf.k]
@@ -191,7 +192,7 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
   sceneRef.current = scene;
   const fit = useCallback(() => {
     const el = containerRef.current;
-    if (!el) return;
+    if (!el || el.clientWidth <= 0 || el.clientHeight <= 0) return;
     const current = sceneRef.current;
     if (!current) return;
     setTf(fittedTransform(
@@ -254,7 +255,8 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
     const my = e.clientY - rect.top;
     movedRef.current = true;
     setTf((t) => {
-      const k = Math.min(zoomBounds.max, Math.max(zoomBounds.min, t.k * Math.exp(-e.deltaY * 0.0012)));
+      // A fitted overview may be below the manual floor; zoom in without a jump.
+      const k = Math.min(zoomBounds.max, Math.max(Math.min(zoomBounds.min, t.k), t.k * Math.exp(-e.deltaY * 0.0012)));
       const scale = k / t.k;
       return { k, x: mx - (mx - t.x) * scale, y: my - (my - t.y) * scale };
     });
@@ -267,7 +269,8 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
     const mx = el.clientWidth / 2;
     const my = el.clientHeight / 2;
     setTf((t) => {
-      const k = Math.min(zoomBounds.max, Math.max(zoomBounds.min, t.k * factor));
+      // A fitted overview may be below the manual floor; zoom in without a jump.
+      const k = Math.min(zoomBounds.max, Math.max(Math.min(zoomBounds.min, t.k), t.k * factor));
       const scale = k / t.k;
       return { k, x: mx - (mx - t.x) * scale, y: my - (my - t.y) * scale };
     });
