@@ -108,7 +108,11 @@ Use `tryCompileDSL` when diagnostics should be returned as data instead of throw
   elements the rulings cross instead of one hiding the other.
   A ruled region is delimited by a hairline, because a ruling has no crisp edge of its own. Thin
   points and lines drop both the ruling and any perimeter stroke, so emphasis cannot invent a wider
-  region than the analysis returned.
+  region than the analysis returned. Committed selections also carry corner marks outside their
+  fill so the seed remains distinguishable from its needs; those marks clip at the tensor edge.
+- **Overview labels stay readable where space permits.** Below 75% zoom, cards show compact names
+  at a 10px screen size when they fit without overlapping neighboring nodes. Crowded names keep
+  their smaller size; long names ellipsize and retain their full name in a tooltip.
 - **Row-major everywhere.** Rows are the second-to-last axis, columns the last. There is no per-card
   axis remapping: a different view of a tensor is a `transpose` node in the graph, where it is part
   of the computation being explained.

@@ -1,3 +1,4 @@
+import { seedCornerSegments } from "../ui/grid";
 import { describe, expect, it } from "vitest";
 import {
   AUTO_TILE_FRACTION,
@@ -485,6 +486,22 @@ describe("screen-space minimum marks", () => {
       expect(rect.y).toBeGreaterThanOrEqual(0);
       expect(rect.x + rect.w).toBeLessThanOrEqual(geom.canvasW);
       expect(rect.y + rect.h).toBeLessThanOrEqual(geom.canvasH);
+    }
+  });
+});
+
+describe("external seed corners", () => {
+  it("keeps tick strokes outside the represented region at any zoom", () => {
+    const rect = { x: 20, y: 30, w: 1, h: 50 };
+    for (const scale of [0.1, 0.3, 1, 4]) {
+      const segments = seedCornerSegments(rect, scale);
+      expect(segments).toHaveLength(8);
+      for (const s of segments) {
+        expect(Math.hypot(s.x2 - s.x1, s.y2 - s.y1) * scale).toBeCloseTo(3);
+        const horizontalOutside = s.y1 === s.y2 && (s.y1 < rect.y || s.y1 > rect.y + rect.h);
+        const verticalOutside = s.x1 === s.x2 && (s.x1 < rect.x || s.x1 > rect.x + rect.w);
+        expect(horizontalOutside || verticalOutside).toBe(true);
+      }
     }
   });
 });

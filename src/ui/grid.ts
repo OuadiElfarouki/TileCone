@@ -61,6 +61,7 @@ export type Layer = {
   color: [number, number, number];
   alpha: number; // base alpha (depth shading already applied by caller)
   hatch: boolean; // over-approximation -> diagonal hatching
+  seed?: boolean; // external corner marks identify the region the user placed
   outline?: boolean; // strong border (selection)
   /** Outline weight. Emphasis uses a heavier stroke than the 1.5 default. */
   lineWidth?: number;
@@ -144,6 +145,20 @@ export function regionRects(
     });
   }
   return rects;
+}
+
+/** @internal Corner marks sit outside the fill, at fixed screen size. Canvas
+ * clipping keeps edge markers out of neighbouring cards and connectors. */
+export function seedCornerSegments(rect: Pick<RegionRect, "x" | "y" | "w" | "h">, scale: number): Segment[] {
+  const gap = 2 / scale, length = 3 / scale;
+  return [-1, 1].flatMap((sx) => [-1, 1].flatMap((sy) => {
+    const x = rect.x + (sx > 0 ? rect.w : 0) + sx * gap;
+    const y = rect.y + (sy > 0 ? rect.h : 0) + sy * gap;
+    return [
+      { x1: x, y1: y, x2: x - sx * length, y2: y },
+      { x1: x, y1: y, x2: x, y2: y - sy * length },
+    ];
+  }));
 }
 
 /** Conservative cross-browser ceiling on a canvas backing-store side. */
@@ -474,6 +489,28 @@ export function drawGrid(
   ctx.lineWidth = Math.min(1 / viewScale, geom.canvasW, geom.canvasH);
   const inset = ctx.lineWidth / 2;
   ctx.strokeRect(inset, inset, geom.canvasW - ctx.lineWidth, geom.canvasH - ctx.lineWidth);
+
+  // Seed marks are the final annotation, so later cone fills and the lattice
+  // cannot cover them. They spend geometry, not a second fill treatment.
+  for (const layer of layers) {
+    if (!layer.seed) continue;
+    for (const rect of regionRects(layer.region, shape, cfg, geom, viewScale)) {
+      ctx.save();
+      ctx.globalAlpha = layer.alpha * rect.alpha;
+      ctx.beginPath();
+      for (const segment of seedCornerSegments(rect, viewScale)) {
+        ctx.moveTo(segment.x1, segment.y1);
+        ctx.lineTo(segment.x2, segment.y2);
+      }
+      ctx.strokeStyle = dark ? CARD_SURFACE.dark : CARD_SURFACE.light;
+      ctx.lineWidth = 3 / viewScale;
+      ctx.stroke();
+      ctx.strokeStyle = `rgb(${layer.color.join(",")})`;
+      ctx.lineWidth = 1 / viewScale;
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
 }
 
 /** The tile size a tensor renders at, without building full geometry. */

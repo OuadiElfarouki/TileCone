@@ -12,6 +12,7 @@ import { shapeLabel, symbolicExtentLabel } from "./shape-label";
 import { enabledPropResult, selectedTensorIds, useStore } from "./store";
 import type { TensorOffset } from "./tensor-layout";
 import { MIN_SIDE_PX } from "./tiling";
+import { overviewLabelWidths } from "./overview-labels";
 import { FIT_GRAPH_EVENT } from "./useKeyboard";
 
 type CardDrag = {
@@ -46,15 +47,15 @@ export function fittedTransform(
   bounds: { min: number; max: number } = { min: 0, max: 1.25 }
 ): { x: number; y: number; k: number } {
   const natural = Math.min(
-    viewport.width / (scene.width + 40),
-    viewport.height / (scene.height + 40),
+    Math.max(1, viewport.width - 40) / Math.max(1, scene.width),
+    Math.max(1, viewport.height - 40) / Math.max(1, scene.height),
     1.25
   );
   // Fit is an overview: the manual legibility floor must not crop the scene.
   const k = Math.min(bounds.max, natural);
   return {
-    x: (20 - scene.left) * k,
-    y: (20 - scene.top) * k,
+    x: 20 - scene.left * k,
+    y: 20 - scene.top * k,
     k,
   };
 }
@@ -170,6 +171,10 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
         : null,
     [baseLayout, tensorOffsets]
   );
+  const overviewWidths = useMemo(() => overviewLabelWidths(
+    scene?.nodes ?? [], tf.k,
+    Object.fromEntries(Object.values(resolved?.tensors ?? {}).map((tensor) => [tensor.id, tensor.name]))
+  ), [scene, tf.k, resolved]);
   const zoomBounds = useMemo(
     () => graphZoomBounds(baseLayout?.nodes ?? []),
     [baseLayout]
@@ -464,6 +469,7 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
                 tensor={t}
                 renderScale={renderScale}
                 viewScale={tf.k}
+                overviewWidth={overviewWidths.get(t.id)}
                 moveHandlers={moveHandlers}
               />
             </div>

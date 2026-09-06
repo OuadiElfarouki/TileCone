@@ -618,3 +618,16 @@ textarea.source.error-state { border-color: var(--err); }
   font-family: var(--mono);
   font-size: var(--t-small); color: var(--muted); font-variant-numeric: tabular-nums;
 }
+
+
+/* The name can borrow space above its own header only after scene collision
+   checks. Keep the header's height fixed so zoom never moves tensor canvases. */
+.overview .tc-shape, .overview .tc-tile, .overview .tc-role { display: none; }
+.overview-name { position: absolute; bottom: 3px; height: calc(12px / var(--view-scale)); }
+.overview-name .tc-name {
+  display: block; width: 100%; overflow: hidden; text-overflow: ellipsis;
+  font-size: calc(10px / var(--view-scale)); line-height: calc(12px / var(--view-scale));
+  text-align: center;
+}
+.overview .tc-approx { position: absolute; right: 0; bottom: 3px; }
+.overview .tc-info { transform: translateX(-50%) scale(calc(1 / var(--view-scale))); transform-origin: top center; }

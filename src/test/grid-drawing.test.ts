@@ -73,3 +73,18 @@ describe("canvas screen-space rendering", () => {
     }
   });
 });
+
+describe("seed annotations", () => {
+  it("draws seed corners after cone paint and distinguishes them from dependency layers", () => {
+    vi.stubGlobal("window", { devicePixelRatio: 1 });
+    const { canvas, strokes } = recordingCanvas();
+    const layer: Layer = { region: fromBox(box([4, 5], [4, 5])), color: [10, 100, 200], alpha: 0.9, hatch: false, seed: true };
+    drawGrid(canvas, shape, cfg, geom, [layer], true, 1, 0.3);
+    const marks = strokes.slice(-2);
+    expect(marks.map((stroke) => stroke.color)).toEqual([CARD_SURFACE.dark, "rgb(10,100,200)"]);
+    expect(marks[1].width * 0.3).toBeCloseTo(1);
+    const ordinary = recordingCanvas();
+    drawGrid(ordinary.canvas, shape, cfg, geom, [{ ...layer, seed: false }], true, 1, 0.3);
+    expect(ordinary.strokes).toHaveLength(strokes.length - 2);
+  });
+});

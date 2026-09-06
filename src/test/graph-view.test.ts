@@ -82,9 +82,9 @@ describe("graph viewport fit", () => {
       { min: 0.4, max: 4 }
     );
     expect(tf.k).toBeLessThan(0.4);
-    expect(tf.x).toBeGreaterThanOrEqual(0);
-    expect(tf.y).toBeGreaterThanOrEqual(0);
-    expect(tf.x + 10_000 * tf.k).toBeLessThanOrEqual(400);
-    expect(tf.y + 10_000 * tf.k).toBeLessThanOrEqual(300);
+    expect(tf.x).toBe(20);
+    expect(tf.y).toBe(20);
+    expect(tf.x + 10_000 * tf.k).toBeLessThanOrEqual(380);
+    expect(tf.y + 10_000 * tf.k).toBeLessThanOrEqual(280);
   });
 });

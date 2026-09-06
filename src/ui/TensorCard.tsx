@@ -16,6 +16,7 @@ import { aggregateColors, boxColor } from "./palette";
 import { BoxProp, Direction, partsOn, useStore } from "./store";
 import { cardPx, planeExtents } from "./tiling";
 import { shapeLabel, shapeReadings } from "./shape-label";
+import { OVERVIEW_SCALE } from "./overview-labels";
 import { formatBytes } from "./format";
 import { viewAxes, type ViewCfg } from "./tensor-view";
 
@@ -217,6 +218,7 @@ export function buildLayers({
       alpha: hidden ? 0.18 : isFocused ? 0.9 : 0.35,
       hatch: false,
       outline: isFocused && !hidden,
+      seed: true,
     });
   });
 
@@ -237,11 +239,13 @@ export function TensorCard({
   tensor,
   renderScale = 1,
   viewScale = 1,
+  overviewWidth,
   moveHandlers,
 }: {
   tensor: Tensor;
   renderScale?: number;
   viewScale?: number;
+  overviewWidth?: number;
   moveHandlers?: Pick<
     React.HTMLAttributes<HTMLDivElement>,
     "onPointerDown" | "onPointerMove" | "onPointerUp" | "onPointerCancel" | "onLostPointerCapture"
@@ -433,14 +437,14 @@ export function TensorCard({
   const approximation = visibleApproximation(back?.region, fwd?.region);
 
   return (
-    <div className={`tensor-card${isSelected ? " selected" : ""}`} data-tensor={tensor.id} style={{ "--view-scale": viewScale } as React.CSSProperties}>
+    <div className={`tensor-card${isSelected ? " selected" : ""}${viewScale < OVERVIEW_SCALE ? " overview" : ""}`} data-tensor={tensor.id} style={{ "--view-scale": viewScale } as React.CSSProperties}>
       {/* The tensor plate is deliberately frameless. Its persistent label is the
           name, the resolved numeric shape, and the two facts that change how the
           grid below should be read: where the tensor comes from, and whether its
           highlight is exact. */}
       <div className={`tc-header${moveHandlers ? " movable" : ""}`} {...moveHandlers}>
-        <span className="tc-name-wrap">
-          <span className="tc-name" tabIndex={0}>{tensor.name}</span>
+        <span className={`tc-name-wrap${overviewWidth ? " overview-name" : ""}`} style={overviewWidth ? { width: overviewWidth } : undefined}>
+          <span className="tc-name" tabIndex={0} title={tensor.name}>{tensor.name}</span>
           <span className="tc-info" role="tooltip">
             {shapeReadings(tensor).map((reading) => (
               <React.Fragment key={reading.label}>
