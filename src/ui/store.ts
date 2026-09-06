@@ -289,7 +289,8 @@ function initialTheme(): Theme {
  */
 function recompute(
   resolved: ResolvedGraph | null,
-  selection: Selection
+  selection: Selection,
+  previous?: { selection: Selection; perBox: BoxProp[] | null }
 ): Pick<State, "backwardRes" | "forwardRes" | "perBox"> {
   const none = { backwardRes: null, forwardRes: null, perBox: null };
   if (!resolved || !selection || selection.parts.length === 0) return none;
@@ -300,7 +301,28 @@ function recompute(
   let perBox: BoxProp[] | null = null;
 
   if (parts.length <= MAX_PER_BOX_PROPS) {
+    // Geometry is the cache key rather than array position: deleting a part
+    // renumbers its peers, and composition may recreate an equal SelPart
+    // object. Reuse every unchanged cone and execute only new/edited parts.
+    const cached = new Map<string, BoxProp[]>();
+    const keyOf = (part: SelPart) =>
+      `${part.tensorId}|${part.box.map((interval) => `${interval.lo}:${interval.hi}`).join(",")}`;
+    if (previous?.selection && previous.perBox &&
+        previous.selection.parts.length === previous.perBox.length) {
+      previous.selection.parts.forEach((part, index) => {
+        const key = keyOf(part);
+        const entries = cached.get(key);
+        if (entries) entries.push(previous.perBox![index]);
+        else cached.set(key, [previous.perBox![index]]);
+      });
+    }
     perBox = parts.map((p) => {
+      const hit = cached.get(keyOf(p))?.shift();
+      if (hit) {
+        if (hit.backward) backs.push(hit.backward);
+        if (hit.forward) fwds.push(hit.forward);
+        return hit;
+      }
       const r = executeQuery(resolved, {
         tensorId: p.tensorId,
         region: fromBox(p.box),
@@ -342,7 +364,7 @@ function editSelection(
   keepFocus = false,
   record = true
 ): void {
-  const { selection, resolved, workspaceHistory, tensorOffsets, focusedBox } = get();
+  const { selection, resolved, workspaceHistory, tensorOffsets, focusedBox, perBox } = get();
   if (!selection || !resolved) return;
   const shapeOf = (tensorId: string) => resolved.tensors[tensorId].resolved!;
   const parts = fn(selection.parts, shapeOf);
@@ -361,7 +383,7 @@ function editSelection(
     // pointing at the wrong cone.
     hiddenBoxes: keepFocus ? get().hiddenBoxes : new Set<number>(),
     preview: null,
-    ...recompute(resolved, sel),
+    ...recompute(resolved, sel, { selection, perBox }),
   });
 }
 
@@ -571,6 +593,7 @@ export const useStore = create<State>((set, get) => ({
       tensorOffsets,
       pinnedBox,
       hiddenBoxes,
+      perBox,
     } = get();
     const mode = compose ?? "union";
     const drawn = region.boxes;
@@ -617,7 +640,7 @@ export const useStore = create<State>((set, get) => ({
       pinnedBox: nextPinned,
       hiddenBoxes: nextHidden,
       preview: null,
-      ...recompute(resolved, sel),
+      ...recompute(resolved, sel, { selection, perBox }),
     });
   },
 
@@ -639,7 +662,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   undoWorkspace: () => {
-    const { workspaceHistory, resolved } = get();
+    const { workspaceHistory, resolved, selection, perBox } = get();
     if (!workspaceHistory.length) return;
     const prev = workspaceHistory[workspaceHistory.length - 1];
     set({
@@ -650,7 +673,7 @@ export const useStore = create<State>((set, get) => ({
       pinnedBox: null,
       hiddenBoxes: new Set<number>(),
       preview: null,
-      ...recompute(resolved, prev.selection),
+      ...recompute(resolved, prev.selection, { selection, perBox }),
     });
   },
 

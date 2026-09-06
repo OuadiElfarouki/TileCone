@@ -19,9 +19,10 @@
  * elements and owes the lattice nothing.
  *
  * Overlap therefore has to be handled where quantities are measured rather than
- * where they are produced. `disjointify` is that form, and every measurement
- * goes through it: `count`, `points`, the FLOP sum, and the canvas fill. The
- * rule is one sentence, and it is the one thing a new consumer must know:
+ * where they are produced. Cardinality uses an exact recursive sweep without
+ * constructing fragments; consumers that need drawable non-overlapping boxes
+ * use `disjointify`. The rule is one sentence, and it is the one thing a new
+ * consumer must know:
  *
  *     Cardinality is measured on the set. Boxes describe it; they do not
  *     count it. Summing box volumes double-counts the overlap.
@@ -239,14 +240,39 @@ export function canonicalize(r: Region, maxBoxes: number = MAX_BOXES): Region {
 }
 
 /**
+ * Memo for the default-cap disjoint form.
+ *
+ * Splitting is the expensive direction - each box is subtracted from every box
+ * already accepted, and the fragments accumulate - while callers ask for it
+ * repeatedly on the *same* region when painting and enumerating. Regions are
+ * immutable everywhere here (every operation returns a fresh one), so keying
+ * on identity is sound. A caller that mutated `boxes` in place would see a
+ * stale result, but the stored/disjoint distinction would already be
+ * meaningless if anything did that.
+ */
+const disjointMemo = new WeakMap<Region, Region>();
+
+/**
  * The disjoint form: split-on-overlap, then merge to a fixpoint.
  *
- * This is the measurement form, not the storage form. Every element appears in
- * exactly one box, so volumes may be summed - which is the only reason it
- * exists. Callers that draw, name, or attribute regions want the boxes instead;
- * callers that count anything want this.
+ * This is a rendering/iteration form, not the storage form. Every element
+ * appears in exactly one box, so a consumer that needs explicit pieces can
+ * process them without repeated compositing or enumeration. Cardinality does
+ * not need those pieces and is computed by `count` directly.
  */
 export function disjointify(r: Region, maxBoxes: number = MAX_BOXES): Region {
+  if (maxBoxes !== MAX_BOXES) return splitOnOverlap(r, maxBoxes);
+  const hit = disjointMemo.get(r);
+  if (hit) return hit;
+  const out = splitOnOverlap(r, MAX_BOXES);
+  disjointMemo.set(r, out);
+  // The disjoint form is its own answer, so a consumer that re-asks the form it
+  // was just handed does not split it a second time.
+  if (!disjointMemo.has(out)) disjointMemo.set(out, out);
+  return out;
+}
+
+function splitOnOverlap(r: Region, maxBoxes: number): Region {
   // 1. drop empties
   let boxes = r.boxes.filter((b) => !isEmptyBox(b));
   let exact = r.exact;
@@ -324,7 +350,6 @@ export function subtract(a: Region, b: Region): Region {
   return canonicalize({ boxes: frags, exact: a.exact && b.exact, reasons: a.reasons });
 }
 
-/** Number of distinct elements. Disjointifies internally, so overlapping boxes\n * contribute their shared elements once. */
 /**
  * True when some whole line along `axis` lies inside the region - the honest
  * form of "this cone pulls that axis in full".
@@ -338,25 +363,187 @@ export function subtract(a: Region, b: Region): Region {
  * merges of boxes that agree on every axis but one are performed, so nothing
  * fuses those two.
  *
- * Anchoring a unit line at each box's lower corner and asking whether the
- * region contains all of it proves containment against the union, so it can
- * never claim a pull the cone did not make.
+ * Sweep the other axes until their active set is constant, then ask whether
+ * the active intervals cover the target axis. This is the same dimensional
+ * reduction used by `count`, with an existential result and early exit.
  */
 export function coversAxisFully(r: Region, axis: number, extent: number): boolean {
-  for (const b of r.boxes) {
-    const line: Box = b.map((interval, i) =>
-      i === axis ? { lo: 0, hi: extent } : { lo: interval.lo, hi: interval.lo + 1 }
-    );
-    if (isEmpty(subtract(fromBox(line), r))) return true;
+  // An inexact region is a represented superset. Its intervals may bridge a
+  // hole that exists in the true dependency set, so it cannot prove coverage.
+  if (!r.exact || extent <= 0) return false;
+  const boxes = r.boxes.filter((b) => !isEmptyBox(b));
+  if (boxes.length === 0 || axis < 0 || axis >= boxes[0].length) return false;
+  const otherAxes = Array.from({ length: boxes[0].length }, (_, i) => i)
+    .filter((i) => i !== axis);
+  return hasFullyCoveredLine(boxes, otherAxes, axis, extent);
+}
+
+function intervalsCoverExtent(boxes: Box[], axis: number, extent: number): boolean {
+  const intervals = boxes
+    .map((b) => b[axis])
+    .sort((a, b) => a.lo - b.lo || b.hi - a.hi);
+  let reached = 0;
+  for (const interval of intervals) {
+    if (interval.lo > reached) return false;
+    if (interval.hi > reached) reached = interval.hi;
+    if (reached >= extent) return true;
   }
   return false;
 }
 
+function hasFullyCoveredLine(
+  boxes: Box[],
+  axes: number[],
+  targetAxis: number,
+  extent: number
+): boolean {
+  if (boxes.length === 0) return false;
+  if (axes.length === 0) return intervalsCoverExtent(boxes, targetAxis, extent);
+
+  let sweepAxis = axes[0];
+  let fewestEndpoints = Infinity;
+  for (const candidate of axes) {
+    const endpoints = new Set<number>();
+    for (const b of boxes) {
+      endpoints.add(b[candidate].lo);
+      endpoints.add(b[candidate].hi);
+    }
+    if (endpoints.size < fewestEndpoints) {
+      fewestEndpoints = endpoints.size;
+      sweepAxis = candidate;
+    }
+  }
+
+  type Events = { add: Box[]; remove: Box[] };
+  const events = new Map<number, Events>();
+  const at = (coordinate: number): Events => {
+    let event = events.get(coordinate);
+    if (!event) {
+      event = { add: [], remove: [] };
+      events.set(coordinate, event);
+    }
+    return event;
+  };
+  for (const b of boxes) {
+    at(b[sweepAxis].lo).add.push(b);
+    at(b[sweepAxis].hi).remove.push(b);
+  }
+
+  const coordinates = [...events.keys()].sort((a, b) => a - b);
+  const active = new Set<Box>();
+  const remaining = axes.filter((candidate) => candidate !== sweepAxis);
+  let previous = coordinates[0];
+  for (const coordinate of coordinates) {
+    if (coordinate > previous && active.size &&
+        hasFullyCoveredLine([...active], remaining, targetAxis, extent)) return true;
+    const event = events.get(coordinate)!;
+    for (const b of event.remove) active.delete(b);
+    for (const b of event.add) active.add(b);
+    previous = coordinate;
+  }
+  return false;
+}
+
+/** Exact cardinality of a union of boxes without materializing a partition.
+ *
+ * Sweep one axis between interval endpoints. Within each slab the active boxes
+ * are constant, so its measure is the slab width times the union measure of
+ * their projections. Choosing the axis with the fewest endpoints and stopping
+ * at one box keeps the common sparse/crossing cases small. Unlike
+ * `disjointify`, this never creates geometric fragments and therefore needs no
+ * box-count fallback: it measures the represented set exactly even when its
+ * cheapest disjoint description would be large.
+ *
+ * Cost is Klee's measure problem, and this is the naive recursive form: O(n^d)
+ * in the worst case for n boxes of rank d. Measured on crossing families, rank
+ * 2 stays near a millisecond at 256 boxes while rank 4 reaches ~140ms there.
+ * Cones are one to three boxes in practice and `count` is memoized per region,
+ * so the cliff is reachable only by a pathological selection on a rank-4
+ * tensor. Anything that starts hitting it wants a sweep with a segment tree
+ * rather than a wider fast path here. */
+function unionVolume(boxes: Box[], axes: number[]): number {
+  if (boxes.length === 0) return 0;
+  if (axes.length === 0) return 1;
+  if (boxes.length === 1) {
+    let volume = 1;
+    for (const axis of axes)
+      volume *= Math.max(0, boxes[0][axis].hi - boxes[0][axis].lo);
+    return volume;
+  }
+  if (axes.length === 1) {
+    const axis = axes[0];
+    const intervals = boxes
+      .map((b) => b[axis])
+      .sort((a, b) => a.lo - b.lo || b.hi - a.hi);
+    let total = 0;
+    let lo = intervals[0].lo;
+    let hi = intervals[0].hi;
+    for (let i = 1; i < intervals.length; i++) {
+      const interval = intervals[i];
+      if (interval.lo > hi) {
+        total += hi - lo;
+        lo = interval.lo;
+        hi = interval.hi;
+      } else if (interval.hi > hi) hi = interval.hi;
+    }
+    return total + hi - lo;
+  }
+
+  let sweepAxis = axes[0];
+  let fewestEndpoints = Infinity;
+  for (const axis of axes) {
+    const endpoints = new Set<number>();
+    for (const b of boxes) {
+      endpoints.add(b[axis].lo);
+      endpoints.add(b[axis].hi);
+    }
+    if (endpoints.size < fewestEndpoints) {
+      fewestEndpoints = endpoints.size;
+      sweepAxis = axis;
+    }
+  }
+
+  type Events = { add: Box[]; remove: Box[] };
+  const events = new Map<number, Events>();
+  const at = (coordinate: number): Events => {
+    let event = events.get(coordinate);
+    if (!event) {
+      event = { add: [], remove: [] };
+      events.set(coordinate, event);
+    }
+    return event;
+  };
+  for (const b of boxes) {
+    at(b[sweepAxis].lo).add.push(b);
+    at(b[sweepAxis].hi).remove.push(b);
+  }
+
+  const coordinates = [...events.keys()].sort((a, b) => a - b);
+  const active = new Set<Box>();
+  const remaining = axes.filter((axis) => axis !== sweepAxis);
+  let total = 0;
+  let previous = coordinates[0];
+  for (const coordinate of coordinates) {
+    if (coordinate > previous && active.size)
+      total += (coordinate - previous) * unionVolume([...active], remaining);
+    const event = events.get(coordinate)!;
+    for (const b of event.remove) active.delete(b);
+    for (const b of event.add) active.add(b);
+    previous = coordinate;
+  }
+  return total;
+}
+
+const countMemo = new WeakMap<Region, number>();
+
 export function count(r: Region): number {
-  const c = disjointify(r);
-  let n = 0;
-  for (const b of c.boxes) n += boxVolume(b);
-  return n;
+  const hit = countMemo.get(r);
+  if (hit !== undefined) return hit;
+  const boxes = r.boxes.filter((b) => !isEmptyBox(b));
+  const rank = boxes[0]?.length ?? 0;
+  const result = unionVolume(boxes, Array.from({ length: rank }, (_, axis) => axis));
+  countMemo.set(r, result);
+  return result;
 }
 
 /** @internal Exhaustive test oracle; never call on application-sized regions. */
@@ -472,9 +659,15 @@ export function partsOverlap(parts: Box[]): { unique: number; summed: number } {
   return { unique: count({ boxes: parts, exact: true, reasons: [] }), summed };
 }
 
-/** `partsOverlap` for a region's boxes. Zero gap means the boxes are disjoint. */
+/** `partsOverlap` for a region's boxes. Zero gap means the boxes are disjoint.
+ *
+ * Counts through `count(r)` on the region itself rather than rebuilding one
+ * from its boxes: a caller asking for elements and overlap together then pays
+ * for one union sweep, because the cardinality memo is keyed on identity. */
 export function regionOverlap(r: Region): { unique: number; summed: number } {
-  return partsOverlap(r.boxes);
+  let summed = 0;
+  for (const b of r.boxes) summed += boxVolume(b);
+  return { unique: count(r), summed };
 }
 
 /** Deterministic ordering, used for byte-identical output & tests. */

@@ -1,6 +1,6 @@
 import { ResolvedGraph } from "./graph";
 import { getOp } from "./ops/index";
-import { OpCtx } from "./ops/types";
+import { OpCtx, OpSpec } from "./ops/types";
 import { Box, Region, canonicalize, isEmpty, sortRegion, union } from "./region";
 
 export type Selection = { tensorId: string; region: Region };
@@ -26,23 +26,62 @@ export type PropResult = {
   reasons: string[];
 };
 
+type PropagationStep = {
+  spec: OpSpec;
+  ctx: OpCtx;
+  fromIds: string[];
+  toIds: string[];
+};
+
+type PropagationPlan = {
+  backward: PropagationStep[];
+  forward: PropagationStep[];
+};
+
+/** Resolve operation dispatch and shape context once per compiled graph.
+ * Interactive selection, per-box attribution, contribution probes, and reuse
+ * sampling all execute the same graph repeatedly; none should rebuild this
+ * immutable node context for every probe. */
+const planMemo = new WeakMap<ResolvedGraph, PropagationPlan>();
+
+function propagationPlan(graph: ResolvedGraph): PropagationPlan {
+  const cached = planMemo.get(graph);
+  if (cached) return cached;
+  const context = new Map<string, { spec: OpSpec; ctx: OpCtx }>();
+  for (const node of graph.topo) {
+    context.set(node.id, {
+      spec: getOp(node.op)!,
+      ctx: {
+        inShapes: graph.shapesOf(node.inputs),
+        outShapes: graph.shapesOf(node.outputs),
+        attrs: node.attrs,
+      },
+    });
+  }
+  const steps = (direction: "backward" | "forward") => {
+    const nodes = direction === "backward" ? [...graph.topo].reverse() : graph.topo;
+    return nodes.map((node): PropagationStep => ({
+      ...context.get(node.id)!,
+      fromIds: direction === "backward" ? node.outputs : node.inputs,
+      toIds: direction === "backward" ? node.inputs : node.outputs,
+    }));
+  };
+  const plan = { backward: steps("backward"), forward: steps("forward") };
+  planMemo.set(graph, plan);
+  return plan;
+}
+
 function propagate(graph: ResolvedGraph, sel: Selection, dir: "backward" | "forward"): PropResult {
   if (!graph.tensors[sel.tensorId]) throw new Error(`unknown tensor "${sel.tensorId}"`);
   const acc = new Map<string, TensorResult>();
   const seed = canonicalize(sel.region);
   acc.set(sel.tensorId, { region: seed, depth: 0 });
 
-  const nodes = dir === "backward" ? [...graph.topo].reverse() : graph.topo;
-
-  for (const node of nodes) {
-    const spec = getOp(node.op)!;
-    const ctx: OpCtx = {
-      inShapes: graph.shapesOf(node.inputs),
-      outShapes: graph.shapesOf(node.outputs),
-      attrs: node.attrs,
-    };
-    const fromIds = dir === "backward" ? node.outputs : node.inputs;
-    const toIds = dir === "backward" ? node.inputs : node.outputs;
+  for (const { spec, ctx, fromIds, toIds } of propagationPlan(graph)[dir]) {
+    // Most nodes in a wide graph may be unrelated to this seed. Test reachability
+    // before allocating pending regions; structural context is already cached.
+    const sources = fromIds.map((id) => acc.get(id));
+    if (!sources.some((src) => src && !isEmpty(src.region))) continue;
 
     // Union of contributions per destination tensor, canonicalized ONCE per node.
     const pending: { boxes: Box[]; exact: boolean; reasons: Set<string> }[] = toIds.map(() => ({
@@ -53,8 +92,8 @@ function propagate(graph: ResolvedGraph, sel: Selection, dir: "backward" | "forw
     let sourceDepth = Infinity;
     let touched = false;
 
-    for (let slot = 0; slot < fromIds.length; slot++) {
-      const src = acc.get(fromIds[slot]);
+    for (let slot = 0; slot < sources.length; slot++) {
+      const src = sources[slot];
       if (!src || isEmpty(src.region)) continue;
       touched = true;
       sourceDepth = Math.min(sourceDepth, src.depth);

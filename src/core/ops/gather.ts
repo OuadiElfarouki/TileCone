@@ -111,4 +111,5 @@ export const gatherOp: OpSpec = {
     return [[dataIdx], [[p]]];
   },
   flopsFor: () => 0,
+  flopsPerElement: () => 0,
 };

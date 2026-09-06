@@ -276,6 +276,16 @@ describe("a full-axis pull is seen however the boxes are arranged", () => {
     expect(coversAxisFully(between, 1, 256)).toBe(true);
   });
 
+  it("finds coverage at a mixed-coordinate cross-section", () => {
+    // The shared y/z cross-section exists, but neither box's lower corner lies
+    // inside the other. Checking only box corners would miss the full x line.
+    const mixed = union(
+      fromBox(box([0, 5], [5, 10], [0, 10])),
+      fromBox(box([5, 10], [0, 10], [5, 10]))
+    );
+    expect(coversAxisFully(mixed, 0, 10)).toBe(true);
+  });
+
   it("refuses an axis no line covers", () => {
     // one element short on both axes: nothing spans either
     const short = union(fromBox(box([0, 32], [0, 255])), fromBox(box([0, 255], [0, 32])));
@@ -392,5 +402,72 @@ describe("disjointify is a partition of the same set", () => {
     const before = JSON.parse(JSON.stringify(stored.boxes));
     disjointify(stored);
     expect(stored.boxes).toEqual(before);
+  });
+});
+
+describe("the disjoint form is computed once per region", () => {
+  const bands = union(fromBox(box([64, 128], [0, 256])), fromBox(box([0, 256], [32, 96])));
+
+  it("returns the same object for the same region", () => {
+    // Splitting is the expensive direction and callers ask repeatedly - `count`
+    // per readout, the FLOP loop per node, `drawGrid` per repaint. Returning a
+    // fresh clone each time would be correct and quietly costly, so identity is
+    // the assertion: a change that clones here shows up as a failure.
+    const first = disjointify(bands);
+    expect(disjointify(bands)).toBe(first);
+    expect(count(bands)).toBe(28672);
+  });
+
+  it("does not memoize a non-default cap", () => {
+    const many = { boxes: Array.from({ length: 40 }, (_, i) => box([i * 2, i * 2 + 1], [0, 4])), exact: true, reasons: [] };
+    const capped = disjointify(many, 8);
+    expect(capped.exact).toBe(false);
+    // the default-cap answer is unaffected by having asked for a capped one
+    expect(disjointify(many).exact).toBe(true);
+  });
+});
+
+describe("exact set cardinality without geometric splitting", () => {
+  it("measures a crossing family exactly after a disjoint form would hit its cap", () => {
+    const extent = 512;
+    const bands = Array.from({ length: 128 }, (_, i) => [
+      box([i * 3, i * 3 + 2], [0, extent]),
+      box([0, extent], [i * 3, i * 3 + 2]),
+    ]).flat();
+    const region = canonicalize({ boxes: bands, exact: true, reasons: [] });
+    const stripeArea = 128 * 2 * extent;
+    const intersections = 128 * 128 * 4;
+    expect(disjointify(region).exact).toBe(false);
+    expect(count(region)).toBe(2 * stripeArea - intersections);
+  });
+
+  it("agrees with exhaustive enumeration on deterministic random small regions", () => {
+    let state = 0x7a11c0de;
+    const random = () => {
+      state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+      return state / 0x100000000;
+    };
+    for (let rank = 1; rank <= 4; rank++) {
+      for (let sample = 0; sample < 40; sample++) {
+        const boxes = Array.from({ length: 1 + Math.floor(random() * 12) }, () =>
+          Array.from({ length: rank }, () => {
+            const lo = Math.floor(random() * 5);
+            return iv(lo, lo + 1 + Math.floor(random() * (6 - lo)));
+          })
+        );
+        const region = { boxes, exact: true, reasons: [] };
+        const unique = new Set([...points(region)].map((point) => point.join(","))).size;
+        expect(count(region)).toBe(unique);
+      }
+    }
+  });
+
+  it("does not infer full-axis coverage from an inexact bound", () => {
+    const approximate = {
+      boxes: [box([0, 4], [0, 8])],
+      exact: false,
+      reasons: ["test bound"],
+    };
+    expect(coversAxisFully(approximate, 1, 8)).toBe(false);
   });
 });

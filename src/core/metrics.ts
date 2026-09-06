@@ -95,6 +95,8 @@ export function computeMetrics(
       const tr = back.tensors.get(tid);
       if (!tr) return;
       if (spec.flopsForRegion) flops += spec.flopsForRegion(slot, tr.region, ctx);
+      else if (spec.flopsPerElement)
+        flops += count(tr.region) * spec.flopsPerElement(slot, ctx);
       // Per-box costs are summed, so they must be summed over a partition.
       // Tiles may overlap, and a shared element would otherwise be paid for
       // once per box that covers it.

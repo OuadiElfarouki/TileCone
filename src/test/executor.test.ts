@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ExecutionError, executeQuery } from "../core/executor";
-import { box, fromBox } from "../core/region";
+import { box, count, fromBox } from "../core/region";
 import { compileDSL } from "../parse/compiler";
 
 const gemm = () =>
@@ -65,6 +65,23 @@ Y = cumsum(X, axis=0)
     };
 
     expect(executor.metrics("Y", region).flops).toBe(128);
+  });
+
+  it("charges overlapping output boxes once without constructing a partition", () => {
+    const { executor } = compileDSL(`input A [512, 512] f16
+input B [512, 512] f16
+C = matmul(A, B)
+`);
+    const region = {
+      boxes: Array.from({ length: 32 }, (_, i) => [
+        box([i * 3, i * 3 + 2], [0, 512]),
+        box([0, 512], [i * 3, i * 3 + 2]),
+      ]).flat(),
+      exact: true,
+      reasons: [],
+    };
+
+    expect(executor.metrics("C", region).flops).toBe(count(region) * 2 * 512);
   });
 
   it("uses inferred cast dtypes for output and intermediate byte metrics", () => {

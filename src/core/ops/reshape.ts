@@ -306,4 +306,5 @@ export const reshapeOp: OpSpec = {
     return [[idx]];
   },
   flopsFor: () => 0,
+  flopsPerElement: () => 0,
 };

@@ -152,11 +152,15 @@ export const reduceOp: OpSpec = {
     return [deps];
   },
   flopsFor: (_s, outBox, ctx) => {
-    const { axes } = attrs(ctx);
     let vol = 1;
     for (const I of outBox) vol *= Math.max(0, I.hi - I.lo);
-    let red = 1;
-    for (const ax of axes) red *= ctx.inShapes[0][ax];
-    return vol * red;
+    return vol * reduceFlopsPerElement(ctx);
   },
+  flopsPerElement: (_slot, ctx) => reduceFlopsPerElement(ctx),
 };
+
+function reduceFlopsPerElement(ctx: OpCtx): number {
+  let reduced = 1;
+  for (const axis of attrs(ctx).axes) reduced *= ctx.inShapes[0][axis];
+  return reduced;
+}

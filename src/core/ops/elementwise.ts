@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Box, fromBox, iv } from "../region";
-import { OpSpec, uniformDTypeOutputs } from "./types";
+import { OpCtx, OpSpec, uniformDTypeOutputs } from "./types";
 import { broadcastAxisNames } from "./axis-names";
 import { broadcastSymShape } from "./sym-shape";
 
@@ -66,6 +66,13 @@ export const elementwiseOp: OpSpec = {
   flopsFor: (_slot, outBox, ctx) => {
     let vol = 1;
     for (const I of outBox) vol *= Math.max(0, I.hi - I.lo);
-    return vol * Math.max(1, ctx.inShapes.length - 1 + (["exp", "gelu", "silu", "tanh", "sigmoid", "sqrt", "rsqrt"].includes(ctx.attrs.fn as string) ? 4 : 0));
+    return vol * elementwiseFlopsPerElement(ctx);
   },
+  flopsPerElement: (_slot, ctx) => elementwiseFlopsPerElement(ctx),
 };
+
+function elementwiseFlopsPerElement(ctx: OpCtx): number {
+  return Math.max(1, ctx.inShapes.length - 1 +
+    (["exp", "gelu", "silu", "tanh", "sigmoid", "sqrt", "rsqrt"]
+      .includes(ctx.attrs.fn as string) ? 4 : 0));
+}

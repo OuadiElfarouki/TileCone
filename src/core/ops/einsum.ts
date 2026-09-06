@@ -150,16 +150,20 @@ function einsumOracleDeps(eq: string, outIndex: number[], ctx: OpCtx): number[][
 }
 
 function einsumFlops(eq: string, outBox: Box, ctx: OpCtx): number {
-  const pe = parseEquation(eq, ctx.inShapes.length);
-  const ext = labelExtents(pe, ctx.inShapes);
   let vol = 1;
   for (const I of outBox) vol *= Math.max(0, I.hi - I.lo);
+  return vol * einsumFlopsPerElement(eq, ctx);
+}
+
+function einsumFlopsPerElement(eq: string, ctx: OpCtx): number {
+  const pe = parseEquation(eq, ctx.inShapes.length);
+  const ext = labelExtents(pe, ctx.inShapes);
   let contr = 1;
   const outSet = new Set(pe.output);
   for (const [L, e] of ext) if (!outSet.has(L)) contr *= e;
   const n = pe.operands.length;
-  if (n >= 2) return 2 * (n - 1) * vol * contr;
-  return contr > 1 ? vol * contr : 0;
+  if (n >= 2) return 2 * (n - 1) * contr;
+  return contr > 1 ? contr : 0;
 }
 
 
@@ -298,6 +302,7 @@ export const einsumOp: OpSpec = {
   forward: (inSlot, inBox, ctx) => einsumForward(eqOf(ctx.attrs), inSlot, inBox, ctx),
   oracleDeps: (_slot, outIndex, ctx) => einsumOracleDeps(eqOf(ctx.attrs), outIndex, ctx),
   flopsFor: (_slot, outBox, ctx) => einsumFlops(eqOf(ctx.attrs), outBox, ctx),
+  flopsPerElement: (_slot, ctx) => einsumFlopsPerElement(eqOf(ctx.attrs), ctx),
   dependencyNote: (ctx) => einsumDependencyNote(eqOf(ctx.attrs), ctx),
 };
 
@@ -322,6 +327,7 @@ function einsumSugar(
     forward: (inSlot, inBox, ctx) => einsumForward(eqFor(ctx), inSlot, inBox, ctx),
     oracleDeps: (_s, outIndex, ctx) => einsumOracleDeps(eqFor(ctx), outIndex, ctx),
     flopsFor: (_s, outBox, ctx) => einsumFlops(eqFor(ctx), outBox, ctx),
+    flopsPerElement: (_slot, ctx) => einsumFlopsPerElement(eqFor(ctx), ctx),
     dependencyNote: (ctx) => einsumDependencyNote(eqFor(ctx), ctx),
   };
 }

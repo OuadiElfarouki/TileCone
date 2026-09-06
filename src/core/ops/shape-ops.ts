@@ -74,6 +74,7 @@ export const transposeOp: OpSpec = {
     return [[inIdx]];
   },
   flopsFor: zero,
+  flopsPerElement: zero,
 };
 
 // -------------------------------------------------------------------- slice
@@ -156,6 +157,7 @@ export const sliceOp: OpSpec = {
     return [[outIndex.map((o, ax) => starts[ax] + o * steps[ax])]];
   },
   flopsFor: zero,
+  flopsPerElement: zero,
 };
 
 // ---------------------------------------------------------------------- pad
@@ -261,6 +263,7 @@ export const padOp: OpSpec = {
     return [[idx]];
   },
   flopsFor: zero,
+  flopsPerElement: zero,
 };
 
 // ------------------------------------------------------------ concat / split
@@ -339,6 +342,7 @@ export const concatOp: OpSpec = {
     return deps;
   },
   flopsFor: zero,
+  flopsPerElement: zero,
 };
 
 export const splitOp: OpSpec = {
@@ -395,6 +399,7 @@ export const splitOp: OpSpec = {
     return [[idx]];
   },
   flopsFor: zero,
+  flopsPerElement: zero,
 };
 
 // ------------------------------------------------------------------- expand
@@ -429,6 +434,7 @@ export const expandOp: OpSpec = {
   ],
   oracleDeps: (_s, outIndex, ctx) => [[broadcastOracleIndex(outIndex, ctx.inShapes[0])]],
   flopsFor: zero,
+  flopsPerElement: zero,
 };
 
 // ---------------------------------------------------------- identity family
@@ -446,6 +452,7 @@ export function identityLike(name: string): OpSpec {
     forward: (_s, inBox) => [fromBox(inBox.map((I) => ({ ...I })))],
     oracleDeps: (_s, outIndex) => [[outIndex.slice()]],
     flopsFor: zero,
+    flopsPerElement: zero,
   };
 }
 

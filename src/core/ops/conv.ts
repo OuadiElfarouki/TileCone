@@ -303,12 +303,17 @@ export const convOp: OpSpec = {
     return [xDeps, wDeps];
   },
   flopsFor: (_s, outBox, ctx) => {
-    const c = convCfg(ctx);
     let vol = 1;
     for (const I of outBox) vol *= Math.max(0, I.hi - I.lo);
-    return 2 * vol * c.cpgIn * c.kernel.reduce((a, b) => a * b, 1);
+    return vol * convFlopsPerElement(ctx);
   },
+  flopsPerElement: (_slot, ctx) => convFlopsPerElement(ctx),
 };
+
+function convFlopsPerElement(ctx: OpCtx): number {
+  const c = convCfg(ctx);
+  return 2 * c.cpgIn * c.kernel.reduce((a, b) => a * b, 1);
+}
 
 type PoolAttrs = {
   kind: "max" | "avg";
@@ -407,9 +412,14 @@ export const poolOp: OpSpec = {
     return [deps];
   },
   flopsFor: (_s, outBox, ctx) => {
-    const a = ctx.attrs as PoolAttrs;
     let vol = 1;
     for (const I of outBox) vol *= Math.max(0, I.hi - I.lo);
-    return vol * a.kernelShape.reduce((x, y) => x * y, 1);
+    return vol * poolFlopsPerElement(ctx);
   },
+  flopsPerElement: (_slot, ctx) => poolFlopsPerElement(ctx),
 };
+
+function poolFlopsPerElement(ctx: OpCtx): number {
+  const a = ctx.attrs as PoolAttrs;
+  return a.kernelShape.reduce((x, y) => x * y, 1);
+}

@@ -714,6 +714,17 @@ describe("per-box dependency attribution", () => {
     expect(perA).toBe(aggA); // the two row bands are disjoint here
   });
 
+  it("reuses unchanged per-box cones when another part is added or edited", () => {
+    S().setSelection("C", fromBox(box([0, 64], [0, 64])), "replace");
+    const first = S().perBox![0];
+    S().setSelection("C", fromBox(box([192, 256], [128, 192])), "union");
+    expect(S().perBox![0]).toBe(first);
+    const second = S().perBox![1];
+    S().replaceBox(1, box([160, 224], [128, 192]));
+    expect(S().perBox![0]).toBe(first);
+    expect(S().perBox![1]).not.toBe(second);
+  });
+
   it("forward attribution is computed per box in downstream mode", () => {
     S().setDirection("forward");
     S().setSelection("A", fromBox(box([0, 8], [0, 512])), "replace");

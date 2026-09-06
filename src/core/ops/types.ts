@@ -142,6 +142,11 @@ export interface OpSpec {
   /** Approximate FLOPs to compute the given output box. Data movement ops return 0. */
   flopsFor(outSlot: number, outBox: Box, ctx: OpCtx): number;
 
+  /** Uniform work per distinct output element. Metrics use this to measure an
+   * overlapping region with `count` directly, avoiding a disjoint partition.
+   * Omit it when location or box shape changes the per-element work. */
+  flopsPerElement?(outSlot: number, ctx: OpCtx): number;
+
   /**
    * A note plus the identity of the constraint it describes. Notes sharing a
    * `key` are the same statement about different tensors : three QKV
