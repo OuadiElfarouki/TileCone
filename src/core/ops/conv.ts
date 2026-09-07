@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Box, Interval, Region, canonicalize, empty, fromBox, iv } from "../region";
 import { productBoxes } from "./shape-ops";
-import { DependencyNoteDraft, NoteCtx, OpCtx, OpSpec, STRIDED_ENUM_CAP, uniformDTypeOutputs } from "./types";
+import { DependencyNoteDraft, NoteCtx, OpCtx, OpSpec, STRIDED_ENUM_CAP, promotingDTypeOutputs, uniformDTypeOutputs } from "./types";
 import { sameAxisNames } from "./axis-names";
 
 /**
@@ -198,7 +198,7 @@ export const convOp: OpSpec = {
     ],
   ],
   dependencyNote: convDependencyNote,
-  inferDTypes: uniformDTypeOutputs("conv"),
+  inferDTypes: promotingDTypeOutputs("conv"),
   inferShapes: (inShapes, attrs) => {
     const a = attrs as ConvAttrs;
     const [xSh, wSh] = inShapes;

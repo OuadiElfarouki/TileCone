@@ -50,10 +50,14 @@ themselves. Every element of every tensor gets a unique id; id-sets propagate fo
 graph using each op's *pointwise semantics* (`oracleDeps`), never its box-level backward rule. The
 analytic region must then **equal** the oracle set when `exact`, and **contain** it when not.
 
-That oracle runs over every op in the registry, randomly generated 5–15 node graphs including
-diamonds, and all the built-in examples at miniature shapes. Other suites cover the region algebra,
-reshape (the one genuinely hard op), forward/backward adjointness, primitive-vs-expanded composite
-equivalence, tile sizing and coverage, and determinism.
+That oracle runs over every op in the registry — enforced, not intended: `listOps()` drives a
+coverage test against a fixture table, so a newly registered op fails the suite until it has one.
+It also runs over randomly generated 5–15 node graphs including diamonds, and all the built-in
+examples at miniature shapes. A separate registry-wide law checks that `forward` and `backward`
+agree about whether the dependency relation between a given input box and output box is empty,
+which needs no oracle and so applies to every op at any size. Other suites cover the region algebra,
+reshape (the one genuinely hard op), primitive-vs-expanded composite equivalence, tile sizing and
+coverage, multi-error diagnostics, and determinism.
 
 ## Layout
 
@@ -68,7 +72,7 @@ src/
     metrics.ts   flops, bytes, intensity
     reuse.ts     deterministic sampled reuse estimates
     expand.ts    composite ops -> primitive subgraphs
-  parse/         DSL/JSON front ends + source-aware compiler facade
+  parse/         lexer -> AST -> graph, JSON front end, compiler facade
   ui/            React + canvas; store.ts holds all view state
   examples/      built-in demo graphs
   test/          oracle + suites
@@ -99,8 +103,14 @@ const cone = program.executor.upstream(
 );
 ```
 
-Use `tryCompileDSL` when diagnostics should be returned as data instead of thrown. The lower-level
-`parseDSL`, `resolveGraph`, and propagation functions remain available for tests and tooling.
+Use `tryCompileDSL` when diagnostics should be returned as data instead of thrown. It reports
+**every** independent error in one pass, in source order, each underlining the narrowest part it
+is certainly about — the offending tensor reference, the misspelled attribute, the unknown call
+name — rather than the whole statement. Parsing recovers per line, and a failed statement poisons
+the names it would have bound so that its consequences are not reported as further mistakes.
+
+The lower-level `parseProgram` (text → AST), `lowerProgram` (AST → graph), `resolveGraph`, and the
+propagation functions remain available for tests and tooling.
 
 ## Notes on the UI
 

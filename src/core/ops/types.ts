@@ -1,7 +1,7 @@
 import type { ZodType } from "zod";
 import type { Box, Region } from "../region";
 import type { Sym } from "../shapes";
-import type { DType } from "../dtypes";
+import { DType, promoteDTypes } from "../dtypes";
 
 /**
  * One tensor's own short reason: why *its* footprint has the shape it has.
@@ -179,14 +179,39 @@ export interface OpSpec {
 export const STRIDED_ENUM_CAP = 512;
 export const DIAG_ENUM_CAP = 256;
 
-/** Require all inputs to share one dtype and apply it to every inferred output. */
+/**
+ * Require all inputs to share one dtype and apply it to every inferred output.
+ *
+ * Correct for the ops that move data rather than compute with it: a `concat` of
+ * an fp16 and an fp32 tensor has no single representation to produce, and the
+ * author almost certainly meant to cast one of them. For single-input ops this
+ * is simply "carry the dtype through". Compute ops use `promotingDTypeOutputs`.
+ */
 export function uniformDTypeOutputs(op: string) {
   return (inDTypes: DType[], _attrs: Attrs, outShapes: number[][]): DType[] => {
     const dtype = inDTypes[0];
     if (!dtype) throw new Error(`${op}: expected at least one input dtype`);
     const mismatch = inDTypes.find((candidate) => candidate !== dtype);
     if (mismatch)
-      throw new Error(`${op}: input dtypes must match, got [${inDTypes.join(", ")}]`);
+      throw new Error(
+        `${op}: input dtypes must match, got [${inDTypes.join(", ")}]` +
+          ` — insert a cast(...) to choose the one you want`
+      );
+    return outShapes.map(() => dtype);
+  };
+}
+
+/**
+ * Promote across inputs and apply the result to every output.
+ *
+ * For operations that compute a value from several tensors, where mixing
+ * precisions is ordinary practice rather than a mistake. See `promoteDType` for
+ * the lattice and why `f16` with `bf16` widens to `f32`.
+ */
+export function promotingDTypeOutputs(op: string) {
+  return (inDTypes: DType[], _attrs: Attrs, outShapes: number[][]): DType[] => {
+    if (!inDTypes.length) throw new Error(`${op}: expected at least one input dtype`);
+    const dtype = promoteDTypes(inDTypes);
     return outShapes.map(() => dtype);
   };
 }

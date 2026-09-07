@@ -2,7 +2,7 @@
 
 import { ZodObject, ZodType, ZodIssue } from "zod";
 import { getOp } from "./ops/index";
-import { GraphError, resolveShape, Shape } from "./shapes";
+import { GraphError, GraphErrorSubject, resolveShape, Shape } from "./shapes";
 import { DTYPES, DType } from "./dtypes";
 import type { AxisNames, Cardinality } from "./ops/types";
 
@@ -201,22 +201,123 @@ function nearestKey(unknown: string, known: string[]): string | null {
 }
 
 /** An unrecognized attribute is the failure worth explaining well: `keepdims`
- * for `keepdim` used to resolve to a different shape without a word. */
-function describeAttrIssue(issue: ZodIssue, schema: ZodType<unknown>): string {
+ * for `keepdim` used to resolve to a different shape without a word.
+ *
+ * Returns the attribute the issue is about alongside the prose, so a caller
+ * with source spans can underline that attribute instead of re-deriving its
+ * name from the sentence this function just wrote. */
+function describeAttrIssue(
+  issue: ZodIssue,
+  schema: ZodType<unknown>
+): { message: string; attribute?: string } {
   if (issue.code === "unrecognized_keys") {
     const known = schema instanceof ZodObject ? Object.keys(schema.shape as object) : [];
-    return issue.keys
-      .map((key) => {
-        const suggestion = nearestKey(key, known);
-        if (suggestion) return `unknown attribute "${key}" (did you mean "${suggestion}"?)`;
-        return known.length
-          ? `unknown attribute "${key}"; this op takes ${known.join(", ")}`
-          : `unknown attribute "${key}"; this op takes no attributes`;
-      })
-      .join("; ");
+    return {
+      // The written key, not a declared one: it is what the author can see.
+      attribute: issue.keys[0],
+      message: issue.keys
+        .map((key) => {
+          const suggestion = nearestKey(key, known);
+          if (suggestion) return `unknown attribute "${key}" (did you mean "${suggestion}"?)`;
+          return known.length
+            ? `unknown attribute "${key}"; this op takes ${known.join(", ")}`
+            : `unknown attribute "${key}"; this op takes no attributes`;
+        })
+        .join("; "),
+    };
   }
   const path = issue.path.join(".");
-  return path ? `${path}: ${issue.message}` : issue.message;
+  return {
+    attribute: typeof issue.path[0] === "string" ? issue.path[0] : undefined,
+    message: path ? `${path}: ${issue.message}` : issue.message,
+  };
+}
+
+/**
+ * Remove one failed subject and everything that depended on it.
+ *
+ * Used only by `resolveGraphCollecting`. Pruning the dependents is the whole
+ * point: a node whose input never resolved will fail for a reason that is not
+ * the author's, and reporting that would bury the one error they can act on.
+ */
+function pruneSubject(g: Graph, subject: GraphErrorSubject): Graph {
+  const deadTensors = new Set<string>();
+  const deadNodes = new Set<string>();
+  if (subject.kind === "tensor") deadTensors.add(subject.id);
+  if (subject.kind === "node") {
+    deadNodes.add(subject.id);
+    for (const n of g.nodes) if (n.id === subject.id) n.outputs.forEach((t) => deadTensors.add(t));
+  }
+
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const n of g.nodes) {
+      if (deadNodes.has(n.id)) continue;
+      if (![...n.inputs, ...n.outputs].some((t) => deadTensors.has(t))) continue;
+      deadNodes.add(n.id);
+      n.outputs.forEach((t) => {
+        if (!deadTensors.has(t)) {
+          deadTensors.add(t);
+          changed = true;
+        }
+      });
+      changed = true;
+    }
+  }
+
+  const tensors: Record<string, Tensor> = {};
+  for (const [id, t] of Object.entries(g.tensors)) if (!deadTensors.has(id)) tensors[id] = t;
+  return {
+    nodes: g.nodes.filter((n) => !deadNodes.has(n.id)),
+    tensors,
+    params: g.params,
+  };
+}
+
+export type CollectedResolution = {
+  /** Resolution of the graph with every failed subject pruned out; null when
+   * even the pruned graph could not be resolved. */
+  resolved: ResolvedGraph | null;
+  errors: GraphError[];
+};
+
+/**
+ * Resolve, reporting every independent failure rather than only the first.
+ *
+ * Implemented by resolving repeatedly and pruning the subject of each error,
+ * deliberately rather than by threading an error list through `resolveGraph`.
+ * A second, collecting copy of that validation would be free to drift from the
+ * throwing one, and the two disagreeing about whether a graph is valid is a
+ * worse failure than the extra passes cost: resolution is milliseconds and the
+ * loop runs once per *distinct* error, which is a handful.
+ *
+ * An error with no locatable subject - a cycle, a malformed graph - ends the
+ * loop, because there is nothing to prune and retrying would not terminate.
+ */
+export function resolveGraphCollecting(source: Graph): CollectedResolution {
+  const errors: GraphError[] = [];
+  let working = source;
+  // Bounded by construction (each pass prunes at least one node or tensor), but
+  // capped anyway so a future pruning bug cannot spin.
+  const limit = source.nodes.length + Object.keys(source.tensors).length + 1;
+  for (let pass = 0; pass <= limit; pass++) {
+    try {
+      return { resolved: resolveGraph(working), errors };
+    } catch (e) {
+      if (!(e instanceof GraphError)) throw e;
+      errors.push(e);
+      if (!e.subject || e.subject.kind === "parameter")
+        return { resolved: null, errors };
+      const pruned = pruneSubject(cloneGraph(working), e.subject);
+      if (
+        pruned.nodes.length === working.nodes.length &&
+        Object.keys(pruned.tensors).length === Object.keys(working.tensors).length
+      )
+        return { resolved: null, errors };
+      working = pruned;
+    }
+  }
+  return { resolved: null, errors };
 }
 
 export function resolveGraph(source: Graph): ResolvedGraph {
@@ -255,14 +356,16 @@ export function resolveGraph(source: Graph): ResolvedGraph {
     validateCardinality(n, "input", n.inputs.length, spec.arity.inputs);
     validateCardinality(n, "output", n.outputs.length, spec.arity.outputs);
     const parsed = strictAttrs(spec.attrSchema).safeParse(n.attrs ?? {});
-    if (!parsed.success)
-      throw new GraphError(
-        `node "${n.id}" (${n.op}): bad attrs: ${parsed.error.issues
-          .map((issue) => describeAttrIssue(issue, spec.attrSchema))
-          .join("; ")}`,
-        "GRAPH_INVALID_ATTRIBUTES",
-        { kind: "node", id: n.id }
+    if (!parsed.success) {
+      const described = parsed.error.issues.map((issue) =>
+        describeAttrIssue(issue, spec.attrSchema)
       );
+      throw new GraphError(
+        `node "${n.id}" (${n.op}): bad attrs: ${described.map((d) => d.message).join("; ")}`,
+        "GRAPH_INVALID_ATTRIBUTES",
+        { kind: "node", id: n.id, attribute: described.find((d) => d.attribute)?.attribute }
+      );
+    }
     n.attrs = parsed.data as Record<string, unknown>;
     try {
       spec.validateArity?.(n.inputs.length, n.outputs.length, n.attrs);

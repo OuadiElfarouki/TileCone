@@ -1,7 +1,8 @@
 import { SymbolicExecutor } from "../core/executor";
-import { Graph, ResolvedGraph, resolveGraph } from "../core/graph";
+import { Graph, ResolvedGraph, resolveGraphCollecting } from "../core/graph";
 import { GraphError } from "../core/shapes";
-import { DSLError, parseDSLWithSource } from "./dsl";
+import { lowerProgram } from "./lower";
+import { DSLError, parseProgram } from "./parser";
 import { DSLSourceMap, SourceSpan } from "./source";
 
 export type DiagnosticPhase = "parse" | "semantic";
@@ -62,9 +63,26 @@ function semanticCode(error: GraphError): string {
   }
 }
 
+/**
+ * The narrowest span that is still certainly about this error.
+ *
+ * A statement span is the fallback, not the goal: when the message names an
+ * attribute the author wrote, underline that attribute instead of the line.
+ * An unknown *op* underlines the call name for the same reason.
+ */
 function semanticSpan(error: GraphError, sourceMap: DSLSourceMap): SourceSpan {
   const subject = error.subject;
-  if (subject?.kind === "node" && sourceMap.nodes[subject.id]) return sourceMap.nodes[subject.id];
+  if (subject?.kind === "node" && sourceMap.nodes[subject.id]) {
+    const args = sourceMap.nodeArgs[subject.id];
+    if (args) {
+      if (error.code === "GRAPH_UNKNOWN_OP") return args.callee;
+      // The attribute the error names, when it names one and the author wrote
+      // it: a defaulted attribute has no span because it appears in no text.
+      const attr = subject.attribute;
+      if (attr && args.attrs[attr]) return args.attrs[attr];
+    }
+    return sourceMap.nodes[subject.id];
+  }
   if (subject?.kind === "tensor" && sourceMap.tensors[subject.id])
     return sourceMap.tensors[subject.id];
   if (subject?.kind === "parameter" && sourceMap.params[subject.id])
@@ -72,55 +90,77 @@ function semanticSpan(error: GraphError, sourceMap: DSLSourceMap): SourceSpan {
   return sourceMap.document;
 }
 
-/** Compile DSL text into one validated, executable symbolic program. */
-export function tryCompileDSL(source: string): CompilationResult {
-  let parsed: ReturnType<typeof parseDSLWithSource>;
-  try {
-    parsed = parseDSLWithSource(source);
-  } catch (error) {
-    if (error instanceof DSLError)
-      return {
-        ok: false,
-        diagnostics: [
-          {
-            severity: "error",
-            phase: "parse",
-            code: error.code,
-            message: error.detail,
-            span: error.span,
-          },
-        ],
-      };
-    throw error;
-  }
+const asDiagnostic = (error: DSLError, phase: DiagnosticPhase): CompilerDiagnostic => ({
+  severity: "error",
+  phase,
+  code: error.code,
+  message: error.detail,
+  span: error.span,
+});
 
-  let resolved: ResolvedGraph;
-  try {
-    resolved = resolveGraph(parsed.graph);
-  } catch (error) {
-    if (error instanceof GraphError) {
-      const message = error.message;
-      return {
-        ok: false,
-        diagnostics: [
-          {
-            severity: "error",
-            phase: "semantic",
-            code: semanticCode(error),
-            message,
-            span: semanticSpan(error, parsed.sourceMap),
-          },
-        ],
-      };
-    }
-    throw error;
-  }
+/** Diagnostics in the order the author reads them, not the order phases ran. */
+function inSourceOrder(diagnostics: CompilerDiagnostic[]): CompilerDiagnostic[] {
+  return [...diagnostics].sort(
+    (a, b) => a.span.start.line - b.span.start.line || a.span.start.column - b.span.start.column
+  );
+}
+
+/**
+ * Compile DSL text into one validated, executable symbolic program.
+ *
+ * Every phase reports everything it found. Parse errors are per line, lowering
+ * errors are per statement, and resolution errors are per node or tensor, so a
+ * document with four unrelated mistakes returns four diagnostics rather than
+ * making the author fix and recompile four times.
+ *
+ * Later phases still run after an earlier one failed, on whatever the earlier
+ * phase could make sense of. That is what turns "one error per compile" into
+ * "one pass per compile": a bad line and a shape mismatch three lines down are
+ * independent facts, and the author wants both.
+ */
+export function tryCompileDSL(source: string): CompilationResult {
+  const { program: ast, errors: parseErrors } = parseProgram(source);
+  const lowered = lowerProgram(ast);
+  const diagnostics: CompilerDiagnostic[] = [
+    ...parseErrors.map((e) => asDiagnostic(e, "parse")),
+    ...lowered.errors.map((e) => asDiagnostic(e, "parse")),
+  ];
+
+  // Resolution runs on what lowering produced even when lowering failed: the
+  // surviving statements are still worth checking, and their errors are real.
+  const { resolved, errors: graphErrors } = resolveGraphCollecting(lowered.graph);
+  for (const error of graphErrors)
+    diagnostics.push({
+      severity: "error",
+      phase: "semantic",
+      code: semanticCode(error),
+      message: error.message,
+      span: semanticSpan(error, lowered.sourceMap),
+    });
+
+  if (diagnostics.length || !resolved)
+    return {
+      ok: false,
+      diagnostics: inSourceOrder(
+        diagnostics.length
+          ? diagnostics
+          : [
+              {
+                severity: "error",
+                phase: "semantic",
+                code: "SEM_INVALID_GRAPH",
+                message: "graph could not be resolved",
+                span: lowered.sourceMap.document,
+              },
+            ]
+      ),
+    };
 
   const program: CompiledDSL = {
     source,
-    graph: parsed.graph,
+    graph: lowered.graph,
     resolved,
-    sourceMap: parsed.sourceMap,
+    sourceMap: lowered.sourceMap,
     executor: new SymbolicExecutor(resolved),
   };
   return { ok: true, program, diagnostics: [] };

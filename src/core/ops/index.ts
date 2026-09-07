@@ -30,6 +30,18 @@ export function getOp(name: string): OpSpec | undefined {
   return registry.get(name);
 }
 
+/**
+ * Every registered operation, in registration order.
+ *
+ * Exported so that "the op registry" can be a thing tests and tooling iterate
+ * rather than a list maintained by hand in parallel with this file. The oracle
+ * corpus and the adjointness law both drive off it, so registering an operation
+ * without a fixture fails the suite instead of silently going untested.
+ */
+export function listOps(): OpSpec[] {
+  return [...registry.values()];
+}
+
 [
   einsumOp,
   matmulOp,

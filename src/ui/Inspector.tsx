@@ -905,6 +905,8 @@ export function Inspector(): React.ReactElement {
   const approxReasons = [
     ...new Set(visibleRows.filter((row) => !row.exact).flatMap((row) => row.reasons)),
   ];
+  /** Prefix for a cost figure measured over an over-approximated region. */
+  const bound = metrics && !metrics.exact ? "\u2264\u202f" : "";
 
   /** Reuse factor (§5.5): sample selection-sized output tiles across the selected
    * tensor; count how many touch the current footprint on each input. The sweep
@@ -1007,21 +1009,41 @@ export function Inspector(): React.ReactElement {
 
             {metrics && (
               <>
+                {/* These figures are bounds when any region they were measured
+                    on was widened, and the relation is exactly "no more than" -
+                    a region is never a subset of the truth. `<=` says that;
+                    `~` would suggest the number could also be an overestimate
+                    in the other direction, which it cannot. */}
                 <div className="ins-section">
                   <div className="ins-title">
                     {focusedBox !== null && perBox
                       ? `Cost to compute tile ${focusedBox + 1}`
                       : "Cost to compute this tile"}
+                    {/* Every figure below is measured over the cone's regions,
+                        so an over-approximated region makes all of them upper
+                        bounds. The rows already say so individually; without
+                        this the totals were the one place a bound was printed
+                        as a count. */}
+                    {!metrics.exact && (
+                      <span className="badge approx" title={metrics.reasons.join("; ")}>≈</span>
+                    )}
                   </div>
                   <div className="kv">
-                    <span>FLOPs</span><span>{fmt(metrics.flops)}</span>
-                    <span>input bytes</span><span>{formatBytes(metrics.inputBytes)}</span>
-                    <span>intermediate</span><span>{formatBytes(metrics.intermediateBytes)}</span>
-                    <span>output bytes</span><span>{formatBytes(metrics.outputBytes)}</span>
+                    <span>FLOPs</span><span>{bound}{fmt(metrics.flops)}</span>
+                    <span>input bytes</span><span>{bound}{formatBytes(metrics.inputBytes)}</span>
+                    <span>intermediate</span><span>{bound}{formatBytes(metrics.intermediateBytes)}</span>
+                    <span>output bytes</span><span>{bound}{formatBytes(metrics.outputBytes)}</span>
                     <span>working set</span>
-                    <span>{formatBytes(metrics.inputBytes + metrics.intermediateBytes + metrics.outputBytes)}</span>
-                    <span>intensity</span><span>{metrics.intensity.toFixed(2)} FLOP/B</span>
+                    <span>{bound}{formatBytes(metrics.inputBytes + metrics.intermediateBytes + metrics.outputBytes)}</span>
+                    <span>intensity</span><span>{bound}{metrics.intensity.toFixed(2)} FLOP/B</span>
                   </div>
+                  {!metrics.exact && (
+                    <p className="hint overlap">
+                      Upper bounds, not counts: {metrics.reasons.join(", ")} widened a
+                      region these figures were measured on. Read each as “no more
+                      than”. They are never understated.
+                    </p>
+                  )}
                   <label className="chk">
                     <input type="checkbox" checked={countIntermediates} onChange={(e) => setCountIntermediates(e.target.checked)} />
                     count intermediates in bytes

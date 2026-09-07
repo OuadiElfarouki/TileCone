@@ -13,7 +13,8 @@ import {
   translatePart,
 } from "../core/region";
 import { EXAMPLES } from "../examples/index";
-import { compileDSL } from "../parse/compiler";
+import type { CompilerDiagnostic } from "../parse/compiler";
+import { compileDSL, tryCompileDSL } from "../parse/compiler";
 import { toDSL } from "../parse/dsl";
 import { graphScale, MAX_ELEM_PX, planeExtents, TILE_SCALE_MAX, TILE_SCALE_MIN } from "./tiling";
 import { tileOf } from "./grid";
@@ -141,6 +142,16 @@ type State = {
   graph: Graph | null;
   resolved: ResolvedGraph | null;
   loadError: string | null;
+  /**
+   * Every diagnostic from the last failed compile, in source order.
+   *
+   * `loadError` remains the first one's message because callers outside the
+   * source panel only want "did it fail, and why" in one line. This is the
+   * list the editor shows: the compiler reports all independent errors in one
+   * pass, and reducing that to the first would put the author back on the
+   * fix-one-recompile loop the collecting phases exist to end.
+   */
+  diagnostics: CompilerDiagnostic[];
 
   /** `region.boxes` are the user's ordered PARTS (identity-stable, may overlap),
    * never a canonicalized set. See the note in core/region.ts. */
@@ -266,6 +277,18 @@ export type BoxProp = { backward: PropResult | null; forward: PropResult | null 
 
 /** Above this many boxes, per-box attribution costs more than it is worth. */
 export const MAX_PER_BOX_PROPS = 12;
+
+/**
+ * Above this many nodes, hovering does not compute a preview cone.
+ *
+ * The bound is a frame budget, not a guess. A bidirectional query costs roughly
+ * 3us per node, so a thousand nodes is about 6ms - comfortably inside a frame,
+ * with the rest of it left for painting. The cap was previously less than half
+ * this because the query ran once per *pointer event* rather than once per
+ * frame, which on a high-polling-rate mouse is an order of magnitude more work
+ * for the same picture; `useFrameThrottle` is what removed that multiplier.
+ */
+export const MAX_PREVIEW_NODES = 1000;
 
 function initialTheme(): Theme {
   if (typeof window === "undefined") return "light";
@@ -446,7 +469,7 @@ export function startingTiles(
 
 function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
   State,
-  | "graph" | "resolved" | "loadError" | "selection" | "backwardRes" | "forwardRes"
+  | "graph" | "resolved" | "loadError" | "diagnostics" | "selection" | "backwardRes" | "forwardRes"
   | "perBox" | "focusedBox" | "pinnedBox" | "viewCfgs" | "preview" | "graphPx"
   | "hiddenBoxes" | "workspaceHistory" | "tensorOffsets"
 > {
@@ -456,6 +479,7 @@ function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
     graph,
     resolved,
     loadError: null,
+    diagnostics: [],
     selection: null,
     // Undo entries refer to tensor IDs and coordinates in one resolved graph.
     // They must never survive a graph replacement or composite rewrite.
@@ -480,6 +504,7 @@ export const useStore = create<State>((set, get) => ({
   graph: null,
   resolved: null,
   loadError: null,
+  diagnostics: [],
   selection: null,
   workspaceHistory: [],
   direction: "both",
@@ -512,14 +537,27 @@ export const useStore = create<State>((set, get) => ({
     set({
       draftText: EXAMPLES[i].dsl,
       loadError: null,
+      diagnostics: [],
     });
   },
 
   setDraftText: (text) => set({ draftText: text }),
 
   applyDSL: (text) => {
+    // `tryCompileDSL` rather than the throwing form: a thrown CompilationError
+    // flattens to its first diagnostic's message, and the editor wants all of
+    // them. Everything the compiler found in one pass reaches the panel.
+    const result = tryCompileDSL(text);
+    if (!result.ok) {
+      set({
+        draftText: text,
+        diagnostics: result.diagnostics,
+        loadError: `line ${result.diagnostics[0].span.start.line}: ${result.diagnostics[0].message}`,
+      });
+      return;
+    }
     try {
-      const program = compileDSL(text);
+      const program = result.program;
       const base = loadResolvedGraph(program.graph, program.resolved);
       // A source that is exactly a built-in example *is* that example, however
       // it got here - picked from the menu, restored from a link, or typed.
@@ -547,9 +585,13 @@ export const useStore = create<State>((set, get) => ({
         st.pinnedBox = null;
         Object.assign(st, recompute(base.resolved, st.selection!));
       }
+      st.loadError = null;
+      st.diagnostics = [];
       set(st as State);
     } catch (e) {
-      set({ draftText: text, loadError: (e as Error).message });
+      // Compilation succeeded; anything failing here is a workspace-build
+      // problem with no source span to attach it to.
+      set({ draftText: text, loadError: (e as Error).message, diagnostics: [] });
     }
   },
 
@@ -872,7 +914,7 @@ export const useStore = create<State>((set, get) => ({
 
   setPreviewBox: (tensorId, box) => {
     const { resolved } = get();
-    if (!tensorId || !box || !resolved || resolved.nodes.length > 400) {
+    if (!tensorId || !box || !resolved || resolved.nodes.length > MAX_PREVIEW_NODES) {
       if (get().preview) set({ preview: null });
       return;
     }

@@ -154,3 +154,42 @@ Z = cast(Y, dtype=fp16)
     expect(result.selection.region.boxes).toEqual([box([0, 3], [0, 1])]);
   });
 });
+
+/**
+ * Aggregate cost figures are measured over the cone's regions, so they inherit
+ * any over-approximation in them. The per-tensor rows always said so; the
+ * totals did not, which made them the one place a bound was printed as a count
+ * — against the rule that an over-approximation is never presented as truth.
+ */
+describe("aggregate metrics carry their own exactness", () => {
+  it("is exact, with no reasons, when every contributing region is", () => {
+    const program = compileDSL("A = Tensor(8, 4)\nB = Tensor(4, 8)\nC = matmul(A, B)\n");
+    const m = program.executor.metrics("C", fromBox(box([0, 4], [0, 4])));
+    expect(m.tensors.every((t) => t.exact)).toBe(true);
+    expect(m.exact).toBe(true);
+    expect(m.reasons).toEqual([]);
+  });
+
+  it("is inexact, and names why, when a contributing region was widened", () => {
+    // A diagonal past the enumeration cap: the preimage becomes the whole
+    // matrix rather than its diagonal, so every figure below is a bound.
+    const program = compileDSL('M = Tensor(300, 300)\nd = einsum("ii->i", M)\n');
+    const m = program.executor.metrics("d", fromBox(box([0, 300])));
+    expect(m.exact).toBe(false);
+    expect(m.reasons).toContain("diagonal einsum");
+    // Bounds, never understatements: the widened region can only add.
+    const truth = 300 * 4; // 300 diagonal elements, fp32
+    expect(m.inputBytes).toBeGreaterThan(truth);
+  });
+
+  it("tracks the rows rather than being set independently", () => {
+    const program = compileDSL('M = Tensor(300, 300)\nd = einsum("ii->i", M)\n');
+    const m = program.executor.metrics("d", fromBox(box([0, 300])));
+    // The flag is derived, so it must agree with the rows it summarises, and
+    // the reasons must be exactly those the inexact rows carry.
+    expect(m.exact).toBe(m.tensors.every((t) => t.exact));
+    expect(m.reasons).toEqual(
+      [...new Set(m.tensors.filter((t) => !t.exact).flatMap((t) => t.reasons))].sort()
+    );
+  });
+});

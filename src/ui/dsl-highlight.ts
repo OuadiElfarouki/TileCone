@@ -1,4 +1,5 @@
 import { DSL_DTYPES } from "../parse/dsl";
+import { IDENT_CONTINUE, IDENT_START, scanStringLiteral } from "../parse/lexical";
 
 export type DSLHighlightKind = "plain" | "comment" | "keyword";
 export type DSLHighlightToken = { kind: DSLHighlightKind; text: string };
@@ -8,9 +9,6 @@ const RESERVED = new Set<string>([
   "false",
   ...DSL_DTYPES,
 ]);
-
-const IDENT_START = /[A-Za-z_]/;
-const IDENT_CONTINUE = /[A-Za-z0-9_.$]/;
 
 /**
  * Tokenize only the syntax whose meaning is stable across operation plugins:
@@ -31,18 +29,11 @@ export function highlightDSL(source: string): DSLHighlightToken[] {
   let i = 0;
   while (i < source.length) {
     if (source[i] === '"') {
-      i++;
-      let escaped = false;
-      while (i < source.length) {
-        const ch = source[i++];
-        // The parser handles physical lines independently. An unterminated
-        // string is an error on this line, but it must not swallow highlighting
-        // on every line below it while the author fixes the draft.
-        if (ch === "\n") break;
-        if (escaped) escaped = false;
-        else if (ch === "\\") escaped = true;
-        else if (ch === '"') break;
-      }
+      // The parser handles physical lines independently. An unterminated
+      // string is an error on this line, but it must not swallow highlighting
+      // on every line below it while the author fixes the draft, so the scan
+      // stops at the newline.
+      i = scanStringLiteral(source, i, true).end;
       continue;
     }
 

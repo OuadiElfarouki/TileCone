@@ -1,12 +1,60 @@
 import { z } from "zod";
 import { Box, Region, coversAxisFully, empty, fromBox, iv, canonicalize } from "../region";
-import { Attrs, DependencyNoteDraft, DIAG_ENUM_CAP, OpCtx, OpSpec, uniformDTypeOutputs, NoteCtx } from "./types";
+import { Attrs, DependencyNoteDraft, DIAG_ENUM_CAP, OpCtx, OpSpec, promotingDTypeOutputs, NoteCtx } from "./types";
 import { AxisNames } from "./types";
 import { Sym } from "../shapes";
 
 type ParsedEquation = { operands: string[][]; output: string[] };
 
+/**
+ * Equations are string constants on a node, re-read by `backward`, `forward`,
+ * `flopsPerElement` and the note layer on every call. Parsing one is pure, so
+ * the result is cached by text; a transformer walks hundreds of einsum nodes
+ * per query and was spending most of its einsum time re-splitting the same
+ * handful of strings.
+ *
+ * `nInputs` is deliberately not part of the key: it only gates a check on an
+ * already-parsed equation, so caching on the text alone stays correct while
+ * every caller still gets its own arity checked.
+ */
+const equationCache = new Map<string, ParsedEquation | Error>();
+
 function parseEquation(eq: string, nInputs?: number): ParsedEquation {
+  const hit = equationCache.get(eq);
+  if (hit !== undefined) {
+    if (hit instanceof Error) throw hit;
+    checkOperandCount(hit, eq, nInputs);
+    return hit;
+  }
+  // Equations are author-supplied, so an editor session can mint arbitrarily
+  // many. Clearing wholesale on overflow keeps this a cache rather than a leak;
+  // a re-parse is cheap and the working set of one graph is a few dozen.
+  if (equationCache.size > 512) equationCache.clear();
+  let parsed: ParsedEquation;
+  try {
+    parsed = parseEquationUncached(eq);
+  } catch (e) {
+    // Cache the failure too: a malformed equation is re-read just as often as
+    // a valid one while the author is still typing it.
+    equationCache.set(eq, e as Error);
+    throw e;
+  }
+  // The parse is shared by every caller now, so it must not be writable by one.
+  parsed.operands.forEach((labs) => Object.freeze(labs));
+  Object.freeze(parsed.operands);
+  Object.freeze(parsed.output);
+  Object.freeze(parsed);
+  equationCache.set(eq, parsed);
+  checkOperandCount(parsed, eq, nInputs);
+  return parsed;
+}
+
+function checkOperandCount(pe: ParsedEquation, eq: string, nInputs?: number): void {
+  if (nInputs !== undefined && pe.operands.length !== nInputs)
+    throw new Error(`einsum "${eq}" has ${pe.operands.length} operands but node has ${nInputs} inputs`);
+}
+
+function parseEquationUncached(eq: string): ParsedEquation {
   const clean = eq.replace(/\s+/g, "");
   const m = clean.split("->");
   if (m.length !== 2) throw new Error(`einsum equation "${eq}" must contain "->"`);
@@ -20,12 +68,42 @@ function parseEquation(eq: string, nInputs?: number): ParsedEquation {
   const known = new Set(operands.flat());
   for (const L of output)
     if (!known.has(L)) throw new Error(`einsum output label "${L}" not in any operand`);
-  if (nInputs !== undefined && operands.length !== nInputs)
-    throw new Error(`einsum "${eq}" has ${operands.length} operands but node has ${nInputs} inputs`);
   return { operands, output };
 }
 
-function labelExtents(pe: ParsedEquation, inShapes: number[][]): Map<string, number> {
+/**
+ * Label extents depend only on the equation and the input shapes, and both are
+ * fixed for the life of a node. `propagationPlan` builds one `OpCtx` per node
+ * per resolved graph and reuses it, so the shapes array is a stable object and
+ * can key the memo directly; a graph that is recompiled gets fresh arrays and
+ * naturally misses.
+ *
+ * The map is shared, so it is frozen against a caller that would otherwise
+ * mutate every future reader's copy.
+ */
+const extentCache = new WeakMap<
+  ParsedEquation,
+  WeakMap<number[][], ReadonlyMap<string, number>>
+>();
+
+function labelExtents(pe: ParsedEquation, inShapes: number[][]): ReadonlyMap<string, number> {
+  // Both keys are objects, so the lookup is two pointer hashes and no string is
+  // built. An earlier version keyed on the equation text and spent as much
+  // rebuilding that key as it saved.
+  let byShapes = extentCache.get(pe);
+  if (byShapes) {
+    const hit = byShapes.get(inShapes);
+    if (hit) return hit;
+  } else {
+    byShapes = new WeakMap();
+    extentCache.set(pe, byShapes);
+  }
+  const computed = labelExtentsUncached(pe, inShapes);
+  byShapes.set(inShapes, computed);
+  return computed;
+}
+
+function labelExtentsUncached(pe: ParsedEquation, inShapes: number[][]): ReadonlyMap<string, number> {
   const ext = new Map<string, number>();
   pe.operands.forEach((labs, i) => {
     if (labs.length !== inShapes[i].length)
@@ -38,7 +116,7 @@ function labelExtents(pe: ParsedEquation, inShapes: number[][]): Map<string, num
       ext.set(L, e);
     });
   });
-  return ext;
+  return Object.freeze(ext);
 }
 
 function einsumInferShapes(eq: string, inShapes: number[][]): number[][] {
@@ -296,7 +374,7 @@ export const einsumOp: OpSpec = {
         `equation declares ${operandCount} operand${operandCount === 1 ? "" : "s"}, got ${inputCount} input${inputCount === 1 ? "" : "s"}`
       );
   },
-  inferDTypes: uniformDTypeOutputs("einsum"),
+  inferDTypes: promotingDTypeOutputs("einsum"),
   inferShapes: (inShapes, attrs) => einsumInferShapes(eqOf(attrs), inShapes),
   backward: (_slot, outBox, ctx) => einsumBackward(eqOf(ctx.attrs), outBox, ctx),
   forward: (inSlot, inBox, ctx) => einsumForward(eqOf(ctx.attrs), inSlot, inBox, ctx),
@@ -321,7 +399,7 @@ function einsumSugar(
       einsumAxisNames(makeEq(ctx.inShapes), inNames, ctx.inShapes.length),
     inferSymShapes: (inSyms, ctx) =>
       einsumSymShape(makeEq(ctx.inShapes), inSyms, ctx, ctx.inShapes.length),
-    inferDTypes: uniformDTypeOutputs(name),
+    inferDTypes: promotingDTypeOutputs(name),
     inferShapes: (inShapes) => einsumInferShapes(makeEq(inShapes), inShapes),
     backward: (_s, outBox, ctx) => einsumBackward(eqFor(ctx), outBox, ctx),
     forward: (inSlot, inBox, ctx) => einsumForward(eqFor(ctx), inSlot, inBox, ctx),

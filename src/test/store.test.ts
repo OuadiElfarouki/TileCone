@@ -1354,3 +1354,50 @@ describe("bidirectional hover probes", () => {
     expect(S().preview).toBeNull();
   });
 });
+
+/**
+ * The compiler reports every independent error in one pass. That is only worth
+ * anything if the list survives to the editor: routing through the throwing
+ * `compileDSL` flattened it to the first diagnostic's message, which put the
+ * author back on the fix-one-recompile loop the collecting phases exist to end.
+ */
+describe("source diagnostics reach the store intact", () => {
+  it("keeps every diagnostic, in source order", () => {
+    S().applyDSL(`A = Tensor(4, 5)
+B = Tensor(9, 7)
+C = matmul(A, B)
+D = relu(Q)
+E = sum(C)
+`);
+    expect(S().diagnostics.map((d) => d.span.start.line)).toEqual([3, 4, 5]);
+    expect(S().diagnostics[1].message).toMatch(/unknown tensor "Q"/);
+  });
+
+  it("carries the line structurally rather than only in the message", () => {
+    S().applyDSL("A = Tensor(4)\nY = matmul(A, Nope)\n");
+    const [d] = S().diagnostics;
+    expect(d.span.start.line).toBe(2);
+    // And the span is the narrow one, so the editor can underline the operand.
+    expect(d.span.end.column - d.span.start.column).toBe("Nope".length);
+  });
+
+  it("summarises the first as loadError for callers wanting one line", () => {
+    S().applyDSL("A = Tensor(4)\nY = matmul(A, Nope)\n");
+    expect(S().loadError).toMatch(/^line 2: /);
+  });
+
+  it("clears both on a compile that succeeds", () => {
+    S().applyDSL("A = Tensor(4)\nY = relu(A)\n");
+    expect(S().diagnostics).toEqual([]);
+    expect(S().loadError).toBeNull();
+  });
+
+  it("leaves the built workspace alone when the new source fails", () => {
+    S().applyDSL("A = Tensor(4, 8)\nB = Tensor(8, 2)\nC = matmul(A, B)\n");
+    const built = S().resolved;
+    S().applyDSL("A = Tensor(4)\nY = matmul(A, Nope)\n");
+    // A failed run reports, it does not tear down what is on screen.
+    expect(S().resolved).toBe(built);
+    expect(S().diagnostics.length).toBeGreaterThan(0);
+  });
+});

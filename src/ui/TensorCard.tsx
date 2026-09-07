@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Tensor } from "../core/graph";
 import { DTYPE_BYTES } from "../core/dtypes";
+import { useFrameThrottle } from "./useFrameThrottle";
 import { Box, formatBoxIndices, fromBox, iv, Region } from "../core/region";
 import {
   drawGrid,
@@ -370,12 +371,19 @@ export function TensorCard({
     setSelection(tensor.id, fromBox(box), composeOf(e));
   }
 
+  /* The preview runs a full dependency query, and pointer events outrun frames
+     by an order of magnitude on a high-polling-rate mouse. Only the last
+     position in a frame can be seen, so only that one is computed.
+     Every preview update goes through this, clears included: a clear that
+     bypassed it would be overtaken by a move still pending for the frame. */
+  const requestPreview = useFrameThrottle(setPreviewBox);
+
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const cell = elementFromEvent(e, canvasRef.current!, geom);
     if (!cell) return;
     e.preventDefault();
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    if (previewKeyRef.current !== null) setPreviewBox(null);
+    if (previewKeyRef.current !== null) requestPreview(null);
     previewKeyRef.current = null;
     setDrag({ r0: cell.row, c0: cell.col, r1: cell.row, c1: cell.col });
   };
@@ -394,11 +402,11 @@ export function TensorCard({
       setHover(`(${key})`);
       if (!drag && previewKeyRef.current !== key) {
         previewKeyRef.current = key;
-        setPreviewBox(tensor.id, box);
+        requestPreview(tensor.id, box);
       }
     } else {
       setHover(null);
-      if (previewKeyRef.current !== null) setPreviewBox(null);
+      if (previewKeyRef.current !== null) requestPreview(null);
       previewKeyRef.current = null;
     }
   };
@@ -417,7 +425,7 @@ export function TensorCard({
 
   const onLeave = () => {
     setHover(null);
-    if (previewKeyRef.current !== null) setPreviewBox(null);
+    if (previewKeyRef.current !== null) requestPreview(null);
     previewKeyRef.current = null;
   };
 

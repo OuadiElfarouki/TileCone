@@ -11,11 +11,31 @@ export type SourceSpan = {
   end: SourcePosition;
 };
 
+/**
+ * Where a node's individual arguments were written.
+ *
+ * A statement span is enough to say "this line is wrong", which is all the
+ * source map used to offer. Semantic errors usually know more than that: a bad
+ * attribute knows which attribute, a dtype mismatch knows which operand. These
+ * let a diagnostic underline the part it is actually about.
+ */
+export type NodeArgSpans = {
+  /** One span per input, parallel to the node's `inputs`. */
+  inputs: SourceSpan[];
+  /** Span of each named attribute as written, keyed by attribute name. */
+  attrs: Record<string, SourceSpan>;
+  /** The call name itself. */
+  callee: SourceSpan;
+};
+
 export type DSLSourceMap = {
   document: SourceSpan;
   params: Record<string, SourceSpan>;
   tensors: Record<string, SourceSpan>;
   nodes: Record<string, SourceSpan>;
+  /** Per-argument spans, keyed by node id. Absent for a node built by tooling
+   * rather than parsed from text. */
+  nodeArgs: Record<string, NodeArgSpans>;
 };
 
 export function lineSpan(

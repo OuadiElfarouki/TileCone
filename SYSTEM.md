@@ -57,12 +57,17 @@ src/
 │   ├── expand.ts         composite-to-primitive graph rewrites
 │   ├── notes.ts          plain-language dependency constraints
 │   ├── shapes.ts         symbolic dimensions and shape errors
-│   ├── dtypes.ts         canonical dtypes and byte widths
+│   ├── dtypes.ts         canonical dtypes, byte widths, and the promotion lattice
 │   └── ops/              operation semantics and registry
 ├── parse/
-│   ├── dsl.ts            DSL parser and serializer
-│   ├── compiler.ts       parse + resolve facade and diagnostics
-│   ├── source.ts         source spans and source maps
+│   ├── lexical.ts        identifier, string, and comment rules, shared with the highlighter
+│   ├── ast.ts            DSL syntax tree
+│   ├── parser.ts         text -> AST, recovering per line
+│   ├── sugar.ts          call-name sugar, read by lowering and the printer
+│   ├── lower.ts          AST -> Graph, desugaring and name resolution
+│   ├── dsl.ts            facade over the above, plus the serializer
+│   ├── compiler.ts       three-phase facade and collected diagnostics
+│   ├── source.ts         source spans, source maps, per-argument spans
 │   └── json.ts           JSON graph import/export
 ├── ui/
 │   ├── store.ts          application state and analysis orchestration
@@ -86,6 +91,7 @@ src/
 │   ├── ShortcutsDialog.tsx  grouped inventory of global bindings
 │   ├── clipboard.ts      copy helper with success/failure feedback
 │   ├── useKeyboard.ts    global key bindings
+│   ├── useFrameThrottle.ts  coalesces pointer-rate work to one call per frame
 │   └── useDragGuard.ts   text-selection suppression during drags
 ├── examples/             built-in DSL examples
 ├── test/                 unit, property-style, and integration tests
@@ -188,15 +194,25 @@ The compiler boundary is `compileDSL` / `tryCompileDSL` in `src/parse/compiler.t
 
 ```text
 text
- └─ parseDSLWithSource
-      ├─ Graph                 unresolved IR
-      └─ SourceMap             declarations and nodes → source spans
-          └─ resolveGraph
-               └─ ResolvedGraph
-                    └─ SymbolicExecutor
+ └─ parseProgram          (parse/parser.ts)   → Program AST + per-line errors
+      └─ lowerProgram     (parse/lower.ts)    → Graph, SourceMap, + per-statement errors
+           └─ resolveGraphCollecting          → ResolvedGraph + per-node errors
+                └─ SymbolicExecutor
 ```
 
-`compileDSL` returns the source, unresolved graph, resolved graph, source map, and an executor as one coherent artifact. `tryCompileDSL` is the diagnostic form used when callers need structured parse or semantic failures instead of an exception.
+Three phases, each collecting rather than throwing. `compileDSL` returns the source, unresolved graph, resolved graph, source map, and an executor as one coherent artifact; `tryCompileDSL` is the diagnostic form.
+
+The store keeps the diagnostic list rather than a rendered string, and the source panel shows all of them with the line each one carries on its span. Routing through the throwing `compileDSL` would flatten the list to its first message, which would leave the collecting phases below doing work nobody ever saw.
+
+**Every phase reports everything it found, and later phases still run.** A document with four unrelated mistakes returns four diagnostics in source order, not one. This is what the AST buys: a line that fails to parse becomes an `error` statement carrying whatever output names were read before the failure, so parsing continues and later statements reading that name are not reported as a second, invented error. Lowering poisons the names of any statement it rejects, for the same reason, and `resolveGraphCollecting` prunes a failed node together with everything downstream of it so a consequence is never reported as a cause.
+
+`resolveGraphCollecting` is implemented by resolving repeatedly and pruning the subject of each error, deliberately rather than by threading an error list through `resolveGraph`. A second, collecting copy of that validation would be free to drift from the throwing one, and the two disagreeing about whether a graph is valid is a worse failure than the extra passes cost.
+
+A `GraphError`'s subject carries the attribute it is about when it is about one, so a diagnostic can underline that attribute rather than recovering its name by parsing the sentence the error already built from it.
+
+Diagnostics carry the narrowest span that is certainly about the error. `SourceMap.nodeArgs` records a span per input and per named attribute, so an unknown tensor underlines that tensor reference, a misspelled attribute underlines that attribute, and an unknown op underlines the call name. A statement span is the fallback, used when the error is genuinely about the statement — a shape mismatch is about the pairing of two operands, not either one.
+
+The AST stops at syntax. It does not know that `relu` is an elementwise function; desugaring happens in lowering, over the tree, from the table in `parse/sugar.ts`. That table is read in **both** directions — lowering maps a call name to an operation, the printer maps an operation back to its call name — because holding those as two hardcoded descriptions is what let them drift: lowering accepted `amax`/`amin` while the printer only reversed `sum`, `mean` and `prod`, so `amax(X, axis=1)` came back as `reduce(X, fn=max, ...)`. Each form declares which attributes the call name itself carries, so the printer omits exactly those and writes every other one; dropping the rest would silently lose an attribute when a composite is expanded and recompiled. Lexical rules (identifier characters, string escapes, comment handling) live once in `parse/lexical.ts` and are shared by the parser and the editor highlighter, which previously carried separate copies of them.
 
 ### DSL surface
 
@@ -232,6 +248,18 @@ The source map connects compiler errors back to declarations or operation calls.
 `src/parse/json.ts` provides a second, programmatic graph frontend. It validates the serialized structure, while deep semantic validation remains the resolver's responsibility. JSON import is currently a core capability rather than a primary UI workflow.
 
 ## 6. Operation registry
+
+`listOps()` exposes the registry, and two suite-wide properties are driven off it rather than off a hand-kept list:
+
+- **Coverage.** `src/test/op-fixtures.ts` holds one representative instance of every op; `registry.test.ts` asserts the table covers `listOps()`, so registering an operation without a fixture fails the suite instead of shipping untested. Each fixture is also run against the brute-force oracle, so "registered" implies "oracle-checked".
+- **Adjointness.** `forward` and `backward` are two implementations of one relation, and for exact regions they must agree about whether it is empty: `forward(inBox) ∩ outBox ≠ ∅` iff `backward(outBox) ∩ inBox ≠ ∅`. This needs no oracle, so it runs on every op at every fixture size, covering the ops the random-graph corpus does not compose.
+
+### Dtypes
+
+Operations that *compute* from several tensors promote (`promotingDTypeOutputs`); operations that *move* data require a match (`uniformDTypeOutputs`). The lattice follows PyTorch rather than NumPy's older value-based rule: category dominates width across families, so `f16` with `i32` is `f16` and not a widening to `f64` that no inference kernel performs. Mixed precision is ordinary inference practice and has an obvious result for an add or a matmul; a `concat` of fp16 and fp32 has none, since the output is one buffer, so it stays an error that names the cast to insert. `f16` with `bf16` widens to `f32`: same width, neither contains the other, and picking either would silently discard range or precision.
+
+The elementwise function table in `ops/elementwise.ts` is the definition of what `fn` may be — the attribute schema enumerates its keys, and the DSL's call-name sugar reads the same table. It also carries each function's own arity, so `relu(a, b)` and `div(a, b, c)` are rejected rather than quietly computing something else.
+
 
 Every operation is described by an `OpSpec` in `src/core/ops/types.ts` and registered in `src/core/ops/index.ts`. An operation owns all semantics specific to that operator:
 
@@ -309,6 +337,9 @@ so a wrong name misinforms where no name merely omits.
 
 Byte estimates use the dtype inferred during graph resolution, so dtype propagation and metrics share one source of truth. Per-tensor readouts include element count, bytes, boxes, exactness, approximation reasons, slice expressions, and propagation depth.
 
+
+`AggregateReadout` carries `exact` and `reasons` alongside the figures. Every total is measured over the cone's regions, so a widened region makes all of them upper bounds: it contributes bytes that are not really needed and FLOPs for work that is not really done. The flag is *derived* from the per-tensor rows rather than set independently, and the relation is strictly "no more than" — a region is never a subset of the truth, so a figure is never understated. The inspector prefixes each bounded figure with `≤` and states the reasons, which is what keeps the totals inside the rule the rest of the system follows: an over-approximation is never presented as ground truth.
+
 ## 8a. Dependency notes
 
 `src/core/notes.ts` turns a backward result into short statements about what constrains the cone - the contraction that must be staged, the axis a softmax needs whole, the halo a convolution re-reads. These answer the question the numbers do not: not how much, but why the footprint has this shape, and what it implies for tiling or fusing across it.
@@ -361,7 +392,7 @@ Expanding a composite node first resolves shape context, so composites fed by in
 - `WorkspaceHeader.tsx` contains product identity, description, the shortcut-sheet entry point, and the global theme control.
 - `SidePanel.tsx` owns the editable DSL draft, share action, built-in examples, and operation list. The last successfully built source and the current editor draft are separate store fields: choosing an example or typing keeps the built graph and analysis live, while the operation list is labelled and dimmed as belonging to the built graph. A synchronized, pointer-transparent syntax layer colors comments and stable DSL keywords beneath the native textarea. Running the draft replaces the workspace only after compilation succeeds.
 - `GraphView.tsx` is the graph controller and React projection: it derives highlighting, manages pan/zoom/focus and tensor gestures, and renders the current scene. Viewport panning starts on every background surface, including the transformed inner layout behind connectors; tensor cards, operation nodes, and zoom controls retain their own gestures. The card header is the full-width drag surface and the dotted button remains its visible and keyboard-focusable affordance; the tensor name is carved back out of it, because it is the focus target for the shape popover and a drag there would swallow the click that opens it. The world is unbounded, scene bounds include negative card positions, useful zoom is bounded by tensor legibility and canvas supersampling, and reset layout is an undoable recovery action. Connector SVGs are split by meaning: dim context runs behind the plates, while ordinary and hot connectors cross above them, including during a card drag. It does not own layout or routing algorithms.
-- `TensorCard.tsx` renders an interactive tensor grid on canvas and converts pointer gestures into element-space boxes. Its paint stack is built by a pure `buildLayers`, so the encoding rules - uniform upstream, ruled downstream, dashed diagonal hatch for approximation, focus fading, and what a hidden box still shows - are asserted directly instead of inferred from pixels. Hover probes compute both directions under the existing 400-node cap; the view filter paints solid needs, ruled feeds, both, or neither without re-querying. Hover previews are selected per tensor and repeated pointer frames inside one logical cell are ignored; the canvas effect declares its paint dependencies, so a hover does not re-rasterise unrelated cards.
+- `TensorCard.tsx` renders an interactive tensor grid on canvas and converts pointer gestures into element-space boxes. Its paint stack is built by a pure `buildLayers`, so the encoding rules - uniform upstream, ruled downstream, dashed diagonal hatch for approximation, focus fading, and what a hidden box still shows - are asserted directly instead of inferred from pixels. Hover probes compute both directions under the `MAX_PREVIEW_NODES` cap; the view filter paints solid needs, ruled feeds, both, or neither without re-querying. Hover previews are selected per tensor, repeated pointer frames inside one logical cell are ignored, and what survives that is coalesced to one query per animation frame by `useFrameThrottle` - pointer events outrun frames by an order of magnitude, and only the last position in a frame can be seen. Every preview update goes through the throttle, clears included, so a clear cannot be overtaken by a move still pending for the frame; the canvas effect declares its paint dependencies, so a hover does not re-rasterise unrelated cards.
 - `Inspector.tsx` is ordered by the question the product asks: the tile's identity, the tiles list, then **What it needs** and **What it feeds**, followed by approximation, cost, reuse, and dependency notes. Each directional heading is also its adjacent view toggle and its fill chip is the legend for the matching canvas treatment; each tensor appears once per direction with its box count, segmented per-tile footprint, slice expressions, and copy action. The What it feeds rollup carries completed-versus-partial counts so the product's distinguishing verdict is visible before rows are scanned. Dependency severity uses progressively heavier rules in muted, warning, and error ink; accent remains reserved for active UI. Setup is pinned to a strip at the bottom because the tile lattice is chosen once and then stops being read. With nothing drawn the panel names the two questions it will answer and offers a starting tile rather than rendering null sections.
 - `shortcuts.ts` is the single manifest for key matching, labels, and help copy. `useKeyboard.ts` dispatches global bindings, local owners such as the source editor match against the same manifest, and `ShortcutsDialog.tsx` renders its grouped inventory. An open dialog gets first refusal on Escape.
 - `inspector-analysis.ts` derives the inspector's scoped metrics, notes, rows, selection seeds, and contribution report with independent memoization. It re-merges the cached per-tile propagation using only enabled tiles, so a visibility toggle synchronizes every readout without rerunning the executor. Contribution classification can launch many checked backward probes, so it runs only while downstream rows are visible; note findings are collected once and shared by the row flags and notes section.
@@ -442,7 +473,7 @@ The test suite checks the architecture at several levels:
 - region algebra and canonicalization, including that `canonicalize` preserves the point set while keeping operand bands whole, and that `disjointify` is a partition of the same set;
 - shape, dtype, attribute, rank, and arity validation;
 - operation-specific forward and backward mappings;
-- compiler diagnostics and source spans;
+- compiler diagnostics: that every independent failure is reported in one pass and in source order, that a failed statement does not cascade into invented errors below it, and that a diagnostic underlines the narrowest part it is certainly about;
 - executor boundary validation;
 - composite expansion equivalence;
 - store behavior, tiling geometry, and slider-stop policy;
@@ -452,6 +483,10 @@ The test suite checks the architecture at several levels:
 - note severity, cap selection, and the per-tensor flags, including that the hardest constraint survives the cap and that a full-axis pull is still seen once its region is split into disjoint boxes;
 - partial versus complete downstream contribution, including the over-approximated case;
 - shared-operand reporting end to end: that `matmul(A, A)` names two bands rather than three fragments, that elements and bytes count the shared square once, and that the FLOP estimate does not pay for it twice;
+- the dtype lattice as a join: idempotent, commutative, associative, and monotonic in width within a family;
+- the sugar table in both directions: that every sugared call round-trips as itself rather than degrading to its underlying operation, that printing is a fixpoint, and that no two forms claim one call name;
+- registry-wide properties: that every registered operation has a fixture, that each fixture agrees with the oracle, and that `forward` and `backward` agree about whether the dependency relation between a given pair of boxes is empty;
+- frame coalescing: that a burst of calls runs once with the most recent arguments, that the trailing call is never dropped, and that a later clear supersedes a pending one;
 - randomized graph and propagation cases.
 
 Some tests deliberately import pure implementation seams: reshape decomposition, the einsum
@@ -484,13 +519,18 @@ npx tsc --noEmit
 4. Implement conservative backward and forward region mappings.
 5. Add a pointwise oracle where practical and define FLOP semantics.
 6. Register the spec in `src/core/ops/index.ts`.
-7. Add exact cases, edge cases, malformed-input cases, and oracle comparisons.
+7. Add an entry to `src/test/op-fixtures.ts`. This is not optional: `registry.test.ts` checks the
+   table against `listOps()`, so a registered operation without a fixture fails the suite. The
+   fixture is then run against the oracle and against the adjointness law automatically.
+8. Add exact cases, edge cases, and malformed-input cases of its own beyond the fixture.
 
 No executor or UI dispatch changes should be necessary unless the operation requires a genuinely new visualization concept.
 
 ### Add DSL syntax
 
-Prefer lowering syntax sugar into an existing canonical operation. If syntax introduces new semantics, first add those semantics to the operation registry, then update parsing/serialization and diagnostic source mapping.
+Prefer lowering syntax sugar into an existing canonical operation. Syntax belongs in `parser.ts` and the tree it builds; the mapping from a call name to an operation and its attributes belongs in `lower.ts`. Keeping that split is what lets the parser stay ignorant of the operation registry, and it is where the printer's inverse mapping should be checked against. If syntax introduces new semantics, first add those semantics to the operation registry, then update lowering, serialization, and diagnostic source mapping.
+
+A new lexical rule - a character an identifier may contain, a new escape - goes in `parse/lexical.ts`, never in the parser or the highlighter alone. Both derive from it so that colours cannot drift from the grammar.
 
 ### Add a visualization feature
 
@@ -501,8 +541,9 @@ Keep shape/index logic in the core or pure UI geometry helpers. The store should
 - TileCone models dependencies and costs, not tensor values, numeric stability, or runtime scheduling.
 - Regions are unions of axis-aligned boxes that may overlap; highly fragmented mappings may conservatively collapse at the box cap. Because normalization no longer splits, the cap is reached later than it used to be, but a box count is no longer an upper bound on how many disjoint pieces a region has.
 - Parsed operation outputs use an empty shape as an unresolved placeholder before graph resolution. Consumers should not execute or render that intermediate form.
-- The DSL compiler exposes structured diagnostics, while parts of the current UI reduce them to a display string.
 - Reuse estimation is deterministic for a given seed but sampled; exact FLOP/byte metrics remain a separate contract.
+- Past a cap, a region degrades to a single bounding box rather than to a coarser set of boxes, so the loss of precision at that boundary is abrupt.
+- einsum FLOPs model the naive contraction, not an optimal pairwise path; for three or more operands the figure exceeds what a real executor would pay.
 - The partial-contribution flag can over-warn on an over-approximated region and never under-warns; past its probe cap, downstream rows are simply unflagged.
 - Per-part attribution is intentionally capped to keep interaction responsive; aggregate propagation remains complete.
 - Expanding a composite can expose intermediate traffic, so dependency and FLOP semantics may remain equivalent while displayed intermediate-byte estimates change.

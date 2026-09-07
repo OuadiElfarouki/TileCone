@@ -357,6 +357,11 @@ textarea.source.error-state { border-color: var(--err); }
 .source-status { font-size: var(--t-small); min-width: 0; overflow: hidden; }
 .source-status .ok { color: var(--muted); }
 .source-status .error { white-space: normal; }
+/* One diagnostic per line. The compiler reports every independent error in one
+   pass, so they stack rather than running together: a wrapped paragraph of four
+   errors is harder to act on than four lines. */
+.source-status .diag { display: block; }
+.source-status .diag + .diag { margin-top: 2px; }
 
 
 /* ---------------- canvas ---------------- */

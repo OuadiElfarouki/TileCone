@@ -33,6 +33,23 @@ export type AggregateReadout = {
   outputBytes: number;
   intensity: number; // FLOPs / input bytes
   tensors: TensorReadout[];
+  /**
+   * Whether every figure above is exact.
+   *
+   * Each of them is measured over the cone's regions, so each inherits any
+   * over-approximation in them: a superset region contributes bytes it does not
+   * really need and FLOPs for work that is not really done, which makes these
+   * upper bounds rather than counts. The per-tensor rows have always carried
+   * their own `exact` flag, and every other layer refuses to let an
+   * approximation pass as truth - this field is what extends that rule to the
+   * totals, which were the one place a bound was printed as a number.
+   *
+   * False means "no more than this", never "this". It is never a *lower* bound,
+   * because a region is never a subset of the truth.
+   */
+  exact: boolean;
+  /** Why the totals are bounds, deduplicated across the contributing rows. */
+  reasons: string[];
 };
 
 /** One line per box, in the boxes' own terms. They may overlap: two operand
@@ -114,6 +131,13 @@ export function computeMetrics(
     else intermediateBytes += t.bytes;
   }
   const denom = inputBytes + (countIntermediates ? intermediateBytes : 0);
+  // Any inexact row taints every total, because each total sums over all of
+  // them. Taking the reasons from the rows rather than from `back.reasons`
+  // keeps the explanation to the regions these figures were actually measured
+  // on: propagation may have recorded a reason on a tensor this cone reached
+  // but no metric counted.
+  const inexact = tensors.filter((tensor) => !tensor.exact);
+  const reasons = [...new Set(inexact.flatMap((tensor) => tensor.reasons))].sort();
   return {
     flops,
     inputBytes,
@@ -121,5 +145,7 @@ export function computeMetrics(
     outputBytes,
     intensity: denom > 0 ? flops / denom : 0,
     tensors,
+    exact: inexact.length === 0,
+    reasons,
   };
 }

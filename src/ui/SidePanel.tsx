@@ -59,6 +59,7 @@ function SourceEditor(): React.ReactElement {
   const setText = useStore((s) => s.setDraftText);
   const applyDSL = useStore((s) => s.applyDSL);
   const loadError = useStore((s) => s.loadError);
+  const diagnostics = useStore((s) => s.diagnostics);
   const built = useStore((s) => s.resolved !== null);
   const [ranAt, setRanAt] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -73,11 +74,6 @@ function SourceEditor(): React.ReactElement {
     applyDSL(text);
     setRanAt(Date.now());
   };
-
-  const errorLine = useMemo(() => {
-    const m = loadError && /line (\d+)/.exec(loadError);
-    return m ? Number(m[1]) : null;
-  }, [loadError]);
 
   return (
     <>
@@ -113,11 +109,24 @@ function SourceEditor(): React.ReactElement {
         </button>
         <ShareButton />
         <span className="source-status">
-          {loadError ? (
+          {diagnostics.length ? (
+            /* Every independent error, not just the first. The compiler finds
+               them in one pass, and showing one at a time would put the author
+               back on the fix-and-recompile loop that collecting exists to
+               end. */
             <span className="error">
-              {errorLine !== null && <b>line {errorLine}: </b>}
-              {loadError.replace(/^line \d+: /, "")}
+              {diagnostics.length > 1 && (
+                <b>{diagnostics.length} errors · </b>
+              )}
+              {diagnostics.map((d, i) => (
+                <span key={i} className="diag">
+                  <b>line {d.span.start.line}: </b>
+                  {d.message}
+                </span>
+              ))}
             </span>
+          ) : loadError ? (
+            <span className="error">{loadError}</span>
           ) : dirty ? (
             <span className="muted">unrun changes · ⌘/ctrl+↵</span>
           ) : !built ? (

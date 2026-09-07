@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { full } from "../core/region";
 import {
   CompilationError,
   compileDSL,
@@ -57,7 +58,7 @@ Y = softmax(X, axis=-1)
     expect(result.diagnostics[0].span.start.column).toBeGreaterThan(2);
   });
 
-  it("maps an unknown op diagnostic back to its DSL statement", () => {
+  it("underlines the call name for an unknown op", () => {
     const result = tryCompileDSL(`X = Tensor(4, dtype=fp32)
 
 Y = mystery(X)
@@ -67,9 +68,13 @@ Y = mystery(X)
     expect(result.diagnostics[0]).toMatchObject({
       phase: "semantic",
       code: "SEM_UNKNOWN_OP",
-      span: { start: { line: 3, column: 1 } },
+      span: { start: { line: 3 } },
     });
     expect(result.diagnostics[0].message).toMatch(/node "mystery_Y"/);
+    // The op name itself, not the statement: `mystery` begins at column 5.
+    const { start, end } = result.diagnostics[0].span;
+    expect(start.column).toBe(5);
+    expect(end.column - start.column).toBe("mystery".length);
   });
 
   it("maps invalid attrs back to the operation statement", () => {
@@ -277,10 +282,42 @@ Y = gather(D, I, axis=0)
     expect(invalid.diagnostics[0].message).toMatch(/indices must be i32/);
   });
 
-  it("rejects ambiguous mixed-dtype compute inputs", () => {
-    const result = tryCompileDSL(`A = Tensor(4, dtype=fp16)
-B = Tensor(4, dtype=fp32)
+  /* Compute ops promote; data-movement ops do not. The split is deliberate:
+     an fp16 activation against an fp32 residual is ordinary inference practice
+     and has one obvious result, while concatenating them has none - the output
+     is a single buffer and the author has to say which type it holds. */
+  it.each([
+    ["fp16 + fp32", "fp16", "fp32", "f32"],
+    ["fp16 + bf16 widens to fp32", "fp16", "bf16", "f32"],
+    ["fp8 + fp16", "fp8", "fp16", "f16"],
+    ["int8 + fp16", "int8", "fp16", "f16"],
+    ["int8 + int32", "int8", "int32", "i32"],
+  ])("promotes mixed compute inputs: %s", (_label, a, b, expected) => {
+    const result = tryCompileDSL(`A = Tensor(4, dtype=${a})
+B = Tensor(4, dtype=${b})
 Y = add(A, B)
+`);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.program.resolved.tensors.Y.dtype).toBe(expected);
+  });
+
+  it("promotes through a matmul and keeps each operand's own bytes", () => {
+    const result = tryCompileDSL(`A = Tensor(4, 8, dtype=fp16)
+W = Parameter(8, 4, dtype=fp32)
+Y = matmul(A, W)
+`);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.program.resolved.tensors.Y.dtype).toBe("f32");
+    expect(result.program.resolved.tensors.A.dtype).toBe("f16");
+    expect(result.program.resolved.tensors.W.dtype).toBe("f32");
+  });
+
+  it("still rejects mixed dtypes where there is no result type to pick", () => {
+    const result = tryCompileDSL(`A = Tensor(2, 3, dtype=fp16)
+B = Tensor(4, 3, dtype=fp32)
+Y = concat(A, B, axis=0)
 `);
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -290,6 +327,7 @@ Y = add(A, B)
       span: { start: { line: 3 } },
     });
     expect(result.diagnostics[0].message).toMatch(/input dtypes must match.*f16, f32/);
+    expect(result.diagnostics[0].message).toMatch(/insert a cast/);
   });
 
   /* `dtype` is the one attribute the parser reads rather than passes through,
@@ -514,5 +552,47 @@ C = matmul(A, B, transposeB=true)
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.diagnostics[0].message).toContain("this op takes no attributes");
+  });
+});
+
+/* The elementwise function table is the definition of what `fn` may be, so
+   these check the two holes it closes: an unrecognized name used to resolve
+   and quietly cost one FLOP, and a function's own arity was never checked
+   against the operands it was actually given. */
+describe("elementwise function table", () => {
+  it("rejects an unknown fn with the accepted list", () => {
+    const result = tryCompileDSL("X = Tensor(4)\nY = elementwise(X, fn=guelu, nary=1)\n");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0].code).toBe("SEM_INVALID_ATTRIBUTES");
+    expect(result.diagnostics[0].message).toMatch(/gelu/);
+  });
+
+  it("rejects a unary function given two operands", () => {
+    const result = tryCompileDSL("A = Tensor(4)\nB = Tensor(4)\nY = relu(A, B)\n");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0].code).toBe("SEM_ARITY");
+    expect(result.diagnostics[0].message).toMatch(/relu takes exactly 1 input/);
+  });
+
+  it("rejects a strictly binary function given three operands", () => {
+    const result = tryCompileDSL("A = Tensor(4)\nB = Tensor(4)\nC = Tensor(4)\nY = div(A, B, C)\n");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0].message).toMatch(/div takes exactly 2 inputs/);
+  });
+
+  it("accepts an n-ary chain of an associative function", () => {
+    const result = tryCompileDSL("A = Tensor(4)\nB = Tensor(4)\nC = Tensor(4)\nY = add(A, B, C)\n");
+    expect(result.ok).toBe(true);
+  });
+
+  it("charges a transcendental more than an add", () => {
+    const cheap = compileDSL("X = Tensor(64)\nY = relu(X)\n");
+    const dear = compileDSL("X = Tensor(64)\nY = gelu(X)\n");
+    const flopsOf = (p: ReturnType<typeof compileDSL>) =>
+      p.executor.metrics("Y", full(p.resolved.tensors.Y.resolved!)).flops;
+    expect(flopsOf(dear)).toBeGreaterThan(flopsOf(cheap));
   });
 });

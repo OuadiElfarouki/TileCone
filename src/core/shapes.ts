@@ -17,6 +17,14 @@ export type GraphErrorCode =
 export type GraphErrorSubject = {
   kind: "node" | "tensor" | "parameter";
   id: string;
+  /**
+   * The written attribute this error is about, when it is about one.
+   *
+   * Carried structurally rather than left to be recovered from the message: a
+   * consumer that wanted to underline the offending attribute would otherwise
+   * have to parse prose that was itself built from this exact value.
+   */
+  attribute?: string;
 };
 
 export class GraphError extends Error {
