@@ -32,9 +32,14 @@ export const TILE_SCALE_MAX = 5;
 /** The sentinel meaning no aggregation: one element per logical tile. */
 export const TILE_SCALE_NONE = TILE_SCALE_MIN;
 
-/** Rendering budget. */
-/** Keep the binding lattice at least as large as drawGrid's stroke threshold,
- * so snapping is never governed by boundaries too dense to display. */
+/** Rendering budget, in canvas px: the tile is chosen so a cell is at least
+ * this wide inside the card, at scale 1.
+ *
+ * This is not the renderer's visibility threshold. `grid.MIN_LATTICE_PX` is the
+ * screen-space one, and drawGrid strides the drawn boundaries to meet it, so
+ * every drawn line remains a snapping boundary at any zoom. The two were one
+ * constant compared in two coordinate systems, which made the lattice vanish
+ * below 100% zoom while snapping still bound to it. */
 export const MIN_CELL_PX = 5;
 /** Px budget for the widest / tallest tensor in the graph. Soft: the floors
  * below may override them, because a tensor nobody can see is worse than a

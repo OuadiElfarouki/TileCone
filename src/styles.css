@@ -410,6 +410,17 @@ textarea.source.error-state { border-color: var(--err); }
   font-size: var(--t-body); font-weight: 500; color: var(--muted); cursor: default;
 }
 .op-node.dim { opacity: var(--dim); }
+/* Below the overview scale the label is counter-scaled to hold a readable size,
+   which makes it wider than the node box - the box is sized for the label at
+   scale 1. It is therefore taken out of flow and positioned by the solver that
+   found it free space, and it never takes the pointer, so the expand button
+   underneath stays clickable. */
+.op-node.overview > span {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  font-size: calc(10px / var(--view-scale)); line-height: calc(12px / var(--view-scale));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center;
+  pointer-events: none;
+}
 .expand-btn { border: none; padding: 0 3px; background: none; font-size: var(--t-base); color: var(--accent); }
 
 .card-slot { position: absolute; cursor: default; }

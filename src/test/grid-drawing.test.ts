@@ -1,19 +1,27 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { box, count, fromBox, union } from "../core/region";
-import { drawGrid, gridGeometry, paintScale, type Layer } from "../ui/grid";
+import {
+  drawGrid, gridGeometry, latticeStride, MIN_LATTICE_PX, paintScale, type Layer,
+} from "../ui/grid";
 import { CARD_SURFACE } from "../ui/palette";
 
 // Record the canvas commands at the browser boundary, including state restored
 // after a hatch. No DOM rasterizer is needed to check screen-space contracts.
 function recordingCanvas() {
-  const strokes: { color: string; width: number; dash: number[] }[] = [];
+  const strokes: { color: string; width: number; dash: number[]; path: number[][] }[] = [];
   const borders: number[] = [];
   let dash: number[] = [];
+  // Points of the path being built, so a stroke can be checked for *where* it
+  // drew and not only how. beginPath resets it, exactly as the canvas does.
+  let path: number[][] = [];
   const stack: { color: string; width: number; alpha: number; dash: number[] }[] = [];
   const ctx = {
     strokeStyle: "", fillStyle: "", lineWidth: 1, globalAlpha: 1,
-    setTransform() {}, clearRect() {}, fillRect() {}, beginPath() {},
-    rect() {}, clip() {}, moveTo() {}, lineTo() {},
+    setTransform() {}, clearRect() {}, fillRect() {},
+    beginPath() { path = []; },
+    rect() {}, clip() {},
+    moveTo(x: number, y: number) { path.push([x, y]); },
+    lineTo() {},
     setLineDash(value: number[]) { dash = value; },
     save() { stack.push({ color: this.strokeStyle, width: this.lineWidth, alpha: this.globalAlpha, dash }); },
     restore() {
@@ -21,7 +29,7 @@ function recordingCanvas() {
       this.strokeStyle = saved.color; this.lineWidth = saved.width;
       this.globalAlpha = saved.alpha; dash = saved.dash;
     },
-    stroke() { strokes.push({ color: this.strokeStyle, width: this.lineWidth, dash }); },
+    stroke() { strokes.push({ color: this.strokeStyle, width: this.lineWidth, dash, path: [...path] }); },
     strokeRect() { borders.push(this.lineWidth); },
   };
   const canvas = { width: 0, height: 0, getContext: () => ctx };
@@ -45,14 +53,65 @@ describe("canvas screen-space rendering", () => {
     expect(height).not.toHaveBeenCalled();
   });
 
-  it("gates the lattice by screen cell size and keeps strokes one pixel", () => {
+  it("keeps lattice and border strokes one screen pixel at any scale", () => {
     vi.stubGlobal("window", { devicePixelRatio: 1 });
     for (const scale of [0.3, 4]) {
       const { canvas, strokes, borders } = recordingCanvas();
       drawGrid(canvas, shape, cfg, geom, [], true, 1, scale);
-      expect(strokes.length > 0).toBe(Math.min(geom.cellW, geom.cellH) * scale >= 5);
       for (const stroke of strokes) expect(stroke.width * scale).toBeCloseTo(1);
       expect(borders[0] * scale).toBeCloseTo(1);
+    }
+  });
+
+  /* The lattice is what a snapped edge lands on, so it may not disappear at a
+     zoom where snapping is still active. It is drawn at a stride instead: the
+     boundaries thin out, and the ones that remain are real ones. */
+  it.each([
+    ["an 8-cell card at 40%", [16, 16], 4, 0.4],
+    ["an 8-cell card at 30%", [16, 16], 4, 0.3],
+    ["a 16-cell card at 2%", [256, 256], 8, 0.02],
+  ])("draws a strided lattice rather than nothing: %s", (_case, sh, tile, scale) => {
+    vi.stubGlobal("window", { devicePixelRatio: 1 });
+    const cardShape = sh as number[];
+    const g = gridGeometry(cardShape, cfg, 0, tile as number);
+    const { canvas, strokes } = recordingCanvas();
+    drawGrid(canvas, cardShape, cfg, g, [], true, 1, scale as number);
+
+    const lattice = strokes.find((stroke) => stroke.color === "rgba(255,255,255,0.10)");
+    expect(lattice).toBeDefined();
+    expect(lattice!.path.length).toBeGreaterThan(0);
+
+    // Every drawn line sits on a tile boundary, so a snapped edge that lands on
+    // a drawn line lands where the line says it does.
+    for (const [x, y] of lattice!.path) {
+      const onGrid = y === 0 ? x / g.cellW : y / g.cellH;
+      expect(Math.abs(onGrid - Math.round(onGrid))).toBeLessThan(1e-9);
+    }
+
+    // And they are far enough apart on screen to be told apart.
+    const xs = lattice!.path.filter(([, y]) => y === 0).map(([x]) => x).sort((a, b) => a - b);
+    for (let i = 1; i < xs.length; i++)
+      expect((xs[i] - xs[i - 1]) * (scale as number)).toBeGreaterThanOrEqual(MIN_LATTICE_PX);
+  });
+
+  it("draws no lattice only when the card itself is too small to divide", () => {
+    vi.stubGlobal("window", { devicePixelRatio: 1 });
+    // 8 cells of 8 canvas px at 5%: the whole card is 3 screen px wide, so no
+    // stride produces a boundary anyone could see.
+    const { canvas, strokes } = recordingCanvas();
+    drawGrid(canvas, shape, cfg, geom, [], true, 1, 0.05);
+    expect(strokes.find((stroke) => stroke.color === "rgba(255,255,255,0.10)")).toBeUndefined();
+  });
+
+  it("strides by powers of two, so a drawn line is never off the tile grid", () => {
+    for (const scale of [0.05, 0.15, 0.4, 1, 4]) {
+      const stride = latticeStride(geom.cellW, 64, scale);
+      expect(Number.isInteger(Math.log2(stride))).toBe(true);
+      if (stride > 1) {
+        // Smallest stride that clears the threshold: half of it would not.
+        expect(geom.cellW * stride * scale).toBeGreaterThanOrEqual(MIN_LATTICE_PX);
+        expect(geom.cellW * (stride / 2) * scale).toBeLessThan(MIN_LATTICE_PX);
+      }
     }
   });
 

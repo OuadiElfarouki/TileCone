@@ -12,7 +12,8 @@ import { shapeLabel, symbolicExtentLabel } from "./shape-label";
 import { enabledPropResult, selectedTensorIds, useStore } from "./store";
 import type { TensorOffset } from "./tensor-layout";
 import { MIN_SIDE_PX } from "./tiling";
-import { overviewLabelWidths } from "./overview-labels";
+import { overviewLabels } from "./overview-labels";
+import { paintScale } from "./grid";
 import { FIT_GRAPH_EVENT } from "./useKeyboard";
 
 type CardDrag = {
@@ -60,6 +61,22 @@ export function fittedTransform(
   };
 }
 
+/**
+ * @internal Pure low-zoom clamp seam, for the same reason `fittedTransform` is
+ * one. Because `fit` may sit below the legibility floor, the floor for a manual
+ * gesture is the lower of the two - and it is derived from the scene, never
+ * from the current scale. Keying it to the current `k` let zooming in past the
+ * floor raise the floor, so the fitted overview became unreachable by wheel or
+ * button.
+ */
+export function lowZoomBound(
+  scene: Pick<GraphScene, "left" | "top" | "width" | "height">,
+  viewport: { width: number; height: number },
+  bounds: { min: number; max: number }
+): number {
+  return Math.min(bounds.min, fittedTransform(scene, viewport, bounds).k);
+}
+
 /** Useful zoom is bounded by legibility at the low end and the canvas backing
  * scale at the high end. Operators do not vote: tensor cards are what the user
  * needs to inspect, and their smallest side determines the floor. */
@@ -104,6 +121,7 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
   const expandNodeInPlace = useStore((s) => s.expandNodeInPlace);
   const direction = useStore((s) => s.direction);
   const focusTensor = useStore((s) => s.focusTensor);
+  const setFocusTensor = useStore((s) => s.setFocusTensor);
   const setDragging = useStore((s) => s.setDragging);
   const tensorOffsets = useStore((s) => s.tensorOffsets);
   const setTensorOffset = useStore((s) => s.setTensorOffset);
@@ -171,10 +189,23 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
         : null,
     [baseLayout, tensorOffsets]
   );
-  const overviewWidths = useMemo(() => overviewLabelWidths(
-    scene?.nodes ?? [], tf.k,
-    Object.fromEntries(Object.values(resolved?.tensors ?? {}).map((tensor) => [tensor.id, tensor.name]))
-  ), [scene, tf.k, resolved]);
+  /* Bucketed, not raw: the label solver is an all-pairs collision pass over
+     every node, and keyed to `tf.k` it re-ran on every wheel event at the zoom
+     range where node counts are highest. `paintScale` is the same 1/32-octave
+     bucketing the canvas already trusts for its own redraws, and a 2% change in
+     scale cannot flip a collision that was close enough to matter. */
+  const labelScale = paintScale(tf.k);
+  const overview = useMemo(() => overviewLabels(
+    scene?.nodes ?? [], labelScale,
+    {
+      ...Object.fromEntries(
+        Object.values(resolved?.tensors ?? {}).map((tensor) => [tensor.id, tensor.name])
+      ),
+      ...Object.fromEntries(
+        (resolved?.nodes ?? []).map((node) => [node.id, node.label ?? node.op])
+      ),
+    }
+  ), [scene, labelScale, resolved]);
   const zoomBounds = useMemo(
     () => graphZoomBounds(baseLayout?.nodes ?? []),
     [baseLayout]
@@ -195,6 +226,21 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
 
   const sceneRef = useRef(scene);
   sceneRef.current = scene;
+  /* The low zoom clamp. `fittedTransform` deliberately ignores `zoomBounds.min`
+     so an overview is never cropped, which means the fitted scale can sit below
+     the manual legibility floor. Clamping against the current `k` let the user
+     zoom in past the floor and then be unable to get back out, so the floor is
+     derived from the scene instead: the fitted scale is recomputed here rather
+     than remembered, because a viewport resize changes it while `movedRef` is
+     true and a cached value would go stale. */
+  const lowZoom = useCallback(() => {
+    const el = containerRef.current;
+    const current = sceneRef.current;
+    if (!el || !current || el.clientWidth <= 0 || el.clientHeight <= 0)
+      return zoomBounds.min;
+    return lowZoomBound(current, { width: el.clientWidth, height: el.clientHeight }, zoomBounds);
+  }, [zoomBounds]);
+
   const fit = useCallback(() => {
     const el = containerRef.current;
     if (!el || el.clientWidth <= 0 || el.clientHeight <= 0) return;
@@ -244,13 +290,23 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
       (x) => x.kind === "tensor" && x.id === focusTensor
     );
     const el = containerRef.current;
-    if (p && el)
+    if (p && el) {
       setTf((t) => ({
         ...t,
         x: el.clientWidth / 2 - (p.x + p.w / 2) * t.k,
         y: el.clientHeight / 2 - (p.y + p.h / 2) * t.k,
       }));
-  }, [focusTensor]);
+      // Centring is a deliberate viewport position like a pan or a zoom. Left
+      // unmarked, the ResizeObserver still considered the view fitted and the
+      // next panel collapse or window resize re-fitted away from the tensor the
+      // user asked to see.
+      movedRef.current = true;
+      // Consumed, so asking for the same tensor again centres it again after a
+      // pan has moved it off screen. Cleared only on success: a request that
+      // arrives before the scene has the node stays pending.
+      setFocusTensor(null);
+    }
+  }, [focusTensor, setFocusTensor]);
 
   const onWheel = (e: React.WheelEvent) => {
     e.preventDefault();
@@ -260,8 +316,7 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
     const my = e.clientY - rect.top;
     movedRef.current = true;
     setTf((t) => {
-      // A fitted overview may be below the manual floor; zoom in without a jump.
-      const k = Math.min(zoomBounds.max, Math.max(Math.min(zoomBounds.min, t.k), t.k * Math.exp(-e.deltaY * 0.0012)));
+      const k = Math.min(zoomBounds.max, Math.max(lowZoom(), t.k * Math.exp(-e.deltaY * 0.0012)));
       const scale = k / t.k;
       return { k, x: mx - (mx - t.x) * scale, y: my - (my - t.y) * scale };
     });
@@ -274,8 +329,7 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
     const mx = el.clientWidth / 2;
     const my = el.clientHeight / 2;
     setTf((t) => {
-      // A fitted overview may be below the manual floor; zoom in without a jump.
-      const k = Math.min(zoomBounds.max, Math.max(Math.min(zoomBounds.min, t.k), t.k * factor));
+      const k = Math.min(zoomBounds.max, Math.max(lowZoom(), t.k * factor));
       const scale = k / t.k;
       return { k, x: mx - (mx - t.x) * scale, y: my - (my - t.y) * scale };
     });
@@ -421,14 +475,20 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
           if (p.kind === "op") {
             const node = nodeById.get(p.id)!;
             const hot = !hasResult || hotNodes.has(p.id);
+            const label = overview.ops.get(p.id);
             return (
               <div
                 key={`n:${p.id}`}
-                className={`op-node${hot ? "" : " dim"}`}
-                style={{ left: p.x, top: p.y, width: p.w, height: p.h }}
+                className={`op-node${hot ? "" : " dim"}${label ? " overview" : ""}`}
+                style={{
+                  left: p.x, top: p.y, width: p.w, height: p.h,
+                  "--view-scale": tf.k,
+                } as React.CSSProperties}
                 title={`${node.op}\n${JSON.stringify(node.attrs)}`}
               >
-                <span>{node.label ?? node.op}</span>
+                <span style={label ? { width: label.w, top: label.dy } : undefined}>
+                  {node.label ?? node.op}
+                </span>
                 {isExpandable(node.op) && (
                   <button
                     className="expand-btn"
@@ -469,7 +529,7 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
                 tensor={t}
                 renderScale={renderScale}
                 viewScale={tf.k}
-                overviewWidth={overviewWidths.get(t.id)}
+                overviewWidth={overview.tensors.get(t.id)}
                 moveHandlers={moveHandlers}
               />
             </div>

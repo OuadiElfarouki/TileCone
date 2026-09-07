@@ -5,6 +5,7 @@ import {
   edgePresentation,
   fittedTransform,
   graphZoomBounds,
+  lowZoomBound,
 } from "../ui/GraphView";
 
 const target = (blocked: boolean) => ({
@@ -86,5 +87,27 @@ describe("graph viewport fit", () => {
     expect(tf.y).toBe(20);
     expect(tf.x + 10_000 * tf.k).toBeLessThanOrEqual(380);
     expect(tf.y + 10_000 * tf.k).toBeLessThanOrEqual(280);
+  });
+
+  /* The companion to the rule above. Since a fitted view may sit below the
+     manual floor, zooming out has to be allowed back down to it, from wherever
+     the user has zoomed to. The clamp therefore takes no current scale: keyed
+     to one, zooming in past the floor raised the floor and left the overview
+     reachable only through `fit`, with the zoom-out button still live. */
+  it("lets zoom-out return to a fitted view below the legibility floor", () => {
+    const scene = { left: 0, top: 0, width: 10_000, height: 10_000 };
+    const viewport = { width: 400, height: 300 };
+    const bounds = { min: 0.4, max: 4 };
+    const fitted = fittedTransform(scene, viewport, bounds).k;
+
+    expect(lowZoomBound(scene, viewport, bounds)).toBeCloseTo(fitted);
+    expect(lowZoomBound(scene, viewport, bounds)).toBeLessThan(bounds.min);
+  });
+
+  it("keeps the ordinary floor when the scene fits above it", () => {
+    const scene = { left: 0, top: 0, width: 200, height: 150 };
+    const viewport = { width: 1200, height: 800 };
+    const bounds = { min: 0.4, max: 4 };
+    expect(lowZoomBound(scene, viewport, bounds)).toBe(0.4);
   });
 });

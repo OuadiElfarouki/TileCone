@@ -10,7 +10,7 @@
 
 import { Box, Interval, Region, disjointify } from "../core/region";
 import { CARD_SURFACE } from "./palette";
-import { cardPx, MIN_CELL_PX, planeExtents, tileFor } from "./tiling";
+import { cardPx, planeExtents, tileFor } from "./tiling";
 import { viewAxes, type ViewCfg } from "./tensor-view";
 
 export type GridGeom = {
@@ -95,6 +95,33 @@ function hiddenFraction(box: Box, shape: number[], cfg: ViewCfg, geom: GridGeom)
 /** Never let a thin region vanish. Over-stating extent is the safe direction. */
 /** @internal Exported with `regionRects` for renderer invariant tests. */
 export const MIN_MARK_PX = 1;
+
+/**
+ * Screen-space stride threshold for the drawn lattice, in CSS px.
+ *
+ * Distinct from `tiling.MIN_CELL_PX`, which is a *canvas*-space budget used to
+ * choose the tile: one constant compared in two coordinate systems is what let
+ * the lattice disappear below 100% zoom while snapping still bound to it.
+ */
+export const MIN_LATTICE_PX = 5;
+
+/**
+ * How many tile boundaries to skip so the drawn ones stay `MIN_LATTICE_PX`
+ * apart on screen. Always a power of two, so every drawn line is also a
+ * snapping boundary; the lattice reads coarser as the view zooms out instead of
+ * collapsing into a wash or vanishing.
+ *
+ * Note what this does not give: the drawn lines are a subset of the snapping
+ * boundaries, not all of them, so a snapped edge can still land between two
+ * drawn lines. Closing that gap would mean deriving the snap unit from the
+ * viewport, which would make the same drag select a different range at a
+ * different zoom and break shared links.
+ */
+export function latticeStride(cell: number, count: number, viewScale: number): number {
+  let stride = 1;
+  while (stride < count && cell * stride * viewScale < MIN_LATTICE_PX) stride *= 2;
+  return stride;
+}
 
 type RegionRect = { x: number; y: number; w: number; h: number; alpha: number };
 
@@ -489,17 +516,21 @@ export function drawGrid(
     }
   }
 
-  // tile boundaries : the cell grid *is* the tile grid
-  if (Math.min(geom.cellW, geom.cellH) * viewScale >= MIN_CELL_PX) {
+  // tile boundaries : the cell grid *is* the tile grid, drawn at a stride that
+  // keeps the lines apart on screen. Each axis strides on its own cell size, so
+  // a card with wide cells and short ones keeps the boundaries it can show.
+  const strideC = latticeStride(geom.cellW, tileCols, viewScale);
+  const strideR = latticeStride(geom.cellH, tileRows, viewScale);
+  if (strideC < tileCols || strideR < tileRows) {
     ctx.strokeStyle = dark ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.10)";
     ctx.lineWidth = 1 / viewScale;
     ctx.beginPath();
-    for (let c = 1; c < tileCols; c++) {
+    for (let c = strideC; c < tileCols; c += strideC) {
       const x = c * geom.cellW;
       ctx.moveTo(x, 0);
       ctx.lineTo(x, geom.canvasH);
     }
-    for (let r = 1; r < tileRows; r++) {
+    for (let r = strideR; r < tileRows; r += strideR) {
       const y = r * geom.cellH;
       ctx.moveTo(0, y);
       ctx.lineTo(geom.canvasW, y);

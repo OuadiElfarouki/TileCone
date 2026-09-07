@@ -124,7 +124,12 @@ Use `tryCompileDSL` when diagnostics should be returned as data instead of throw
   fill so the seed remains distinguishable from its needs; those marks clip at the tensor edge.
 - **Overview labels stay readable where space permits.** Below 75% zoom, cards show compact names
   at a 10px screen size when they fit without overlapping neighboring nodes. Crowded names keep
-  their smaller size; long names ellipsize and retain their full name in a tooltip.
+  their smaller size; long names ellipsize and retain their full name in a tooltip. Operation
+  labels get the same treatment, but may extend past their node box: the box is sized for the
+  label at 100% zoom, so a counter-scaled label needs more room than it reserves. They are placed
+  across the node, or in the gap above or below it, and are dropped rather than drawn over a
+  neighbour. Tensor names are placed first. On a dense graph at its fitted scale there is often no
+  free space for either, and the ordinary small label remains.
 - **Row-major everywhere.** Rows are the second-to-last axis, columns the last. There is no per-card
   axis remapping: a different view of a tensor is a `transpose` node in the graph, where it is part
   of the computation being explained.
