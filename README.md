@@ -1,15 +1,16 @@
 # TileCone
 
-*See what a tensor region depends on.*
+*A tile's dependency cone, as an annotated sub-DAG.*
 
-Takes a DAG of tensor operations plus input shapes, infers every intermediate and output shape, and
-lets you select any region of any tensor to see — highlighted in place — the exact set of upstream
-regions it depends on, and the downstream regions it influences.
+Select any region of any tensor in a compute graph. TileCone draws the sub-DAG that region actually
+touches — the operations on the path, and for every tensor among them, the exact index range
+involved. Upstream is what the tile reads; downstream is what it feeds.
 
-The canonical example: for `C[M,N] = A[M,K] @ B[K,N]`, selecting the tile `C[64:128, 0:64]`
-highlights `A[64:128, :]` and `B[:, 0:64]`.
+For `C[M,N] = A[M,K] @ B[K,N]`, the tile `C[64:128, 0:64]` yields a cone reaching `A[64:128, :]`
+and `B[:, 0:64]` — a row band and a column band, and nothing else.
 
-No values are ever computed. The whole engine is integer interval arithmetic over index sets.
+Shapes are inferred across the whole graph. No values are ever computed — the engine is integer
+interval arithmetic over index sets.
 
 ```bash
 npm install
