@@ -136,7 +136,7 @@ function SourceEditor(): React.ReactElement {
 /** Prototype-style operation list. Clicking a row probes its first output. */
 function Operations(): React.ReactElement {
   const resolved = useStore((s) => s.resolved);
-  const setFocusTensor = useStore((s) => s.setFocusTensor);
+  const setFocusNode = useStore((s) => s.setFocusNode);
   const backwardRes = useStore((s) => s.backwardRes);
   const forwardRes = useStore((s) => s.forwardRes);
   const perBox = useStore((s) => s.perBox);
@@ -153,9 +153,12 @@ function Operations(): React.ReactElement {
   for (const res of [enabledBackward, enabledForward])
     if (res) for (const id of res.tensors.keys()) involved.add(id);
 
-  const probe = (tensorId: string) => {
+  // The row names an operation, so the viewport goes to the operator. The
+  // starter tile still lands on its first output, which is where a cone has to
+  // begin - the two were the same request while only tensors could be focused.
+  const probe = (nodeId: string, tensorId: string) => {
     const shape = resolved.tensors[tensorId].resolved!;
-    setFocusTensor(tensorId);
+    setFocusNode({ kind: "op", id: nodeId });
     if (shape.some((extent) => extent <= 0)) return;
     const { rowAxis, colAxis } = viewAxes(shape);
     const tile = tileOf(shape, tileScale, graphPx);
@@ -187,7 +190,7 @@ function Operations(): React.ReactElement {
             key={node.id}
             className={`operation-row${involved.size ? (hot ? " hot" : " dim") : ""}`}
             title={`select a starter tile on ${outputs[0].name}\n${JSON.stringify(node.attrs)}`}
-            onClick={() => probe(outputs[0].id)}
+            onClick={() => probe(node.id, outputs[0].id)}
           >
             <i />
             <span>

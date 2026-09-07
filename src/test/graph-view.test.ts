@@ -4,6 +4,7 @@ import {
   canStartGraphPan,
   edgePresentation,
   fittedTransform,
+  centredOn,
   graphZoomBounds,
   lowZoomBound,
 } from "../ui/GraphView";
@@ -54,16 +55,24 @@ describe("connector stacking", () => {
 });
 
 describe("graph viewport fit", () => {
-  it("translates negative scene origins into the fitted viewport", () => {
+  /* The axis that limited the scale keeps the 20px margin exactly; the slack on
+     the other is split, rather than collecting below and to the right. */
+  it("centres the fitted scene, translating negative scene origins", () => {
     const tf = fittedTransform(
       { left: -100, top: -50, width: 400, height: 200 },
       { width: 440, height: 300 }
     );
 
     expect(tf.k).toBe(1);
-    expect(tf.x + -100 * tf.k).toBe(20);
-    expect(tf.y + -50 * tf.k).toBe(20);
-    expect(tf.x + (-100 + 400) * tf.k).toBe(420);
+    const left = tf.x + -100 * tf.k;
+    const right = 440 - (tf.x + (-100 + 400) * tf.k);
+    const top = tf.y + -50 * tf.k;
+    const bottom = 300 - (tf.y + (-50 + 200) * tf.k);
+
+    expect(left).toBe(20);
+    expect(right).toBe(20);
+    expect(top).toBe(bottom);
+    expect(top).toBe(50);
   });
 
   it("keeps the smallest tensor legible and stops where supersampling stops", () => {
@@ -83,8 +92,11 @@ describe("graph viewport fit", () => {
       { min: 0.4, max: 4 }
     );
     expect(tf.k).toBeLessThan(0.4);
-    expect(tf.x).toBe(20);
+    // Height limited the scale here, so the vertical margin is the 20px one and
+    // the horizontal slack is shared.
     expect(tf.y).toBe(20);
+    expect(300 - (tf.y + 10_000 * tf.k)).toBeCloseTo(20);
+    expect(tf.x).toBeCloseTo(400 - (tf.x + 10_000 * tf.k));
     expect(tf.x + 10_000 * tf.k).toBeLessThanOrEqual(380);
     expect(tf.y + 10_000 * tf.k).toBeLessThanOrEqual(280);
   });
@@ -102,6 +114,22 @@ describe("graph viewport fit", () => {
 
     expect(lowZoomBound(scene, viewport, bounds)).toBeCloseTo(fitted);
     expect(lowZoomBound(scene, viewport, bounds)).toBeLessThan(bounds.min);
+  });
+
+  /* An operation row centres its operator, so the seam takes any node and puts
+     its middle in the middle - a tensor card and a 70x30 op node alike. */
+  it("puts a node's centre in the middle of the viewport", () => {
+    const viewport = { width: 1000, height: 600 };
+    for (const node of [
+      { x: 0, y: 0, w: 70, h: 30 },
+      { x: 400, y: 250, w: 300, h: 200 },
+    ]) {
+      for (const k of [0.2, 1, 2.5]) {
+        const { x, y } = centredOn(node, viewport, k);
+        expect(x + (node.x + node.w / 2) * k).toBeCloseTo(viewport.width / 2);
+        expect(y + (node.y + node.h / 2) * k).toBeCloseTo(viewport.height / 2);
+      }
+    }
   });
 
   it("keeps the ordinary floor when the scene fits above it", () => {

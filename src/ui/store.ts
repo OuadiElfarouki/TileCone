@@ -195,7 +195,10 @@ type State = {
    */
   axisMode: AxisMode;
   countIntermediates: boolean;
-  focusTensor: string | null;
+  /** A one-shot request to bring a node into view. Carries the kind because an
+   * operation row centres its operator, not the tensor it writes. Consumed by
+   * the viewport and cleared, so asking twice acts twice. */
+  focusNode: { kind: "tensor" | "op"; id: string } | null;
   /** Width in px of each side panel when open, and whether it is collapsed to a
    * rail. Collapsing keeps the remembered width so reopening restores it. */
   panelW: { left: number; right: number };
@@ -238,7 +241,7 @@ type State = {
   setSnapToGrid: (v: boolean) => void;
   setAxisMode: (v: AxisMode) => void;
   setCountIntermediates: (v: boolean) => void;
-  setFocusTensor: (id: string | null) => void;
+  setFocusNode: (node: { kind: "tensor" | "op"; id: string } | null) => void;
   /** Preview a panel resize, clamped to the usable open range. */
   setPanelWidth: (side: PanelSide, w: number) => void;
   /** Commit a resize. A raw width under `PANEL_COLLAPSE_AT` collapses here,
@@ -498,7 +501,7 @@ export const useStore = create<State>((set, get) => ({
   // older payload keeps the numeric cards it was written against.
   axisMode: "symbolic",
   countIntermediates: false,
-  focusTensor: null,
+  focusNode: null,
   panelW: { left: 330, right: 300 },
   panelCollapsed: { left: false, right: false },
   tensorOffsets: {},
@@ -529,7 +532,7 @@ export const useStore = create<State>((set, get) => ({
         dslText: text,
         draftText: text,
         exampleIndex,
-        focusTensor: null,
+        focusNode: null,
       };
       if (example?.defaultSelection && base.resolved) {
         st.selection = {
@@ -588,7 +591,7 @@ export const useStore = create<State>((set, get) => ({
         dslText: dsl,
         draftText: dsl,
         exampleIndex: -1,
-        focusTensor: null,
+        focusNode: null,
         direction,
         tileScale: clampedTile,
         snapToGrid,
@@ -800,7 +803,7 @@ export const useStore = create<State>((set, get) => ({
     set({ tileScale: Math.max(TILE_SCALE_MIN, Math.min(TILE_SCALE_MAX, Math.round(v))) }),
 
   setCountIntermediates: (v) => set({ countIntermediates: v }),
-  setFocusTensor: (id) => set({ focusTensor: id }),
+  setFocusNode: (node) => set({ focusNode: node }),
 
   setPanelWidth: (side, w) => {
     const { panelW, panelCollapsed } = get();
@@ -899,7 +902,7 @@ export const useStore = create<State>((set, get) => ({
         dslText: source,
         draftText: source,
         exampleIndex: -1,
-        focusTensor: null,
+        focusNode: null,
       });
     } catch (e) {
       set({ loadError: (e as Error).message });

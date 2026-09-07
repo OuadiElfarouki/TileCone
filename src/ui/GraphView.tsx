@@ -54,9 +54,14 @@ export function fittedTransform(
   );
   // Fit is an overview: the manual legibility floor must not crop the scene.
   const k = Math.min(bounds.max, natural);
+  /* Centre the scaled scene on both axes rather than pinning it to the top
+     left. One axis is what `natural` was limited by and keeps the 20px margin
+     exactly; the slack on the other used to collect entirely below and to the
+     right of the graph. Margins only grow here, never shrink, so the reason the
+     20px exists - keeping overview labels inside the viewport - still holds. */
   return {
-    x: 20 - scene.left * k,
-    y: 20 - scene.top * k,
+    x: (viewport.width - scene.width * k) / 2 - scene.left * k,
+    y: (viewport.height - scene.height * k) / 2 - scene.top * k,
     k,
   };
 }
@@ -75,6 +80,22 @@ export function lowZoomBound(
   bounds: { min: number; max: number }
 ): number {
   return Math.min(bounds.min, fittedTransform(scene, viewport, bounds).k);
+}
+
+/** How long the viewport takes to slide to a focused node, in ms. Long enough
+ * to show the direction travelled, short enough not to be waited on. */
+export const GLIDE_MS = 320;
+
+/** @internal Pure "bring this node to the middle" seam. */
+export function centredOn(
+  node: Pick<PlacedGraphNode, "x" | "y" | "w" | "h">,
+  viewport: { width: number; height: number },
+  k: number
+): { x: number; y: number } {
+  return {
+    x: viewport.width / 2 - (node.x + node.w / 2) * k,
+    y: viewport.height / 2 - (node.y + node.h / 2) * k,
+  };
 }
 
 /** Useful zoom is bounded by legibility at the low end and the canvas backing
@@ -120,8 +141,8 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
   const selection = useStore((s) => s.selection);
   const expandNodeInPlace = useStore((s) => s.expandNodeInPlace);
   const direction = useStore((s) => s.direction);
-  const focusTensor = useStore((s) => s.focusTensor);
-  const setFocusTensor = useStore((s) => s.setFocusTensor);
+  const focusNode = useStore((s) => s.focusNode);
+  const setFocusNode = useStore((s) => s.setFocusNode);
   const setDragging = useStore((s) => s.setDragging);
   const tensorOffsets = useStore((s) => s.tensorOffsets);
   const setTensorOffset = useStore((s) => s.setTensorOffset);
@@ -226,6 +247,42 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
 
   const sceneRef = useRef(scene);
   sceneRef.current = scene;
+  const tfRef = useRef(tf);
+  tfRef.current = tf;
+
+  /* A focused node is slid into view rather than jumped to, because a viewport
+     that changes without showing the movement leaves the reader to work out
+     what moved and which way. Any deliberate viewport gesture cancels it: the
+     user's own pan or zoom always wins over an animation still in flight. */
+  const glideRef = useRef<number | null>(null);
+  const cancelGlide = useCallback(() => {
+    if (glideRef.current !== null) cancelAnimationFrame(glideRef.current);
+    glideRef.current = null;
+  }, []);
+
+  const glideTo = useCallback((to: { x: number; y: number }) => {
+    cancelGlide();
+    const from = { x: tfRef.current.x, y: tfRef.current.y };
+    const still = Math.abs(to.x - from.x) < 0.5 && Math.abs(to.y - from.y) < 0.5;
+    // Honour a reduced-motion preference, and skip the machinery when the view
+    // is already where it is going.
+    if (still || window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
+      setTf((t) => ({ ...t, ...to }));
+      return;
+    }
+    const started = performance.now();
+    const step = (now: number) => {
+      const p = Math.min(1, (now - started) / GLIDE_MS);
+      // Ease out: leaves quickly, arrives gently, so the end reads as settling
+      // rather than stopping.
+      const e = 1 - (1 - p) ** 3;
+      setTf((t) => ({ ...t, x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e }));
+      glideRef.current = p < 1 ? requestAnimationFrame(step) : null;
+    };
+    glideRef.current = requestAnimationFrame(step);
+  }, [cancelGlide]);
+
+  useEffect(() => cancelGlide, [cancelGlide]);
   /* The low zoom clamp. `fittedTransform` deliberately ignores `zoomBounds.min`
      so an overview is never cropped, which means the fitted scale can sit below
      the manual legibility floor. Clamping against the current `k` let the user
@@ -242,6 +299,7 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
   }, [zoomBounds]);
 
   const fit = useCallback(() => {
+    cancelGlide();
     const el = containerRef.current;
     if (!el || el.clientWidth <= 0 || el.clientHeight <= 0) return;
     const current = sceneRef.current;
@@ -285,31 +343,34 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
   }, [scene, fit]);
 
   useEffect(() => {
-    if (!focusTensor) return;
-    const p = sceneRef.current?.nodes.find(
-      (x) => x.kind === "tensor" && x.id === focusTensor
+    if (!focusNode) return;
+    const target = sceneRef.current?.nodes.find(
+      (node) =>
+        node.id === focusNode.id &&
+        (node.kind === "tensor") === (focusNode.kind === "tensor")
     );
     const el = containerRef.current;
-    if (p && el) {
-      setTf((t) => ({
-        ...t,
-        x: el.clientWidth / 2 - (p.x + p.w / 2) * t.k,
-        y: el.clientHeight / 2 - (p.y + p.h / 2) * t.k,
-      }));
+    if (target && el) {
+      glideTo(centredOn(
+        target,
+        { width: el.clientWidth, height: el.clientHeight },
+        tfRef.current.k
+      ));
       // Centring is a deliberate viewport position like a pan or a zoom. Left
       // unmarked, the ResizeObserver still considered the view fitted and the
-      // next panel collapse or window resize re-fitted away from the tensor the
+      // next panel collapse or window resize re-fitted away from the node the
       // user asked to see.
       movedRef.current = true;
-      // Consumed, so asking for the same tensor again centres it again after a
+      // Consumed, so asking for the same node again centres it again after a
       // pan has moved it off screen. Cleared only on success: a request that
       // arrives before the scene has the node stays pending.
-      setFocusTensor(null);
+      setFocusNode(null);
     }
-  }, [focusTensor, setFocusTensor]);
+  }, [focusNode, setFocusNode, glideTo]);
 
   const onWheel = (e: React.WheelEvent) => {
     e.preventDefault();
+    cancelGlide();
     const el = containerRef.current!;
     const rect = el.getBoundingClientRect();
     const mx = e.clientX - rect.left;
@@ -323,6 +384,7 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
   };
 
   const zoomBy = (factor: number) => {
+    cancelGlide();
     const el = containerRef.current;
     if (!el) return;
     movedRef.current = true;
@@ -337,6 +399,7 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.button !== 0 || !canStartGraphPan(e.target)) return;
+    cancelGlide();
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     panRef.current = { x0: e.clientX, y0: e.clientY, tx: tf.x, ty: tf.y };
