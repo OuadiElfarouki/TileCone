@@ -5,6 +5,7 @@ import {
   boundingBox,
   box,
   canonicalize,
+  coarsen,
   count,
   coversAxisFully,
   empty,
@@ -15,6 +16,7 @@ import {
   points,
   addPart,
   disjointify,
+  MAX_BOXES,
   partsOverlap,
   regionOverlap,
   subtractFromParts,
@@ -149,14 +151,19 @@ describe("region algebra", () => {
     expect(difference.reasons).toEqual(expect.arrayContaining(["test bound", "inexact subtraction"]));
   });
 
-  it("box count cap produces bounding box marked inexact", () => {
+  it("box count cap coarsens, marks inexact, and stays a superset", () => {
     const boxes: Box[] = [];
     for (let i = 0; i < 600; i++) boxes.push(box([i * 2, i * 2 + 1]));
     const r = canonicalize({ boxes, exact: true, reasons: [] });
     expect(r.exact).toBe(false);
     expect(r.reasons).toContain("box count cap");
-    expect(r.boxes).toHaveLength(1);
-    expect(r.boxes[0]).toEqual(box([0, 1199]));
+    expect(r.boxes.length).toBeLessThanOrEqual(MAX_BOXES);
+    // Superset: every element that was in is still in.
+    const kept = new Set<number>();
+    for (const p of points(r)) kept.add(p[0]);
+    for (let i = 0; i < 600; i++) expect(kept.has(i * 2)).toBe(true);
+    // And tighter than the collapse it replaced, which is the whole point.
+    expect(count(r)).toBeLessThan(1199);
   });
 
   it("boundingBox encloses everything", () => {
@@ -359,12 +366,19 @@ describe("boxes are kept whole, and measured on the set", () => {
     expect(r.boxes).toEqual([box([0, 8], [0, 8])]);
   });
 
-  it("falls back to a marked bounding box past the cap", () => {
+  it("coarsens to the cap past it, marked, without losing an element", () => {
     const many = Array.from({ length: 40 }, (_, i) => box([i * 2, i * 2 + 1], [0, 4]));
     const r = canonicalize({ boxes: many, exact: true, reasons: [] }, 8);
-    expect(r.boxes).toHaveLength(1);
+    expect(r.boxes.length).toBeLessThanOrEqual(8);
     expect(r.exact).toBe(false);
     expect(r.reasons).toContain("box count cap");
+    const covered = new Set(
+      [...points(r)].map((p) => `${p[0]},${p[1]}`)
+    );
+    for (const b of many)
+      for (let y = 0; y < 4; y++) expect(covered.has(`${b[0].lo},${y}`)).toBe(true);
+    // Bounding-box collapse would have been 79 x 4 = 316 elements.
+    expect(count(r)).toBeLessThan(316);
   });
 });
 
@@ -469,5 +483,123 @@ describe("exact set cardinality without geometric splitting", () => {
       reasons: ["test bound"],
     };
     expect(coversAxisFully(approximate, 1, 8)).toBe(false);
+  });
+});
+
+/**
+ * Coarsening is what a region does instead of giving up at the cap. It is only
+ * safe because a hull contains both boxes it replaces, so the two properties
+ * worth pinning are that it never loses an element and never exceeds the cap.
+ */
+describe("coarsen", () => {
+  const elements = (boxes: Box[]) => {
+    const out = new Set<string>();
+    for (const p of points({ boxes, exact: true, reasons: [] })) out.add(p.join(","));
+    return out;
+  };
+
+  it("returns the input untouched when already under the cap", () => {
+    const boxes = [box([0, 1]), box([5, 6])];
+    expect(coarsen(boxes, 8)).toBe(boxes);
+  });
+
+  it("never drops an element, over many random inputs", () => {
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    for (let trial = 0; trial < 40; trial++) {
+      const n = 12 + Math.floor(rnd() * 30);
+      const boxes: Box[] = Array.from({ length: n }, () => {
+        const lo0 = Math.floor(rnd() * 40);
+        const lo1 = Math.floor(rnd() * 40);
+        return box([lo0, lo0 + 1 + Math.floor(rnd() * 3)], [lo1, lo1 + 1 + Math.floor(rnd() * 3)]);
+      });
+      const cap = 1 + Math.floor(rnd() * 8);
+      const out = coarsen(boxes, cap);
+      expect(out.length).toBeLessThanOrEqual(cap);
+      const before = elements(boxes);
+      const after = elements(out);
+      for (const e of before) expect(after.has(e), `lost ${e}`).toBe(true);
+    }
+  });
+
+  it("keeps the staircase of a diagonal instead of filling its square", () => {
+    // The case that motivated this: 300 diagonal cells used to report 90,000.
+    const diagonal = Array.from({ length: 300 }, (_, i) => box([i, i + 1], [i, i + 1]));
+    const out = coarsen(diagonal, MAX_BOXES);
+    expect(out.length).toBeLessThanOrEqual(MAX_BOXES);
+    expect(count({ boxes: out, exact: false, reasons: [] })).toBeLessThan(2000);
+  });
+
+  it("merges the cheap neighbours and leaves a distant box alone", () => {
+    // Three touching cells and one far away: the far one should survive whole
+    // rather than being hulled with anything.
+    const boxes = [box([0, 1]), box([1, 2]), box([2, 3]), box([1000, 1001])];
+    const out = coarsen(boxes, 2);
+    expect(out).toHaveLength(2);
+    expect(out).toContainEqual(box([1000, 1001]));
+    expect(out).toContainEqual(box([0, 3]));
+  });
+
+  it("still terminates when every box is identical", () => {
+    const boxes = Array.from({ length: 20 }, () => box([0, 4], [0, 4]));
+    const out = coarsen(boxes, 3);
+    expect(out.length).toBeLessThanOrEqual(3);
+  });
+});
+
+/**
+ * The disjoint form degrades the same way the stored form does.
+ *
+ * It used to collapse straight to a bounding box, which on a rank-3 or rank-4
+ * crossing family reported several times the set it described - and took
+ * seconds to decide, because the fragment cap bounds the output but not the
+ * work done approaching it.
+ */
+describe("disjointify degrades by coarsening, under a work budget", () => {
+  /** A crossing family: every box overlaps most others, which is what makes
+   * splitting explode rather than resolve. */
+  const crossing = (n: number, rank: number): Box[] =>
+    Array.from({ length: n }, (_, i) =>
+      Array.from({ length: rank }, (_, a) => {
+        const lo = (i * 7 + a * 31) % 90;
+        return iv(lo, lo + 30);
+      })
+    );
+
+  it.each([2, 3, 4])("stays a partition of a superset at rank %i", (rank) => {
+    const stored = canonicalize({ boxes: crossing(400, rank), exact: true, reasons: [] });
+    const dj = disjointify(stored);
+    // A partition: no element is in two boxes, so volumes sum to the measure.
+    const summed = dj.boxes.reduce(
+      (a, b) => a + b.reduce((v, i) => v * (i.hi - i.lo), 1),
+      0
+    );
+    expect(summed).toBe(count(dj));
+    // And a superset: coarsening only ever adds.
+    expect(count(dj)).toBeGreaterThanOrEqual(count(stored));
+    if (count(dj) > count(stored)) expect(dj.exact).toBe(false);
+  });
+
+  it("finishes a rank-3 crossing family promptly", () => {
+    const stored = canonicalize({ boxes: crossing(400, 3), exact: true, reasons: [] });
+    const start = performance.now();
+    const dj = disjointify(stored);
+    const ms = performance.now() - start;
+    // Was ~2500ms before the work budget. Generous here for slower machines;
+    // the point is that it is bounded rather than quadratic in disguise.
+    expect(ms).toBeLessThan(1200);
+    // And coarsening rather than collapsing keeps it near the real measure.
+    expect(count(dj)).toBeLessThan(count(stored) * 2);
+  });
+
+  it("leaves a small overlapping region exact and split", () => {
+    const stored = canonicalize({
+      boxes: [box([0, 8], [0, 4]), box([4, 12], [2, 6])],
+      exact: true,
+      reasons: [],
+    });
+    const dj = disjointify(stored);
+    expect(dj.exact).toBe(true);
+    expect(count(dj)).toBe(count(stored));
   });
 });

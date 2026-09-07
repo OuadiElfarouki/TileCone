@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { Box, Interval, Region, canonicalize, empty, fromBox, iv } from "../region";
 import { productBoxes } from "./shape-ops";
-import { DependencyNoteDraft, NoteCtx, OpCtx, OpSpec, STRIDED_ENUM_CAP, promotingDTypeOutputs, uniformDTypeOutputs } from "./types";
+import { DependencyNoteDraft, NoteCtx, OpCtx, OpSpec, promotingDTypeOutputs, uniformDTypeOutputs } from "./types";
+import { limitsOf } from "./limits";
 import { sameAxisNames } from "./axis-names";
 
 /**
@@ -42,7 +43,8 @@ function spatialBackward(
   d: number,
   K: number,
   pLo: number,
-  n: number
+  n: number,
+  stridedEnum: number
 ): { list: Interval[]; exact: boolean } {
   if (o1 <= o0) return { list: [], exact: true };
   if (d === 1 && s <= K) {
@@ -50,7 +52,7 @@ function spatialBackward(
     const hi = Math.min(n, (o1 - 1) * s + K - pLo);
     return { list: hi > lo ? [iv(lo, hi)] : [], exact: true };
   }
-  if ((o1 - o0) * K <= STRIDED_ENUM_CAP) {
+  if ((o1 - o0) * K <= stridedEnum) {
     const seen = new Set<number>();
     for (let o = o0; o < o1; o++)
       for (let k = 0; k < K; k++) {
@@ -79,14 +81,15 @@ function spatialForward(
   d: number,
   K: number,
   pLo: number,
-  oN: number
+  oN: number,
+  stridedEnum: number
 ): { list: Interval[]; exact: boolean } {
   if (i1 <= i0) return { list: [], exact: true };
   const oLo = Math.max(0, Math.ceil((i0 + pLo - (K - 1) * d) / s));
   const oHi = Math.min(oN, Math.floor((i1 - 1 + pLo) / s) + 1);
   if (oHi <= oLo) return { list: [], exact: true };
   if (d === 1) return { list: [iv(oLo, oHi)], exact: true };
-  if ((oHi - oLo) * K <= STRIDED_ENUM_CAP) {
+  if ((oHi - oLo) * K <= stridedEnum) {
     const list: Interval[] = [];
     for (let o = oLo; o < oHi; o++) {
       let touches = false;
@@ -235,7 +238,8 @@ export const convOp: OpSpec = {
         c.dilation[i],
         c.kernel[i],
         c.pads[i][0],
-        c.spatialIn[i]
+        c.spatialIn[i],
+        limitsOf(ctx).stridedEnum
       );
       exact = exact && r.exact;
       perAxis.push(r.list);
@@ -264,7 +268,8 @@ export const convOp: OpSpec = {
           c.dilation[i],
           c.kernel[i],
           c.pads[i][0],
-          c.spatialOut[i]
+          c.spatialOut[i],
+          limitsOf(ctx).stridedEnum
         );
         exact = exact && r.exact;
         perAxis.push(r.list);
@@ -361,7 +366,8 @@ export const poolOp: OpSpec = {
         d[i],
         a.kernelShape[i],
         a.pads[i][0],
-        inSh[2 + i]
+        inSh[2 + i],
+        limitsOf(ctx).stridedEnum
       );
       exact = exact && r.exact;
       perAxis.push(r.list);
@@ -382,7 +388,8 @@ export const poolOp: OpSpec = {
         d[i],
         a.kernelShape[i],
         a.pads[i][0],
-        outSh[2 + i]
+        outSh[2 + i],
+        limitsOf(ctx).stridedEnum
       );
       exact = exact && r.exact;
       perAxis.push(r.list);

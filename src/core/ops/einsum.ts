@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { Box, Region, coversAxisFully, empty, fromBox, iv, canonicalize } from "../region";
-import { Attrs, DependencyNoteDraft, DIAG_ENUM_CAP, OpCtx, OpSpec, promotingDTypeOutputs, NoteCtx } from "./types";
+import { Attrs, DependencyNoteDraft, OpCtx, OpSpec, promotingDTypeOutputs, NoteCtx } from "./types";
+import { limitsOf } from "./limits";
 import { AxisNames } from "./types";
 import { Sym } from "../shapes";
 
@@ -127,6 +128,7 @@ function einsumInferShapes(eq: string, inShapes: number[][]): number[][] {
 
 /** @internal Exported for direct oracle-sized tests of diagonal semantics. */
 export function einsumBackward(eq: string, outBox: Box, ctx: OpCtx): Region[] {
+  const diagEnum = limitsOf(ctx).diagEnum;
   const pe = parseEquation(eq, ctx.inShapes.length);
   const ext = labelExtents(pe, ctx.inShapes);
   const labelIv = new Map<string, { lo: number; hi: number }>();
@@ -149,12 +151,42 @@ export function einsumBackward(eq: string, outBox: Box, ctx: OpCtx): Region[] {
       combos *= Math.max(0, I.hi - I.lo);
     }
     if (combos === 0) return empty(labs.length);
-    if (combos > DIAG_ENUM_CAP)
-      return {
-        boxes: [base],
-        exact: false,
-        reasons: ["diagonal einsum"],
+    if (combos > diagEnum) {
+      // Too many diagonal positions to name individually, but the staircase is
+      // still worth keeping: chunk each repeated label's range into blocks and
+      // emit one box per combination of blocks. Each box is the sub-square a
+      // block spans, which contains that block's diagonal cells, so the union
+      // is a superset exactly as the single enclosing box was - and for a
+      // 300-wide diagonal it is a few hundred elements rather than 90,000.
+      const perLabel = Math.max(
+        1,
+        Math.floor(Math.pow(diagEnum, 1 / repeated.length))
+      );
+      const blocks = repeated.map((L) => {
+        const I = labelIv.get(L)!;
+        const width = I.hi - I.lo;
+        const groups = Math.min(perLabel, width);
+        const size = Math.ceil(width / groups);
+        const out: { lo: number; hi: number }[] = [];
+        for (let start = I.lo; start < I.hi; start += size)
+          out.push(iv(start, Math.min(start + size, I.hi)));
+        return out;
+      });
+      const boxes: Box[] = [];
+      const walk = (li: number, assign: Map<string, { lo: number; hi: number }>) => {
+        if (li === repeated.length) {
+          boxes.push(labs.map((L, ax) => ({ ...(assign.get(L) ?? base[ax]) })));
+          return;
+        }
+        for (const block of blocks[li]) {
+          assign.set(repeated[li], block);
+          walk(li + 1, assign);
+        }
+        assign.delete(repeated[li]);
       };
+      walk(0, new Map());
+      return canonicalize({ boxes, exact: false, reasons: ["diagonal einsum"] });
+    }
     const boxes: Box[] = [];
     const rec = (li: number, assign: Map<string, number>) => {
       if (li === repeated.length) {
@@ -233,15 +265,43 @@ function einsumFlops(eq: string, outBox: Box, ctx: OpCtx): number {
   return vol * einsumFlopsPerElement(eq, ctx);
 }
 
+/**
+ * Cost of one output element of the equation **as written**: one fused
+ * contraction, no intermediate materialized.
+ *
+ * Per contracted position the loop body multiplies the operands together and
+ * accumulates, so the count is
+ *
+ *     (operands - 1) multiplies  +  one add per position that accumulates
+ *
+ * both scaled by the number of contracted positions. Each term is nil in a real
+ * case, which is why they are counted separately rather than folded into one
+ * factor: an outer product (`i,j->ij`) contracts nothing and only multiplies,
+ * a plain reduction (`ij->i`) has one operand and only adds, and a transpose
+ * (`ij->ji`) does neither. For the ordinary two-operand contraction it comes
+ * out at the conventional `2 * K` per element, so a GEMM still reports 2MNK.
+ *
+ * The previous form, `2 * (operands - 1) * positions`, was right only for two
+ * operands with something to contract. It charged an outer product two FLOPs
+ * for a single multiply, and a three-operand contraction four per position
+ * where the fused loop does three.
+ *
+ * This is deliberately not the cost of an optimal pairwise path. A three-
+ * operand einsum written as one node is one fused contraction, and a pairwise
+ * decomposition is a different program that happens to compute the same values
+ * - usually far more cheaply. Reporting its cost here would answer a question
+ * about a program the author did not write; writing the two einsums separately
+ * reports it, because then that is what the graph says.
+ */
 function einsumFlopsPerElement(eq: string, ctx: OpCtx): number {
   const pe = parseEquation(eq, ctx.inShapes.length);
   const ext = labelExtents(pe, ctx.inShapes);
-  let contr = 1;
+  let positions = 1;
   const outSet = new Set(pe.output);
-  for (const [L, e] of ext) if (!outSet.has(L)) contr *= e;
-  const n = pe.operands.length;
-  if (n >= 2) return 2 * (n - 1) * contr;
-  return contr > 1 ? contr : 0;
+  for (const [L, e] of ext) if (!outSet.has(L)) positions *= e;
+  const multiplies = (pe.operands.length - 1) * positions;
+  const adds = positions > 1 ? positions : 0;
+  return multiplies + adds;
 }
 
 

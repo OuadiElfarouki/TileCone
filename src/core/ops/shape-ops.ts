@@ -8,7 +8,8 @@ import {
   broadcastOracleIndex,
 } from "./elementwise";
 import { normAxis } from "./reduce";
-import { OpSpec, STRIDED_ENUM_CAP, uniformDTypeOutputs } from "./types";
+import { OpSpec, uniformDTypeOutputs } from "./types";
+import { limitsOf } from "./limits";
 import { broadcastAxisNames, firstNamedAxis, sameAxisNames } from "./axis-names";
 import { sameSymShape } from "./sym-shape";
 import { Sym } from "../shapes";
@@ -119,7 +120,7 @@ export const sliceOp: OpSpec = {
     let inexact = false;
     outBox.forEach((I, ax) => {
       if (steps[ax] === 1) return;
-      if (stridedCombos <= STRIDED_ENUM_CAP) {
+      if (stridedCombos <= limitsOf(ctx).stridedEnum) {
         const list: Interval[] = [];
         for (let o = I.lo; o < I.hi; o++) {
           const i = starts[ax] + o * steps[ax];

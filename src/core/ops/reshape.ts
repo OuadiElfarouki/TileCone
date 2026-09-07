@@ -1,11 +1,12 @@
 import { z } from "zod";
-import { Box, Interval, Region, boundingBox, canonicalize, iv, MAX_BOXES } from "../region";
+import { Box, Interval, Region, boundingBox, canonicalize, iv } from "../region";
 import { resolveShape } from "../shapes";
 import { DependencyNoteDraft, NoteCtx, OpSpec, uniformDTypeOutputs } from "./types";
+import { DEFAULT_LIMITS, limitsOf } from "./limits";
 import { AxisNames } from "./types";
 import { Sym } from "../shapes";
 
-const MAX_RESHAPE_RUNS = 4096;
+
 
 /**
  * Reshape provenance, implemented per IDEA.md §3.2 but unified:
@@ -125,12 +126,18 @@ function boxToRuns(box: Box, ext: number[], budget: number): [number, number][] 
 }
 
 /** @internal Map a box through reshape; exported for round-trip and brute-force tests. */
-export function reshapeMapBox(b: Box, fromShape: number[], toShape: number[]): Region {
+export function reshapeMapBox(
+  b: Box,
+  fromShape: number[],
+  toShape: number[],
+  maxRuns: number = DEFAULT_LIMITS.reshapeRuns,
+  maxBoxes: number = DEFAULT_LIMITS.maxBoxes
+): Region {
   const groups = groupAxes(fromShape, toShape);
   // Per group: a small Region over the group's `to` axes.
   const perGroup: { boxes: Box[]; exact: boolean; reasons: string[] }[] = [];
   let fi = 0;
-  let budget = MAX_RESHAPE_RUNS;
+  let budget = maxRuns;
   for (const g of groups) {
     const gBox = b.slice(fi, fi + g.from.length);
     fi += g.from.length;
@@ -159,7 +166,7 @@ export function reshapeMapBox(b: Box, fromShape: number[], toShape: number[]): R
     budget = Math.max(64, budget - runs.length);
     const boxes: Box[] = [];
     for (const [a, e] of runs) boxes.push(...linearRangeToBoxes(a, e, g.to));
-    const r = canonicalize({ boxes, exact: true, reasons: [] }, MAX_BOXES);
+    const r = canonicalize({ boxes, exact: true, reasons: [] }, maxBoxes);
     perGroup.push({ boxes: r.boxes, exact: r.exact, reasons: r.reasons });
   }
   // Combine groups: cartesian product. Collapse the biggest groups first if it explodes.
@@ -167,7 +174,7 @@ export function reshapeMapBox(b: Box, fromShape: number[], toShape: number[]): R
   let product = counts.reduce((a, c) => a * c, 1);
   let exact = perGroup.every((g) => g.exact);
   const reasons = new Set(perGroup.flatMap((g) => g.reasons));
-  while (product > MAX_BOXES) {
+  while (product > maxBoxes) {
     let worst = 0;
     for (let k = 1; k < perGroup.length; k++)
       if (perGroup[k].boxes.length > perGroup[worst].boxes.length) worst = k;
@@ -290,8 +297,12 @@ export const reshapeOp: OpSpec = {
     if (inN !== outN) throw new Error(`reshape: ${inN} elements -> ${outN}`);
     return [target];
   },
-  backward: (_s, outBox, ctx) => [reshapeMapBox(outBox, ctx.outShapes[0], ctx.inShapes[0])],
-  forward: (_s, inBox, ctx) => [reshapeMapBox(inBox, ctx.inShapes[0], ctx.outShapes[0])],
+  backward: (_s, outBox, ctx) => [
+    reshapeMapBox(outBox, ctx.outShapes[0], ctx.inShapes[0], limitsOf(ctx).reshapeRuns, limitsOf(ctx).maxBoxes),
+  ],
+  forward: (_s, inBox, ctx) => [
+    reshapeMapBox(inBox, ctx.inShapes[0], ctx.outShapes[0], limitsOf(ctx).reshapeRuns, limitsOf(ctx).maxBoxes),
+  ],
   oracleDeps: (_s, outIndex, ctx) => {
     const outSt = strides(ctx.outShapes[0]);
     const inSt = strides(ctx.inShapes[0]);

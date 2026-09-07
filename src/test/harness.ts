@@ -3,6 +3,7 @@ import { Graph, ResolvedGraph, resolveGraph, Tensor } from "../core/graph";
 import { DType } from "../core/dtypes";
 import { propagateBackward, propagateForward } from "../core/propagate";
 import { Region, fromBox, points } from "../core/region";
+import { DEFAULT_LIMITS, type Limits } from "../core/ops/limits";
 import { computeOracle, regionToFlatSet, truthBackward, truthForward, unflatIndex, Oracle } from "./oracle";
 
 export function rng(seed: number): () => number {
@@ -87,6 +88,9 @@ function assertAgainstTruth(
 }
 
 export type CheckOpts = {
+  /** Lowered fallback thresholds, so the conservative branches are reachable
+   * at shapes a brute-force oracle can still enumerate. */
+  limits?: Partial<Limits>;
   seed?: number;
   perTensorElementCap?: number;
   boxSelections?: number;
@@ -97,6 +101,7 @@ export type CheckOpts = {
 /** Exhaustive-ish oracle check of backward and forward propagation on a small graph. */
 export function checkGraph(graph: Graph, opts: CheckOpts = {}): void {
   const {
+    limits: limitOverrides,
     seed = 42,
     perTensorElementCap = 24,
     boxSelections = 2,
@@ -106,6 +111,7 @@ export function checkGraph(graph: Graph, opts: CheckOpts = {}): void {
   const g = resolveGraph(graph);
   const oracle: Oracle = computeOracle(g);
   const r = rng(seed);
+  const limits = limitOverrides ? { ...DEFAULT_LIMITS, ...limitOverrides } : undefined;
 
   for (const t of Object.values(g.tensors)) {
     const shape = t.resolved!;
@@ -120,7 +126,7 @@ export function checkGraph(graph: Graph, opts: CheckOpts = {}): void {
     for (const sel of sels) {
       const selDesc = JSON.stringify(sel.boxes);
       if (backward) {
-        const res = propagateBackward(g, { tensorId: t.id, region: sel });
+        const res = propagateBackward(g, { tensorId: t.id, region: sel }, limits);
         assertAgainstTruth(
           g,
           res.tensors,
@@ -129,7 +135,7 @@ export function checkGraph(graph: Graph, opts: CheckOpts = {}): void {
         );
       }
       if (forward) {
-        const res = propagateForward(g, { tensorId: t.id, region: sel });
+        const res = propagateForward(g, { tensorId: t.id, region: sel }, limits);
         assertAgainstTruth(
           g,
           res.tensors,

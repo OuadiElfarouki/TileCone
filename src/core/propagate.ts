@@ -1,6 +1,7 @@
 import { ResolvedGraph } from "./graph";
 import { getOp } from "./ops/index";
 import { OpCtx, OpSpec } from "./ops/types";
+import type { Limits } from "./ops/limits";
 import { Box, Region, canonicalize, isEmpty, sortRegion, union } from "./region";
 
 export type Selection = { tensorId: string; region: Region };
@@ -44,8 +45,12 @@ type PropagationPlan = {
  * immutable node context for every probe. */
 const planMemo = new WeakMap<ResolvedGraph, PropagationPlan>();
 
-function propagationPlan(graph: ResolvedGraph): PropagationPlan {
-  const cached = planMemo.get(graph);
+function propagationPlan(graph: ResolvedGraph, limits?: Limits): PropagationPlan {
+  // Only the default plan is memoized. Custom limits come from tests driving
+  // the conservative branches, and caching one graph's plan under whichever
+  // limits happened to be asked for first would hand the next caller a context
+  // built for someone else's thresholds.
+  const cached = limits ? undefined : planMemo.get(graph);
   if (cached) return cached;
   const context = new Map<string, { spec: OpSpec; ctx: OpCtx }>();
   for (const node of graph.topo) {
@@ -55,6 +60,7 @@ function propagationPlan(graph: ResolvedGraph): PropagationPlan {
         inShapes: graph.shapesOf(node.inputs),
         outShapes: graph.shapesOf(node.outputs),
         attrs: node.attrs,
+        ...(limits ? { limits } : {}),
       },
     });
   }
@@ -67,17 +73,22 @@ function propagationPlan(graph: ResolvedGraph): PropagationPlan {
     }));
   };
   const plan = { backward: steps("backward"), forward: steps("forward") };
-  planMemo.set(graph, plan);
+  if (!limits) planMemo.set(graph, plan);
   return plan;
 }
 
-function propagate(graph: ResolvedGraph, sel: Selection, dir: "backward" | "forward"): PropResult {
+function propagate(
+  graph: ResolvedGraph,
+  sel: Selection,
+  dir: "backward" | "forward",
+  limits?: Limits
+): PropResult {
   if (!graph.tensors[sel.tensorId]) throw new Error(`unknown tensor "${sel.tensorId}"`);
   const acc = new Map<string, TensorResult>();
   const seed = canonicalize(sel.region);
   acc.set(sel.tensorId, { region: seed, depth: 0 });
 
-  for (const { spec, ctx, fromIds, toIds } of propagationPlan(graph)[dir]) {
+  for (const { spec, ctx, fromIds, toIds } of propagationPlan(graph, limits)[dir]) {
     // Most nodes in a wide graph may be unrelated to this seed. Test reachability
     // before allocating pending regions; structural context is already cached.
     const sources = fromIds.map((id) => acc.get(id));
@@ -132,12 +143,20 @@ function propagate(graph: ResolvedGraph, sel: Selection, dir: "backward" | "forw
   return { direction: dir, selection: sel, roots: [sel.tensorId], tensors: acc, reasons: [...reasons].sort() };
 }
 
-export function propagateBackward(graph: ResolvedGraph, sel: Selection): PropResult {
-  return propagate(graph, sel, "backward");
+export function propagateBackward(
+  graph: ResolvedGraph,
+  sel: Selection,
+  limits?: Limits
+): PropResult {
+  return propagate(graph, sel, "backward", limits);
 }
 
-export function propagateForward(graph: ResolvedGraph, sel: Selection): PropResult {
-  return propagate(graph, sel, "forward");
+export function propagateForward(
+  graph: ResolvedGraph,
+  sel: Selection,
+  limits?: Limits
+): PropResult {
+  return propagate(graph, sel, "forward", limits);
 }
 
 /**

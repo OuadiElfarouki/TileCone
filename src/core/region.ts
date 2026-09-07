@@ -172,6 +172,132 @@ function mergePass(boxes: Box[]): Box[] {
   return bs;
 }
 
+/** The box covering both, which is what merging them costs you. */
+function hull(a: Box, b: Box): Box {
+  const out: Box = [];
+  for (let ax = 0; ax < a.length; ax++)
+    out.push(iv(Math.min(a[ax].lo, b[ax].lo), Math.max(a[ax].hi, b[ax].hi)));
+  return out;
+}
+
+/**
+ * Elements the hull adds beyond the two boxes themselves.
+ *
+ * An upper bound on the waste, not the exact figure: it charges for the overlap
+ * twice when the boxes intersect, which only ever makes a merge look worse than
+ * it is. Computing the true union here would cost a measure sweep per candidate
+ * pair, and the ranking barely changes - overlapping pairs are cheap either way.
+ */
+function mergeWaste(a: Box, b: Box): number {
+  let hullVolume = 1;
+  const h = hull(a, b);
+  for (const i of h) hullVolume *= i.hi - i.lo;
+  return hullVolume - boxVolume(a) - boxVolume(b);
+}
+
+/** Minimal binary heap over (cost, entry), enough for the coarsener. */
+type PairEntry = { cost: number; left: number; right: number; stampL: number; stampR: number };
+
+function heapPush(heap: PairEntry[], entry: PairEntry): void {
+  heap.push(entry);
+  let i = heap.length - 1;
+  while (i > 0) {
+    const parent = (i - 1) >> 1;
+    if (heap[parent].cost <= heap[i].cost) break;
+    [heap[parent], heap[i]] = [heap[i], heap[parent]];
+    i = parent;
+  }
+}
+
+function heapPop(heap: PairEntry[]): PairEntry | undefined {
+  if (heap.length === 0) return undefined;
+  const top = heap[0];
+  const last = heap.pop()!;
+  if (heap.length) {
+    heap[0] = last;
+    let i = 0;
+    for (;;) {
+      const l = 2 * i + 1;
+      const r = l + 1;
+      let small = i;
+      if (l < heap.length && heap[l].cost < heap[small].cost) small = l;
+      if (r < heap.length && heap[r].cost < heap[small].cost) small = r;
+      if (small === i) break;
+      [heap[small], heap[i]] = [heap[i], heap[small]];
+      i = small;
+    }
+  }
+  return top;
+}
+
+/**
+ * Reduce a box list to at most `maxBoxes` by merging neighbours into their
+ * hulls, cheapest first.
+ *
+ * This replaces collapsing straight to one bounding box, which was correct but
+ * threw away everything: a 300-wide diagonal reported the whole 300x300 matrix,
+ * 300 times its own size. Merging pairwise keeps the shape of the set, so the
+ * same case comes back within a few hundred elements of the truth.
+ *
+ * Always a superset: a hull contains both boxes it replaces, so no element is
+ * ever lost. The caller marks the result inexact.
+ *
+ * Candidates are adjacent pairs in lexicographic order by lower corner, not all
+ * pairs. All-pairs greedy is cubic and unusable at the sizes this guards, while
+ * the orders that actually reach the cap - a strided slice's evenly spaced
+ * runs, a diagonal's staircase - are exactly the orders lexicographic sorting
+ * puts next to each other.
+ */
+export function coarsen(boxes: Box[], maxBoxes: number): Box[] {
+  if (boxes.length <= maxBoxes || maxBoxes < 1) return boxes;
+  const items = boxes.slice().sort((a, b) => {
+    for (let ax = 0; ax < a.length; ax++) {
+      if (a[ax].lo !== b[ax].lo) return a[ax].lo - b[ax].lo;
+      if (a[ax].hi !== b[ax].hi) return a[ax].hi - b[ax].hi;
+    }
+    return 0;
+  });
+
+  const prev = items.map((_, i) => i - 1);
+  const next = items.map((_, i) => (i === items.length - 1 ? -1 : i + 1));
+  const alive = items.map(() => true);
+  // Bumped whenever a box is merged into, so heap entries naming an older
+  // version of it can be discarded on pop instead of deleted on merge.
+  const stamp = items.map(() => 0);
+
+  const heap: PairEntry[] = [];
+  const offer = (left: number, right: number) => {
+    if (left < 0 || right < 0) return;
+    heapPush(heap, {
+      cost: mergeWaste(items[left], items[right]),
+      left,
+      right,
+      stampL: stamp[left],
+      stampR: stamp[right],
+    });
+  };
+  for (let i = 0; i < items.length - 1; i++) offer(i, i + 1);
+
+  let count = items.length;
+  while (count > maxBoxes) {
+    const entry = heapPop(heap);
+    if (!entry) break; // no candidates left; the caller's cap still applies
+    const { left, right } = entry;
+    if (!alive[left] || !alive[right]) continue;
+    if (entry.stampL !== stamp[left] || entry.stampR !== stamp[right]) continue;
+
+    items[left] = hull(items[left], items[right]);
+    stamp[left]++;
+    alive[right] = false;
+    next[left] = next[right];
+    if (next[right] >= 0) prev[next[right]] = left;
+    count--;
+    offer(prev[left], left);
+    offer(left, next[left]);
+  }
+  return items.filter((_, i) => alive[i]);
+}
+
 export function boundingBox(r: Region): Box | null {
   if (r.boxes.length === 0) return null;
   const rank = r.boxes[0].length;
@@ -231,8 +357,10 @@ export function canonicalize(r: Region, maxBoxes: number = MAX_BOXES): Region {
     boxes = mergePass(dropContained(boxes));
   }
   if (boxes.length > maxBoxes) {
-    const bb = boundingBox({ boxes, exact, reasons });
-    boxes = bb ? [bb] : [];
+    // Coarsen rather than collapse. Both are supersets, but one bounding box
+    // discards the shape of the set entirely, and the shape is what the reader
+    // is looking at.
+    boxes = coarsen(boxes, maxBoxes);
     exact = false;
     reasons = mergeReasons(reasons, ["box count cap"]);
   }
@@ -272,40 +400,60 @@ export function disjointify(r: Region, maxBoxes: number = MAX_BOXES): Region {
   return out;
 }
 
-function splitOnOverlap(r: Region, maxBoxes: number): Region {
-  // 1. drop empties
-  let boxes = r.boxes.filter((b) => !isEmptyBox(b));
-  let exact = r.exact;
-  let reasons = r.reasons.slice();
-  // 2. disjointify (split-on-overlap)
+/**
+ * Work a split may do before giving up, counted in `subtractBox` calls.
+ *
+ * A fragment cap alone does not bound the time. Splitting is quadratic in the
+ * boxes and exponential in the rank - `subtractBox` yields up to `2 * rank`
+ * pieces per overlap - so a crossing family can spend seconds *approaching* the
+ * fragment cap and reach it only at the end. Counting the calls bounds the wall
+ * clock directly, which is what an interactive caller actually needs.
+ */
+const SPLIT_WORK_BUDGET = 200_000;
+
+/** Split-on-overlap, or null when it outgrows the fragment or work budget. */
+function trySplit(boxes: Box[], softCap: number): Box[] | null {
   const disjoint: Box[] = [];
-  const softCap = maxBoxes * 8;
-  let bailed = false;
+  let work = 0;
   for (const b of boxes) {
     let frags: Box[] = [b];
     for (const d of disjoint) {
       const next: Box[] = [];
       for (const f of frags) next.push(...subtractBox(f, d));
+      work += frags.length;
       frags = next;
       if (frags.length === 0) break;
     }
+    if (work > SPLIT_WORK_BUDGET) return null;
     disjoint.push(...frags);
-    if (disjoint.length > softCap) {
-      bailed = true;
-      break;
-    }
+    if (disjoint.length > softCap) return null;
   }
-  boxes = bailed ? boxes : disjoint;
-  // 3. merge to fixpoint; the split above guarantees the result stays disjoint
-  if (!bailed) boxes = mergePass(boxes);
-  // 4. cap
-  if (bailed || boxes.length > maxBoxes) {
-    const bb = boundingBox({ boxes, exact, reasons });
-    boxes = bb ? [bb] : [];
-    exact = false;
-    reasons = mergeReasons(reasons, ["box count cap"]);
-  }
-  return { boxes, exact, reasons };
+  return mergePass(disjoint);
+}
+
+function splitOnOverlap(r: Region, maxBoxes: number): Region {
+  let source = r.boxes.filter((b) => !isEmptyBox(b));
+  const softCap = maxBoxes * 8;
+
+  const direct = trySplit(source, softCap);
+  if (direct && direct.length <= maxBoxes)
+    return { boxes: direct, exact: r.exact, reasons: r.reasons.slice() };
+
+  // Splitting blew up, or produced more pieces than the cap allows. Coarsen the
+  // *input* and split that, rather than collapsing the answer to one box: at
+  // rank 3 and 4 a family of crossing boxes reliably defeated the split, and a
+  // bounding box there reported several times the set it was describing.
+  //
+  // Coarsening well below the cap is deliberate. The split is what grows the
+  // count, so the input has to leave room for it, and a second failure costs
+  // another full attempt.
+  source = coarsen(source, Math.max(1, maxBoxes >> 3));
+  const reasons = mergeReasons(r.reasons, ["box count cap"]);
+  const retry = trySplit(source, softCap);
+  if (retry && retry.length <= maxBoxes) return { boxes: retry, exact: false, reasons };
+
+  const bb = boundingBox({ boxes: source, exact: false, reasons });
+  return { boxes: bb ? [bb] : [], exact: false, reasons };
 }
 
 export function union(a: Region, b: Region): Region {

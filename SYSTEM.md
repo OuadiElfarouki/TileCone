@@ -58,7 +58,7 @@ src/
 │   ├── notes.ts          plain-language dependency constraints
 │   ├── shapes.ts         symbolic dimensions and shape errors
 │   ├── dtypes.ts         canonical dtypes, byte widths, and the promotion lattice
-│   └── ops/              operation semantics and registry
+│   └── ops/              operation semantics, registry, and fallback thresholds
 ├── parse/
 │   ├── lexical.ts        identifier, string, and comment rules, shared with the highlighter
 │   ├── ast.ts            DSL syntax tree
@@ -338,6 +338,8 @@ so a wrong name misinforms where no name merely omits.
 Byte estimates use the dtype inferred during graph resolution, so dtype propagation and metrics share one source of truth. Per-tensor readouts include element count, bytes, boxes, exactness, approximation reasons, slice expressions, and propagation depth.
 
 
+einsum FLOPs count the fused loop: `(operands - 1)` multiplies plus one add per contracted position, each term dropping out where it should. An outer product only multiplies, a reduction only adds, a transpose does neither, and the ordinary two-operand contraction comes out at the conventional `2K` per element.
+
 `AggregateReadout` carries `exact` and `reasons` alongside the figures. Every total is measured over the cone's regions, so a widened region makes all of them upper bounds: it contributes bytes that are not really needed and FLOPs for work that is not really done. The flag is *derived* from the per-tensor rows rather than set independently, and the relation is strictly "no more than" — a region is never a subset of the truth, so a figure is never understated. The inspector prefixes each bounded figure with `≤` and states the reasons, which is what keeps the totals inside the rule the rest of the system follows: an over-approximation is never presented as ground truth.
 
 ## 8a. Dependency notes
@@ -472,6 +474,7 @@ The test suite checks the architecture at several levels:
 
 - region algebra and canonicalization, including that `canonicalize` preserves the point set while keeping operand bands whole, and that `disjointify` is a partition of the same set;
 - shape, dtype, attribute, rank, and arity validation;
+- the conservative branches against the oracle, with the fallback thresholds lowered so a diagonal, a strided access, or a fragmenting reshape takes its fallback at a shape brute force can still enumerate. Each is paired with a check that the lowered threshold genuinely changed which branch ran, since a superset assertion passes trivially on an exact region;
 - operation-specific forward and backward mappings;
 - compiler diagnostics: that every independent failure is reported in one pass and in source order, that a failed statement does not cascade into invented errors below it, and that a diagnostic underlines the narrowest part it is certainly about;
 - executor boundary validation;
@@ -542,8 +545,10 @@ Keep shape/index logic in the core or pure UI geometry helpers. The store should
 - Regions are unions of axis-aligned boxes that may overlap; highly fragmented mappings may conservatively collapse at the box cap. Because normalization no longer splits, the cap is reached later than it used to be, but a box count is no longer an upper bound on how many disjoint pieces a region has.
 - Parsed operation outputs use an empty shape as an unresolved placeholder before graph resolution. Consumers should not execute or render that intermediate form.
 - Reuse estimation is deterministic for a given seed but sampled; exact FLOP/byte metrics remain a separate contract.
-- Past a cap, a region degrades to a single bounding box rather than to a coarser set of boxes, so the loss of precision at that boundary is abrupt.
-- einsum FLOPs model the naive contraction, not an optimal pairwise path; for three or more operands the figure exceeds what a real executor would pay.
+- Past a cap, a region is coarsened by merging neighbours into their hulls rather than collapsed to one bounding box, so the shape of the set survives. What remains abrupt is only the transition to `exact: false`.
+- Coarsening recovers an asymptotic loss, not a constant one. A diagonal's fallback was quadratic in the selection and is now linear; a strided access is already linear and stays within its stride factor, which no box decomposition improves without one box per element.
+- `disjointify` degrades the same way, after a work budget rather than only a fragment cap: splitting is exponential in the rank, so a crossing family could spend seconds approaching the cap. A rank-4 crossing family still reaches the bounding box, marked.
+- einsum FLOPs are the cost of the equation as written, as one fused contraction. A pairwise decomposition of a three-operand contraction costs less, and writing it as separate einsums is what reports that.
 - The partial-contribution flag can over-warn on an over-approximated region and never under-warns; past its probe cap, downstream rows are simply unflagged.
 - Per-part attribution is intentionally capped to keep interaction responsive; aggregate propagation remains complete.
 - Expanding a composite can expose intermediate traffic, so dependency and FLOP semantics may remain equivalent while displayed intermediate-byte estimates change.

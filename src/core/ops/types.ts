@@ -2,6 +2,7 @@ import type { ZodType } from "zod";
 import type { Box, Region } from "../region";
 import type { Sym } from "../shapes";
 import { DType, promoteDTypes } from "../dtypes";
+import { DEFAULT_LIMITS, type Limits } from "./limits";
 
 /**
  * One tensor's own short reason: why *its* footprint has the shape it has.
@@ -41,6 +42,9 @@ export type OpCtx = {
   inShapes: number[][];
   outShapes: number[][];
   attrs: Attrs;
+  /** Fallback thresholds; absent means `DEFAULT_LIMITS`. Only tests set this,
+   * so that the conservative branches can be reached at oracle-sized shapes. */
+  limits?: Limits;
 };
 
 /**
@@ -175,9 +179,9 @@ export interface OpSpec {
   flopsForRegion?(outSlot: number, outRegion: Region, ctx: OpCtx): number;
 }
 
-/** Thresholds for emitting enumerated boxes before falling back to inexact bounds. */
-export const STRIDED_ENUM_CAP = 512;
-export const DIAG_ENUM_CAP = 256;
+/** @deprecated Read `limitsOf(ctx)` instead, so a caller can lower them. */
+export const STRIDED_ENUM_CAP = DEFAULT_LIMITS.stridedEnum;
+export const DIAG_ENUM_CAP = DEFAULT_LIMITS.diagEnum;
 
 /**
  * Require all inputs to share one dtype and apply it to every inferred output.

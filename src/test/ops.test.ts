@@ -3,7 +3,9 @@ import { resolveGraph } from "../core/graph";
 import { propagateBackward } from "../core/propagate";
 import { checkGraph, G, rng, randInt } from "./harness";
 import { einsumBackward } from "../core/ops/einsum";
-import { fromBox, box, count } from "../core/region";
+import { fromBox, box, count, full } from "../core/region";
+import { getOp } from "../core/ops/index";
+import { compileDSL } from "../parse/compiler";
 
 describe("shape inference (known-good table)", () => {
   const cases: [string, ReturnType<typeof G>, Record<string, number[]>][] = [
@@ -223,7 +225,7 @@ describe("oracle corpus: single ops", () => {
 });
 
 describe("inexact fallbacks are marked and are supersets", () => {
-  it("large diagonal einsum falls back to inexact box", () => {
+  it("large diagonal einsum coarsens the staircase, marked and still a superset", () => {
     const ctx = {
       inShapes: [[1000, 1000]],
       outShapes: [[1000]],
@@ -232,8 +234,13 @@ describe("inexact fallbacks are marked and are supersets", () => {
     const [r] = einsumBackward("ii->i", box([0, 1000]), ctx);
     expect(r.exact).toBe(false);
     expect(r.reasons).toContain("diagonal einsum");
-    // superset: bounding box contains the whole diagonal
-    expect(count(r)).toBe(1000 * 1000);
+    // Superset: every diagonal cell is still covered by some box.
+    const covers = (i: number) =>
+      r.boxes.some((b) => i >= b[0].lo && i < b[0].hi && i >= b[1].lo && i < b[1].hi);
+    for (let i = 0; i < 1000; i++) expect(covers(i), `diagonal cell ${i}`).toBe(true);
+    // But blocks along the diagonal, not the whole square it used to report.
+    expect(count(r)).toBeGreaterThanOrEqual(1000);
+    expect(count(r)).toBeLessThan(1000 * 1000 / 100);
   });
 
   it("data-dependent gather is full + inexact", () => {
@@ -254,9 +261,26 @@ describe("inexact fallbacks are marked and are supersets", () => {
 describe("oracle corpus: random composed graphs with diamonds", () => {
   it("random 5-15 node graphs", () => {
     const r = rng(2024);
-    for (let trial = 0; trial < 12; trial++) {
+    for (let trial = 0; trial < 24; trial++) {
       const graph = randomGraph(r, randInt(r, 5, 16));
       checkGraph(graph, { perTensorElementCap: 8, boxSelections: 1, seed: trial });
+    }
+  });
+
+  /* The same generator with the fallback thresholds lowered, so composed
+     graphs take the conservative branches as well as the exact ones. A cone
+     that passes through two widened regions is where an over-approximation
+     could plausibly be mishandled, and nothing else composes them. */
+  it("random graphs under tight fallback thresholds", () => {
+    const r = rng(31337);
+    for (let trial = 0; trial < 24; trial++) {
+      const graph = randomGraph(r, randInt(r, 5, 16));
+      checkGraph(graph, {
+        perTensorElementCap: 6,
+        boxSelections: 1,
+        seed: trial,
+        limits: { stridedEnum: 2, diagEnum: 2, reshapeRuns: 1, maxBoxes: 2 },
+      });
     }
   });
 });
@@ -286,7 +310,7 @@ function randomGraph(r: () => number, nNodes: number) {
   };
   const pick = () => pool[randInt(r, 0, pool.length)];
   for (let k = 0; k < nNodes; k++) {
-    const choice = randInt(r, 0, 8);
+    const choice = randInt(r, 0, 14);
     const t = pick();
     const sh = t.shape;
     if (choice === 0 && sh.length >= 2) {
@@ -332,6 +356,64 @@ function randomGraph(r: () => number, nNodes: number) {
     } else if (choice === 7 && sh.length === 2) {
       const other = newInput([sh[1], randInt(r, 2, 4)]);
       emit("matmul", [t, other], [sh[0], other.shape[1]]);
+    } else if (choice === 8 && sh.length >= 1) {
+      // slice, sometimes strided
+      const step = randInt(r, 1, 3);
+      const starts = sh.map(() => 0);
+      const stops = sh.slice();
+      const steps = sh.map(() => 1);
+      const axis = randInt(r, 0, sh.length);
+      steps[axis] = step;
+      starts[axis] = randInt(r, 0, Math.max(1, sh[axis] - 1));
+      const out = sh.map((e, i) =>
+        i === axis ? Math.max(1, Math.ceil((e - starts[i]) / steps[i])) : e
+      );
+      emit("slice", [t], out, { starts, stops, steps });
+    } else if (choice === 9 && sh.length >= 1) {
+      const axis = randInt(r, 0, sh.length);
+      const pads: [number, number][] = sh.map(() => [0, 0]);
+      const mode = ["constant", "replicate", "reflect"][randInt(r, 0, 3)];
+      // reflect cannot pad wider than extent-1
+      const cap = mode === "reflect" ? Math.max(0, sh[axis] - 1) : 2;
+      pads[axis] = [randInt(r, 0, Math.min(2, cap) + 1), randInt(r, 0, Math.min(2, cap) + 1)];
+      emit("pad", [t], sh.map((e, i) => e + pads[i][0] + pads[i][1]), { pads, mode });
+    } else if (choice === 10 && sh.length >= 1) {
+      const axis = randInt(r, 0, sh.length);
+      if (sh[axis] < 2) {
+        emit("elementwise", [t], sh.slice(), { fn: "relu", nary: 1 });
+      } else {
+        const cut = randInt(r, 1, sh[axis]);
+        const sizes = [cut, sh[axis] - cut];
+        const outs = sizes.map((sz) => sh.map((e, i) => (i === axis ? sz : e)));
+        // split is the only multi-output op; take the first piece onward
+        const id = `t${tid++}`;
+        const id2 = `t${tid++}`;
+        nodes.push([`n${nid++}`, "split", [t.id], [id, id2], { axis, sizes }]);
+        pool.push({ id, shape: outs[0] });
+        pool.push({ id: id2, shape: outs[1] });
+      }
+    } else if (choice === 11 && sh.length >= 1) {
+      // expand a fresh degenerate axis up to t's shape
+      const axis = randInt(r, 0, sh.length);
+      const src = newInput(sh.map((e, i) => (i === axis ? 1 : e)));
+      emit("expand", [src], sh.slice(), { shape: sh.slice() });
+    } else if (choice === 12 && sh.length >= 1) {
+      const perm = sh.map((_, i) => i);
+      emit("transpose", [t], perm.map((p) => sh[p]), { perm });
+    } else if (choice === 13 && sh.length >= 1) {
+      const axes = [randInt(r, 0, sh.length)];
+      const wShape = axes.map((a) => sh[a]);
+      // normalize's affine params must match the normalized axes, and
+      // expansion requires them to be trailing
+      if (axes[0] === sh.length - 1) {
+        const w = newInput(wShape);
+        emit("normalize", [t, w], sh.slice(), {
+          kind: r() < 0.5 ? "layernorm" : "rmsnorm",
+          axes,
+          hasWeight: true,
+          hasBias: false,
+        });
+      } else emit("elementwise", [t], sh.slice(), { fn: "relu", nary: 1 });
     } else {
       emit("elementwise", [t], sh.slice(), { fn: "relu", nary: 1 });
     }
@@ -340,3 +422,56 @@ function randomGraph(r: () => number, nNodes: number) {
   // declared shapes for intermediates are unknown; leave empty (inferred)
   return graph;
 }
+
+/**
+ * FLOP counts for the equation as written. The cases that matter are the ones
+ * where a term drops out: an outer product only multiplies, a reduction only
+ * adds, a transpose does neither.
+ */
+describe("einsum FLOPs count the fused contraction", () => {
+  const perElement = (equation: string, inShapes: number[][], outShape: number[]) => {
+    const spec = getOp("einsum")!;
+    return spec.flopsPerElement!(0, { inShapes, outShapes: [outShape], attrs: { equation } });
+  };
+
+  it("charges the conventional 2K for a matmul", () => {
+    expect(perElement("mk,kn->mn", [[3, 8], [8, 5]], [3, 5])).toBe(2 * 8);
+  });
+
+  it("charges one multiply for an outer product, which accumulates nothing", () => {
+    // Two operands but no contracted axis: 2*(n-1)*positions used to say 2.
+    expect(perElement("i,j->ij", [[4], [5]], [4, 5])).toBe(1);
+  });
+
+  it("charges three per position for a fused three-operand contraction", () => {
+    // Two multiplies and one add, not the four the old form charged.
+    expect(perElement("ij,jk,kl->il", [[2, 3], [3, 4], [4, 5]], [2, 5])).toBe(3 * (3 * 4));
+  });
+
+  it("charges only adds for a reduction", () => {
+    expect(perElement("ij->i", [[4, 7]], [4])).toBe(7);
+  });
+
+  it("charges nothing for a transpose", () => {
+    expect(perElement("ij->ji", [[4, 5]], [5, 4])).toBe(0);
+  });
+
+  it("prices a written pairwise decomposition below the fused equation", () => {
+    // The point of leaving the fused count alone: the cheaper program is the
+    // one the author writes, and then the graph says so.
+    const fused = compileDSL(`A = Tensor(64, 64)
+B = Tensor(64, 64)
+C = Tensor(64, 64)
+D = einsum("ij,jk,kl->il", A, B, C)
+`);
+    const pairwise = compileDSL(`A = Tensor(64, 64)
+B = Tensor(64, 64)
+C = Tensor(64, 64)
+T = einsum("ij,jk->ik", A, B)
+D = einsum("ik,kl->il", T, C)
+`);
+    const flopsOf = (p: ReturnType<typeof compileDSL>) =>
+      p.executor.metrics("D", full(p.resolved.tensors.D.resolved!)).flops;
+    expect(flopsOf(pairwise)).toBeLessThan(flopsOf(fused));
+  });
+});
