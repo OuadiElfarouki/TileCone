@@ -61,6 +61,15 @@ export type Layer = {
   color: [number, number, number];
   alpha: number; // base alpha (depth shading already applied by caller)
   hatch: boolean; // over-approximation -> diagonal hatching
+  /**
+   * Draw this layer's pattern in the card surface colour rather than its hue.
+   *
+   * For a mark that lands on a solid fill of its own hue, where drawing in that
+   * hue would be drawing nothing. The approximation hatch has always done this;
+   * the stipple needs it for the same reason and more often, because what a
+   * tile is combined with routinely lands inside what it reads.
+   */
+  knockout?: boolean;
   seed?: boolean; // external corner marks identify the region the user placed
   outline?: boolean; // strong border (selection)
   /** Outline weight. Emphasis uses a heavier stroke than the 1.5 default. */
@@ -203,6 +212,8 @@ const MAX_CANVAS_DIM = 8192;
 
 /** Weight of the hairline that delimits a ruled region, in screen CSS px. */
 const PATTERN_EDGE_PX = 0.75;
+/** Dash for the degraded stipple's delimiter: dots, like the fill it replaces. */
+const STIPPLE_EDGE_DASH_PX = [1, 1.6] as const;
 
 /** Ink coverage at the ends of the density scale. The floor stays clearly a set
  * of separate lines; the ceiling stays clearly ruled rather than solid, so a
@@ -254,14 +265,33 @@ export function outlineFitsRect(
 export const MIN_PATTERN_EXTENT_PX = 3;
 
 /** @internal Pure fallback rule for renderer tests. */
+/**
+ * Screen-px extent a mark needs on its short axis before it is legible.
+ *
+ * Every pattern kind answers here, so the gate below and the renderer that
+ * draws the mark cannot disagree about what fits. They did: the gate asked for
+ * 3px while `strokeStipple` refused anything under a full pitch of 3.6, so the
+ * renderer regularly passed a rect the stipple then declined - and the fall
+ * through was a solid fill, which is the *needs* mark. Three textures collapsed
+ * to two, silently, in the same hue.
+ *
+ * `undefined` is the approximation hatch, which rides a ruling's geometry.
+ */
+export function patternFloorFor(pattern: Layer["pattern"] | undefined): number {
+  // A stipple must fit one whole pitch, or its lattice has no row to sit on.
+  if (pattern?.kind === "stipple") return stipplePitchPx(pattern.density);
+  return MIN_PATTERN_EXTENT_PX;
+}
+
 export function patternFitsRect(
   rect: Pick<RegionRect, "w" | "h">,
-  viewScale = 1
+  viewScale = 1,
+  pattern?: Layer["pattern"]
 ): boolean {
   // Pitch and stroke weight are counter-scaled below, so zoom alone cannot
   // destroy direction. Only the region's resulting screen extent may force a
-  // solid fallback: density degrades before direction does.
-  return Math.min(rect.w, rect.h) * viewScale >= MIN_PATTERN_EXTENT_PX;
+  // fallback: density degrades before direction does.
+  return Math.min(rect.w, rect.h) * viewScale >= patternFloorFor(pattern);
 }
 
 /**
@@ -375,7 +405,7 @@ export function rulingSegments(
 function strokeStipple(
   ctx: CanvasRenderingContext2D,
   rect: RegionRect,
-  color: [number, number, number],
+  color: [number, number, number] | string,
   spec: { pitch: number; radius: number; alpha: number },
   viewScale: number
 ): boolean {
@@ -387,7 +417,8 @@ function strokeStipple(
   ctx.rect(rect.x, rect.y, rect.w, rect.h);
   ctx.clip();
   ctx.globalAlpha = spec.alpha;
-  ctx.fillStyle = `rgb(${color[0]},${color[1]},${color[2]})`;
+  ctx.fillStyle =
+    typeof color === "string" ? color : `rgb(${color[0]},${color[1]},${color[2]})`;
   ctx.beginPath();
   // Offset by half a pitch so the lattice sits inside the rect rather than
   // clipping a row of half-dots along its top and left edges.
@@ -487,15 +518,16 @@ export function drawGrid(
     const boundRects = regionRects(layer.region, shape, cfg, geom, viewScale);
 
     let anyRuled = false;
+    let stippleDegraded = false;
     for (const q of rects) {
       const alpha = Math.min(1, layer.alpha * q.alpha);
       const stippled =
         layer.pattern?.kind === "stipple" &&
-        patternFitsRect(q, viewScale) &&
+        patternFitsRect(q, viewScale, layer.pattern) &&
         strokeStipple(
           ctx,
           q,
-          [r, g, b],
+          layer.knockout ? (dark ? CARD_SURFACE.dark : CARD_SURFACE.light) : [r, g, b],
           {
             pitch: stipplePitchPx(layer.pattern.density),
             radius: STIPPLE_RADIUS_PX,
@@ -504,9 +536,18 @@ export function drawGrid(
           viewScale
         );
       if (stippled) continue;
+      if (layer.pattern?.kind === "stipple") {
+        // A stipple that will not fit degrades to a delimiter, never to a
+        // solid. A solid in this hue *is* the needs mark, so borrowing it
+        // would answer "combined with" in the encoding for "reads" - and
+        // entanglement's answer is characteristically a thin band, so this is
+        // the common case at the fitted overview rather than an edge one.
+        stippleDegraded = true;
+        continue;
+      }
       const ruled =
         layer.pattern?.kind === "stripe" &&
-        patternFitsRect(q, viewScale) &&
+        patternFitsRect(q, viewScale, layer.pattern) &&
         strokeRuling(
           ctx,
           q,
@@ -531,6 +572,27 @@ export function drawGrid(
       ctx.fillStyle = `rgba(${r},${g},${b},${fallbackAlpha})`;
       ctx.fillRect(q.x, q.y, q.w, q.h);
     }
+
+    // The degraded stipple's own mark: a dotted hairline around the box. Dotted
+    // because the relation is a stipple, so the edge is made of the same dots
+    // the fill would have been; a hairline because it is a delimiter and must
+    // not read as the selection's perimeter.
+    if (stippleDegraded)
+      for (const q of boundRects) {
+        if (!outlineFitsRect(q, PATTERN_EDGE_PX, viewScale)) continue;
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, layer.alpha * q.alpha);
+        ctx.strokeStyle = layer.knockout
+          ? dark
+            ? CARD_SURFACE.dark
+            : CARD_SURFACE.light
+          : `rgb(${r},${g},${b})`;
+        ctx.lineWidth = PATTERN_EDGE_PX / viewScale;
+        ctx.setLineDash(STIPPLE_EDGE_DASH_PX.map((d) => d / viewScale));
+        const inset = ctx.lineWidth / 2;
+        ctx.strokeRect(q.x + inset, q.y + inset, q.w - ctx.lineWidth, q.h - ctx.lineWidth);
+        ctx.restore();
+      }
 
     // A ruled fill has no edge of its own: the eye stops at the last line inside
     // the region, not at its bound, so the extent reads as ragged. A hairline

@@ -88,7 +88,11 @@ export const SHORTCUTS = {
 export const SHORTCUT_GROUPS = [
   { title: "Selection", items: [SHORTCUTS.move, SHORTCUTS.moveFast, SHORTCUTS.toggleTile, SHORTCUTS.escape, SHORTCUTS.undo] },
   { title: "View", items: [SHORTCUTS.needs, SHORTCUTS.feeds, SHORTCUTS.entangled, SHORTCUTS.fit, SHORTCUTS.scrub, SHORTCUTS.zoom, SHORTCUTS.help] },
-  { title: "Panels", items: [SHORTCUTS.leftPanel, SHORTCUTS.rightPanel, SHORTCUTS.run] },
+  /* `run` builds the source; it is not a panel control. The sheet is the one
+     place the bindings are taught, so its grouping is the mental model a reader
+     leaves with. */
+  { title: "Panels", items: [SHORTCUTS.leftPanel, SHORTCUTS.rightPanel] },
+  { title: "Source", items: [SHORTCUTS.run] },
 ] as const;
 
 type KeyboardLike = Pick<KeyboardEvent, "key" | "altKey" | "ctrlKey" | "metaKey" | "shiftKey">;

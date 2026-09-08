@@ -86,6 +86,11 @@ export function lowZoomBound(
  * to show the direction travelled, short enough not to be waited on. */
 export const GLIDE_MS = 320;
 
+/** Scales within this of each other are the same scale for display purposes.
+ * The fitted scale is recomputed from the viewport, so an exact equality would
+ * flicker on a sub-pixel resize. */
+export const ZOOM_EPSILON = 1e-3;
+
 /** @internal Pure "bring this node to the middle" seam. */
 export function centredOn(
   node: Pick<PlacedGraphNode, "x" | "y" | "w" | "h">,
@@ -592,13 +597,21 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
                 {isExpandable(node.op) && (
                   <button
                     className="expand-btn"
-                    title="expand into primitive ops"
+                    /* The title states the cost, because the action is larger
+                       than its affordance: it replaces the written source with
+                       generated DSL. Undo restores it, and saying so is what
+                       makes the click safe to try. */
+                    title={`substitute ${node.op} with its primitive subgraph · rewrites the source (undoable)`}
+                    aria-label={`substitute ${node.op} with its primitive subgraph`}
                     onClick={(ev) => {
                       ev.stopPropagation();
                       expandNodeInPlace(p.id);
                     }}
                   >
-                    ⊞
+                    {/* Not the tile-span glyph: a card header already reads
+                        `⊞ 4×128` a few pixels away, and one mark cannot mean
+                        both "tile span" and "substitute the definition". */}
+                    ⌄
                   </button>
                 )}
               </div>
@@ -647,7 +660,13 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
           <button onClick={fit} title="fit to view (f)">fit</button>
           <button onClick={resetLayout} disabled={!Object.keys(tensorOffsets).length} title="restore generated tensor layout (undoable)">reset</button>
           <button onClick={onShowShortcuts} title="keyboard shortcuts (?)" aria-label="show keyboard shortcuts">?</button>
-          <span>{Math.round(tf.k * 100)}%</span>
+          {/* At the floor the percentage is a number with no reference — 12%
+              of what, and why will it not go lower. `fit` names the scale the
+              zoom-out is actually resting against, which D72 made a derived
+              and knowable quantity. */}
+          <span title={`${Math.round(tf.k * 100)}% of actual size`}>
+            {Math.abs(tf.k - lowZoom()) < ZOOM_EPSILON ? "fit" : `${Math.round(tf.k * 100)}%`}
+          </span>
         </div>
       </div>
     </div>

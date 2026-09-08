@@ -1,4 +1,4 @@
-import React, { useRef } from "react";
+import React, { useRef, useState } from "react";
 import {
   PANEL_COLLAPSE_AT,
   PANEL_MAX,
@@ -35,11 +35,24 @@ export function PanelFrame({
   const dragRef = useRef(false);
   const rawWidthRef = useRef(width);
   const startWidthRef = useRef(width);
+  /**
+   * Whether releasing now would collapse the panel.
+   *
+   * The preview clamps at `PANEL_MIN` while the commit tests the raw width
+   * against `PANEL_COLLAPSE_AT`, so between the two the panel has stopped
+   * moving while the pointer keeps travelling — and 64px later, letting go
+   * makes it vanish. Nothing on screen distinguished "will spring back" from
+   * "will collapse", and the only signal was a title on a 4px strip, which does
+   * not appear mid-drag. This state is what makes the gesture read as pushing
+   * the panel off the edge, which is what it is.
+   */
+  const [willCollapse, setWillCollapse] = useState(false);
 
   const onPointerDown = (e: React.PointerEvent) => {
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     dragRef.current = true;
+    setWillCollapse(false);
     rawWidthRef.current = width;
     startWidthRef.current = width;
     setDragging(true); // suppresses text selection for the duration
@@ -50,6 +63,7 @@ export function PanelFrame({
     // measure from the panel's outer edge, so the pointer tracks the strip
     const raw = side === "left" ? e.clientX - rect.left : rect.right - e.clientX;
     rawWidthRef.current = raw;
+    setWillCollapse(raw < PANEL_COLLAPSE_AT);
     // Width previews stay open and usable. Crossing the collapse threshold is
     // committed only on pointerup, so the captured element cannot disappear
     // before it has a chance to end the drag.
@@ -58,6 +72,7 @@ export function PanelFrame({
   const endDrag = (commit: boolean) => {
     if (!dragRef.current) return;
     dragRef.current = false;
+    setWillCollapse(false);
     if (commit) finishPanelResize(side, rawWidthRef.current);
     else setPanelWidth(side, startWidthRef.current);
     setDragging(false);
@@ -66,7 +81,9 @@ export function PanelFrame({
   return (
     <div
       ref={frameRef}
-      className={`panel-frame ${side}${collapsed ? " collapsed" : ""}`}
+      className={`panel-frame ${side}${collapsed ? " collapsed" : ""}${
+        willCollapse ? " will-collapse" : ""
+      }`}
       style={{ width: collapsed ? PANEL_RAIL : width }}
     >
       {/* Keep children mounted while collapsed. The source editor owns its draft

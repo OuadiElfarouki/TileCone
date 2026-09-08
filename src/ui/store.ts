@@ -99,7 +99,24 @@ export function anchorTensorId(selection: Selection, focusedBox: number | null):
   if (focusedBox !== null && parts[focusedBox]) return parts[focusedBox].tensorId;
   return parts[parts.length - 1].tensorId;
 }
-type WorkspaceSnapshot = { selection: Selection; tensorOffsets: TensorOffsets };
+type WorkspaceSnapshot = {
+  selection: Selection;
+  tensorOffsets: TensorOffsets;
+  /**
+   * The source and graph as they were, for the one edit that replaces them.
+   *
+   * Expanding a composite rewrites `dslText` and `draftText` with generated DSL
+   * — the author's comments, formatting and names for intermediates all go —
+   * and it is reached by clicking a glyph on the canvas, sometimes with the
+   * source panel collapsed to a rail where none of that is even visible.
+   * Without this, undo restored a selection into a graph that no longer had the
+   * composite in it, and the shortcut sheet's promise was false for the largest
+   * action in the app.
+   *
+   * Absent on the ordinary entries, which change neither.
+   */
+  source?: { dslText: string; draftText: string; graph: Graph; exampleIndex: number };
+};
 const WORKSPACE_HISTORY_LIMIT = 40;
 
 function appendWorkspaceHistory(
@@ -800,6 +817,28 @@ export const useStore = create<State>((set, get) => ({
     const { workspaceHistory, resolved, selection, perBox, entangled } = get();
     if (!workspaceHistory.length) return;
     const prev = workspaceHistory[workspaceHistory.length - 1];
+    if (prev.source) {
+      // Undoing a composite expansion: the graph itself goes back, so the
+      // selection has to be restored against *that* graph rather than the
+      // expanded one it was recorded beside.
+      try {
+        const program = compileDSL(prev.source.dslText);
+        set({
+          ...loadResolvedGraph(program.graph, program.resolved),
+          dslText: prev.source.dslText,
+          draftText: prev.source.draftText,
+          exampleIndex: prev.source.exampleIndex,
+          tensorOffsets: prev.tensorOffsets,
+          selection: prev.selection,
+          workspaceHistory: workspaceHistory.slice(0, -1),
+          focusNode: null,
+          ...recompute(program.resolved, prev.selection),
+        });
+      } catch (e) {
+        set({ loadError: (e as Error).message });
+      }
+      return;
+    }
     set({
       selection: prev.selection,
       tensorOffsets: prev.tensorOffsets,
@@ -1004,7 +1043,8 @@ export const useStore = create<State>((set, get) => ({
   },
 
   expandNodeInPlace: (nodeId) => {
-    const { graph } = get();
+    const state = get();
+    const { graph } = state;
     if (!graph) return;
     try {
       const g2 = expandNode(graph, nodeId);
@@ -1012,12 +1052,27 @@ export const useStore = create<State>((set, get) => ({
       // must restore the same primitive graph currently shown in the workspace.
       const source = toDSL(g2);
       const program = compileDSL(source);
+      // `loadResolvedGraph` clears the history, and rightly: its entries name
+      // tensors and coordinates in the graph being replaced. The one entry that
+      // survives is the one it cannot invalidate, because it is what to go back
+      // *to* — recorded after the clear, for that reason.
+      const restore: WorkspaceSnapshot = {
+        selection: state.selection,
+        tensorOffsets: state.tensorOffsets,
+        source: {
+          dslText: state.dslText,
+          draftText: state.draftText,
+          graph,
+          exampleIndex: state.exampleIndex,
+        },
+      };
       set({
         ...loadResolvedGraph(program.graph, program.resolved),
         dslText: source,
         draftText: source,
         exampleIndex: -1,
         focusNode: null,
+        workspaceHistory: [restore],
       });
     } catch (e) {
       set({ loadError: (e as Error).message });

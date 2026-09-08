@@ -1020,15 +1020,19 @@ export function Inspector(): React.ReactElement {
             {/* A third relation, so a third section rather than rows folded into
                 one of the cones: "what this tile is multiplied against" is not
                 a hop along the graph and does not belong under a direction. */}
-            <div className="ins-section">
-              <button
-                className={`ins-title toggle${showEntangled ? " on" : ""}`}
-                onClick={toggleEntangled}
-                title="what this tile is combined with (E)"
-              >
-                <span className="swatch stipple" aria-hidden="true" />
-                What it is combined with
-              </button>
+            <section className="cone-section">
+              <div className="cone-head">
+                <button
+                  className={`cone-toggle${showEntangled ? " on" : ""}`}
+                  onClick={toggleEntangled}
+                  aria-pressed={showEntangled}
+                  aria-expanded={showEntangled}
+                  title={`${showEntangled ? "hide" : "show"} what it is combined with (e)`}
+                >
+                  <span className="cone-key combined" aria-hidden="true" />
+                  What it is combined with
+                </button>
+              </div>
               {showEntangled &&
                 (merged ? (
                   <p className="hint">
@@ -1056,7 +1060,7 @@ export function Inspector(): React.ReactElement {
                     nothing: no operation reads this tile alongside another tensor
                   </p>
                 ))}
-            </div>
+            </section>
 
             {approxReasons.length > 0 && (
               <div className="ins-section warn" title={approxReasons.join("; ")}>

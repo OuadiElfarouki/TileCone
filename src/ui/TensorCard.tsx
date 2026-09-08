@@ -2,7 +2,16 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Tensor } from "../core/graph";
 import { DTYPE_BYTES } from "../core/dtypes";
 import { useFrameThrottle } from "./useFrameThrottle";
-import { Box, formatBoxIndices, fromBox, iv, Region } from "../core/region";
+import {
+  Box,
+  formatBoxIndices,
+  fromBox,
+  intersect,
+  isEmpty,
+  iv,
+  Region,
+  subtract,
+} from "../core/region";
 import {
   drawGrid,
   paintScale,
@@ -144,6 +153,22 @@ export function buildLayers({
   const showBack = direction === "backward" || direction === "both";
   const showFwd = direction === "forward" || direction === "both";
 
+  /**
+   * The solid same-hue fill this tile has already put on this card, which a
+   * stipple in that hue would disappear into.
+   *
+   * Only the needs cone qualifies. The feeds cone is ruled, so dots read fine
+   * over it, and the selection rectangle paints later and is opaque whatever
+   * colour the dots are. The condition is the cone's own paint condition, not
+   * an approximation of it: if the fill is not there, there is nothing to knock
+   * out of and the dots should stay in the tile's hue.
+   */
+  const solidGroundFor = (index: number): Region | null => {
+    const tr = perBox?.[index]?.backward?.tensors.get(tensorId);
+    if (!showBack || !tr || (isSelected && tr.depth === 0)) return null;
+    return tr.region;
+  };
+
   // Transient hover preview, drawn faintly under everything else.
   if (prev && !isSelected && showBack)
     layers.push({ region: prev.region, color: agg.upstream, alpha: previewAlpha(prev.depth), hatch: !prev.region.exact });
@@ -221,13 +246,37 @@ export function buildLayers({
     for (const { index, region } of entangled) {
       if (hiddenBoxes.has(index)) continue;
       const alphaScale = focusedBox !== null && focusedBox !== index ? PEER_FADE : 1;
-      layers.push({
-        region,
-        color: boxColor(index, dark),
-        alpha: CONE_ALPHA * alphaScale,
-        hatch: !region.exact,
-        pattern: { kind: "stipple", density: 0.5 },
-      });
+      const color = boxColor(index, dark);
+      const alpha = CONE_ALPHA * alphaScale;
+      /* Dots in the tile's hue vanish on a solid fill of that same hue, and
+         that overlap is the headline case rather than an edge one: in
+         `matmul(A, A)` both operands are the one tensor, so what the tile is
+         combined with lands inside what it reads. Split the region against the
+         ground it will be drawn on and knock the covered part out in the card
+         surface, exactly as the approximation hatch already does on a solid
+         fill. Hue where there is bare surface under it, surface where there is
+         not — the mark stays legible either way, and "third relation, third
+         texture" stays true where it matters most. */
+      const solid = solidGroundFor(index);
+      const over = solid ? intersect(region, solid) : null;
+      const bare = solid ? subtract(region, solid) : region;
+      if (over && !isEmpty(over))
+        layers.push({
+          region: over,
+          color,
+          knockout: true,
+          alpha,
+          hatch: !region.exact,
+          pattern: { kind: "stipple", density: 0.5 },
+        });
+      if (!isEmpty(bare))
+        layers.push({
+          region: bare,
+          color,
+          alpha,
+          hatch: !region.exact,
+          pattern: { kind: "stipple", density: 0.5 },
+        });
     }
 
   // The selection itself: each box in its own hue, dimmed when another is

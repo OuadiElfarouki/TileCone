@@ -203,6 +203,13 @@ kbd {
 .panel-frame.left .panel-resize { right: -2px; }
 .panel-frame.right .panel-resize { left: -2px; }
 .panel-resize:hover, .panel-resize:active { background: var(--accent); }
+/* The collapse chevron sits on the edge it collapses toward, so the arrow and
+   the motion agree. On the left panel that is the *left* edge: it used to sit
+   on the right, hard against the resize strip, pointing away from where it
+   would go. The `.left`/`.right` classes were already emitted and matched no
+   rule at all. */
+.panel-collapse.left { left: 7px; right: auto; }
+.panel-collapse.right { right: 7px; left: auto; }
 .panel-collapse {
   position: absolute; top: 5px; right: 7px; z-index: 12;
   width: 24px; height: 21px; padding: 0; font-size: var(--t-base); line-height: 1;
@@ -435,7 +442,15 @@ textarea.source.error-state { border-color: var(--err); }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center;
   pointer-events: none;
 }
-.expand-btn { border: none; padding: 0 3px; background: none; font-size: var(--t-base); color: var(--accent); }
+/* Quiet at rest, like `.tensor-grab`: accent is reserved for *active*, and a
+   resting accent mark on every softmax and normalize node reads as "this node
+   is in the answer" on a graph that has dozens of them. */
+.expand-btn {
+  border: none; padding: 0 3px; background: none; font-size: var(--t-base);
+  color: var(--ink); opacity: 0.24; cursor: pointer;
+  transition: opacity 90ms linear, color 90ms linear;
+}
+.expand-btn:hover, .expand-btn:focus-visible { color: var(--accent); opacity: 1; }
 
 .card-slot { position: absolute; cursor: default; }
 .card-slot.dim { opacity: var(--dim); }
@@ -592,6 +607,12 @@ textarea.source.error-state { border-color: var(--err); }
 .cone-key.feeds {
   background-image: repeating-linear-gradient(45deg, currentColor 0 1px, transparent 1px 4px);
 }
+/* The third relation's chip. Dots rather than lines, matching the canvas: a
+   ruling at another angle would read as another cone. */
+.cone-key.combined {
+  background-image: radial-gradient(currentColor 0.9px, transparent 1px);
+  background-size: 3.6px 3.6px;
+}
 .cone-arrow { color: var(--accent); font: 600 var(--t-base)/1 var(--mono); }
 .cone-head .rollup {
   margin-left: auto; color: var(--muted); font-size: var(--t-small);
@@ -747,21 +768,13 @@ textarea.source.error-state { border-color: var(--err); }
 .overview .tc-approx { position: absolute; right: 0; bottom: 3px; }
 .overview .tc-info { transform: translateX(-50%) scale(calc(1 / var(--view-scale))); transform-origin: top center; }
 
-/* Entanglement. A third relation gets a third texture: solid means needs, a
-   ruling means feeds, and a stipple means combined-with. The swatch repeats the
-   canvas mark so the section heading is its own legend, the way the cone
-   headings already are. */
-.swatch.stipple {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  margin-right: 5px;
-  vertical-align: -1px;
-  border-radius: 2px;
-  background-image: radial-gradient(currentColor 0.9px, transparent 1px);
-  background-size: 3.6px 3.6px;
-  opacity: 0.75;
-}
 .ent-list { list-style: none; margin: 4px 0 0; padding: 0; }
 .ent-list li { display: flex; align-items: baseline; gap: 4px; font-size: var(--t-body); }
 .ent-list code { background: var(--bg); padding: 1px 5px; border-radius: var(--r); }
+
+/* Releasing now would collapse the panel. The content fades and the inner edge
+   lights, so the gesture reads as pushing the panel off the screen — the state
+   the drag has actually been in since the preview stopped moving. */
+.panel-frame.will-collapse .panel-content { opacity: var(--dim-soft); }
+.panel-frame.will-collapse.left { box-shadow: inset -2px 0 0 var(--accent); }
+.panel-frame.will-collapse.right { box-shadow: inset 2px 0 0 var(--accent); }

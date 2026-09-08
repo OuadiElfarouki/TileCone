@@ -1416,3 +1416,62 @@ E = sum(C)
     expect(S().diagnostics.length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * Expanding a composite is the largest action in the app and sits behind its
+ * smallest affordance. It replaces the written source with generated DSL, and
+ * used to empty the undo stack on the way — so the shortcut sheet's promise to
+ * undo was false exactly where it mattered most.
+ */
+describe("composite expansion is undoable", () => {
+  const source = `X = Tensor(2, 4)
+# a comment the author wrote
+Y = softmax(X, axis=-1)
+`;
+
+  const expandFirstSoftmax = () => {
+    const node = S().graph!.nodes.find((n) => n.op === "softmax")!;
+    S().expandNodeInPlace(node.id);
+  };
+
+  it("replaces the composite with its primitive subgraph", () => {
+    S().applyDSL(source);
+    expect(S().graph!.nodes.some((n) => n.op === "softmax")).toBe(true);
+    expandFirstSoftmax();
+    expect(S().graph!.nodes.some((n) => n.op === "softmax")).toBe(false);
+    expect(S().graph!.nodes.some((n) => n.op === "reduce")).toBe(true);
+  });
+
+  it("restores the graph, the source, and the author's own text", () => {
+    S().applyDSL(source);
+    expandFirstSoftmax();
+    expect(S().dslText).not.toBe(source);
+
+    S().undoWorkspace();
+    expect(S().graph!.nodes.some((n) => n.op === "softmax")).toBe(true);
+    // Not merely an equivalent graph: the text as written, comment included.
+    expect(S().dslText).toBe(source);
+    expect(S().draftText).toBe(source);
+    expect(S().resolved!.tensors.Y.resolved).toEqual([2, 4]);
+  });
+
+  it("leaves an undo entry where there was none", () => {
+    S().applyDSL(source);
+    expect(S().workspaceHistory).toHaveLength(0);
+    expandFirstSoftmax();
+    expect(S().workspaceHistory).toHaveLength(1);
+    S().undoWorkspace();
+    expect(S().workspaceHistory).toHaveLength(0);
+  });
+
+  it("does not keep entries that name tensors the expansion removed", () => {
+    // Entries recorded before the rewrite refer to a graph that no longer
+    // exists; only the one that restores it survives.
+    S().applyDSL(source);
+    S().setSelection("X", fromBox(box([0, 1], [0, 2])), "replace");
+    expect(S().workspaceHistory.length).toBeGreaterThan(0);
+    expandFirstSoftmax();
+    expect(S().workspaceHistory).toHaveLength(1);
+    expect(S().workspaceHistory[0].source).toBeDefined();
+  });
+});
