@@ -167,7 +167,9 @@ describe("direction stays readable once hue means box identity", () => {
   it("gives each box its own ruling angle, so overlapping cones cross", () => {
     const perBox = Array.from({ length: MAX_PER_BOX_PROPS }, () => bothCones("T"));
     const layers = buildLayers(inputs({ perBox, direction: "forward" }));
-    const angles = layers.map((l) => l.pattern!.angle);
+    const angles = layers.map((l) =>
+      l.pattern?.kind === "stripe" ? l.pattern.angle : undefined
+    );
     expect(new Set(angles).size).toBe(angles.length);
   });
 
@@ -299,6 +301,18 @@ describe("inexact regions are hatched", () => {
     expect(result).toEqual({
       approximate: true,
       reasons: ["conservative forward map"],
+    });
+  });
+
+  it("reports an inexact entanglement region when it is the only highlight", () => {
+    const result = visibleApproximation(undefined, undefined, {
+      boxes: [box([0, 4])],
+      exact: false,
+      reasons: ["composed from forward and backward"],
+    });
+    expect(result).toEqual({
+      approximate: true,
+      reasons: ["composed from forward and backward"],
     });
   });
 });

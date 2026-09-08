@@ -40,7 +40,7 @@ function normalizeFlops(outRegion: Region, ctx: OpCtx): number {
 }
 
 /**
- * Inputs: data, [weight], [bias] — weight/bias shaped as the normalized axes' extents.
+ * Inputs: data, [weight], [bias] - weight/bias shaped as the normalized axes' extents.
  * Backward on data: full extent along `axes`, identity elsewhere.
  * Backward on weight/bias: the OUTPUT BOX's intervals restricted to `axes`.
  */
@@ -64,7 +64,7 @@ function normalizeDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
   const fullList = full.map(word).join(", ");
   const tail = free.length
     ? `but ${free.length === 1 ? `axis ${word(free[0])} stays` : `axes ${free.map(word).join(", ")} stay`} ` +
-      `independent — safe to fuse there.`
+      `independent - safe to fuse there.`
     : "and no free axis is left to fuse along.";
   return {
     key: `normalize:${attrs.kind}:${full.join(",")}`,
@@ -73,7 +73,7 @@ function normalizeDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
     flags: [
       {
         tensorId: ctx.inIds[0],
-        text: `full ${one ? `axis ${word(full[0])}` : `axes ${fullList}`} — ${attrs.kind} statistics span ${one ? "it" : "them"}`,
+        text: `full ${one ? `axis ${word(full[0])}` : `axes ${fullList}`} - ${attrs.kind} statistics span ${one ? "it" : "them"}`,
       },
     ],
     text:

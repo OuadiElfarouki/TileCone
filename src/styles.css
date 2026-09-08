@@ -737,3 +737,22 @@ textarea.source.error-state { border-color: var(--err); }
 }
 .overview .tc-approx { position: absolute; right: 0; bottom: 3px; }
 .overview .tc-info { transform: translateX(-50%) scale(calc(1 / var(--view-scale))); transform-origin: top center; }
+
+/* Entanglement. A third relation gets a third texture: solid means needs, a
+   ruling means feeds, and a stipple means combined-with. The swatch repeats the
+   canvas mark so the section heading is its own legend, the way the cone
+   headings already are. */
+.swatch.stipple {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 5px;
+  vertical-align: -1px;
+  border-radius: 2px;
+  background-image: radial-gradient(currentColor 0.9px, transparent 1px);
+  background-size: 3.6px 3.6px;
+  opacity: 0.75;
+}
+.ent-list { list-style: none; margin: 4px 0 0; padding: 0; }
+.ent-list li { display: flex; align-items: baseline; gap: 4px; font-size: var(--t-body); }
+.ent-list code { background: var(--bg); padding: 1px 5px; border-radius: var(--r); }

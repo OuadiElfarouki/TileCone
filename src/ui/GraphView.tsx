@@ -316,7 +316,7 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
     fit();
   }, [resolved, fit]);
 
-  // Re-fit when the viewport changes size — panel collapse/restore, panel drag,
+  // Re-fit when the viewport changes size - panel collapse/restore, panel drag,
   // window resize. An observer is used rather than a timeout after each of those
   // actions because it fires when layout has actually settled, and it covers
   // window resize (which never re-fitted at all) for free.

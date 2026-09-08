@@ -40,7 +40,7 @@ function reduceDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
     flags: [
       {
         tensorId: ctx.inIds[0],
-        text: `full ${one ? `axis ${word(full[0])}` : `axes ${listed}`} — reduced, needs an accumulator`,
+        text: `full ${one ? `axis ${word(full[0])}` : `axes ${listed}`} - reduced, needs an accumulator`,
       },
     ],
     text:

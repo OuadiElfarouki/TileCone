@@ -213,6 +213,7 @@ describe("transactional workspace restore", () => {
     const restored = S().restoreWorkspace({
       dsl: "X = Tensor(4, 4, dtype=fp32)\nY = relu(X)\n",
       direction: "both",
+      showEntangled: true,
       tileScale: 2,
       snapToGrid: false,
       axisMode: "symbolic",
@@ -226,6 +227,7 @@ describe("transactional workspace restore", () => {
     expect(restored).toBe(true);
     expect(S().dslText).toContain("Y = relu(X)");
     expect(S().direction).toBe("both");
+    expect(S().showEntangled).toBe(true);
     expect(S().tileScale).toBe(2);
     expect(S().snapToGrid).toBe(false);
     expect(S().tensorOffsets).toEqual({ X: { dx: -30, dy: 25 } });
@@ -799,6 +801,18 @@ describe("per-box dependency attribution", () => {
     expect(S().perBox![1]).not.toBe(second);
   });
 
+  it("reuses unchanged entanglement when another part is added or edited", () => {
+    S().setSelection("A", fromBox(box([0, 4], [0, 4])), "replace");
+    const first = S().entangled![0];
+    expect(first.length).toBeGreaterThan(0);
+    S().setSelection("A", fromBox(box([8, 12], [8, 12])), "union");
+    expect(S().entangled![0]).toBe(first);
+    const second = S().entangled![1];
+    S().replaceBox(1, box([12, 16], [8, 12]));
+    expect(S().entangled![0]).toBe(first);
+    expect(S().entangled![1]).not.toBe(second);
+  });
+
   it("forward attribution is computed per box in downstream mode", () => {
     S().setDirection("forward");
     S().setSelection("A", fromBox(box([0, 8], [0, 512])), "replace");
@@ -846,6 +860,7 @@ describe("per-box dependency attribution", () => {
       S().setSelection("C", fromBox(box([i * 8, i * 8 + 4], [0, 4])), "union");
     expect(selBoxes().length).toBeGreaterThan(MAX_PER_BOX_PROPS);
     expect(S().perBox).toBeNull();
+    expect(S().entangled).toBeNull();
     // the aggregate cone is still available
     expect(regionOf("A")).toBeDefined();
   });
@@ -854,7 +869,7 @@ describe("per-box dependency attribution", () => {
 
 /**
  * Moving one part of a multi-part selection. The other parts must be untouched,
- * and the propagation must follow the moved part immediately — including when
+ * and the propagation must follow the moved part immediately - including when
  * the move puts two parts on top of each other.
  */
 describe("moving a single selected part", () => {
@@ -945,7 +960,7 @@ describe("moving a single selected part", () => {
 
 /**
  * Escape backs out of the innermost active mode. It must never destroy the
- * selection — clearing tiles is the right panel's explicit "clear all" button.
+ * selection - clearing tiles is the right panel's explicit "clear all" button.
  */
 describe("cone visibility is independent of focus", () => {
   beforeEach(() => {

@@ -41,8 +41,8 @@ export class GraphError extends Error {
 /* ------------------------------------------------- dimension expressions */
 
 /**
- * A dimension may be written as arithmetic over parameters — `H*D`, `E/H`,
- * `S+1` — so a relationship the author relies on is stated where it is used
+ * A dimension may be written as arithmetic over parameters - `H*D`, `E/H`,
+ * `S+1` : so a relationship the author relies on is stated where it is used
  * instead of being precomputed into a literal that silently stops agreeing.
  *
  * `Sym` stays `string | number`: the string simply holds the expression, a bare

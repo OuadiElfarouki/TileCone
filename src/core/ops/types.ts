@@ -143,6 +143,43 @@ export interface OpSpec {
    */
   oracleDeps(outSlot: number, outIndex: number[], ctx: OpCtx): number[][][];
 
+  /**
+   * Which elements of input `otherSlot` are combined with this box of input
+   * `slot` - the operation's *entanglement* relation.
+   *
+   * This is a third relation, not a view over the other two, and the difference
+   * is the point. Composing `forward` with `backward` asks which outputs the box
+   * reaches and then what those outputs read; for `mk,kn->mn` that is every
+   * element of the second operand, because every `C[m,n]` in the row band does
+   * read all of `B`. The composition loses the correlation between which output
+   * element came from which input element, and it loses it at the region
+   * boundary, where a set of elements becomes a shape.
+   *
+   * Entanglement asks the narrower question: which elements meet in the *same
+   * term* of the computation. For a contraction that is a join on the shared
+   * label, and the answer is `B[k0:k1, :]` - the rows a kernel must hold
+   * resident alongside that block of `A`, and no more.
+   *
+   * Omitting the hook means the operation cannot answer, and callers fall back
+   * to the composition, marked inexact. That is a real superset, never a subset,
+   * so a missing implementation degrades rather than lies.
+   */
+  coaccess?(slot: number, box: Box, otherSlot: number, ctx: OpCtx): Region;
+
+  /**
+   * Ground truth for entanglement: one entry per term the operation evaluates
+   * for this output element, each naming the element every input contributes.
+   *
+   * `null` for a slot means that term reads nothing from it, which padding
+   * makes real. Derived from the definition, never from `coaccess`, on the same
+   * principle as `oracleDeps`.
+   *
+   * Distinct from `oracleDeps` because that flattens terms away: it says a
+   * whole row of `A` and a whole column of `B` reach one output, not which
+   * element of each was multiplied by which.
+   */
+  oracleTerms?(outSlot: number, outIndex: number[], ctx: OpCtx): (number[] | null)[][];
+
   /** Approximate FLOPs to compute the given output box. Data movement ops return 0. */
   flopsFor(outSlot: number, outBox: Box, ctx: OpCtx): number;
 
@@ -199,7 +236,7 @@ export function uniformDTypeOutputs(op: string) {
     if (mismatch)
       throw new Error(
         `${op}: input dtypes must match, got [${inDTypes.join(", ")}]` +
-          ` — insert a cast(...) to choose the one you want`
+          ` - insert a cast(...) to choose the one you want`
       );
     return outShapes.map(() => dtype);
   };

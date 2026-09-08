@@ -31,7 +31,7 @@ describe("contraction notes", () => {
     const { notes } = notesFor(GEMM, "C", [[0, 16], [0, 16]]);
     expect(notes).toHaveLength(1);
     expect(notes[0].op).toBe("matmul");
-    // the DSL declared this axis as K, so the note must say K — not the
+    // the DSL declared this axis as K, so the note must say K - not the
     // internal einsum label
     expect(notes[0].text).toContain("contracts K=128 in full");
     expect(notes[0].text).toContain("A and B");
@@ -232,7 +232,7 @@ F = reshape(X, shape=[16])
   });
 
   it("stays silent when the tile happens to split cleanly", () => {
-    // F[0:4] is exactly row 0 of X — one run in, one run out
+    // F[0:4] is exactly row 0 of X - one run in, one run out
     const { notes } = notesFor(TRAP, "F", [[0, 4]]);
     expect(notes.filter((n) => n.op === "reshape")).toEqual([]);
   });
@@ -438,7 +438,7 @@ Y = add(X, X)
 
 /* A note names an axis the way the source does. An axis name outranks the
    declared dimension, because `emb` says what the axis is where `H*D` only says
-   how wide it is — and it is the only one of the two that survives onto a
+   how wide it is - and it is the only one of the two that survives onto a
    produced tensor. If no name survives, the verified symbolic extent is the
    next best source word before a bare position or internal einsum label. */
 describe("notes naming axes by their declared names", () => {

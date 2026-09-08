@@ -3,13 +3,13 @@
 *A tile's dependency cone, as an annotated sub-DAG.*
 
 Select any region of any tensor in a compute graph. TileCone draws the sub-DAG that region actually
-touches — the operations on the path, and for every tensor among them, the exact index range
+touches - the operations on the path, and for every tensor among them, the exact index range
 involved. Upstream is what the tile reads; downstream is what it feeds.
 
 For `C[M,N] = A[M,K] @ B[K,N]`, the tile `C[64:128, 0:64]` yields a cone reaching `A[64:128, :]`
-and `B[:, 0:64]` — a row band and a column band, and nothing else.
+and `B[:, 0:64]` - a row band and a column band, and nothing else.
 
-Shapes are inferred across the whole graph. No values are ever computed — the engine is integer
+Shapes are inferred across the whole graph. No values are ever computed - the engine is integer
 interval arithmetic over index sets.
 
 ```bash
@@ -66,6 +66,15 @@ Alongside the dependency cone, the app reports element and byte footprints, FLOP
 intensity, reuse estimates, and plain-language notes naming the constraint each operation puts on
 tiling or fusion.
 
+**Entanglement** is a third relation, next to upstream and downstream: what a tile is *combined
+with*. For `C = A @ B`, the block `A[0:4, 0:4]` is multiplied only against `B[0:4, :]` - the rows a
+kernel must hold resident alongside it. That is not the downstream cone read backwards, which
+reaches all of `B`; entanglement asks which elements meet in the same term. Exact for `einsum`
+(so `matmul`, `bmm`, `linear`), elementwise, `conv`, `concat` and `gather`; `normalize` falls back to
+a marked bound.
+Press `e` to show it - a stipple, next to the solid fill of what a tile needs and the ruling of what
+it feeds.
+
 **Not supported yet.** `matmul` needs matching ranks (no 3D @ 2D, no batch broadcast); einsum has
 no ellipsis; `reshape` takes no `-1`; slices have no negative steps; there is no `conv_transpose`,
 batch/group norm, `where`, `argmax`/`topk`, or comparison operator; a name is bound once, so
@@ -75,8 +84,8 @@ batch/group norm, `where`, `argmax`/`topk`, or comparison operator; a name is bo
 
 A `Region` is a union of half-open axis-aligned boxes carrying an `exact` flag:
 
-- `exact: true` — the region is **precisely** the dependency set.
-- `exact: false` — the region is a **strict superset**, never a subset, and always carries a reason
+- `exact: true` - the region is **precisely** the dependency set.
+- `exact: false` - the region is a **strict superset**, never a subset, and always carries a reason
   (`"strided conv"`, `"diagonal einsum"`, `"reshape run cap exceeded"`, …). The UI hatches these so
   an over-approximation is never presented as ground truth. Past a box cap a region is coarsened by
   merging neighbours into their hulls rather than collapsed to one bounding box.
@@ -90,7 +99,7 @@ square out of one band and report three fragments, two of which are not regions 
 
 The rule that makes this safe: **cardinality is measured on the set.** Elements, bytes,
 percentages and FLOPs count a shared element once, so summing the boxes you can see exceeds the
-element total whenever they overlap — a row states that difference as `N shared`.
+element total whenever they overlap - a row states that difference as `N shared`.
 
 ## Headless API
 
@@ -113,7 +122,7 @@ Use `tryCompileDSL` to get diagnostics as data instead of an exception. The lowe
 `parseProgram` (text → AST), `lowerProgram` (AST → graph), `resolveGraph`, and the propagation
 functions remain available for tooling.
 
-`core/` is strictly headless — nothing there may import from `ui/` — so the oracle and any future
+`core/` is strictly headless - nothing there may import from `ui/` - so the oracle and any future
 CLI run without a DOM.
 
 ## Testing
@@ -124,7 +133,7 @@ themselves. Every element of every tensor gets a unique id; id-sets propagate fo
 op's *pointwise semantics* (`oracleDeps`), never its box-level backward rule. The analytic region
 must then **equal** the oracle set when `exact`, and **contain** it when not.
 
-It runs over every op in the registry — enforced, not intended: `listOps()` drives a coverage test
+It runs over every op in the registry - enforced, not intended: `listOps()` drives a coverage test
 against a fixture table, so a newly registered op fails the suite until it has one. It also runs
 over randomly generated 5–15 node graphs including diamonds, and the built-in examples at
 miniature shapes. The thresholds at which an operation gives up and returns a bound are parameters
@@ -142,7 +151,7 @@ src/
     region.ts    the box algebra everything rests on
     graph.ts     IR, validation, topo sort, shape inference
     propagate.ts the backward/forward driver
-    ops/         the op registry — einsum is the heart of it
+    ops/         the op registry - einsum is the heart of it
     metrics.ts   flops, bytes, intensity
   parse/         lexer -> AST -> graph, JSON front end, compiler facade
   ui/            React + canvas; store.ts holds all view state

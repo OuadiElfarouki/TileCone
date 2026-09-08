@@ -50,6 +50,7 @@ src/
 │   ├── graph.ts          graph IR validation and resolution
 │   ├── executor.ts       checked public query boundary
 │   ├── propagate.ts      generic forward/backward worklist
+│   ├── entangle.ts       what a region is combined with, per operation
 │   ├── region.ts         exact and conservative region algebra
 │   ├── metrics.ts        FLOP, byte, and intensity estimates
 │   ├── reuse.ts          seeded dependency-reuse estimator
@@ -210,9 +211,9 @@ The store keeps the diagnostic list rather than a rendered string, and the sourc
 
 A `GraphError`'s subject carries the attribute it is about when it is about one, so a diagnostic can underline that attribute rather than recovering its name by parsing the sentence the error already built from it.
 
-Diagnostics carry the narrowest span that is certainly about the error. `SourceMap.nodeArgs` records a span per input and per named attribute, so an unknown tensor underlines that tensor reference, a misspelled attribute underlines that attribute, and an unknown op underlines the call name. A statement span is the fallback, used when the error is genuinely about the statement — a shape mismatch is about the pairing of two operands, not either one.
+Diagnostics carry the narrowest span that is certainly about the error. `SourceMap.nodeArgs` records a span per input and per named attribute, so an unknown tensor underlines that tensor reference, a misspelled attribute underlines that attribute, and an unknown op underlines the call name. A statement span is the fallback, used when the error is genuinely about the statement - a shape mismatch is about the pairing of two operands, not either one.
 
-The AST stops at syntax. It does not know that `relu` is an elementwise function; desugaring happens in lowering, over the tree, from the table in `parse/sugar.ts`. That table is read in **both** directions — lowering maps a call name to an operation, the printer maps an operation back to its call name — because holding those as two hardcoded descriptions is what let them drift: lowering accepted `amax`/`amin` while the printer only reversed `sum`, `mean` and `prod`, so `amax(X, axis=1)` came back as `reduce(X, fn=max, ...)`. Each form declares which attributes the call name itself carries, so the printer omits exactly those and writes every other one; dropping the rest would silently lose an attribute when a composite is expanded and recompiled. Lexical rules (identifier characters, string escapes, comment handling) live once in `parse/lexical.ts` and are shared by the parser and the editor highlighter, which previously carried separate copies of them.
+The AST stops at syntax. It does not know that `relu` is an elementwise function; desugaring happens in lowering, over the tree, from the table in `parse/sugar.ts`. That table is read in **both** directions - lowering maps a call name to an operation, the printer maps an operation back to its call name - because holding those as two hardcoded descriptions is what let them drift: lowering accepted `amax`/`amin` while the printer only reversed `sum`, `mean` and `prod`, so `amax(X, axis=1)` came back as `reduce(X, fn=max, ...)`. Each form declares which attributes the call name itself carries, so the printer omits exactly those and writes every other one; dropping the rest would silently lose an attribute when a composite is expanded and recompiled. Lexical rules (identifier characters, string escapes, comment handling) live once in `parse/lexical.ts` and are shared by the parser and the editor highlighter, which previously carried separate copies of them.
 
 ### DSL surface
 
@@ -258,7 +259,7 @@ The source map connects compiler errors back to declarations or operation calls.
 
 Operations that *compute* from several tensors promote (`promotingDTypeOutputs`); operations that *move* data require a match (`uniformDTypeOutputs`). The lattice follows PyTorch rather than NumPy's older value-based rule: category dominates width across families, so `f16` with `i32` is `f16` and not a widening to `f64` that no inference kernel performs. Mixed precision is ordinary inference practice and has an obvious result for an add or a matmul; a `concat` of fp16 and fp32 has none, since the output is one buffer, so it stays an error that names the cast to insert. `f16` with `bf16` widens to `f32`: same width, neither contains the other, and picking either would silently discard range or precision.
 
-The elementwise function table in `ops/elementwise.ts` is the definition of what `fn` may be — the attribute schema enumerates its keys, and the DSL's call-name sugar reads the same table. It also carries each function's own arity, so `relu(a, b)` and `div(a, b, c)` are rejected rather than quietly computing something else.
+The elementwise function table in `ops/elementwise.ts` is the definition of what `fn` may be - the attribute schema enumerates its keys, and the DSL's call-name sugar reads the same table. It also carries each function's own arity, so `relu(a, b)` and `div(a, b, c)` are rejected rather than quietly computing something else.
 
 
 Every operation is described by an `OpSpec` in `src/core/ops/types.ts` and registered in `src/core/ops/index.ts`. An operation owns all semantics specific to that operator:
@@ -300,6 +301,22 @@ For each node, the engine calls the registered operation once per relevant sourc
 
 Queries may request upstream, downstream, or both directions. Low-level propagation functions remain available for operation development and testing, but UI and external callers should normally use the executor so malformed selections fail at the boundary.
 
+## 7a. Entanglement
+
+A third relation alongside upstream and downstream: given a block of one operand, which elements of the *other* operands meet it in the same term of the computation. `executor.entangled(tensorId, region)` returns one entry per (node, other-slot) pair.
+
+In the UI it is a separate toggle (`e`), not a fourth `Direction`: what a tile reads and what it is multiplied against are independent questions, and folding them into one control would make them alternatives. Its paint is a stipple - solid fill means needs, a ruling means feeds, and a third relation needs a mark that is not a line, so it cannot be read as another cone or as the approximation hatch. Hue still follows the tile index, and hiding a tile hides its entanglement too.
+
+It is not a view over the other two, and the difference is the point. For `C = A @ B` and a block `A[0:4, 0:4]`, the downstream cone is `C[0:4, :]` and what that cone reads of `B` is *all* of `B` - correctly, since every `C[m,n]` in the band reads every row. But that block of `A` is only ever multiplied against `B[0:4, :]`. Composing `forward` with `backward` cannot recover this: the correlation between which input element produced which output element is discarded at the region boundary, where a set of elements becomes a shape.
+
+`einsum` (so `matmul`, `bmm`, `linear`), elementwise, `conv`, `concat` and `gather` answer exactly. `concat` answers *empty*, which is information rather than a gap: its operands are placed side by side and never combined, so a kernel may write the pieces independently. `normalize` deliberately does not answer - its output is not a sum of products, so "the same term" has no single reading there, and an honest bound is better than a hook with mushy semantics.
+
+Operations answer through `OpSpec.coaccess`, with `OpSpec.oracleTerms` as its ground truth - the terms an output element evaluates, each naming what every input contributes. That is strictly finer than `oracleDeps`, which flattens terms away and says only that a whole row of `A` and a whole column of `B` reach one output. `registry.test.ts` requires the two hooks together: `coaccess` without `oracleTerms` would be an analytic claim nothing can check.
+
+An operation without the hooks falls back to composing `forward` and `backward`, marked inexact with the reason. That is a genuine superset - every term combining two elements does land in some output the block reaches - so a missing implementation degrades rather than lies.
+
+Scope is one operation. Tensors meeting several hops apart relate through a chain of these; following the chain would mean carrying the correlation across propagation, which is a materially harder problem.
+
 ## 8. Metrics
 
 Metrics are derived from the backward dependency result in `src/core/metrics.ts`:
@@ -340,7 +357,7 @@ Byte estimates use the dtype inferred during graph resolution, so dtype propagat
 
 einsum FLOPs count the fused loop: `(operands - 1)` multiplies plus one add per contracted position, each term dropping out where it should. An outer product only multiplies, a reduction only adds, a transpose does neither, and the ordinary two-operand contraction comes out at the conventional `2K` per element.
 
-`AggregateReadout` carries `exact` and `reasons` alongside the figures. Every total is measured over the cone's regions, so a widened region makes all of them upper bounds: it contributes bytes that are not really needed and FLOPs for work that is not really done. The flag is *derived* from the per-tensor rows rather than set independently, and the relation is strictly "no more than" — a region is never a subset of the truth, so a figure is never understated. The inspector prefixes each bounded figure with `≤` and states the reasons, which is what keeps the totals inside the rule the rest of the system follows: an over-approximation is never presented as ground truth.
+`AggregateReadout` carries `exact` and `reasons` alongside the figures. Every total is measured over the cone's regions, so a widened region makes all of them upper bounds: it contributes bytes that are not really needed and FLOPs for work that is not really done. The flag is *derived* from the per-tensor rows rather than set independently, and the relation is strictly "no more than" - a region is never a subset of the truth, so a figure is never understated. The inspector prefixes each bounded figure with `≤` and states the reasons, which is what keeps the totals inside the rule the rest of the system follows: an over-approximation is never presented as ground truth.
 
 ## 8a. Dependency notes
 
@@ -488,6 +505,7 @@ The test suite checks the architecture at several levels:
 - shared-operand reporting end to end: that `matmul(A, A)` names two bands rather than three fragments, that elements and bytes count the shared square once, and that the FLOP estimate does not pay for it twice;
 - the dtype lattice as a join: idempotent, commutative, associative, and monotonic in width within a family;
 - the sugar table in both directions: that every sugared call round-trips as itself rather than degrading to its underlying operation, that printing is a fixpoint, and that no two forms claim one call name;
+- entanglement against brute-force terms, including that it is strictly tighter than the composition it falls back to, and that its paint is a texture distinct from the downstream ruling;
 - registry-wide properties: that every registered operation has a fixture, that each fixture agrees with the oracle, and that `forward` and `backward` agree about whether the dependency relation between a given pair of boxes is empty;
 - frame coalescing: that a burst of calls runs once with the most recent arguments, that the trailing call is never dropped, and that a later clear supersedes a pending one;
 - randomized graph and propagation cases.

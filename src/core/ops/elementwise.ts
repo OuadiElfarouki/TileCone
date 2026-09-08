@@ -132,6 +132,16 @@ export const elementwiseOp: OpSpec = {
   ],
   oracleDeps: (_slot, outIndex, ctx) =>
     ctx.inShapes.map((sh) => [broadcastOracleIndex(outIndex, sh)]),
+  /* One term per output element, so entanglement is just the same output
+     position read on the other operand. A broadcast axis is where this stops
+     being the identity: an operand of extent 1 there meets the whole extent. */
+  coaccess: (slot, box, otherSlot, ctx) => {
+    const out = broadcastForwardBox(box, ctx.inShapes[slot], ctx.outShapes[0]);
+    return fromBox(broadcastBackwardBox(out, ctx.inShapes[otherSlot]));
+  },
+  oracleTerms: (_slot, outIndex, ctx) => [
+    ctx.inShapes.map((sh) => broadcastOracleIndex(outIndex, sh)),
+  ],
   flopsFor: (_slot, outBox, ctx) => {
     let vol = 1;
     for (const I of outBox) vol *= Math.max(0, I.hi - I.lo);

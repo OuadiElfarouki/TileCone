@@ -46,7 +46,7 @@ export function useKeyboard({
 
       /**
        * Escape backs out of the innermost active mode. It never destroys the
-       * selection — clearing the tiles is the right panel's "clear all", an
+       * selection - clearing the tiles is the right panel's "clear all", an
        * explicit act, not a side effect of pressing cancel.
        */
       if (matchesShortcut(e, SHORTCUTS.escape)) {
@@ -101,6 +101,7 @@ export function useKeyboard({
       // direction / view
       if (matchesShortcut(e, SHORTCUTS.needs)) return s.toggleDirection("backward");
       if (matchesShortcut(e, SHORTCUTS.feeds)) return s.toggleDirection("forward");
+      if (matchesShortcut(e, SHORTCUTS.entangled)) return s.toggleEntangled();
       if (matchesShortcut(e, SHORTCUTS.undo)) {
         e.preventDefault();
         return s.undoWorkspace();

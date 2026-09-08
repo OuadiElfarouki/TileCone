@@ -130,3 +130,49 @@ export function regionToFlatSet(r: Region, shape: number[]): Set<number> {
   for (const p of points(r)) out.add(flatIndex(p, shape));
   return out;
 }
+
+/**
+ * Brute-force entanglement: which elements of `otherSlot` are combined with
+ * `selRegion` on `fromSlot`, at one node.
+ *
+ * Built from `oracleTerms`, the operation's own statement of what each term
+ * combines, and never from `coaccess` - the same separation that keeps
+ * `oracleDeps` independent of `backward`. Enumerating every output element and
+ * every term is exactly what makes this ground truth and exactly what makes it
+ * unusable outside a test.
+ */
+export function truthEntangled(
+  g: ResolvedGraph,
+  nodeId: string,
+  fromSlot: number,
+  otherSlot: number,
+  selRegion: Region
+): Set<number> {
+  const node = g.topo.find((n) => n.id === nodeId)!;
+  const spec = getOp(node.op)!;
+  if (!spec.oracleTerms) throw new Error(`${node.op}: no oracleTerms to check against`);
+  const ctx: OpCtx = {
+    inShapes: g.shapesOf(node.inputs),
+    outShapes: g.shapesOf(node.outputs),
+    attrs: node.attrs,
+  };
+  const fromShape = ctx.inShapes[fromSlot];
+  const otherShape = ctx.inShapes[otherSlot];
+  const selected = regionToFlatSet(selRegion, fromShape);
+  const out = new Set<number>();
+
+  node.outputs.forEach((outId, slot) => {
+    const outShape = g.tensors[outId].resolved!;
+    const n = outShape.reduce((a, b) => a * b, 1);
+    for (let f = 0; f < n; f++) {
+      for (const term of spec.oracleTerms!(slot, unflatIndex(f, outShape), ctx)) {
+        const mine = term[fromSlot];
+        const theirs = term[otherSlot];
+        if (!mine || !theirs) continue;
+        if (!selected.has(flatIndex(mine, fromShape))) continue;
+        out.add(flatIndex(theirs, otherShape));
+      }
+    }
+  });
+  return out;
+}

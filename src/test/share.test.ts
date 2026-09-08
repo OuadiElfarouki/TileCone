@@ -12,6 +12,7 @@ import { box } from "../core/region";
 const LINK: WorkspaceLink = {
   dsl: "A = Tensor(4, 4, dtype=fp32)\nB = relu(A)\n",
   dir: "both",
+  ent: true,
   tile: -2,
   snap: false,
   axes: "numeric",
@@ -30,7 +31,7 @@ describe("workspace links round-trip", () => {
   });
 
   it("carries non-ASCII source through base64 intact", () => {
-    const link = { ...LINK, dsl: "# λ — tensor ≈ région\nA = Tensor(2, dtype=fp32)\n" };
+    const link = { ...LINK, dsl: "# λ - tensor ≈ région\nA = Tensor(2, dtype=fp32)\n" };
     expect(decodeWorkspace(`#s=${encodeWorkspace(link)}`)?.dsl).toBe(link.dsl);
   });
 
@@ -76,6 +77,11 @@ describe("workspace links round-trip", () => {
     for (const dir of ["none", "backward", "forward", "both"] as const)
       expect(decodeWorkspace(`#s=${encodeWorkspace({ ...LINK, dir })}`)?.dir).toBe(dir);
   });
+
+  it("round-trips the combined-with view", () => {
+    for (const ent of [false, true])
+      expect(decodeWorkspace(`#s=${encodeWorkspace({ ...LINK, ent })}`)?.ent).toBe(ent);
+  });
 });
 
 describe("a link that cannot be trusted is refused, not repaired", () => {
@@ -113,7 +119,12 @@ describe("a link that cannot be trusted is refused, not repaired", () => {
   });
 
   it("rejects explicitly malformed settings while defaulting absent legacy ones", () => {
-    for (const patch of [{ tile: "large" }, { tile: Infinity }, { snap: "yes" }]) {
+    for (const patch of [
+      { tile: "large" },
+      { tile: Infinity },
+      { snap: "yes" },
+      { ent: "yes" },
+    ]) {
       const bad = btoa(JSON.stringify({ ...LINK, ...patch }));
       expect(decodeWorkspace(`#s=${bad}`)).toBeNull();
     }
@@ -129,6 +140,11 @@ describe("a link that cannot be trusted is refused, not repaired", () => {
   it("defaults snapping on for links written before it existed", () => {
     const legacy = btoa(JSON.stringify({ dsl: "A = Tensor(2, dtype=fp32)\n", dir: "both", tile: 0, sel: null }));
     expect(decodeWorkspace(`#s=${legacy}`)?.snap).toBe(true);
+  });
+
+  it("leaves the combined-with view absent for legacy links", () => {
+    const { ent: _ent, ...legacy } = LINK;
+    expect(decodeWorkspace(`#s=${encodeWorkspace(legacy)}`)?.ent).toBeUndefined();
   });
 
   it("keeps a null selection null", () => {

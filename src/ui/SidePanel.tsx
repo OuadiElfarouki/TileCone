@@ -10,7 +10,7 @@ import { viewAxes } from "./tensor-view";
 import { highlightDSL } from "./dsl-highlight";
 
 /**
- * Copies a link that restores this workspace — source, selection, cone direction
+ * Copies a link that restores this workspace - source, selection, analysis views
  * and tile detail. It sits with the source actions rather than in the header
  * because the source is most of what it encodes.
  */
@@ -18,6 +18,7 @@ function ShareButton(): React.ReactElement {
   const dslText = useStore((s) => s.dslText);
   const selection = useStore((s) => s.selection);
   const direction = useStore((s) => s.direction);
+  const showEntangled = useStore((s) => s.showEntangled);
   const tileScale = useStore((s) => s.tileScale);
   const snapToGrid = useStore((s) => s.snapToGrid);
   const axisMode = useStore((s) => s.axisMode);
@@ -28,6 +29,7 @@ function ShareButton(): React.ReactElement {
     const target = shareTarget(location.origin, location.pathname, {
       dsl: dslText,
       dir: direction,
+      ent: showEntangled,
       tile: tileScale,
       snap: snapToGrid,
       axes: axisMode,
@@ -44,7 +46,7 @@ function ShareButton(): React.ReactElement {
     <button
       className={`mini share-btn${copyState === "failed" ? " copy-failed" : ""}`}
       onClick={copy}
-      title="copy a link that restores this source, selection, graph layout, needs view and feeds view"
+      title="copy a link that restores this source, selection, graph layout, and analysis views"
       aria-live="polite"
     >
       {copyState === "copied" ? "copied ✓" : copyState === "failed" ? "copy failed" : "share"}

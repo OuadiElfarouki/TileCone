@@ -715,8 +715,8 @@ export function* points(r: Region): Generator<number[]> {
   }
 }
 
-export function markInexact(r: Region, reason: string): Region {
-  return { boxes: r.boxes, exact: false, reasons: mergeReasons(r.reasons, [reason]) };
+export function markInexact(r: Region, ...reasons: string[]): Region {
+  return { boxes: r.boxes, exact: false, reasons: mergeReasons(r.reasons, reasons) };
 }
 
 // ------------------------------------------------------ selections vs regions

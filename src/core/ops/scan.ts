@@ -50,13 +50,13 @@ function cumsumDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
     flags: [
       {
         tensorId: ctx.inIds[0],
-        text: `triangular cone — prefix over axis ${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)}`,
+        text: `triangular cone - prefix over axis ${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)}`,
       },
     ],
     text:
       `cumsum is a prefix scan along axis ${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)} ` +
       `(${extent} wide), so element i of ${ctx.outNames[0]} depends on ` +
-      `${reverse ? "every later" : "every earlier"} element of ${ctx.inNames[0]} — the cone is ` +
+      `${reverse ? "every later" : "every earlier"} element of ${ctx.inNames[0]} - the cone is ` +
       `triangular, not rectangular. Tiles along axis ${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)} must ` +
       `run in order and carry the running value across the boundary.`,
   };

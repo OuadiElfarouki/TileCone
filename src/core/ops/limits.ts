@@ -3,7 +3,7 @@
  * falls back to a conservative bound.
  *
  * These are the branches where the engine is allowed to be imprecise, so they
- * are the branches most worth testing — and they were the only ones the oracle
+ * are the branches most worth testing - and they were the only ones the oracle
  * never reached. Every cap is large enough that triggering it needs a tensor
  * far beyond what a brute-force oracle can enumerate, which left the safe path
  * covered exhaustively and the unsafe path covered by hand-written examples.

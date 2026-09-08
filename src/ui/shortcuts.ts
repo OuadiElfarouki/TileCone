@@ -47,6 +47,12 @@ export const SHORTCUTS = {
   },
   needs: { id: "needs", label: "U", action: "toggle What it needs", keys: ["u"] },
   feeds: { id: "feeds", label: "D", action: "toggle What it feeds", keys: ["d"] },
+  entangled: {
+    id: "entangled",
+    label: "E",
+    action: "toggle What it is combined with",
+    keys: ["e"],
+  },
   fit: { id: "fit", label: "F", action: "fit the graph to the viewport", keys: ["f"] },
   scrub: {
     id: "scrub",
@@ -81,7 +87,7 @@ export const SHORTCUTS = {
 
 export const SHORTCUT_GROUPS = [
   { title: "Selection", items: [SHORTCUTS.move, SHORTCUTS.moveFast, SHORTCUTS.toggleTile, SHORTCUTS.escape, SHORTCUTS.undo] },
-  { title: "View", items: [SHORTCUTS.needs, SHORTCUTS.feeds, SHORTCUTS.fit, SHORTCUTS.scrub, SHORTCUTS.zoom, SHORTCUTS.help] },
+  { title: "View", items: [SHORTCUTS.needs, SHORTCUTS.feeds, SHORTCUTS.entangled, SHORTCUTS.fit, SHORTCUTS.scrub, SHORTCUTS.zoom, SHORTCUTS.help] },
   { title: "Panels", items: [SHORTCUTS.leftPanel, SHORTCUTS.rightPanel, SHORTCUTS.run] },
 ] as const;
 
@@ -90,7 +96,7 @@ type KeyboardLike = Pick<KeyboardEvent, "key" | "altKey" | "ctrlKey" | "metaKey"
 export function matchesShortcut(event: KeyboardLike, binding: Shortcut): boolean {
   if (!binding.keys) return false;
   // `key` already folds Shift into a printable character, so an exact match is
-  // what keeps Ctrl+Shift+Z — the redo chord this app does not implement — from
+  // what keeps Ctrl+Shift+Z - the redo chord this app does not implement - from
   // silently undoing, and what lets `?` bind without claiming which layout
   // produces it. Named keys do not fold, so a binding that wants Shift with one
   // says so and its unshifted base binding still matches.

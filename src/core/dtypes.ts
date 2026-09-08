@@ -15,8 +15,8 @@ export const DTYPE_BYTES: Record<DType, number> = {
 /**
  * Promotion for operations that read more than one tensor.
  *
- * Real inference graphs mix precisions constantly — fp16 activations against an
- * fp32 residual or scale, an int8 weight against an fp16 input — and refusing
+ * Real inference graphs mix precisions constantly - fp16 activations against an
+ * fp32 residual or scale, an int8 weight against an fp16 input - and refusing
  * them made a large class of realistic programs unwritable. Byte accounting is
  * unaffected, because bytes are measured per tensor from that tensor's own
  * dtype; promotion only decides what the *result* is.

@@ -342,6 +342,25 @@ export const concatOp: OpSpec = {
     }
     return deps;
   },
+  /* Nothing is ever combined: each output element comes from exactly one
+     operand, so a concat places its inputs side by side rather than mixing
+     them. Empty is the answer, and a useful one - it says a kernel can write
+     the pieces independently. */
+  coaccess: (_slot, _box, otherSlot, ctx) => empty(ctx.inShapes[otherSlot].length),
+  oracleTerms: (_s, outIndex, ctx) => {
+    const ax = normAxis(ctx.attrs.axis as number, ctx.inShapes[0].length);
+    let ofs = 0;
+    for (let k = 0; k < ctx.inShapes.length; k++) {
+      const e = ctx.inShapes[k][ax];
+      if (outIndex[ax] >= ofs && outIndex[ax] < ofs + e) {
+        const idx = outIndex.slice();
+        idx[ax] -= ofs;
+        return [ctx.inShapes.map((_sh, slot) => (slot === k ? idx : null))];
+      }
+      ofs += e;
+    }
+    return [];
+  },
   flopsFor: zero,
   flopsPerElement: zero,
 };

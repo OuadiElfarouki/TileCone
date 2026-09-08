@@ -287,7 +287,7 @@ describe("one scale for the whole graph", () => {
 
   it("a degenerate axis does not drag the whole graph to the cap", () => {
     // A rank-1 bias vector has rows === 1. Counting that as the smallest side
-    // would demand 14px for it and peg every card at MAX_ELEM_PX — one bias
+    // would demand 14px for it and peg every card at MAX_ELEM_PX - one bias
     // would blow a 64x64 tensor up from 300px to 896px.
     const withoutBias = graphScale([{ rows: 64, cols: 64 }]);
     const withBias = graphScale([{ rows: 64, cols: 64 }, { rows: 1, cols: 64 }]);
@@ -388,7 +388,7 @@ describe("thin-region paint fallbacks", () => {
 
   it("delimits a ruled region wherever it rules it", () => {
     // The hairline and the ruling share a 3px floor, so a rect never draws one
-    // without the other — a ruled fill is never left without its edge.
+    // without the other - a ruled fill is never left without its edge.
     for (const rect of [{ w: 3, h: 20 }, { w: 20, h: 20 }, { w: 2, h: 20 }])
       expect(outlineFitsRect(rect, 0.75, 1)).toBe(patternFitsRect(rect, 1));
   });
@@ -402,7 +402,7 @@ describe("downstream density is spacing", () => {
 
   it("stays a ruling at both ends of the scale", () => {
     // Wide enough at the floor to read as separate lines, tight enough at the
-    // ceiling to read as dense — but never so tight it fills in as solid.
+    // ceiling to read as dense - but never so tight it fills in as solid.
     expect(stripePitchPx(0)).toBeLessThanOrEqual(12);
     expect(stripePitchPx(1)).toBeGreaterThanOrEqual(2.5);
   });

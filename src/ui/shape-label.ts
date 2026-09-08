@@ -13,9 +13,9 @@ export type AxisMode = "symbolic" | "numeric";
 
 /**
  * The symbolic reading of one axis: the name the source gave it, else the
- * dimension it was declared with, else its extent. The fallbacks matter — a
+ * dimension it was declared with, else its extent. The fallbacks matter - a
  * produced tensor has no declared shape, and propagated names have holes where
- * an operation invented an axis — so a symbolic shape may be partly numeric.
+ * an operation invented an axis - so a symbolic shape may be partly numeric.
  * That is honest: those axes have no symbol to show.
  */
 export function axisLabel(tensor: Tensor, axis: number): string {

@@ -37,6 +37,7 @@ export default function App(): React.ReactElement {
       const restored = restoreWorkspace({
         dsl: link.dsl,
         direction: link.dir,
+        showEntangled: link.ent === true,
         tileScale: link.tile,
         snapToGrid: link.snap !== false,
         axisMode: link.axes ?? "symbolic",

@@ -4,9 +4,9 @@
  *
  * Two are checked here:
  *
- * 1. Coverage — the fixture table names every registered op, so a new op cannot
+ * 1. Coverage - the fixture table names every registered op, so a new op cannot
  *    ship untested.
- * 2. Adjointness — `forward` and `backward` are two implementations of one
+ * 2. Adjointness - `forward` and `backward` are two implementations of one
  *    relation, and nothing else in the suite makes them agree directly. The
  *    oracle checks each against truth, but only where the oracle runs; this law
  *    needs no oracle and so runs on every op at every fixture size.
@@ -120,7 +120,7 @@ describe("adjointness: forward and backward describe one relation", () => {
             expect(
               forwardMeets,
               `${fixture.op}: in slot ${inSlot} ${JSON.stringify(inBox)} vs out slot ${outSlot} ` +
-                `${JSON.stringify(outBox)} — forward says ${forwardMeets}, backward says ${backwardMeets}`
+                `${JSON.stringify(outBox)} - forward says ${forwardMeets}, backward says ${backwardMeets}`
             ).toBe(backwardMeets);
             asserted++;
           }
@@ -131,4 +131,45 @@ describe("adjointness: forward and backward describe one relation", () => {
       expect(asserted, `${fixture.op}: no exact pair was available to assert on`).toBeGreaterThan(0);
     });
   }
+});
+
+/**
+ * The entanglement hooks come in a pair. `coaccess` without `oracleTerms` is an
+ * analytic claim nothing can check, which is precisely the situation the rest
+ * of this file exists to prevent.
+ */
+describe("entanglement hooks", () => {
+  it("an op implementing coaccess also states its terms", () => {
+    const unchecked = listOps()
+      .filter((spec) => spec.coaccess && !spec.oracleTerms)
+      .map((spec) => spec.name);
+    expect(unchecked).toEqual([]);
+  });
+
+  it("terms agree with deps: every term's element is one the output reads", () => {
+    // oracleTerms is finer than oracleDeps - it keeps which elements were
+    // combined - so flattening it must land inside what oracleDeps reports.
+    for (const fixture of OP_FIXTURES) {
+      const g = resolveGraph(fixture.graph);
+      const node = g.topo.find((n) => n.id === fixture.nodeId)!;
+      const spec = listOps().find((s) => s.name === node.op)!;
+      if (!spec.oracleTerms) continue;
+      const ctx: OpCtx = {
+        inShapes: g.shapesOf(node.inputs),
+        outShapes: g.shapesOf(node.outputs),
+        attrs: node.attrs,
+      };
+      const outShape = ctx.outShapes[0];
+      const first = outShape.map(() => 0);
+      const deps = spec.oracleDeps(0, first, ctx);
+      for (const term of spec.oracleTerms(0, first, ctx))
+        term.forEach((tuple, slot) => {
+          if (!tuple) return;
+          const known = deps[slot].some((d) => d.join() === tuple.join());
+          expect(known, `${fixture.op}: term reads ${tuple} on slot ${slot}, deps do not`).toBe(
+            true
+          );
+        });
+    }
+  });
 });

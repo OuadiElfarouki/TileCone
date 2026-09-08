@@ -10,6 +10,10 @@ import { CARD_SURFACE } from "../ui/palette";
 function recordingCanvas() {
   const strokes: { color: string; width: number; dash: number[]; path: number[][] }[] = [];
   const borders: number[] = [];
+  // Stipple dots, so the entanglement texture can be checked for where it drew
+  // rather than only that it ran.
+  const arcs: { x: number; y: number; r: number }[] = [];
+  const fills: { color: string; count: number }[] = [];
   let dash: number[] = [];
   // Points of the path being built, so a stroke can be checked for *where* it
   // drew and not only how. beginPath resets it, exactly as the canvas does.
@@ -19,6 +23,8 @@ function recordingCanvas() {
     strokeStyle: "", fillStyle: "", lineWidth: 1, globalAlpha: 1,
     setTransform() {}, clearRect() {}, fillRect() {},
     beginPath() { path = []; },
+    arc(x: number, y: number, r: number) { arcs.push({ x, y, r }); },
+    fill() { fills.push({ color: this.fillStyle, count: arcs.length }); },
     rect() {}, clip() {},
     moveTo(x: number, y: number) { path.push([x, y]); },
     lineTo() {},
@@ -33,7 +39,7 @@ function recordingCanvas() {
     strokeRect() { borders.push(this.lineWidth); },
   };
   const canvas = { width: 0, height: 0, getContext: () => ctx };
-  return { canvas: canvas as unknown as HTMLCanvasElement, strokes, borders };
+  return { canvas: canvas as unknown as HTMLCanvasElement, strokes, borders, arcs, fills };
 }
 const cfg = { sliders: [], projection: true };
 const shape = [16, 16];
@@ -272,5 +278,64 @@ describe("a border traces the region, not the split", () => {
     // two regions an operand actually reads.
     expect(painted).toHaveLength(3);
     expect(rects.filter((r) => r.width === 1.5)).toHaveLength(2);
+  });
+});
+
+
+/**
+ * The entanglement texture at the canvas boundary.
+ *
+ * `buildLayers` decides that a stipple is requested; only this reaches the
+ * renderer, where the mark either exists and is made of dots or does not. The
+ * distinction from a ruling has to hold here, not in the layer description.
+ */
+describe("stipple rendering", () => {
+  const stippleLayer = (region = fromBox(box([0, 8], [0, 8]))): Layer => ({
+    region,
+    color: [20, 120, 220],
+    alpha: 1,
+    hatch: false,
+    pattern: { kind: "stipple", density: 0.5 },
+  });
+
+  /** The lattice is stroked whatever the layers are; only layer marks matter. */
+  const layerStrokes = (strokes: { color: string; path: number[][] }[]) =>
+    strokes.filter((s) => s.path.length > 0 && s.color.includes("20,120,220"));
+
+  it("draws dots, and no lines that could read as a ruling", () => {
+    vi.stubGlobal("window", { devicePixelRatio: 1 });
+    const { canvas, arcs, strokes } = recordingCanvas();
+    drawGrid(canvas, shape, cfg, geom, [stippleLayer()], false, 1, 1);
+    expect(arcs.length).toBeGreaterThan(4);
+    // A ruling strokes; a stipple fills. The layer must contribute no line, or
+    // the two encodings become confusable at a glance.
+    expect(layerStrokes(strokes)).toHaveLength(0);
+  });
+
+  it("keeps every dot inside the region it describes", () => {
+    vi.stubGlobal("window", { devicePixelRatio: 1 });
+    const { canvas, arcs } = recordingCanvas();
+    drawGrid(canvas, shape, cfg, geom, [stippleLayer(fromBox(box([4, 12], [4, 12])))], false, 1, 1);
+    expect(arcs.length).toBeGreaterThan(0);
+    // Pixels per *element*, not per drawn cell: a cell may span several
+    // elements, and the region is stated in elements.
+    const pxX = geom.canvasW / geom.cols;
+    const pxY = geom.canvasH / geom.rows;
+    for (const a of arcs) {
+      expect(a.x).toBeGreaterThanOrEqual(4 * pxX);
+      expect(a.x).toBeLessThanOrEqual(12 * pxX);
+      expect(a.y).toBeGreaterThanOrEqual(4 * pxY);
+      expect(a.y).toBeLessThanOrEqual(12 * pxY);
+    }
+  });
+
+  it("degrades to a flat fill where no pattern fits, as a ruling does", () => {
+    vi.stubGlobal("window", { devicePixelRatio: 1 });
+    const { canvas, arcs } = recordingCanvas();
+    // Zoomed far out, the region's screen extent falls under the shared
+    // pattern floor, so direction degrades to alpha rather than drawing a mark
+    // too small to read as anything.
+    drawGrid(canvas, shape, cfg, geom, [stippleLayer(fromBox(box([0, 1], [0, 1])))], false, 1, 0.1);
+    expect(arcs).toHaveLength(0);
   });
 });

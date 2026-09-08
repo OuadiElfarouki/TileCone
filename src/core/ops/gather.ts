@@ -102,6 +102,42 @@ export const gatherOp: OpSpec = {
     );
     return [canonicalize({ boxes: productBoxes(perAxis), exact: true, reasons: [] })];
   },
+  /* The index and the element it selects are read together, which is exactly
+     what the existing mappings already describe: a data element is combined
+     with the positions naming it, and a position with the row it names. */
+  coaccess: (slot, box, otherSlot, ctx) => {
+    const { axis, indexValues } = cfg(ctx);
+    const dataSh = ctx.inShapes[0];
+    if (slot === 1 && otherSlot === 0) {
+      if (!indexValues) return markInexact(full(dataSh), "data-dependent index");
+      const selected = indexValues.slice(box[0].lo, box[0].hi);
+      if (!selected.length) return empty(dataSh.length);
+      const perAxis: Interval[][] = dataSh.map((e, ax) =>
+        ax === axis ? toIntervals(selected) : [iv(0, e)]
+      );
+      return canonicalize({ boxes: productBoxes(perAxis), exact: true, reasons: [] });
+    }
+    // data -> indices: the positions whose value lands inside the block.
+    if (!indexValues) return markInexact(full(ctx.inShapes[1]), "data-dependent index");
+    const positions: number[] = [];
+    indexValues.forEach((v, p) => {
+      if (v >= box[axis].lo && v < box[axis].hi) positions.push(p);
+    });
+    if (!positions.length) return empty(1);
+    return canonicalize({
+      boxes: toIntervals(positions).map((I) => [I]),
+      exact: true,
+      reasons: [],
+    });
+  },
+  oracleTerms: (_s, outIndex, ctx) => {
+    const { axis, indexValues } = cfg(ctx);
+    if (!indexValues) throw new Error("gather oracleTerms requires indexValues");
+    const p = outIndex[axis];
+    const dataIdx = outIndex.slice();
+    dataIdx[axis] = indexValues[p];
+    return [[dataIdx, [p]]];
+  },
   oracleDeps: (_s, outIndex, ctx) => {
     const { axis, indexValues } = cfg(ctx);
     if (!indexValues) throw new Error("gather oracle requires indexValues");

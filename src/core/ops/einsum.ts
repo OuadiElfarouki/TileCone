@@ -126,6 +126,89 @@ function einsumInferShapes(eq: string, inShapes: number[][]): number[][] {
   return [pe.output.map((L) => ext.get(L)!)];
 }
 
+/**
+ * The region of one operand implied by an assignment of intervals to labels.
+ *
+ * Shared by `backward` and `coaccess`, which differ only in where the label
+ * intervals come from: an output box for one, another operand's box for the
+ * other. The diagonal handling below is the whole reason this is worth
+ * factoring; a repeated label constrains its axes to *equal* indices, and
+ * getting that right in two places independently is how they drift.
+ */
+function operandRegion(
+  labs: readonly string[],
+  labelIv: ReadonlyMap<string, { lo: number; hi: number }>,
+  diagEnum: number
+): Region {
+  const base: Box = labs.map((L) => ({ ...labelIv.get(L)! }));
+  const counts = new Map<string, number>();
+  labs.forEach((L) => counts.set(L, (counts.get(L) ?? 0) + 1));
+  const repeated = [...counts.entries()].filter(([, c]) => c > 1).map(([L]) => L);
+  if (repeated.length === 0) return fromBox(base);
+
+  // Diagonal: the true set constrains repeated-label axes to equal indices.
+  // Enumerate diagonal positions when small; otherwise block the staircase.
+  let combos = 1;
+  for (const L of repeated) {
+    const I = labelIv.get(L)!;
+    combos *= Math.max(0, I.hi - I.lo);
+  }
+  if (combos === 0) return empty(labs.length);
+  if (combos > diagEnum) {
+    // Too many diagonal positions to name individually, but the staircase is
+    // still worth keeping: chunk each repeated label's range into blocks and
+    // emit one box per combination of blocks. Each box is the sub-square a
+    // block spans, which contains that block's diagonal cells, so the union is
+    // a superset exactly as the single enclosing box was - and for a 300-wide
+    // diagonal it is a few hundred elements rather than 90,000.
+    const perLabel = Math.max(1, Math.floor(Math.pow(diagEnum, 1 / repeated.length)));
+    const blocks = repeated.map((L) => {
+      const I = labelIv.get(L)!;
+      const width = I.hi - I.lo;
+      const groups = Math.min(perLabel, width);
+      const size = Math.ceil(width / groups);
+      const out: { lo: number; hi: number }[] = [];
+      for (let start = I.lo; start < I.hi; start += size)
+        out.push(iv(start, Math.min(start + size, I.hi)));
+      return out;
+    });
+    const boxes: Box[] = [];
+    const walk = (li: number, assign: Map<string, { lo: number; hi: number }>) => {
+      if (li === repeated.length) {
+        boxes.push(labs.map((L, ax) => ({ ...(assign.get(L) ?? base[ax]) })));
+        return;
+      }
+      for (const block of blocks[li]) {
+        assign.set(repeated[li], block);
+        walk(li + 1, assign);
+      }
+      assign.delete(repeated[li]);
+    };
+    walk(0, new Map());
+    return canonicalize({ boxes, exact: false, reasons: ["diagonal einsum"] });
+  }
+  const boxes: Box[] = [];
+  const rec = (li: number, assign: Map<string, number>) => {
+    if (li === repeated.length) {
+      boxes.push(
+        labs.map((L, ax) =>
+          assign.has(L) ? iv(assign.get(L)!, assign.get(L)! + 1) : { ...base[ax] }
+        )
+      );
+      return;
+    }
+    const L = repeated[li];
+    const I = labelIv.get(L)!;
+    for (let v = I.lo; v < I.hi; v++) {
+      assign.set(L, v);
+      rec(li + 1, assign);
+    }
+    assign.delete(L);
+  };
+  rec(0, new Map());
+  return canonicalize({ boxes, exact: true, reasons: [] });
+}
+
 /** @internal Exported for direct oracle-sized tests of diagonal semantics. */
 export function einsumBackward(eq: string, outBox: Box, ctx: OpCtx): Region[] {
   const diagEnum = limitsOf(ctx).diagEnum;
@@ -134,79 +217,82 @@ export function einsumBackward(eq: string, outBox: Box, ctx: OpCtx): Region[] {
   const labelIv = new Map<string, { lo: number; hi: number }>();
   pe.output.forEach((L, ax) => labelIv.set(L, outBox[ax]));
   for (const [L, e] of ext) if (!labelIv.has(L)) labelIv.set(L, iv(0, e));
+  return pe.operands.map((labs) => operandRegion(labs, labelIv, diagEnum));
+}
 
-  return pe.operands.map((labs) => {
-    const base: Box = labs.map((L) => ({ ...labelIv.get(L)! }));
-    const counts = new Map<string, number>();
-    labs.forEach((L) => counts.set(L, (counts.get(L) ?? 0) + 1));
-    const repeated = [...counts.entries()].filter(([, c]) => c > 1).map(([L]) => L);
-    if (repeated.length === 0) return fromBox(base);
+/**
+ * Which elements of operand `otherSlot` are multiplied against this box of
+ * operand `slot`.
+ *
+ * A label shared by the two operands is the join between them: fixing it on one
+ * side fixes it on the other, because a term of the contraction reads both at
+ * the same value of that label. Labels the box does not mention stay full.
+ *
+ * This is strictly finer than composing `forward` with `backward`. That route
+ * asks which *outputs* the box reaches and then what those outputs read, which
+ * for `mk,kn->mn` is every element of the second operand: every `C[m,n]` in the
+ * row band does read all of `B`. Entanglement asks the narrower question of
+ * which elements are combined in the same term, and answers `B[k0:k1, :]`.
+ */
+function einsumCoaccess(
+  eq: string,
+  slot: number,
+  box: Box,
+  otherSlot: number,
+  ctx: OpCtx
+): Region {
+  const diagEnum = limitsOf(ctx).diagEnum;
+  const pe = parseEquation(eq, ctx.inShapes.length);
+  const ext = labelExtents(pe, ctx.inShapes);
+  const labs = pe.operands[slot];
 
-    // Diagonal: the true preimage constrains repeated-label axes to equal indices.
-    // Enumerate diagonal positions when small; otherwise the rectangular box is a
-    // strict superset and must be marked inexact (see IDEA.md §3.1).
-    let combos = 1;
-    for (const L of repeated) {
-      const I = labelIv.get(L)!;
-      combos *= Math.max(0, I.hi - I.lo);
-    }
-    if (combos === 0) return empty(labs.length);
-    if (combos > diagEnum) {
-      // Too many diagonal positions to name individually, but the staircase is
-      // still worth keeping: chunk each repeated label's range into blocks and
-      // emit one box per combination of blocks. Each box is the sub-square a
-      // block spans, which contains that block's diagonal cells, so the union
-      // is a superset exactly as the single enclosing box was - and for a
-      // 300-wide diagonal it is a few hundred elements rather than 90,000.
-      const perLabel = Math.max(
-        1,
-        Math.floor(Math.pow(diagEnum, 1 / repeated.length))
-      );
-      const blocks = repeated.map((L) => {
-        const I = labelIv.get(L)!;
-        const width = I.hi - I.lo;
-        const groups = Math.min(perLabel, width);
-        const size = Math.ceil(width / groups);
-        const out: { lo: number; hi: number }[] = [];
-        for (let start = I.lo; start < I.hi; start += size)
-          out.push(iv(start, Math.min(start + size, I.hi)));
-        return out;
-      });
-      const boxes: Box[] = [];
-      const walk = (li: number, assign: Map<string, { lo: number; hi: number }>) => {
-        if (li === repeated.length) {
-          boxes.push(labs.map((L, ax) => ({ ...(assign.get(L) ?? base[ax]) })));
-          return;
-        }
-        for (const block of blocks[li]) {
-          assign.set(repeated[li], block);
-          walk(li + 1, assign);
-        }
-        assign.delete(repeated[li]);
-      };
-      walk(0, new Map());
-      return canonicalize({ boxes, exact: false, reasons: ["diagonal einsum"] });
-    }
-    const boxes: Box[] = [];
-    const rec = (li: number, assign: Map<string, number>) => {
-      if (li === repeated.length) {
-        const b: Box = labs.map((L, ax) =>
-          assign.has(L) ? iv(assign.get(L)!, assign.get(L)! + 1) : { ...base[ax] }
-        );
-        boxes.push(b);
-        return;
-      }
-      const L = repeated[li];
-      const I = labelIv.get(L)!;
-      for (let v = I.lo; v < I.hi; v++) {
-        assign.set(L, v);
-        rec(li + 1, assign);
-      }
-      assign.delete(L);
-    };
-    rec(0, new Map());
-    return canonicalize({ boxes, exact: true, reasons: [] });
+  // A label repeated within the operand is read on its diagonal, so the values
+  // it can take are those its axes agree on.
+  const labelIv = new Map<string, { lo: number; hi: number }>();
+  labs.forEach((L, ax) => {
+    const prev = labelIv.get(L);
+    labelIv.set(
+      L,
+      prev
+        ? iv(Math.max(prev.lo, box[ax].lo), Math.min(prev.hi, box[ax].hi))
+        : { ...box[ax] }
+    );
   });
+  for (const I of labelIv.values())
+    if (I.hi <= I.lo) return empty(pe.operands[otherSlot].length);
+  for (const [L, e] of ext) if (!labelIv.has(L)) labelIv.set(L, iv(0, e));
+
+  return operandRegion(pe.operands[otherSlot], labelIv, diagEnum);
+}
+
+/**
+ * Ground truth for entanglement: one entry per term of the contraction, each
+ * naming the element every operand contributes to that term.
+ *
+ * Derived from the definition rather than from `coaccess`, for the same reason
+ * `oracleDeps` is derived from the definition rather than from `backward`.
+ */
+function einsumOracleTerms(eq: string, outIndex: number[], ctx: OpCtx): (number[] | null)[][] {
+  const pe = parseEquation(eq, ctx.inShapes.length);
+  const ext = labelExtents(pe, ctx.inShapes);
+  const assign = new Map<string, number>();
+  pe.output.forEach((L, ax) => assign.set(L, outIndex[ax]));
+  const contracted = [...ext.keys()].filter((L) => !assign.has(L));
+  const terms: (number[] | null)[][] = [];
+  const rec = (ci: number) => {
+    if (ci === contracted.length) {
+      terms.push(pe.operands.map((labs) => labs.map((L) => assign.get(L)!)));
+      return;
+    }
+    const L = contracted[ci];
+    for (let v = 0; v < ext.get(L)!; v++) {
+      assign.set(L, v);
+      rec(ci + 1);
+    }
+    assign.delete(L);
+  };
+  rec(0);
+  return terms;
 }
 
 function einsumForward(eq: string, inSlot: number, inBox: Box, ctx: OpCtx): Region[] {
@@ -439,6 +525,9 @@ export const einsumOp: OpSpec = {
   backward: (_slot, outBox, ctx) => einsumBackward(eqOf(ctx.attrs), outBox, ctx),
   forward: (inSlot, inBox, ctx) => einsumForward(eqOf(ctx.attrs), inSlot, inBox, ctx),
   oracleDeps: (_slot, outIndex, ctx) => einsumOracleDeps(eqOf(ctx.attrs), outIndex, ctx),
+  coaccess: (slot, box, otherSlot, ctx) =>
+    einsumCoaccess(eqOf(ctx.attrs), slot, box, otherSlot, ctx),
+  oracleTerms: (_slot, outIndex, ctx) => einsumOracleTerms(eqOf(ctx.attrs), outIndex, ctx),
   flopsFor: (_slot, outBox, ctx) => einsumFlops(eqOf(ctx.attrs), outBox, ctx),
   flopsPerElement: (_slot, ctx) => einsumFlopsPerElement(eqOf(ctx.attrs), ctx),
   dependencyNote: (ctx) => einsumDependencyNote(eqOf(ctx.attrs), ctx),
@@ -464,6 +553,8 @@ function einsumSugar(
     backward: (_s, outBox, ctx) => einsumBackward(eqFor(ctx), outBox, ctx),
     forward: (inSlot, inBox, ctx) => einsumForward(eqFor(ctx), inSlot, inBox, ctx),
     oracleDeps: (_s, outIndex, ctx) => einsumOracleDeps(eqFor(ctx), outIndex, ctx),
+    coaccess: (slot, box, otherSlot, ctx) => einsumCoaccess(eqFor(ctx), slot, box, otherSlot, ctx),
+    oracleTerms: (_s, outIndex, ctx) => einsumOracleTerms(eqFor(ctx), outIndex, ctx),
     flopsFor: (_s, outBox, ctx) => einsumFlops(eqFor(ctx), outBox, ctx),
     flopsPerElement: (_slot, ctx) => einsumFlopsPerElement(eqFor(ctx), ctx),
     dependencyNote: (ctx) => einsumDependencyNote(eqFor(ctx), ctx),

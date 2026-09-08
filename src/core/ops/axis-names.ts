@@ -3,8 +3,8 @@
  *
  * The rule every helper here obeys: an output axis takes a name only when it is
  * genuinely the same axis as the input one it came from. A name is shown to the
- * reader as the source's own word for that axis, so inventing one — or letting a
- * broadcast axis lend its name to the axis it was stretched to match — is worse
+ * reader as the source's own word for that axis, so inventing one - or letting a
+ * broadcast axis lend its name to the axis it was stretched to match - is worse
  * than leaving it unnamed.
  */
 
@@ -50,7 +50,7 @@ export function firstNamedAxis(inNames: AxisNames[], rank: number): AxisNames {
 /**
  * The word a note should use for one axis: its semantic name, then its verified
  * symbolic extent, then its position. Callers keep their own "axis"/"axes"
- * prefix, so this returns a bare token that reads correctly either way —
+ * prefix, so this returns a bare token that reads correctly either way -
  * "full axis seq", "full axis K", "full axis 3".
  */
 export function axisWord(

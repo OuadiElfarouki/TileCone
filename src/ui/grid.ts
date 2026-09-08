@@ -73,7 +73,17 @@ export type Layer = {
    * layer contract. `angle` separates one box's ruling from another's, so two
    * cones that reach the same elements cross there instead of hiding.
    */
-  pattern?: { kind: "stripe"; density: number; angle: number };
+  pattern?:
+    | { kind: "stripe"; density: number; angle: number }
+    /**
+     * Entanglement: what the tile is *combined with*, as opposed to what it
+     * reads or feeds. A third relation needs a third texture, and it has to be
+     * one neither of the others can be mistaken for. A ruling at a new angle
+     * would read as another cone, and a denser ruling as another share; a
+     * stipple is the one mark here that is not a line, so it cannot be confused
+     * with the downstream ruling or the approximation hatch.
+     */
+    | { kind: "stipple"; density: number };
 };
 
 /** Fraction of a box's hidden-axis volume that is currently visible. */
@@ -202,6 +212,16 @@ const STRIPE_COVERAGE_MIN = 0.11;
 const STRIPE_COVERAGE_MAX = 0.34;
 /** Ruling weight in screen CSS px, held constant: spacing carries the quantity. */
 const STRIPE_WIDTH_PX = 1;
+/** Dot radius for the entanglement stipple, in screen pixels. */
+const STIPPLE_RADIUS_PX = 0.9;
+
+/** Spacing between stipple dots. Sparser than a ruling of the same density:
+ * dots cover far less of a rect than lines at equal pitch, so matching the
+ * pitch would read as a much lighter mark rather than a different one. */
+export function stipplePitchPx(density: number): number {
+  const coverage = Math.max(0.05, Math.min(1, density));
+  return (STIPPLE_RADIUS_PX * 2) / coverage;
+}
 
 /**
  * Perpendicular spacing between downstream rulings, in screen CSS px.
@@ -345,6 +365,42 @@ export function rulingSegments(
 
 /** Stroke one ruled rect. Sizes are divided by the fine paint scale, so CSS
  * transforms do not change the screen-space meaning of spacing or weight. */
+/**
+ * A grid of dots inside the rect, used for entanglement.
+ *
+ * Returns false when the rect cannot hold a legible pattern, so the caller
+ * degrades exactly as it does for a ruling that will not fit rather than
+ * drawing something that reads as a different encoding.
+ */
+function strokeStipple(
+  ctx: CanvasRenderingContext2D,
+  rect: RegionRect,
+  color: [number, number, number],
+  spec: { pitch: number; radius: number; alpha: number },
+  viewScale: number
+): boolean {
+  const pitch = spec.pitch / viewScale;
+  const radius = spec.radius / viewScale;
+  if (pitch <= 0 || rect.w < pitch || rect.h < pitch) return false;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(rect.x, rect.y, rect.w, rect.h);
+  ctx.clip();
+  ctx.globalAlpha = spec.alpha;
+  ctx.fillStyle = `rgb(${color[0]},${color[1]},${color[2]})`;
+  ctx.beginPath();
+  // Offset by half a pitch so the lattice sits inside the rect rather than
+  // clipping a row of half-dots along its top and left edges.
+  for (let y = rect.y + pitch / 2; y < rect.y + rect.h; y += pitch)
+    for (let x = rect.x + pitch / 2; x < rect.x + rect.w; x += pitch) {
+      ctx.moveTo(x + radius, y);
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+    }
+  ctx.fill();
+  ctx.restore();
+  return true;
+}
+
 function strokeRuling(
   ctx: CanvasRenderingContext2D,
   rect: RegionRect,
@@ -433,6 +489,21 @@ export function drawGrid(
     let anyRuled = false;
     for (const q of rects) {
       const alpha = Math.min(1, layer.alpha * q.alpha);
+      const stippled =
+        layer.pattern?.kind === "stipple" &&
+        patternFitsRect(q, viewScale) &&
+        strokeStipple(
+          ctx,
+          q,
+          [r, g, b],
+          {
+            pitch: stipplePitchPx(layer.pattern.density),
+            radius: STIPPLE_RADIUS_PX,
+            alpha,
+          },
+          viewScale
+        );
+      if (stippled) continue;
       const ruled =
         layer.pattern?.kind === "stripe" &&
         patternFitsRect(q, viewScale) &&

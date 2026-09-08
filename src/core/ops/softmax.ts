@@ -40,7 +40,7 @@ function softmaxDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
     flags: [
       {
         tensorId: ctx.inIds[0],
-        text: `full axis ${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)} — softmax normalises across it`,
+        text: `full axis ${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)} - softmax normalises across it`,
       },
     ],
     text:

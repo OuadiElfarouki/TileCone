@@ -4,7 +4,7 @@
  * Two consumers need them and used to carry separate copies: the parser, which
  * turns text into a tree, and the editor highlighter, which colours text that
  * may not parse at all. The highlighter's copy was written to match the
- * parser's "exactly", which is a comment rather than a guarantee — a change to
+ * parser's "exactly", which is a comment rather than a guarantee - a change to
  * what may appear in an identifier, or to how a string escape ends, would have
  * silently desynchronised the colours from the grammar.
  *

@@ -107,11 +107,14 @@ export type LayerInputs = {
   prevForward?: { region: Region; depth: number };
   /** The in-progress rubber band, already in element space. */
   dragRegion: Region | null;
+  /** Regions on this tensor that the selection is combined with, by part index. */
+  entangled?: { index: number; region: Region }[];
+  showEntangled?: boolean;
 };
 
 /**
- * Decide the paint stack for one tensor. Pure so the encoding rules — which
- * cone is filled, which is outlined, what fades, what is hidden — can be
+ * Decide the paint stack for one tensor. Pure so the encoding rules - which
+ * cone is filled, which is outlined, what fades, what is hidden - can be
  * asserted directly instead of inferred from pixels.
  */
 /** @internal Pure rendering seam exported for deterministic canvas tests. */
@@ -130,6 +133,8 @@ export function buildLayers({
   prev,
   prevForward,
   dragRegion,
+  entangled,
+  showEntangled,
 }: LayerInputs): Layer[] {
   const layers: Layer[] = [];
   const agg = aggregateColors(dark);
@@ -207,8 +212,26 @@ export function buildLayers({
       });
   }
 
+  /* Entanglement is orthogonal to the cone, so it paints whichever direction is
+     shown, and when neither is: what a tile reads and what it is multiplied
+     against are separate questions, and a reader may want either alone. Hue
+     still follows the part index, and a hidden part is hidden here too - one
+     visibility control, not two. */
+  if (showEntangled && entangled)
+    for (const { index, region } of entangled) {
+      if (hiddenBoxes.has(index)) continue;
+      const alphaScale = focusedBox !== null && focusedBox !== index ? PEER_FADE : 1;
+      layers.push({
+        region,
+        color: boxColor(index, dark),
+        alpha: CONE_ALPHA * alphaScale,
+        hatch: !region.exact,
+        pattern: { kind: "stipple", density: 0.5 },
+      });
+    }
+
   // The selection itself: each box in its own hue, dimmed when another is
-  // focused. A hidden box keeps its rectangle — hiding removes the *cone*, and
+  // focused. A hidden box keeps its rectangle - hiding removes the *cone*, and
   // a probe you cannot see is a probe you cannot move back.
   parts.forEach(({ index, box: b }) => {
     const isFocused = focusedBox === null || focusedBox === index;
@@ -276,6 +299,8 @@ export function TensorCard({
   const graphPx = useStore((s) => s.graphPx);
   const theme = useStore((s) => s.theme);
   const setDragging = useStore((s) => s.setDragging);
+  const showEntangled = useStore((s) => s.showEntangled);
+  const entangledAll = useStore((s) => s.entangled);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const previewKeyRef = useRef<string | null>(null);
@@ -289,6 +314,18 @@ export function TensorCard({
   const { rowAxis, colAxis } = viewAxes(shape);
 
   const parts = useMemo(() => partsOn(selection, tensor.id), [selection, tensor.id]);
+  /* One entry per (part, meeting operation) that lands on this card. A part can
+     be entangled with this tensor at more than one node, and those are separate
+     facts, so they are separate layers rather than a union. */
+  const entangled = useMemo(
+    () =>
+      entangledAll?.flatMap((forPart, index) =>
+        forPart
+          .filter((e) => e.tensorId === tensor.id)
+          .map((e) => ({ index, region: e.region }))
+      ) ?? [],
+    [entangledAll, tensor.id]
+  );
   const isSelected = parts.length > 0;
   const back = backwardRes?.tensors.get(tensor.id);
   const fwd = forwardRes?.tensors.get(tensor.id);
@@ -312,6 +349,8 @@ export function TensorCard({
       prev,
       prevForward,
       dragRegion: drag ? fromBox(dragToBox(drag)) : null,
+      entangled,
+      showEntangled,
     });
     drawGrid(canvas, shape, cfg, geom, layers, dark, renderScale, drawScale);
   }, [
@@ -320,6 +359,8 @@ export function TensorCard({
     dark,
     direction,
     drag,
+    entangled,
+    showEntangled,
     focusedBox,
     fwd,
     geom,
@@ -442,7 +483,15 @@ export function TensorCard({
   // Exactness is carried by hatching on the canvas; this repeats it in the
   // header because an over-approximation must never be mistakable for ground
   // truth, and hatching is easy to miss on a small or sparsely covered card.
-  const approximation = visibleApproximation(back?.region, fwd?.region);
+  const approximation = visibleApproximation(
+    back?.region,
+    fwd?.region,
+    ...(showEntangled
+      ? entangled
+          .filter(({ index }) => !hiddenBoxes.has(index))
+          .map(({ region }) => region)
+      : [])
+  );
 
   return (
     <div className={`tensor-card${isSelected ? " selected" : ""}${viewScale < OVERVIEW_SCALE ? " overview" : ""}`} data-tensor={tensor.id} style={{ "--view-scale": viewScale } as React.CSSProperties}>
@@ -482,7 +531,7 @@ export function TensorCard({
         <div className="tc-axes">
           <button
             className={`mini ${cfg.projection ? "on" : ""}`}
-            title="this tensor only — projection unions hidden axes; slice uses the slider index"
+            title="this tensor only - projection unions hidden axes; slice uses the slider index"
             onClick={() => setViewCfg(tensor.id, { projection: !cfg.projection })}
           >
             {cfg.projection ? "proj" : "slice"}

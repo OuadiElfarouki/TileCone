@@ -14,6 +14,8 @@ import { AxisMode } from "./shape-label";
 export type WorkspaceLink = {
   dsl: string;
   dir: Direction;
+  /** Optional: links written before the combined-with view existed default off. */
+  ent?: boolean;
   tile: number;
   /** Optional: links written before snapping existed simply default to on. */
   snap?: boolean;
@@ -73,6 +75,9 @@ export function decodeWorkspace(hash: string): WorkspaceLink | null {
     const tile = raw.tile === undefined
       ? 0
       : typeof raw.tile === "number" && Number.isFinite(raw.tile) ? raw.tile : null;
+    const ent = raw.ent === undefined
+      ? undefined
+      : typeof raw.ent === "boolean" ? raw.ent : null;
     const snap = raw.snap === undefined
       ? true
       : typeof raw.snap === "boolean" ? raw.snap : null;
@@ -85,7 +90,7 @@ export function decodeWorkspace(hash: string): WorkspaceLink | null {
     const axes = raw.axes === undefined
       ? "numeric"
       : AXIS_MODES.includes(raw.axes as AxisMode) ? (raw.axes as AxisMode) : null;
-    if (dir === null || tile === null || snap === null || axes === null) return null;
+    if (dir === null || ent === null || tile === null || snap === null || axes === null) return null;
 
     let pos: WorkspaceLink["pos"];
     if (raw.pos !== undefined) {
@@ -120,7 +125,16 @@ export function decodeWorkspace(hash: string): WorkspaceLink | null {
         if (parts.length) sel = parts;
       } else return null;
     } else if (candidate !== undefined && candidate !== null) return null;
-    return { dsl: raw.dsl, dir, tile, snap, axes, ...(pos ? { pos } : {}), sel };
+    return {
+      dsl: raw.dsl,
+      dir,
+      ...(ent === undefined ? {} : { ent }),
+      tile,
+      snap,
+      axes,
+      ...(pos ? { pos } : {}),
+      sel,
+    };
   } catch {
     return null;
   }

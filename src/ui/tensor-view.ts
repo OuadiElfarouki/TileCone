@@ -11,7 +11,7 @@ export function defaultViewCfg(shape: number[]): ViewCfg {
 /**
  * Which axes the grid draws, fixed row-major for every tensor: the last axis
  * (fastest-varying) is columns, the one before it is rows. There is no per-card
- * axis remapping — a different view of a tensor is a `transpose` node in the
+ * axis remapping - a different view of a tensor is a `transpose` node in the
  * graph, where it is part of the computation being explained rather than a
  * display setting that silently disagrees with the DSL.
  */

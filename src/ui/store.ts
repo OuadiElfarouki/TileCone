@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { executeQuery, validateSelection } from "../core/executor";
+import { Entanglement, entangledWith } from "../core/entangle";
 import { Graph, graphOutputs, ResolvedGraph } from "../core/graph";
 import { expandNode } from "../core/expand";
 import { PropResult, mergeProps } from "../core/propagate";
@@ -111,6 +112,8 @@ function appendWorkspaceHistory(
 type WorkspaceRestore = {
   dsl: string;
   direction: Direction;
+  /** Optional for callers restoring links written before entanglement existed. */
+  showEntangled?: boolean;
   tileScale: number;
   snapToGrid: boolean;
   /** Whether a compact shape reads as semantic labels or numeric extents. */
@@ -182,6 +185,17 @@ type State = {
    * so Escape can cancel the band and text selection can be suppressed. */
   dragging: boolean;
   preview: { backward: PropResult | null; forward: PropResult | null } | null; // bidirectional hover probe
+  /**
+   * What the selection is combined with, per selected tile.
+   *
+   * A separate toggle rather than a fourth `Direction`, because entanglement is
+   * orthogonal to the cone: "what this tile reads" and "what it is multiplied
+   * against" are both worth seeing at once, and folding them into one control
+   * would make them alternatives.
+   */
+  showEntangled: boolean;
+  /** Parallel to `selection.parts`; null without a selection or past the attribution cap. */
+  entangled: Entanglement[][] | null;
 
   viewCfgs: Record<string, ViewCfg>;
   /** Px per element for every card in this graph. A property of the resolved
@@ -269,6 +283,7 @@ type State = {
    * a projection gesture selects whole hidden axes, so a cell-sized preview
    * would understate the cone the same gesture goes on to produce. */
   setPreviewBox: (tensorId: string | null, box?: Box) => void;
+  toggleEntangled: () => void;
   expandNodeInPlace: (nodeId: string) => void;
 };
 
@@ -324,9 +339,13 @@ function initialTheme(): Theme {
 function recompute(
   resolved: ResolvedGraph | null,
   selection: Selection,
-  previous?: { selection: Selection; perBox: BoxProp[] | null }
-): Pick<State, "backwardRes" | "forwardRes" | "perBox"> {
-  const none = { backwardRes: null, forwardRes: null, perBox: null };
+  previous?: {
+    selection: Selection;
+    perBox: BoxProp[] | null;
+    entangled: Entanglement[][] | null;
+  }
+): Pick<State, "backwardRes" | "forwardRes" | "perBox" | "entangled"> {
+  const none = { backwardRes: null, forwardRes: null, perBox: null, entangled: null };
   if (!resolved || !selection || selection.parts.length === 0) return none;
 
   const parts = selection.parts;
@@ -383,7 +402,35 @@ function recompute(
       if (r.forward) fwds.push(r.forward);
     }
   }
-  return { backwardRes: mergeProps(backs), forwardRes: mergeProps(fwds), perBox };
+  // Entanglement is attributed per part for the same reason as the cones: hue
+  // identifies the tile that produced a region. Respect the same cap, rather
+  // than reintroducing unbounded synchronous work after cone attribution has
+  // deliberately switched to a grouped query. Geometry is also cached so an
+  // edit only recomputes the part that changed.
+  let entangled: Entanglement[][] | null = null;
+  if (parts.length <= MAX_PER_BOX_PROPS) {
+    const keyOf = (part: SelPart) =>
+      `${part.tensorId}|${part.box.map((interval) => `${interval.lo}:${interval.hi}`).join(",")}`;
+    const cached = new Map<string, Entanglement[][]>();
+    if (
+      previous?.selection &&
+      previous.entangled &&
+      previous.selection.parts.length === previous.entangled.length
+    ) {
+      previous.selection.parts.forEach((part, index) => {
+        const key = keyOf(part);
+        const entries = cached.get(key);
+        if (entries) entries.push(previous.entangled![index]);
+        else cached.set(key, [previous.entangled![index]]);
+      });
+    }
+    entangled = parts.map(
+      (part) =>
+        cached.get(keyOf(part))?.shift() ??
+        entangledWith(resolved, part.tensorId, fromBox(part.box))
+    );
+  }
+  return { backwardRes: mergeProps(backs), forwardRes: mergeProps(fwds), perBox, entangled };
 }
 
 /**
@@ -398,7 +445,15 @@ function editSelection(
   keepFocus = false,
   record = true
 ): void {
-  const { selection, resolved, workspaceHistory, tensorOffsets, focusedBox, perBox } = get();
+  const {
+    selection,
+    resolved,
+    workspaceHistory,
+    tensorOffsets,
+    focusedBox,
+    perBox,
+    entangled,
+  } = get();
   if (!selection || !resolved) return;
   const shapeOf = (tensorId: string) => resolved.tensors[tensorId].resolved!;
   const parts = fn(selection.parts, shapeOf);
@@ -417,7 +472,7 @@ function editSelection(
     // pointing at the wrong cone.
     hiddenBoxes: keepFocus ? get().hiddenBoxes : new Set<number>(),
     preview: null,
-    ...recompute(resolved, sel, { selection, perBox }),
+    ...recompute(resolved, sel, { selection, perBox, entangled }),
   });
 }
 
@@ -470,6 +525,7 @@ export function startingTiles(
 function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
   State,
   | "graph" | "resolved" | "loadError" | "diagnostics" | "selection" | "backwardRes" | "forwardRes"
+  | "entangled"
   | "perBox" | "focusedBox" | "pinnedBox" | "viewCfgs" | "preview" | "graphPx"
   | "hiddenBoxes" | "workspaceHistory" | "tensorOffsets"
 > {
@@ -480,6 +536,7 @@ function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
     resolved,
     loadError: null,
     diagnostics: [],
+    entangled: null,
     selection: null,
     // Undo entries refer to tensor IDs and coordinates in one resolved graph.
     // They must never survive a graph replacement or composite rewrite.
@@ -505,6 +562,8 @@ export const useStore = create<State>((set, get) => ({
   resolved: null,
   loadError: null,
   diagnostics: [],
+  showEntangled: false,
+  entangled: null,
   selection: null,
   workspaceHistory: [],
   direction: "both",
@@ -595,10 +654,20 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 
-  restoreWorkspace: ({ dsl, direction, tileScale, snapToGrid, axisMode, tensorOffsets, parts }) => {
+  restoreWorkspace: ({
+    dsl,
+    direction,
+    showEntangled,
+    tileScale,
+    snapToGrid,
+    axisMode,
+    tensorOffsets,
+    parts,
+  }) => {
     try {
       if (
         !["none", "backward", "forward", "both"].includes(direction) ||
+        (showEntangled !== undefined && typeof showEntangled !== "boolean") ||
         !Number.isFinite(tileScale) ||
         typeof snapToGrid !== "boolean" ||
         !["symbolic", "numeric"].includes(axisMode)
@@ -635,6 +704,7 @@ export const useStore = create<State>((set, get) => ({
         exampleIndex: -1,
         focusNode: null,
         direction,
+        showEntangled: showEntangled ?? false,
         tileScale: clampedTile,
         snapToGrid,
         axisMode,
@@ -657,6 +727,7 @@ export const useStore = create<State>((set, get) => ({
       pinnedBox,
       hiddenBoxes,
       perBox,
+      entangled,
     } = get();
     const mode = compose ?? "union";
     const drawn = region.boxes;
@@ -703,7 +774,7 @@ export const useStore = create<State>((set, get) => ({
       pinnedBox: nextPinned,
       hiddenBoxes: nextHidden,
       preview: null,
-      ...recompute(resolved, sel, { selection, perBox }),
+      ...recompute(resolved, sel, { selection, perBox, entangled }),
     });
   },
 
@@ -717,6 +788,7 @@ export const useStore = create<State>((set, get) => ({
       backwardRes: null,
       forwardRes: null,
       perBox: null,
+      entangled: null,
       focusedBox: null,
       pinnedBox: null,
       hiddenBoxes: new Set<number>(),
@@ -725,7 +797,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   undoWorkspace: () => {
-    const { workspaceHistory, resolved, selection, perBox } = get();
+    const { workspaceHistory, resolved, selection, perBox, entangled } = get();
     if (!workspaceHistory.length) return;
     const prev = workspaceHistory[workspaceHistory.length - 1];
     set({
@@ -736,7 +808,7 @@ export const useStore = create<State>((set, get) => ({
       pinnedBox: null,
       hiddenBoxes: new Set<number>(),
       preview: null,
-      ...recompute(resolved, prev.selection, { selection, perBox }),
+      ...recompute(resolved, prev.selection, { selection, perBox, entangled }),
     });
   },
 
@@ -816,6 +888,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setDragging: (v) => set({ dragging: v }),
+  toggleEntangled: () => set({ showEntangled: !get().showEntangled }),
 
   // Direction is a view setting. It changes what is drawn and which section the
   // inspector shows, never what was analysed, so no repropagation follows.

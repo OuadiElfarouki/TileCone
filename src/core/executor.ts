@@ -7,6 +7,7 @@ import {
 } from "./propagate";
 import { canonicalize, Region } from "./region";
 import { ResolvedGraph } from "./graph";
+import { Entanglement, entangledWith } from "./entangle";
 
 export type QueryDirection = "backward" | "forward" | "both";
 
@@ -117,6 +118,18 @@ export class SymbolicExecutor {
 
   downstream(tensorId: string, region: Region): PropResult {
     return this.query({ tensorId, region, direction: "forward" }).forward!;
+  }
+
+  /**
+   * What this region is *combined with*: the other operands it meets in the
+   * same term, at each operation that reads it.
+   *
+   * A third relation alongside `upstream` and `downstream`, not a view over
+   * them - see `core/entangle.ts` for why the composition of those two answers
+   * a different, looser question.
+   */
+  entangled(tensorId: string, region: Region): Entanglement[] {
+    return entangledWith(this.graph, tensorId, validateSelection(this.graph, { tensorId, region }).region);
   }
 
   metrics(tensorId: string, region: Region, countIntermediates = false): AggregateReadout {

@@ -7,6 +7,7 @@ import {
   Box,
   Region,
   count,
+  formatBoxIndices,
   fromBox,
   partsOverlap,
   subtract,
@@ -835,6 +836,9 @@ export function Inspector(): React.ReactElement {
   const forwardRes = useStore((s) => s.forwardRes);
   const direction = useStore((s) => s.direction);
   const toggleDirection = useStore((s) => s.toggleDirection);
+  const showEntangled = useStore((s) => s.showEntangled);
+  const toggleEntangled = useStore((s) => s.toggleEntangled);
+  const entangled = useStore((s) => s.entangled);
   const countIntermediates = useStore((s) => s.countIntermediates);
   const setCountIntermediates = useStore((s) => s.setCountIntermediates);
   const perBox = useStore((s) => s.perBox);
@@ -905,6 +909,18 @@ export function Inspector(): React.ReactElement {
   const approxReasons = [
     ...new Set(visibleRows.filter((row) => !row.exact).flatMap((row) => row.reasons)),
   ];
+  /* One row per entangled region, skipping tiles the user hid so the list and
+     the paint describe the same set. */
+  const entangledRows = (entangled ?? []).flatMap((forPart, index) =>
+    hiddenBoxes.has(index) || (focusedBox !== null && focusedBox !== index)
+      ? []
+      : forPart.map((e) => ({
+          name: resolved?.tensors[e.tensorId]?.name ?? e.tensorId,
+          op: e.op,
+          region: e.region,
+        }))
+  );
+
   /** Prefix for a cost figure measured over an over-approximated region. */
   const bound = metrics && !metrics.exact ? "\u2264\u202f" : "";
 
@@ -1000,6 +1016,47 @@ export function Inspector(): React.ReactElement {
                 whether this tile completes them or only feeds them
               </p>
             )}
+
+            {/* A third relation, so a third section rather than rows folded into
+                one of the cones: "what this tile is multiplied against" is not
+                a hop along the graph and does not belong under a direction. */}
+            <div className="ins-section">
+              <button
+                className={`ins-title toggle${showEntangled ? " on" : ""}`}
+                onClick={toggleEntangled}
+                title="what this tile is combined with (E)"
+              >
+                <span className="swatch stipple" aria-hidden="true" />
+                What it is combined with
+              </button>
+              {showEntangled &&
+                (merged ? (
+                  <p className="hint">
+                    too many tiles to trace individually (over {MAX_PER_BOX_PROPS})
+                  </p>
+                ) : entangledRows.length ? (
+                  <ul className="ent-list">
+                    {entangledRows.map((row, i) => (
+                      <li key={i}>
+                        <code>
+                          {row.name}[{formatBoxIndices(row.region.boxes[0])}
+                          {row.region.boxes.length > 1 ? ", …" : ""}]
+                        </code>
+                        <span className="muted"> via {row.op}</span>
+                        {!row.region.exact && (
+                          <span className="badge approx" title={row.region.reasons.join("; ")}>
+                            ≈
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="hint">
+                    nothing: no operation reads this tile alongside another tensor
+                  </p>
+                ))}
+            </div>
 
             {approxReasons.length > 0 && (
               <div className="ins-section warn" title={approxReasons.join("; ")}>

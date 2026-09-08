@@ -11,7 +11,7 @@ import { Sym } from "../shapes";
 /**
  * Reshape provenance, implemented per IDEA.md §3.2 but unified:
  *
- * Tier 1 (axis factorization) appears here as the GROUPING step — the coarsest
+ * Tier 1 (axis factorization) appears here as the GROUPING step - the coarsest
  * common decomposition into independent axis groups with equal products. 1:1
  * groups copy intervals directly and product-of-groups keeps everything exact
  * and box-shaped for the common split/merge cases.
@@ -201,7 +201,7 @@ type ReshapeAttrs = { shape: (string | number)[] };
  * Reshape is the op most likely to surprise: it moves no data and costs no
  * FLOPs, so it looks free, but a range that is contiguous after the reshape is
  * usually not contiguous before it. The note fires only when this actually bit
- * — when the preimage came back as several runs, or when it had to be widened —
+ * - when the preimage came back as several runs, or when it had to be widened -
  * because a reshape that happens to split cleanly really is a relabel.
  */
 function reshapeDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
@@ -216,11 +216,11 @@ function reshapeDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
       subject: ctx.outNames[0],
       severity: 1,
       flags: [
-        { tensorId: ctx.inIds[0], text: "superset — preimage fragmented past the box cap" },
+        { tensorId: ctx.inIds[0], text: "superset - preimage fragmented past the box cap" },
       ],
       text:
         `reshape ${from} → ${to} fragmented this tile's preimage past the box cap, so the ` +
-        `highlight on ${ctx.inNames[0]} is a conservative superset — it is hatched for that ` +
+        `highlight on ${ctx.inNames[0]} is a conservative superset - it is hatched for that ` +
         `reason. Read it as "no more than this", not as the exact set.`,
     };
   }
@@ -232,7 +232,7 @@ function reshapeDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
       flags: [
         {
           tensorId: ctx.inIds[0],
-          text: `${region.boxes.length} disjoint runs — strided in memory`,
+          text: `${region.boxes.length} disjoint runs - strided in memory`,
         },
       ],
       text:
@@ -241,7 +241,7 @@ function reshapeDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
         `of ${ctx.inNames[0]}. A tile that straddles a reshaped axis is strided in memory.`,
     };
   }
-  return null; // one run in, one run out — the reshape really is a relabel here
+  return null; // one run in, one run out - the reshape really is a relabel here
 }
 
 /**

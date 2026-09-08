@@ -159,7 +159,7 @@ Z = cast(Y, dtype=fp16)
  * Aggregate cost figures are measured over the cone's regions, so they inherit
  * any over-approximation in them. The per-tensor rows always said so; the
  * totals did not, which made them the one place a bound was printed as a count
- * — against the rule that an over-approximation is never presented as truth.
+ * - against the rule that an over-approximation is never presented as truth.
  */
 describe("aggregate metrics carry their own exactness", () => {
   it("is exact, with no reasons, when every contributing region is", () => {

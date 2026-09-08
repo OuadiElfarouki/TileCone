@@ -53,7 +53,7 @@ B = Tensor(K, N, dtype=fp16)
 C = matmul(A, B)
 `;
     expect(shapeLabel(tensorIn(GEMM, "A"), "symbolic")).toBe("[M × K]");
-    // C is produced, so it has no declared shape — but matmul carries M and N
+    // C is produced, so it has no declared shape - but matmul carries M and N
     // across the contraction, and K is the axis that disappears into it.
     expect(shapeLabel(tensorIn(GEMM, "C"), "symbolic")).toBe("[M × N]");
     expect(hasSymbolicShape(tensorIn(GEMM, "C"))).toBe(true);
