@@ -173,6 +173,16 @@ export function cubicPath([p0, p1, p2, p3]: Cubic): string {
   return `M${n(p0.x)},${n(p0.y)} C${n(p1.x)},${n(p1.y)} ${n(p2.x)},${n(p2.y)} ${n(p3.x)},${n(p3.y)}`;
 }
 
+/** Position on a cubic connector. Kept alongside the path construction so
+ * structural marks and labels use the exact curve that is actually drawn. */
+export function pointOnCubic([p0, p1, p2, p3]: Cubic, t: number): Point {
+  const u = 1 - t;
+  return {
+    x: u * u * u * p0.x + 3 * u * u * t * p1.x + 3 * u * t * t * p2.x + t * t * t * p3.x,
+    y: u * u * u * p0.y + 3 * u * u * t * p1.y + 3 * u * t * t * p2.y + t * t * t * p3.y,
+  };
+}
+
 /** Half-width of the flow chevron, in world px. */
 export const FLOW_MARK_PX = 4.5;
 
@@ -192,10 +202,7 @@ export function flowMarkPath(c: Cubic, size = FLOW_MARK_PX, t = 0.5): string {
   const [p0, p1, p2, p3] = c;
   // B(t) and B'(t) for a cubic Bezier.
   const u = 1 - t;
-  const mid = {
-    x: u * u * u * p0.x + 3 * u * u * t * p1.x + 3 * u * t * t * p2.x + t * t * t * p3.x,
-    y: u * u * u * p0.y + 3 * u * u * t * p1.y + 3 * u * t * t * p2.y + t * t * t * p3.y,
-  };
+  const mid = pointOnCubic(c, t);
   let tx = 3 * u * u * (p1.x - p0.x) + 6 * u * t * (p2.x - p1.x) + 3 * t * t * (p3.x - p2.x);
   let ty = 3 * u * u * (p1.y - p0.y) + 6 * u * t * (p2.y - p1.y) + 3 * t * t * (p3.y - p2.y);
   let len = Math.hypot(tx, ty);

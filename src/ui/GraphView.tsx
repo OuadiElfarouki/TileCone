@@ -131,6 +131,24 @@ export function canStartCardDrag(target: unknown): boolean {
   return !(target as { closest: (selector: string) => unknown }).closest(CARD_DRAG_BLOCKERS);
 }
 
+/** Tensors carrying visible combined-with regions. Kept separate from the
+ * directional cone set because restoring a card's opacity must not make its
+ * unrelated producer or consumer edges look like dependency paths.
+ * @internal Pure visibility seam exported for graph-view tests. */
+export function visibleEntangledTensorIds(
+  entangled: { tensorId: string }[][] | null,
+  hiddenBoxes: ReadonlySet<number>,
+  enabled: boolean
+): Set<string> {
+  const visible = new Set<string>();
+  if (!enabled || !entangled) return visible;
+  entangled.forEach((entries, index) => {
+    if (hiddenBoxes.has(index)) return;
+    for (const entry of entries) visible.add(entry.tensorId);
+  });
+  return visible;
+}
+
 export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }): React.ReactElement {
   const resolved = useStore((s) => s.resolved);
   const graphPx = useStore((s) => s.graphPx);
@@ -141,6 +159,8 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
   const selection = useStore((s) => s.selection);
   const expandNodeInPlace = useStore((s) => s.expandNodeInPlace);
   const direction = useStore((s) => s.direction);
+  const showEntangled = useStore((s) => s.showEntangled);
+  const entangled = useStore((s) => s.entangled);
   const focusNode = useStore((s) => s.focusNode);
   const setFocusNode = useStore((s) => s.setFocusNode);
   const setDragging = useStore((s) => s.setDragging);
@@ -181,6 +201,10 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
   }, [backwardRes, direction, forwardRes, hiddenBoxes, perBox, selection]);
 
   const hasResult = contributing.size > 0;
+  const visibleEntangled = useMemo(
+    () => visibleEntangledTensorIds(entangled, hiddenBoxes, showEntangled),
+    [entangled, hiddenBoxes, showEntangled]
+  );
 
   // Canvas backing-store multiplier, bucketed to powers of two so that zooming
   // reallocates only at bucket crossings. Fine paint buckets separately bound redraws.
@@ -512,6 +536,19 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
             {/* Flow direction. Structural, so it is drawn whether or not a
                 query is live. */}
             {edge.mark && <path d={edge.mark} className={`${presentation.className} edge-arrow`} />}
+            {edge.operandLabel && (
+              <text
+                x={edge.operandLabel.x}
+                y={edge.operandLabel.y}
+                className={`edge-operand${hot ? " hot" : hasResult ? " dim" : ""}`}
+                style={{
+                  fontSize: 9 / Math.min(1, tf.k),
+                  strokeWidth: 3 / Math.min(1, tf.k),
+                }}
+              >
+                {edge.operandLabel.text}
+              </text>
+            )}
           </g>
         );
       })}
@@ -568,7 +605,10 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
             );
           }
           const t = resolved.tensors[p.id];
-          const hot = !hasResult || contributing.has(p.id);
+          // Entanglement restores the target card so its stipple is legible,
+          // but deliberately does not enter `contributing`: doing that would
+          // heat every unrelated edge that happens to carry the same tensor.
+          const hot = !hasResult || contributing.has(p.id) || visibleEntangled.has(p.id);
           const moveHandlers = {
             onPointerDown: (e: React.PointerEvent<HTMLElement>) => startCardDrag(e, p),
             onPointerMove: moveCard,

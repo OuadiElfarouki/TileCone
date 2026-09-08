@@ -7,6 +7,7 @@ import {
   centredOn,
   graphZoomBounds,
   lowZoomBound,
+  visibleEntangledTensorIds,
 } from "../ui/GraphView";
 
 const target = (blocked: boolean) => ({
@@ -51,6 +52,24 @@ describe("connector stacking", () => {
     expect(edgePresentation(true, false)).toEqual({ className: "edge dim", layer: "behind" });
     expect(edgePresentation(true, true)).toEqual({ className: "edge hot", layer: "front" });
     expect(edgePresentation(false, false)).toEqual({ className: "edge", layer: "front" });
+  });
+});
+
+describe("entanglement visibility", () => {
+  const entries = [
+    [{ tensorId: "B", nodeId: "left" }],
+    [
+      { tensorId: "C", nodeId: "right" },
+      { tensorId: "D", nodeId: "right" },
+    ],
+  ];
+
+  it("restores entangled tensor cards without including hidden tiles", () => {
+    expect(visibleEntangledTensorIds(entries, new Set([1]), true)).toEqual(new Set(["B"]));
+  });
+
+  it("restores no cards while the view is disabled", () => {
+    expect(visibleEntangledTensorIds(entries, new Set(), false)).toEqual(new Set());
   });
 });
 

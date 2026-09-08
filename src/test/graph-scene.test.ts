@@ -19,8 +19,34 @@ describe("structural graph layout", () => {
 
     expect(layout.links.filter((link) => link.from === "t:X" && link.to === "n:mul"))
       .toHaveLength(2);
+    expect(
+      layout.links
+        .filter((link) => link.from === "t:X" && link.to === "n:mul")
+        .map((link) => link.operandSlot)
+    ).toEqual([0, 1]);
     expect(layout.links).toHaveLength(3);
     expect(layout.nodes).toHaveLength(3);
+  });
+
+  it("labels only inputs of multi-operand operations", () => {
+    const resolved = resolveGraph(
+      G(
+        { A: [4, 4], B: [4, 4] },
+        [
+          ["mul", "matmul", ["A", "B"], ["Y"]],
+          ["copy", "identity", ["Y"], ["Z"]],
+        ]
+      )
+    );
+    const layout = buildBaseGraphLayout(resolved, measure);
+
+    expect(
+      layout.links
+        .filter((link) => link.to === "n:mul")
+        .map((link) => link.operandSlot)
+    ).toEqual([0, 1]);
+    expect(layout.links.find((link) => link.to === "n:copy")?.operandSlot).toBeUndefined();
+    expect(layout.links.find((link) => link.from === "n:mul")?.operandSlot).toBeUndefined();
   });
 
   it("uses the supplied tensor measurement policy verbatim", () => {
@@ -74,11 +100,16 @@ describe("live graph scene projection", () => {
   it("fans repeated links into independently keyed routes", () => {
     const repeated: BaseGraphLayout = {
       ...base,
-      links: [base.links[0], base.links[0]],
+      links: [
+        { ...base.links[0], operandSlot: 0 },
+        { ...base.links[0], operandSlot: 1 },
+      ],
     };
     const scene = buildGraphScene(repeated, {});
 
     expect(scene.edges.map((edge) => edge.key)).toEqual(["t:X|n:op#0", "t:X|n:op#1"]);
+    expect(scene.edges.map((edge) => edge.operandLabel?.text)).toEqual(["arg0", "arg1"]);
+    expect(scene.edges[0].operandLabel).not.toEqual(scene.edges[1].operandLabel);
     expect(scene.edges[0].path).not.toBe(scene.edges[1].path);
     expect(scene.edges[0].mark).not.toBe(scene.edges[1].mark);
   });

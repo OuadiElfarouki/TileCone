@@ -5,6 +5,7 @@ import {
   curvedEdge,
   fanSpacing,
   fannedFlowMark,
+  pointOnCubic,
   type Rect,
   WORLD_MARGIN,
 } from "./graph-geometry";
@@ -22,12 +23,16 @@ export type GraphLink = {
   to: string;
   tensorId: string;
   opId: string;
+  /** Zero-based destination input slot. Present only on incoming links of
+   * operations with more than one operand. */
+  operandSlot?: number;
 };
 
 export type RoutedGraphEdge = GraphLink & {
   key: string;
   path: string;
   mark: string;
+  operandLabel?: { text: string; x: number; y: number };
 };
 
 export type BaseGraphLayout = {
@@ -101,13 +106,15 @@ export function buildBaseGraphLayout(
   // ordered operand lists: layout needs connectivity, rendering needs arity.
   const links: GraphLink[] = [];
   for (const node of resolved.nodes) {
-    for (const tensorId of node.inputs)
+    node.inputs.forEach((tensorId, operandSlot) =>
       links.push({
         from: `t:${tensorId}`,
         to: `n:${node.id}`,
         tensorId,
         opId: node.id,
-      });
+        ...(node.inputs.length > 1 ? { operandSlot } : {}),
+      })
+    );
     for (const tensorId of node.outputs)
       links.push({
         from: `n:${node.id}`,
@@ -166,6 +173,14 @@ export function buildGraphScene(
       key: `${pairKey}#${slot}`,
       path: cubicPath(curve),
       mark: fannedFlowMark(curve, slot, count, spacing),
+      ...(link.operandSlot !== undefined
+        ? {
+            operandLabel: {
+              text: `arg${link.operandSlot}`,
+              ...pointOnCubic(curve, 0.72),
+            },
+          }
+        : {}),
     });
   }
 
