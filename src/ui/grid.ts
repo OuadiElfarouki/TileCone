@@ -193,6 +193,56 @@ export function regionRects(
   return rects;
 }
 
+/** Project a set to coverage before alpha compositing. Disjoint N-D boxes can
+ * overlap in the visible plane: their hidden volumes add, their opacities do not.
+ * Sweep rectangle boundaries rather than enumerating tensor elements. */
+export function regionFillRects(
+  region: Region, shape: number[], cfg: ViewCfg, geom: GridGeom, viewScale = 1
+): RegionRect[] {
+  const rects = regionRects(disjointify(region), shape, cfg, geom, viewScale);
+  if (!cfg.projection || shape.length <= 2 || rects.length < 2) return rects;
+  const ys = [...new Set(rects.flatMap((q) => [q.y, q.y + q.h]))].sort((a, b) => a - b);
+  const out: RegionRect[] = [];
+  let previous = new Map<string, RegionRect>();
+  for (let row = 0; row + 1 < ys.length; row++) {
+    const y = ys[row], h = ys[row + 1] - y;
+    const events = new Map<number, number>();
+    for (const q of rects) {
+      if (q.y > y || q.y + q.h <= y) continue;
+      events.set(q.x, (events.get(q.x) ?? 0) + q.alpha);
+      events.set(q.x + q.w, (events.get(q.x + q.w) ?? 0) - q.alpha);
+    }
+    const xs = [...events.keys()].sort((a, b) => a - b);
+    const spans: RegionRect[] = [];
+    let coverage = 0;
+    for (let col = 0; col + 1 < xs.length; col++) {
+      coverage += events.get(xs[col])!;
+      if (coverage <= 1e-12) continue;
+      const x = xs[col], w = xs[col + 1] - x;
+      // Minimum-width screen marks can overlap beyond their true geometry.
+      const alpha = Math.min(1, coverage);
+      const last = spans[spans.length - 1];
+      if (last && last.x + last.w === x && Math.abs(last.alpha - alpha) < 1e-12)
+        last.w += w;
+      else spans.push({ x, y, w, h, alpha });
+    }
+    const next = new Map<string, RegionRect>();
+    for (const q of spans) {
+      const key = `${q.x}:${q.w}:${q.alpha}`;
+      const above = previous.get(key);
+      if (above && above.y + above.h === y) {
+        above.h += h;
+        next.set(key, above);
+      } else {
+        out.push(q);
+        next.set(key, q);
+      }
+    }
+    previous = next;
+  }
+  return out;
+}
+
 /** @internal Corner marks sit outside the fill, at fixed screen size. Canvas
  * clipping keeps edge markers out of neighbouring cards and connectors. */
 export function seedCornerSegments(rect: Pick<RegionRect, "x" | "y" | "w" | "h">, scale: number): Segment[] {
@@ -508,7 +558,7 @@ export function drawGrid(
     // would make alpha mean multiplicity by accident, on the one channel this
     // renderer deliberately holds constant. Splitting here is invisible: the
     // painted set is identical, and no user-facing box count comes from it.
-    const rects = regionRects(disjointify(layer.region), shape, cfg, geom, viewScale);
+    const rects = regionFillRects(layer.region, shape, cfg, geom, viewScale);
     // Perimeter marks take the region's own boxes instead. A border says "this
     // is the region", and the region is the row band and the column band - two
     // rectangles that cross. Tracing the split form instead outlines three

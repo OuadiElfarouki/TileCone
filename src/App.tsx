@@ -41,6 +41,7 @@ export default function App(): React.ReactElement {
         tileScale: link.tile,
         snapToGrid: link.snap !== false,
         axisMode: link.axes ?? "symbolic",
+        viewCfgs: link.views,
         tensorOffsets: Object.fromEntries(
           Object.entries(link.pos ?? {}).map(([id, [dx, dy]]) => [id, { dx, dy }])
         ),

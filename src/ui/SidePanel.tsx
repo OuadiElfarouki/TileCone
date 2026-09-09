@@ -23,6 +23,7 @@ function ShareButton(): React.ReactElement {
   const snapToGrid = useStore((s) => s.snapToGrid);
   const axisMode = useStore((s) => s.axisMode);
   const tensorOffsets = useStore((s) => s.tensorOffsets);
+  const viewCfgs = useStore((s) => s.viewCfgs);
   const [copyState, setCopyState] = useState<"copied" | "failed" | null>(null);
 
   const copy = async () => {
@@ -33,6 +34,9 @@ function ShareButton(): React.ReactElement {
       tile: tileScale,
       snap: snapToGrid,
       axes: axisMode,
+      views: Object.fromEntries(Object.entries(viewCfgs).filter(
+        ([, cfg]) => !cfg.projection || cfg.sliders.some((v) => v !== 0)
+      )),
       pos: Object.fromEntries(
         Object.entries(tensorOffsets).map(([id, { dx, dy }]) => [id, [dx, dy]])
       ),
@@ -148,6 +152,8 @@ function SourceEditor(): React.ReactElement {
 function Operations(): React.ReactElement {
   const resolved = useStore((s) => s.resolved);
   const setFocusNode = useStore((s) => s.setFocusNode);
+  const setSelectedOp = useStore((s) => s.setSelectedOp);
+  const selectedOp = useStore((s) => s.selectedOp);
   const backwardRes = useStore((s) => s.backwardRes);
   const forwardRes = useStore((s) => s.forwardRes);
   const perBox = useStore((s) => s.perBox);
@@ -170,6 +176,11 @@ function Operations(): React.ReactElement {
   const probe = (nodeId: string, tensorId: string) => {
     const shape = resolved.tensors[tensorId].resolved!;
     setFocusNode({ kind: "op", id: nodeId });
+    // `setSelection` below lights the row for whatever produced the tensor it
+    // lands on, which for an operation's own output is this row - but only when
+    // the tile is actually placed. A degenerate output takes the early return,
+    // and the click should still show which row was pressed.
+    setSelectedOp(nodeId);
     if (shape.some((extent) => extent <= 0)) return;
     const { rowAxis, colAxis } = viewAxes(shape);
     const tile = tileOf(shape, tileScale, graphPx);
@@ -199,7 +210,10 @@ function Operations(): React.ReactElement {
         return (
           <button
             key={node.id}
-            className={`operation-row${involved.size ? (hot ? " hot" : " dim") : ""}`}
+            className={`operation-row${involved.size ? (hot ? " hot" : " dim") : ""}${
+              node.id === selectedOp ? " selected" : ""
+            }`}
+            aria-current={node.id === selectedOp || undefined}
             title={`select a starter tile on ${outputs[0].name}\n${JSON.stringify(node.attrs)}`}
             onClick={() => probe(node.id, outputs[0].id)}
           >

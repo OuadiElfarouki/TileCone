@@ -1,6 +1,7 @@
 import { Box } from "../core/region";
 import { Direction, MAX_TENSOR_OFFSET } from "./store";
 import { AxisMode } from "./shape-label";
+import { isViewCfg, type ViewCfg } from "./tensor-view";
 
 /**
  * Shareable workspace state.
@@ -23,6 +24,8 @@ export type WorkspaceLink = {
   axes?: AxisMode;
   /** Optional: user displacement from the generated graph layout. */
   pos?: Record<string, [number, number]>;
+  /** Missing entries use the default projected view at index zero. */
+  views?: Record<string, ViewCfg>;
   /**
    * One entry per drawn part, in order, each naming its own tensor. The order
    * is load-bearing: it is what assigns hues and footprint rows, so parts are
@@ -107,6 +110,13 @@ export function decodeWorkspace(hash: string): WorkspaceLink | null {
       pos = Object.fromEntries(entries) as Record<string, [number, number]>;
     }
 
+    let views: WorkspaceLink["views"];
+    if (raw.views !== undefined) {
+      if (!raw.views || typeof raw.views !== "object" || Array.isArray(raw.views)) return null;
+      if (!Object.entries(raw.views).every(([id, cfg]) => !!id && isViewCfg(cfg))) return null;
+      views = raw.views;
+    }
+
     let sel: WorkspaceLink["sel"] = null;
     const candidate: unknown = raw.sel;
     if (Array.isArray(candidate)) {
@@ -133,6 +143,7 @@ export function decodeWorkspace(hash: string): WorkspaceLink | null {
       snap,
       axes,
       ...(pos ? { pos } : {}),
+      ...(views ? { views } : {}),
       sel,
     };
   } catch {

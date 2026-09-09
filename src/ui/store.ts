@@ -21,7 +21,7 @@ import { graphScale, MAX_ELEM_PX, planeExtents, TILE_SCALE_MAX, TILE_SCALE_MIN }
 import { tileOf } from "./grid";
 import type { AxisMode } from "./shape-label";
 import type { TensorOffset, TensorOffsets } from "./tensor-layout";
-import { defaultViewCfg, viewAxes, type ViewCfg } from "./tensor-view";
+import { defaultViewCfg, viewAxes, viewCfgFits, type ViewCfg } from "./tensor-view";
 
 /** Which independently toggled views are active in the workspace. `none` is
  * the explicit figures-only state: analysis remains live while paint and rows hide. */
@@ -99,6 +99,27 @@ export function anchorTensorId(selection: Selection, focusedBox: number | null):
   if (focusedBox !== null && parts[focusedBox]) return parts[focusedBox].tensorId;
   return parts[parts.length - 1].tensorId;
 }
+/**
+ * The operation a tile on this tensor is "at", for the operations list.
+ *
+ * Its producer, because that is the operation the tensor *is* the result of. A
+ * graph input has no producer, and then the only honest answer is its consumer
+ * when there is exactly one - with several, no single row is the one the reader
+ * is looking at, and lighting an arbitrary one would be a guess presented as a
+ * fact. `null` leaves the list unhighlighted, which is a true statement.
+ */
+export function operationForTensor(
+  graph: ResolvedGraph | null,
+  tensorId: string | null
+): string | null {
+  if (!graph || !tensorId) return null;
+  const producer = graph.tensors[tensorId]?.producer;
+  if (producer) return producer.nodeId;
+  const consumers = graph.consumers[tensorId] ?? [];
+  const distinct = [...new Set(consumers.map((c) => c.nodeId))];
+  return distinct.length === 1 ? distinct[0] : null;
+}
+
 type WorkspaceSnapshot = {
   selection: Selection;
   tensorOffsets: TensorOffsets;
@@ -136,6 +157,7 @@ type WorkspaceRestore = {
   /** Whether a compact shape reads as semantic labels or numeric extents. */
   axisMode: AxisMode;
   tensorOffsets?: TensorOffsets;
+  viewCfgs?: Record<string, ViewCfg>;
   parts: SelPart[] | null;
 };
 
@@ -241,6 +263,17 @@ type State = {
    * operation row centres its operator, not the tensor it writes. Consumed by
    * the viewport and cleared, so asking twice acts twice. */
   focusNode: { kind: "tensor" | "op"; id: string } | null;
+  /**
+   * The row standing highlighted in the operations list.
+   *
+   * Distinct from `focusNode`, which is a one-shot "glide the viewport here"
+   * request and clears the moment the glide lands. This one persists: it is the
+   * operation the reader is currently working at, set from either end - click a
+   * row and a starter tile appears on its output; touch a tile and its row
+   * lights. A viewport gesture clears it, because panning away is the reader
+   * saying they are looking somewhere else now.
+   */
+  selectedOp: string | null;
   /** Width in px of each side panel when open, and whether it is collapsed to a
    * rail. Collapsing keeps the remembered width so reopening restores it. */
   panelW: { left: number; right: number };
@@ -284,6 +317,8 @@ type State = {
   setAxisMode: (v: AxisMode) => void;
   setCountIntermediates: (v: boolean) => void;
   setFocusNode: (node: { kind: "tensor" | "op"; id: string } | null) => void;
+  /** Light one row of the operations list, or clear it with `null`. */
+  setSelectedOp: (nodeId: string | null) => void;
   /** Preview a panel resize, clamped to the usable open range. */
   setPanelWidth: (side: PanelSide, w: number) => void;
   /** Commit a resize. A raw width under `PANEL_COLLAPSE_AT` collapses here,
@@ -299,7 +334,7 @@ type State = {
   /** Preview the cone of the box a click would commit, not of one element:
    * a projection gesture selects whole hidden axes, so a cell-sized preview
    * would understate the cone the same gesture goes on to produce. */
-  setPreviewBox: (tensorId: string | null, box?: Box) => void;
+  setPreviewBox: (tensorId: string | null, box?: Box, expectedView?: ViewCfg) => void;
   toggleEntangled: () => void;
   expandNodeInPlace: (nodeId: string) => void;
 };
@@ -477,7 +512,12 @@ function editSelection(
   const sel = parts.length === 0 ? null : { parts };
   const nextFocus =
     keepFocus && sel && focusedBox !== null && focusedBox < parts.length ? focusedBox : null;
+  // Moving or editing a tile is working at its operation, so the list follows.
+  // The anchor is the same tile the keyboard acts on, so the row that lights is
+  // the one the reader is driving.
+  const anchor = anchorTensorId(sel, nextFocus);
   set({
+    selectedOp: operationForTensor(resolved, anchor),
     selection: sel,
     workspaceHistory: record
       ? appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets })
@@ -603,6 +643,7 @@ export const useStore = create<State>((set, get) => ({
   axisMode: "symbolic",
   countIntermediates: false,
   focusNode: null,
+  selectedOp: null,
   panelW: { left: 330, right: 300 },
   panelCollapsed: { left: false, right: false },
   tensorOffsets: {},
@@ -679,6 +720,7 @@ export const useStore = create<State>((set, get) => ({
     snapToGrid,
     axisMode,
     tensorOffsets,
+    viewCfgs,
     parts,
   }) => {
     try {
@@ -691,6 +733,11 @@ export const useStore = create<State>((set, get) => ({
       ) return false;
       const program = compileDSL(dsl);
       const base = loadResolvedGraph(program.graph, program.resolved);
+      for (const [id, cfg] of Object.entries(viewCfgs ?? {})) {
+        const shape = program.resolved.tensors[id]?.resolved;
+        if (!shape || !viewCfgFits(shape, cfg)) throw new Error(`invalid view for tensor "${id}"`);
+        base.viewCfgs[id] = { projection: cfg.projection, sliders: cfg.sliders.slice() };
+      }
       const checkedParts = (parts ?? []).map((part) => {
         const checked = validateSelection(program.resolved, {
           tensorId: part.tensorId,
@@ -748,6 +795,10 @@ export const useStore = create<State>((set, get) => ({
     } = get();
     const mode = compose ?? "union";
     const drawn = region.boxes;
+    // Drawing on a tensor is the other half of the link the operations list
+    // makes: clicking a row puts a tile on its output, and putting a tile
+    // anywhere lights the row that produced what it sits on.
+    const drawnOp = operationForTensor(resolved, tensorId);
 
     let parts: SelPart[];
     if (mode === "replace" || !selection) {
@@ -784,6 +835,7 @@ export const useStore = create<State>((set, get) => ({
     }
     set({
       selection: sel,
+      selectedOp: sel ? drawnOp : null,
       // Null is a real workspace state: the first selection must be undoable
       // without also rewinding an earlier tensor move.
       workspaceHistory: appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets }),
@@ -799,6 +851,7 @@ export const useStore = create<State>((set, get) => ({
     const { selection, workspaceHistory, tensorOffsets } = get();
     set({
       selection: null,
+      selectedOp: null,
       workspaceHistory: selection
         ? appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets })
         : workspaceHistory,
@@ -947,8 +1000,16 @@ export const useStore = create<State>((set, get) => ({
 
   setTheme: (theme) => set({ theme }),
 
-  setViewCfg: (tensorId, cfg) =>
-    set((s) => ({ viewCfgs: { ...s.viewCfgs, [tensorId]: { ...s.viewCfgs[tensorId], ...cfg } } })),
+  setViewCfg: (tensorId, cfg) => {
+    const state = get();
+    const shape = state.resolved?.tensors[tensorId]?.resolved;
+    const next = { ...state.viewCfgs[tensorId], ...cfg };
+    if (!shape || !viewCfgFits(shape, next)) return;
+    set({
+      viewCfgs: { ...state.viewCfgs, [tensorId]: { ...next, sliders: next.sliders.slice() } },
+      preview: null,
+    });
+  },
 
   setSnapToGrid: (v) => set({ snapToGrid: v }),
   setAxisMode: (v) => set({ axisMode: v }),
@@ -958,6 +1019,7 @@ export const useStore = create<State>((set, get) => ({
 
   setCountIntermediates: (v) => set({ countIntermediates: v }),
   setFocusNode: (node) => set({ focusNode: node }),
+  setSelectedOp: (nodeId) => set({ selectedOp: nodeId }),
 
   setPanelWidth: (side, w) => {
     const { panelW, panelCollapsed } = get();
@@ -1024,7 +1086,9 @@ export const useStore = create<State>((set, get) => ({
     });
   },
 
-  setPreviewBox: (tensorId, box) => {
+  setPreviewBox: (tensorId, box, expectedView) => {
+    // A queued pointer probe may belong to the slice before a keyboard scrub.
+    if (tensorId && expectedView && get().viewCfgs[tensorId] !== expectedView) return;
     const { resolved } = get();
     if (!tensorId || !box || !resolved || resolved.nodes.length > MAX_PREVIEW_NODES) {
       if (get().preview) set({ preview: null });

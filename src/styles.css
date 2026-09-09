@@ -327,6 +327,15 @@ kbd {
 .operation-row.hot > i { background: var(--accent); }
 .operation-row.dim { opacity: var(--dim-soft); }
 .operation-row:hover { background: color-mix(in srgb, var(--bg) 70%, transparent); }
+/* The row currently being worked at. It survives a `dim` state on purpose: the
+   list is how you find your way around a long graph, and an operation you just
+   clicked must stay findable even when the cone it produced does not reach it. */
+.operation-row.selected {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.operation-row.selected.dim { opacity: 1; }
+.operation-row.selected code { color: var(--ink); }
 .operation-row code { display: block; color: var(--ink); font-size: var(--t-small); white-space: normal; overflow-wrap: anywhere; }
 .operation-row small { display: block; margin-top: 2px; color: var(--muted); font-size: var(--t-small); font-variant-numeric: tabular-nums; }
 

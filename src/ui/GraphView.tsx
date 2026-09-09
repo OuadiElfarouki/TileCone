@@ -167,6 +167,7 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
   const showEntangled = useStore((s) => s.showEntangled);
   const entangled = useStore((s) => s.entangled);
   const focusNode = useStore((s) => s.focusNode);
+  const setSelectedOp = useStore((s) => s.setSelectedOp);
   const setFocusNode = useStore((s) => s.setFocusNode);
   const setDragging = useStore((s) => s.setDragging);
   const tensorOffsets = useStore((s) => s.tensorOffsets);
@@ -329,6 +330,7 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
 
   const fit = useCallback(() => {
     cancelGlide();
+    if (useStore.getState().selectedOp !== null) useStore.getState().setSelectedOp(null);
     const el = containerRef.current;
     if (!el || el.clientWidth <= 0 || el.clientHeight <= 0) return;
     const current = sceneRef.current;
@@ -397,9 +399,19 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
     }
   }, [focusNode, setFocusNode, glideTo]);
 
+  /* A deliberate viewport gesture means the reader is looking somewhere else,
+     so the operations list stops claiming they are working at a row. Hooked to
+     the gestures themselves rather than to `movedRef`, which the focus glide
+     also sets - and that glide is the *consequence* of clicking a row, so it
+     must not clear the row it was asked for. */
+  const leaveOperation = () => {
+    if (useStore.getState().selectedOp !== null) setSelectedOp(null);
+  };
+
   const onWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     cancelGlide();
+    leaveOperation();
     const el = containerRef.current!;
     const rect = el.getBoundingClientRect();
     const mx = e.clientX - rect.left;
@@ -414,6 +426,7 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
 
   const zoomBy = (factor: number) => {
     cancelGlide();
+    leaveOperation();
     const el = containerRef.current;
     if (!el) return;
     movedRef.current = true;
@@ -432,6 +445,7 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     panRef.current = { x0: e.clientX, y0: e.clientY, tx: tf.x, ty: tf.y };
+    leaveOperation();
     setPanning(true);
     setDragging(true); // so the drag guard suppresses text selection
   };

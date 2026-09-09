@@ -468,6 +468,14 @@ export function TensorCard({
      bypassed it would be overtaken by a move still pending for the frame. */
   const requestPreview = useFrameThrottle(setPreviewBox);
 
+  useEffect(() => {
+    setHover(null);
+    if (previewKeyRef.current !== null) {
+      previewKeyRef.current = null;
+      requestPreview(null);
+    }
+  }, [cfg, requestPreview]);
+
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const cell = elementFromEvent(e, canvasRef.current!, geom);
     if (!cell) return;
@@ -492,7 +500,7 @@ export function TensorCard({
       setHover(`(${key})`);
       if (!drag && previewKeyRef.current !== key) {
         previewKeyRef.current = key;
-        requestPreview(tensor.id, box);
+        requestPreview(tensor.id, box, cfg);
       }
     } else {
       setHover(null);
@@ -593,6 +601,9 @@ export function TensorCard({
             <span>{axisName(ax)}</span>
             <input
               type="range"
+              disabled={cfg.projection}
+              aria-label={`${axisName(ax)} slice index`}
+              title={cfg.projection ? "Switch to slice mode to choose an index" : "Displayed slice index"}
               min={0}
               max={e - 1}
               value={cfg.sliders[ax] ?? 0}

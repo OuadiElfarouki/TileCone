@@ -8,6 +8,19 @@ export function defaultViewCfg(shape: number[]): ViewCfg {
   return { sliders: shape.map(() => 0), projection: true };
 }
 
+/** Structural validation for serialized view state; bounds need the graph. */
+export function isViewCfg(value: unknown): value is ViewCfg {
+  if (!value || typeof value !== "object") return false;
+  const cfg = value as Partial<ViewCfg>;
+  return typeof cfg.projection === "boolean" && Array.isArray(cfg.sliders) &&
+    cfg.sliders.every((v) => Number.isSafeInteger(v) && v >= 0);
+}
+
+export function viewCfgFits(shape: number[], value: unknown): value is ViewCfg {
+  return isViewCfg(value) && value.sliders.length === shape.length &&
+    value.sliders.every((v, axis) => v < Math.max(1, shape[axis]));
+}
+
 /**
  * Which axes the grid draws, fixed row-major for every tensor: the last axis
  * (fastest-varying) is columns, the one before it is rows. There is no per-card

@@ -153,6 +153,7 @@ export function useKeyboard({
 
       // hidden-axis scrub
       if (matchesShortcut(e, SHORTCUTS.scrub)) {
+        if (cfg.projection) return;
         const hidden = shape.map((_, ax) => ax).filter((ax) => !visible.includes(ax));
         if (!hidden.length) return;
         const ax = hidden[0];

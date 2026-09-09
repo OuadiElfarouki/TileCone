@@ -3,6 +3,7 @@ import { canonicalize, count, fromBox, box } from "../core/region";
 import { computeMetrics } from "../core/metrics";
 import { EXAMPLES } from "../examples";
 import {
+  operationForTensor,
   enabledPropResult,
   MAX_PER_BOX_PROPS, PANEL_COLLAPSE_AT, PANEL_MAX, PANEL_MIN,
   planesOf, startingTiles, useStore,
@@ -1473,5 +1474,91 @@ Y = softmax(X, axis=-1)
     expandFirstSoftmax();
     expect(S().workspaceHistory).toHaveLength(1);
     expect(S().workspaceHistory[0].source).toBeDefined();
+  });
+});
+
+/**
+ * The operations list and the canvas are two views of one place in the graph,
+ * and the link runs both ways: clicking a row puts a starter tile on its
+ * output, and putting a tile anywhere lights the row that produced what it
+ * sits on. The highlight persists — it is where the reader is working, not a
+ * flash of feedback — until something supersedes it or they look elsewhere.
+ */
+describe("the operations list tracks where the reader is working", () => {
+  const chain = "A = Tensor(8, 8)\nB = Tensor(8, 8)\nC = matmul(A, B)\nD = relu(C)\n";
+
+  describe("which operation a tensor belongs to", () => {
+    it("is its producer", () => {
+      S().applyDSL(chain);
+      expect(operationForTensor(S().resolved, "C")).toBe("matmul_C");
+      expect(operationForTensor(S().resolved, "D")).toBe("elementwise_D");
+    });
+
+    it("is the single consumer when a graph input has one", () => {
+      S().applyDSL(chain);
+      // `A` is produced by nothing, but only `matmul` reads it, so there is no
+      // ambiguity about which row the reader is at.
+      expect(operationForTensor(S().resolved, "A")).toBe("matmul_C");
+    });
+
+    it("is nothing when several operations read the input", () => {
+      S().applyDSL("X = Tensor(4, 4)\nY = relu(X)\nZ = neg(X)\n");
+      // Lighting one of two would be a guess shown as a fact. No highlight is a
+      // true statement; an arbitrary one is not.
+      expect(operationForTensor(S().resolved, "X")).toBeNull();
+    });
+
+    it("is nothing without a graph", () => {
+      expect(operationForTensor(null, "C")).toBeNull();
+    });
+  });
+
+  it("lights the row for the tensor a tile is drawn on", () => {
+    S().applyDSL(chain);
+    S().setSelection("C", fromBox(box([0, 2], [0, 2])), "replace");
+    expect(S().selectedOp).toBe("matmul_C");
+  });
+
+  it("moves to the new row when a tile is drawn elsewhere", () => {
+    S().applyDSL(chain);
+    S().setSelection("C", fromBox(box([0, 2], [0, 2])), "replace");
+    S().setSelection("D", fromBox(box([0, 2], [0, 2])), "replace");
+    expect(S().selectedOp).toBe("elementwise_D");
+  });
+
+  it("follows a tile that is moved", () => {
+    S().applyDSL(chain);
+    S().setSelection("A", fromBox(box([0, 2], [0, 2])), "replace");
+    S().moveSelection(0, 1);
+    expect(S().selectedOp).toBe("matmul_C");
+  });
+
+  it("survives view toggles, which change nothing about where you are", () => {
+    S().applyDSL(chain);
+    S().setSelection("C", fromBox(box([0, 2], [0, 2])), "replace");
+    S().setDirection("forward");
+    S().toggleEntangled();
+    S().toggleBoxHidden(0);
+    expect(S().selectedOp).toBe("matmul_C");
+  });
+
+  it("can be set directly, which is what clicking a row does", () => {
+    S().applyDSL(chain);
+    S().setSelectedOp("elementwise_D");
+    expect(S().selectedOp).toBe("elementwise_D");
+    S().setSelectedOp(null);
+    expect(S().selectedOp).toBeNull();
+  });
+
+  it("clears with the selection", () => {
+    S().applyDSL(chain);
+    S().setSelection("C", fromBox(box([0, 2], [0, 2])), "replace");
+    S().clearSelection();
+    expect(S().selectedOp).toBeNull();
+  });
+
+  it("starts clear on a freshly loaded graph", () => {
+    S().applyDSL(chain);
+    expect(S().selectedOp).toBeNull();
   });
 });
