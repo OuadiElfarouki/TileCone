@@ -313,12 +313,14 @@ export function TensorCard({
   renderScale = 1,
   viewScale = 1,
   overviewWidth,
+  uniformTile = null,
   moveHandlers,
 }: {
   tensor: Tensor;
   renderScale?: number;
   viewScale?: number;
   overviewWidth?: number;
+  uniformTile?: number | null;
   moveHandlers?: Pick<
     React.HTMLAttributes<HTMLDivElement>,
     "onPointerDown" | "onPointerMove" | "onPointerUp" | "onPointerCancel" | "onLostPointerCapture"
@@ -536,6 +538,18 @@ export function TensorCard({
   const shownShape = axisMode === "numeric" ? numericShape : symbolicShape;
   const tileSpanRows = Math.min(geom.rows, geom.tile);
   const tileSpanCols = Math.min(geom.cols, geom.tile);
+  /**
+   * The span is only worth a slot in the header when it says something the
+   * setup strip does not. Two cases do: a tensor short enough to clip the
+   * square tile (C5), and a graph whose tensors did not all settle on the same
+   * one, where the strip can only print a range. On a uniform square lattice
+   * the strip already names the tile, and repeating it on every card put a
+   * second bracketed number pair beside the shape on the whole canvas.
+   *
+   * `cardSize` still reserves this label's width whether or not it is drawn, so
+   * detail changes re-rasterise in place (C4).
+   */
+  const showTileSpan = tileSpanRows !== tileSpanCols || uniformTile !== tileSpanRows;
   const roleTag = tensor.producer ? null : tensor.role === "weight" ? "weight" : "input";
   // Exactness is carried by hatching on the canvas; this repeats it in the
   // header because an over-approximation must never be mistakable for ground
@@ -570,9 +584,11 @@ export function TensorCard({
           </span>
         </span>
         <span className="tc-shape">{shownShape}</span>
-        <span className="tc-tile" title="current visible-plane tile size">
-          ⊞ {tileSpanRows}×{tileSpanCols}
-        </span>
+        {showTileSpan && (
+          <span className="tc-tile" title="current visible-plane tile size">
+            ⊞ {tileSpanRows}×{tileSpanCols}
+          </span>
+        )}
         {roleTag && <span className="tc-role">{roleTag}</span>}
         {approximation.approximate && (
           <span

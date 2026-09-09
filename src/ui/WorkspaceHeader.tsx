@@ -11,9 +11,6 @@ export function WorkspaceHeader({ onShowShortcuts }: { onShowShortcuts: () => vo
     <header className="workspace-header">
       <span className="brand">tilecone<span>/</span></span>
       <span className="product-tag">tile dependency explorer</span>
-      <span className="product-copy">
-        Draw a tile on any tensor and read exactly what it needs upstream and what it feeds downstream.
-      </span>
       <button className="shortcut-button" onClick={onShowShortcuts} title="keyboard shortcuts (?)" aria-label="show keyboard shortcuts">?</button>
       <button
         className="theme-toggle"

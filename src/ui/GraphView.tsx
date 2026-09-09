@@ -9,9 +9,9 @@ import {
 } from "./graph-scene";
 import { cardSize, TensorCard } from "./TensorCard";
 import { shapeLabel, symbolicExtentLabel } from "./shape-label";
-import { enabledPropResult, selectedTensorIds, useStore } from "./store";
+import { enabledPropResult, planesOf, selectedTensorIds, useStore } from "./store";
 import type { TensorOffset } from "./tensor-layout";
-import { MIN_SIDE_PX } from "./tiling";
+import { MIN_SIDE_PX, settledTiles } from "./tiling";
 import { overviewLabels } from "./overview-labels";
 import { paintScale } from "./grid";
 import { FIT_GRAPH_EVENT } from "./useKeyboard";
@@ -157,6 +157,7 @@ export function visibleEntangledTensorIds(
 export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }): React.ReactElement {
   const resolved = useStore((s) => s.resolved);
   const graphPx = useStore((s) => s.graphPx);
+  const tileScale = useStore((s) => s.tileScale);
   const backwardRes = useStore((s) => s.backwardRes);
   const forwardRes = useStore((s) => s.forwardRes);
   const perBox = useStore((s) => s.perBox);
@@ -231,6 +232,17 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
         : null,
     [resolved, graphPx]
   );
+
+  /**
+   * The tile every tensor settled on, or `null` when the fit rule coarsened
+   * some of them and the setup strip can only print a range. Computed once
+   * here rather than per card: `planesOf` walks every tensor in the graph.
+   */
+  const uniformTile = useMemo(() => {
+    if (!resolved) return null;
+    const { min, max } = settledTiles(planesOf(resolved), tileScale, graphPx);
+    return min === max ? min : null;
+  }, [resolved, tileScale, graphPx]);
 
   /** Offsets and connector routes are cheap live scene projection, not layout. */
   const scene = useMemo(
@@ -656,6 +668,7 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
                 {...moveHandlers}
               />
               <TensorCard
+                uniformTile={uniformTile}
                 tensor={t}
                 renderScale={renderScale}
                 viewScale={tf.k}

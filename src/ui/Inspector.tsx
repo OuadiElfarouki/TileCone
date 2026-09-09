@@ -906,6 +906,7 @@ export function Inspector(): React.ReactElement {
       : "Nothing consumes this selection, it feeds no later tensor.";
 
   const visibleRows = [...(showUpstream ? upstream : []), ...(showDownstream ? downstream : [])];
+  const approxRows = visibleRows.filter((row) => !row.exact).length;
   const approxReasons = [
     ...new Set(visibleRows.filter((row) => !row.exact).flatMap((row) => row.reasons)),
   ];
@@ -1063,8 +1064,14 @@ export function Inspector(): React.ReactElement {
             </section>
 
             {approxReasons.length > 0 && (
-              <div className="ins-section warn" title={approxReasons.join("; ")}>
-                ≈ marks {visibleRows.filter((row) => !row.exact).length} row{visibleRows.filter((row) => !row.exact).length === 1 ? "" : "s"} with conservative over-approximations
+              /* Contract A1 asks this section to name a *reason*. Counting the
+                 badges restated something already on screen and left the
+                 reasons in a title, which is the one place a mouse-less reader
+                 never reaches. The count stays because it says how far to
+                 look; the reasons are now the content. */
+              <div className="ins-section warn">
+                ≈ {approxRows} row{approxRows === 1 ? "" : "s"} over-approximated:{" "}
+                {approxReasons.join(", ")}
               </div>
             )}
 
@@ -1105,14 +1112,28 @@ export function Inspector(): React.ReactElement {
                       than”. They are never understated.
                     </p>
                   )}
-                  <label className="chk">
+                  {/* This moves the intensity denominator and nothing else.
+                      The `intermediate` row above is counted either way, so a
+                      label naming intermediates rather than intensity read as
+                      a switch on that row. */}
+                  <label
+                    className="chk"
+                    title="intensity divides FLOPs by traffic; the denominator is input bytes, plus intermediate bytes when this is on"
+                  >
                     <input type="checkbox" checked={countIntermediates} onChange={(e) => setCountIntermediates(e.target.checked)} />
-                    count intermediates in bytes
+                    intensity counts intermediates
                   </label>
                 </div>
                 <div className="ins-section">
                   <div className="ins-title">
-                    Reuse <button className="mini" onClick={computeReuse}>estimate</button>
+                    Reuse{" "}
+                    <button
+                      className="mini"
+                      onClick={computeReuse}
+                      title="sample selection-sized output tiles across the graph and count how many touch each input's current footprint"
+                    >
+                      estimate
+                    </button>
                   </div>
                   {reuse ? (
                     <div className="kv">
@@ -1127,7 +1148,7 @@ export function Inspector(): React.ReactElement {
                       ))}
                     </div>
                   ) : (
-                    <p className="hint">sampled sweep: run on demand to estimate selection-sized output tiles touching each input's current footprint</p>
+                    <p className="hint">sampled sweep · run on demand</p>
                   )}
                 </div>
               </>
