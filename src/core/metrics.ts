@@ -31,7 +31,25 @@ export type AggregateReadout = {
   inputBytes: number;
   intermediateBytes: number;
   outputBytes: number;
-  intensity: number; // FLOPs / input bytes
+  /** Ideal op-by-op traffic: distinct reads per operation plus its writes.
+   * No cross-operation cache reuse; views are modeled as materialized ops. */
+  unfusedBytes: number;
+  /**
+   * FLOPs per byte of memory traffic, under the two fusion assumptions a
+   * kernel author actually chooses between.
+   *
+   * `fused` charges the cone's graph inputs and its output: one kernel, with
+   * every intermediate held in registers or shared memory and never written
+   * out. `unfused` sums distinct input reads and output writes per operation,
+   * with no cross-operation cache reuse. Views are assumed materialized.
+   * These are idealized scenarios, not bounds on measured hardware traffic.
+   *
+   * Both denominators include `outputBytes`. The tile has to be written
+   * somewhere in either world, and leaving it out overstated the ratio on
+   * producer-output query.
+   */
+  fusedIntensity: number;
+  unfusedIntensity: number;
   tensors: TensorReadout[];
   /**
    * Whether every figure above is exact.
@@ -95,12 +113,11 @@ export function coneReadout(graph: ResolvedGraph, prop: PropResult): TensorReado
   return tensors;
 }
 
-export function computeMetrics(
-  graph: ResolvedGraph,
-  back: PropResult,
-  countIntermediates = false
-): AggregateReadout {
+export function computeMetrics(graph: ResolvedGraph, back: PropResult): AggregateReadout {
   let flops = 0;
+  let unfusedBytes = 0;
+  let trafficExact = true;
+  const trafficReasons = new Set<string>();
   for (const node of graph.topo) {
     const spec = getOp(node.op)!;
     const ctx: OpCtx = {
@@ -108,9 +125,26 @@ export function computeMetrics(
       outShapes: graph.shapesOf(node.outputs),
       attrs: node.attrs,
     };
+    // Keep reads separate across consumers, but deduplicate repeated operand
+    // slots and overlapping output dependencies within a single operation.
+    const reads = new Map<string, Region>();
     node.outputs.forEach((tid, slot) => {
       const tr = back.tensors.get(tid);
       if (!tr) return;
+      unfusedBytes += count(tr.region) * DTYPE_BYTES[graph.tensors[tid].dtype];
+      for (const b of tr.region.boxes) {
+        spec.backward(slot, b, ctx).forEach((region, inputSlot) => {
+          trafficExact &&= region.exact;
+          if (!region.exact) region.reasons.forEach((reason) => trafficReasons.add(reason));
+          const inputId = node.inputs[inputSlot];
+          const prev = reads.get(inputId);
+          reads.set(inputId, prev ? {
+            boxes: [...prev.boxes, ...region.boxes],
+            exact: prev.exact && region.exact,
+            reasons: [...prev.reasons, ...region.reasons],
+          } : region);
+        });
+      }
       if (spec.flopsForRegion) flops += spec.flopsForRegion(slot, tr.region, ctx);
       else if (spec.flopsPerElement)
         flops += count(tr.region) * spec.flopsPerElement(slot, ctx);
@@ -119,6 +153,8 @@ export function computeMetrics(
       // once per box that covers it.
       else for (const b of disjointify(tr.region).boxes) flops += spec.flopsFor(slot, b, ctx);
     });
+    for (const [tid, region] of reads)
+      unfusedBytes += count(region) * DTYPE_BYTES[graph.tensors[tid].dtype];
   }
 
   const tensors = coneReadout(graph, back);
@@ -130,22 +166,25 @@ export function computeMetrics(
     else if (back.roots.includes(t.tensorId)) outputBytes += t.bytes;
     else intermediateBytes += t.bytes;
   }
-  const denom = inputBytes + (countIntermediates ? intermediateBytes : 0);
+  // Traffic, not just what is read: the tile is written in both worlds.
+  const fusedBytes = inputBytes + outputBytes;
   // Any inexact row taints every total, because each total sums over all of
   // them. Taking the reasons from the rows rather than from `back.reasons`
   // keeps the explanation to the regions these figures were actually measured
   // on: propagation may have recorded a reason on a tensor this cone reached
   // but no metric counted.
   const inexact = tensors.filter((tensor) => !tensor.exact);
-  const reasons = [...new Set(inexact.flatMap((tensor) => tensor.reasons))].sort();
+  const reasons = [...new Set([...inexact.flatMap((tensor) => tensor.reasons), ...trafficReasons])].sort();
   return {
     flops,
     inputBytes,
     intermediateBytes,
     outputBytes,
-    intensity: denom > 0 ? flops / denom : 0,
+    unfusedBytes,
+    fusedIntensity: fusedBytes > 0 ? flops / fusedBytes : 0,
+    unfusedIntensity: unfusedBytes > 0 ? flops / unfusedBytes : 0,
     tensors,
-    exact: inexact.length === 0,
+    exact: inexact.length === 0 && trafficExact,
     reasons,
   };
 }

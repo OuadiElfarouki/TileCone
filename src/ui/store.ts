@@ -67,6 +67,44 @@ export function enabledPropResult(
  */
 type Selection = { parts: SelPart[] } | null;
 
+/**
+ * One tensor's enabled tiles as a single cone, for the inspector's analysis.
+ *
+ * `enabledPropResult` merges every enabled tile whatever it sits on, which is
+ * the right scope for the canvas and the operations list: those describe the
+ * selection. The inspector deliberately scopes cost to one output tensor's
+ * tiles. Multi-output jobs could be modeled too, but require explicit output
+ * and materialization semantics; union itself does not double-count work.
+ *
+ * Past `MAX_PER_BOX_PROPS` there are no per-tile cones to filter and the
+ * grouped per-tensor query stands in - coarser, never mixed.
+ */
+export function groupPropResult(
+  byTensorRes: Record<string, { backward: PropResult | null; forward: PropResult | null }> | null,
+  perBox: BoxProp[] | null,
+  parts: SelPart[],
+  hiddenBoxes: Set<number>,
+  focusedBox: number | null,
+  tensorId: string | null,
+  direction: ConeDirection
+): PropResult | null {
+  if (!tensorId) return null;
+  if (!perBox) return byTensorRes?.[tensorId]?.[direction] ?? null;
+  if (
+    focusedBox !== null &&
+    !hiddenBoxes.has(focusedBox) &&
+    parts[focusedBox]?.tensorId === tensorId
+  )
+    return perBox[focusedBox]?.[direction] ?? null;
+  return mergeProps(
+    perBox.flatMap((prop, index) =>
+      hiddenBoxes.has(index) || parts[index]?.tensorId !== tensorId || !prop[direction]
+        ? []
+        : [prop[direction]!]
+    )
+  );
+}
+
 /** Parts drawn on one tensor, carrying the global index each one keeps. */
 export function partsOn(
   selection: Selection,
@@ -203,6 +241,14 @@ type State = {
   direction: Direction;
   theme: Theme;
   backwardRes: PropResult | null;
+  /**
+   * One cone per tensor drawn on, so the inspector can analyse a tensor's
+   * tiles without mixing in tiles that sit on a different tensor. Available in
+   * both regimes: derived from `perBox` under the attribution cap, and taken
+   * straight from the grouped queries above it, where per-tile results do not
+   * exist to filter.
+   */
+  byTensorRes: Record<string, { backward: PropResult | null; forward: PropResult | null }> | null;
   forwardRes: PropResult | null;
   /** One propagation per selection box, so a highlighted region can be traced
    * back to the box that produced it. Null when there are too many boxes. */
@@ -258,7 +304,6 @@ type State = {
    * separate facts without making every graph label carry all three.
    */
   axisMode: AxisMode;
-  countIntermediates: boolean;
   /** A one-shot request to bring a node into view. Carries the kind because an
    * operation row centres its operator, not the tensor it writes. Consumed by
    * the viewport and cleared, so asking twice acts twice. */
@@ -315,7 +360,6 @@ type State = {
   setTileScale: (v: number) => void;
   setSnapToGrid: (v: boolean) => void;
   setAxisMode: (v: AxisMode) => void;
-  setCountIntermediates: (v: boolean) => void;
   setFocusNode: (node: { kind: "tensor" | "op"; id: string } | null) => void;
   /** Light one row of the operations list, or clear it with `null`. */
   setSelectedOp: (nodeId: string | null) => void;
@@ -396,14 +440,17 @@ function recompute(
     perBox: BoxProp[] | null;
     entangled: Entanglement[][] | null;
   }
-): Pick<State, "backwardRes" | "forwardRes" | "perBox" | "entangled"> {
-  const none = { backwardRes: null, forwardRes: null, perBox: null, entangled: null };
+): Pick<State, "backwardRes" | "forwardRes" | "perBox" | "entangled" | "byTensorRes"> {
+  const none = {
+    backwardRes: null, forwardRes: null, perBox: null, entangled: null, byTensorRes: null,
+  };
   if (!resolved || !selection || selection.parts.length === 0) return none;
 
   const parts = selection.parts;
   const backs: PropResult[] = [];
   const fwds: PropResult[] = [];
   let perBox: BoxProp[] | null = null;
+  const byTensorRes: State["byTensorRes"] = {};
 
   if (parts.length <= MAX_PER_BOX_PROPS) {
     // Geometry is the cache key rather than array position: deleting a part
@@ -437,6 +484,22 @@ function recompute(
       if (r.forward) fwds.push(r.forward);
       return { backward: r.backward, forward: r.forward };
     });
+    // The same grouping the branch below gets for free. Merging per-part cones
+    // that already exist is cheaper than re-querying, and both regimes have to
+    // offer the inspector the same shape.
+    const grouped = new Map<string, { backs: PropResult[]; fwds: PropResult[] }>();
+    parts.forEach((part, index) => {
+      const entry = grouped.get(part.tensorId) ?? { backs: [], fwds: [] };
+      const prop = perBox![index];
+      if (prop.backward) entry.backs.push(prop.backward);
+      if (prop.forward) entry.fwds.push(prop.forward);
+      grouped.set(part.tensorId, entry);
+    });
+    for (const [tensorId, entry] of grouped)
+      byTensorRes[tensorId] = {
+        backward: mergeProps(entry.backs),
+        forward: mergeProps(entry.fwds),
+      };
   } else {
     const byTensor = new Map<string, Box[]>();
     for (const p of parts) {
@@ -452,6 +515,7 @@ function recompute(
       });
       if (r.backward) backs.push(r.backward);
       if (r.forward) fwds.push(r.forward);
+      byTensorRes[tensorId] = { backward: r.backward, forward: r.forward };
     }
   }
   // Entanglement is attributed per part for the same reason as the cones: hue
@@ -482,7 +546,13 @@ function recompute(
         entangledWith(resolved, part.tensorId, fromBox(part.box))
     );
   }
-  return { backwardRes: mergeProps(backs), forwardRes: mergeProps(fwds), perBox, entangled };
+  return {
+    backwardRes: mergeProps(backs),
+    forwardRes: mergeProps(fwds),
+    perBox,
+    entangled,
+    byTensorRes,
+  };
 }
 
 /**
@@ -582,6 +652,7 @@ export function startingTiles(
 function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
   State,
   | "graph" | "resolved" | "loadError" | "diagnostics" | "selection" | "backwardRes" | "forwardRes"
+  | "byTensorRes"
   | "entangled"
   | "perBox" | "focusedBox" | "pinnedBox" | "viewCfgs" | "preview" | "graphPx"
   | "hiddenBoxes" | "workspaceHistory" | "tensorOffsets"
@@ -600,6 +671,7 @@ function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
     workspaceHistory: [],
     tensorOffsets: {},
     backwardRes: null,
+    byTensorRes: null,
     forwardRes: null,
     perBox: null,
     focusedBox: null,
@@ -626,6 +698,7 @@ export const useStore = create<State>((set, get) => ({
   direction: "both",
   theme: initialTheme(),
   backwardRes: null,
+  byTensorRes: null,
   forwardRes: null,
   perBox: null,
   focusedBox: null,
@@ -641,7 +714,6 @@ export const useStore = create<State>((set, get) => ({
   // A shared link deliberately defaults the other way: see `share.ts`, where an
   // older payload keeps the numeric cards it was written against.
   axisMode: "symbolic",
-  countIntermediates: false,
   focusNode: null,
   selectedOp: null,
   panelW: { left: 330, right: 300 },
@@ -856,6 +928,7 @@ export const useStore = create<State>((set, get) => ({
         ? appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets })
         : workspaceHistory,
       backwardRes: null,
+      byTensorRes: null,
       forwardRes: null,
       perBox: null,
       entangled: null,
@@ -1017,7 +1090,6 @@ export const useStore = create<State>((set, get) => ({
   setTileScale: (v) =>
     set({ tileScale: Math.max(TILE_SCALE_MIN, Math.min(TILE_SCALE_MAX, Math.round(v))) }),
 
-  setCountIntermediates: (v) => set({ countIntermediates: v }),
   setFocusNode: (node) => set({ focusNode: node }),
   setSelectedOp: (nodeId) => set({ selectedOp: nodeId }),
 

@@ -96,7 +96,7 @@ Z = cast(Y, dtype=fp16)
       intermediateBytes: 0,
       outputBytes: 4,
     });
-    expect(executor.metrics("Z", region, true)).toMatchObject({
+    expect(executor.metrics("Z", region)).toMatchObject({
       inputBytes: 16,
       intermediateBytes: 4,
       outputBytes: 8,

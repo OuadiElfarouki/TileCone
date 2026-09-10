@@ -697,6 +697,22 @@ textarea.source.error-state { border-color: var(--err); }
    is now the place you compare them; capping it at two and a half rows hid the
    comparison the feature exists to make. */
 .box-list { display: flex; flex-direction: column; gap: 2px; max-height: 252px; overflow-y: auto; margin: 4px 0; }
+/* One tensor's tiles. The container is the semantics made visible: everything
+   below the list analyses exactly one of these; multi-output execution is
+   outside this inspector's current cost model. */
+.tile-group { display: flex; flex-direction: column; gap: 2px; }
+.tile-group + .tile-group { margin-top: 7px; }
+.tile-group-head {
+  display: flex; align-items: baseline; gap: 6px;
+  padding: 2px 0 1px; font-size: var(--t-small);
+}
+.tile-group-head b { font-size: var(--t-base); }
+/* Accent means active, here as everywhere: the analysed group is the one the
+   panel below is about. */
+.tile-group.active .tile-group-head b { color: var(--accent); }
+.tile-group-mark { margin-left: auto; font-size: var(--t-micro); }
+.tile-group.active .tile-group-mark { color: var(--accent); }
+.tile-group:not(.active) .box-row { opacity: var(--dim-soft); }
 .box-row {
   display: flex; align-items: flex-start; gap: 8px; padding: 6px 3px; border-radius: var(--r);
   border: 1px solid transparent; border-bottom: 1px solid var(--line); cursor: pointer;

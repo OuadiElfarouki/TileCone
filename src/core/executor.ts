@@ -132,7 +132,7 @@ export class SymbolicExecutor {
     return entangledWith(this.graph, tensorId, validateSelection(this.graph, { tensorId, region }).region);
   }
 
-  metrics(tensorId: string, region: Region, countIntermediates = false): AggregateReadout {
-    return computeMetrics(this.graph, this.upstream(tensorId, region), countIntermediates);
+  metrics(tensorId: string, region: Region): AggregateReadout {
+    return computeMetrics(this.graph, this.upstream(tensorId, region));
   }
 }

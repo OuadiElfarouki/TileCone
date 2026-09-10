@@ -14,10 +14,9 @@ import {
   union,
 } from "../core/region";
 import { formatBytes } from "./format";
-import { useInspectorAnalysis } from "./inspector-analysis";
+import { analysisTensorId, groupAttribution, useInspectorAnalysis } from "./inspector-analysis";
 import { aggregateColors, boxColor, MAX_DISTINCT_HUES, rgbCss } from "./palette";
 import {
-  anchorTensorId,
   ConeDirection,
   MAX_PER_BOX_PROPS,
   partsOn,
@@ -568,28 +567,38 @@ function ConeSection({
 function TileIdentity({
   onCopyAll,
   copyState,
+  activeTensorId,
+  focusedBox,
 }: {
   onCopyAll: () => void;
   copyState: "copied" | "failed" | null;
+  activeTensorId: string | null;
+  focusedBox: number | null;
 }): React.ReactElement | null {
   const resolved = useStore((s) => s.resolved)!;
   const selection = useStore((s) => s.selection);
-  const focusedBox = useStore((s) => s.focusedBox);
   const replaceBox = useStore((s) => s.replaceBox);
   const deleteBox = useStore((s) => s.deleteBox);
   const theme = useStore((s) => s.theme);
 
   if (!selection) return null;
-  const parts = selection.parts;
-  const anchorId = anchorTensorId(selection, focusedBox);
-  const index = focusedBox ?? parts.length - 1;
-  const part = parts[index];
-  if (!anchorId || !part) return null;
+  const anchorId = activeTensorId;
+  if (!anchorId) return null;
+  /**
+   * The header describes the same group as everything under it, so its counts
+   * come from the active tensor's tiles rather than from the whole selection.
+   * A tile on another tensor is in the list above, not in this answer.
+   */
+  const group = partsOn(selection, anchorId);
+  const index = focusedBox ?? group[group.length - 1]?.index;
+  const part = selection.parts[index];
+  if (part === undefined || index === undefined) return null;
+  const ordinal = group.findIndex((row) => row.index === index);
 
-  // With several tiles and none focused, everything below describes the merged
-  // cone. Naming one of them here would put the wrong tile at the top of a
-  // readout about all of them, so the header describes the selection instead.
-  const merged = parts.length > 1 && focusedBox === null;
+  // With several tiles in the group and none focused, everything below
+  // describes their merged cone. Naming one of them here would put the wrong
+  // tile at the top of a readout about all of them.
+  const merged = group.length > 1 && focusedBox === null;
   const tensor = resolved.tensors[anchorId];
   const shape = tensor.resolved!;
   const { rowAxis, colAxis } = viewAxes(shape);
@@ -597,7 +606,7 @@ function TileIdentity({
   const volume = (box: Box) =>
     box.reduce((total, interval) => total * (interval.hi - interval.lo), 1);
   const elements = merged
-    ? parts.reduce((total, p) => total + volume(p.box), 0)
+    ? group.reduce((total, row) => total + volume(row.box), 0)
     : volume(part.box);
 
   return (
@@ -611,7 +620,9 @@ function TileIdentity({
           <i className="swatch" style={{ background: rgbCss(boxColor(index, theme === "dark")) }} />
         )}
         <span>
-          {merged ? `${parts.length} tiles · merged` : `tile ${index + 1} of ${parts.length}`}
+          {merged
+            ? `${group.length} tiles · merged`
+            : `tile ${ordinal + 1} of ${group.length}`}
         </span>
         <button
           className={`mini copy-cone${copyState === "failed" ? " copy-failed" : ""}`}
@@ -621,7 +632,7 @@ function TileIdentity({
         >
           {copyState === "copied" ? "copied ✓" : copyState === "failed" ? "copy failed" : "copy all"}
         </button>
-        {parts.length === 1 && (
+        {group.length === 1 && (
           <button className="mini danger" title="remove this tile from the selection" onClick={() => deleteBox(index)}>
             ×
           </button>
@@ -629,24 +640,16 @@ function TileIdentity({
       </div>
       <div className="tile-name">
         <b
-          title={
-            merged
-              ? "every tensor the selection draws on"
-              : `rows ${axisLabel(rowAxis >= 0 ? rowAxis : 0)} · cols ${axisLabel(colAxis >= 0 ? colAxis : 0)} · shape [${shape.join("×")}]`
-          }
+          title={`rows ${axisLabel(rowAxis >= 0 ? rowAxis : 0)} · cols ${axisLabel(colAxis >= 0 ? colAxis : 0)} · shape [${shape.join("×")}]`}
         >
-          {merged
-            ? selectedTensorIds(selection)
-                .map((id) => resolved.tensors[id].name)
-                .join(" · ")
-            : tensor.name}
+          {tensor.name}
         </b>
         <span className="tile-count">{fmt(elements)} el</span>
       </div>
       {/* Only at one tile. From two upwards the list below carries every range,
           and repeating the focused one here made the header change height as
           the pointer moved across the list. */}
-      {parts.length === 1 && (
+      {group.length === 1 && (
         <SelectionRangeInput box={part.box} shape={shape} onCommit={(next) => replaceBox(index, next)} />
       )}
     </header>
@@ -657,7 +660,10 @@ function TileIdentity({
  * The selection's tiles, one row each, from two upwards. Hovering a row
  * emphasises that tile's cone across the whole graph; clicking pins it.
  */
-function RegionEditor(): React.ReactElement | null {
+function RegionEditor({ activeTensorId, onSelectGroup }: {
+  activeTensorId: string | null;
+  onSelectGroup: (tensorId: string) => void;
+}): React.ReactElement | null {
   const resolved = useStore((s) => s.resolved);
   const selection = useStore((s) => s.selection);
   const replaceBox = useStore((s) => s.replaceBox);
@@ -674,6 +680,18 @@ function RegionEditor(): React.ReactElement | null {
   if (!resolved || !selection || selection.parts.length < 2) return null;
   const parts = selection.parts;
   const dark = theme === "dark";
+  /**
+   * Tiles in drawn order, split into one group per tensor.
+   *
+   * The split is the semantics made visible: everything below this list
+   * analyses one group, so the list has to show where a group ends. Order
+   * follows first appearance, which keeps a row from jumping to a new place
+   * when a second tile lands on a tensor already in the list.
+   */
+  const groups = selectedTensorIds(selection).map((tensorId) => ({
+    tensorId,
+    rows: partsOn(selection, tensorId),
+  }));
 
   // Overlap is a within-tensor question: two boxes on different tensors index
   // different things and cannot double-count each other.
@@ -692,6 +710,15 @@ function RegionEditor(): React.ReactElement | null {
           ? "hover an enabled tile to emphasise its analysis; click to pin it, then arrow keys move that tile alone"
           : `too many tiles to trace individually (over ${MAX_PER_BOX_PROPS}), showing merged needs and feeds`}
       </p>
+      {groups.length > 1 && (
+        /* Two tensors' tiles index different things, and where one feeds the
+           other their cones overlap, so a merged total would charge the shared
+           upstream work to a job nobody would write. The list is split for the
+           same reason the analysis is. */
+        <p className="hint">
+          Select a tensor header to analyse its enabled tiles together, or a tile for its individual cone.
+        </p>
+      )}
       {overlap.summed > overlap.unique && (
         <p className="hint overlap">
           tiles overlap: {fmt(overlap.summed)} counted across parts,{" "}
@@ -700,7 +727,30 @@ function RegionEditor(): React.ReactElement | null {
       )}
 
       <div className="box-list" onMouseLeave={() => hoverBox(null)}>
-        {parts.map(({ tensorId, box: b }, i) => {
+        {groups.map((group) => (
+          <div
+            className={`tile-group${group.tensorId === activeTensorId ? " active" : ""}`}
+            key={group.tensorId}
+          >
+            {groups.length > 1 && (
+              <div className="tile-group-head">
+                <button className="mini" aria-pressed={group.tensorId === activeTensorId}
+                  onClick={() => onSelectGroup(group.tensorId)}
+                  title="analyse this tensor's enabled tiles together">
+                  <b>{resolved.tensors[group.tensorId].name}</b>
+                </button>
+                <span className="muted">
+                  {group.rows.length} tile{group.rows.length === 1 ? "" : "s"}
+                </span>
+                {group.tensorId === activeTensorId ? (
+                  <span className="tile-group-mark">analysed below</span>
+                ) : (
+                  <span className="tile-group-mark muted">select group or tile</span>
+                )}
+              </div>
+            )}
+        {group.rows.map(({ index: i, box: b }) => {
+          const tensorId = group.tensorId;
           const active = focusedBox === i;
           const hidden = hiddenBoxes.has(i);
           const t = resolved.tensors[tensorId];
@@ -759,6 +809,8 @@ function RegionEditor(): React.ReactElement | null {
             </div>
           );
         })}
+          </div>
+        ))}
       </div>
       {parts.length > MAX_DISTINCT_HUES && (
         <p className="hint">
@@ -832,24 +884,39 @@ export function Inspector(): React.ReactElement {
   const resolved = useStore((s) => s.resolved);
   const theme = useStore((s) => s.theme);
   const selection = useStore((s) => s.selection);
-  const backwardRes = useStore((s) => s.backwardRes);
-  const forwardRes = useStore((s) => s.forwardRes);
+  const byTensorRes = useStore((s) => s.byTensorRes);
   const direction = useStore((s) => s.direction);
   const toggleDirection = useStore((s) => s.toggleDirection);
   const showEntangled = useStore((s) => s.showEntangled);
   const toggleEntangled = useStore((s) => s.toggleEntangled);
   const entangled = useStore((s) => s.entangled);
-  const countIntermediates = useStore((s) => s.countIntermediates);
-  const setCountIntermediates = useStore((s) => s.setCountIntermediates);
   const perBox = useStore((s) => s.perBox);
   const hiddenBoxes = useStore((s) => s.hiddenBoxes);
-  const focusedBox = useStore((s) => s.focusedBox);
+  const tileFocus = useStore((s) => s.focusedBox);
+  /**
+   * The tile group everything below the tiles list describes.
+   *
+   * A selected group persists independently of tile focus. Hover/pin temporarily
+   * narrows the readout; clearing focus returns to the selected merged group.
+   */
+  const [selectedGroup, setSelectedGroup] = useState<{ graph: typeof resolved; tensorId: string } | null>(null);
+  // Above the attribution cap, tile hover must not masquerade as a single-tile readout.
+  const focusedBox = perBox ? tileFocus : null;
+  const activeTensorId = analysisTensorId(selection?.parts ?? [], focusedBox,
+    selectedGroup?.graph === resolved ? selectedGroup.tensorId : null);
+  const scopedAttribution = useMemo(() => groupAttribution(perBox, selection?.parts ?? [], activeTensorId),
+    [perBox, selection, activeTensorId]);
+  const selectGroup = (tensorId: string) => {
+    useStore.getState().clearFocus();
+    setSelectedGroup({ graph: resolved, tensorId });
+  };
 
   const [reuse, setReuse] = useState<ReuseEstimate[] | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<CopyFeedback>(null);
 
   const {
     metrics,
+    bounds,
     findings,
     seeds,
     contribution: contrib,
@@ -858,30 +925,36 @@ export function Inspector(): React.ReactElement {
   } = useInspectorAnalysis({
     resolved,
     selection,
-    backward: backwardRes,
-    forward: forwardRes,
     perBox,
+    byTensorRes,
     hiddenBoxes,
     focusedBox,
-    countIntermediates,
+    activeTensorId,
     direction,
   });
 
-  useEffect(() => setReuse(null), [resolved, selection, focusedBox, hiddenBoxes]);
+  useEffect(() => setReuse(null), [resolved, selection, focusedBox, hiddenBoxes, activeTensorId]);
 
   if (!resolved) return <aside className="inspector" />;
 
-  const selBoxes = selection?.parts.length ?? 0;
-  const enabledBoxes = selection?.parts.filter((_, index) => !hiddenBoxes.has(index)).length ?? 0;
+  /**
+   * Everything below the tiles list is counted over the active group, not over
+   * the whole selection: a tile on another tensor is not part of this answer
+   * and must not appear in its totals or its "N tiles" wording.
+   */
+  const groupParts = activeTensorId ? partsOn(selection, activeTensorId) : [];
+  const selBoxes = groupParts.length;
+  const enabledBoxes = groupParts.filter((part) => !hiddenBoxes.has(part.index)).length;
   const dark = theme === "dark";
-  /** Past the cap the cones are still correct, but merged rather than attributed. */
-  const merged = selBoxes > MAX_PER_BOX_PROPS;
+  /** Past the cap the cones are still correct, but merged rather than attributed.
+   *  The cap counts the whole selection, because that is what `perBox` tracks. */
+  const merged = !perBox;
   const aggregate = aggregateColors(dark);
   /** A bar carries the hue of the tile it belongs to, or the aggregate when the
    *  rows describe several tiles at once. */
   const coneHue = (cone: "upstream" | "downstream") => {
     if (focusedBox !== null) return rgbCss(boxColor(focusedBox, dark));
-    if (selBoxes === 1 && !merged) return rgbCss(boxColor(0, dark));
+    if (selBoxes === 1 && !merged) return rgbCss(boxColor(groupParts[0].index, dark));
     return rgbCss(cone === "upstream" ? aggregate.upstream : aggregate.downstream);
   };
 
@@ -922,8 +995,35 @@ export function Inspector(): React.ReactElement {
         }))
   );
 
+  /**
+   * What the Cost figures actually cover, named in the heading.
+   *
+   * Merged is the common case and it was the one the heading got wrong: with
+   * several tiles and no focus every figure describes their *union*, and the
+   * heading still read "this tile". Past the attribution cap `hiddenBoxes` is
+   * not honoured either (`enabledPropResult` returns the whole aggregate), so
+   * the count has to come from what was measured rather than from what is
+   * switched on.
+   */
+  const measuredBoxes = perBox ? enabledBoxes : selBoxes;
+  const costScope =
+    focusedBox !== null && perBox
+      ? `tile ${focusedBox + 1}`
+      : measuredBoxes > 1
+        ? `${measuredBoxes === selBoxes ? measuredBoxes : `${measuredBoxes} of ${selBoxes}`} tiles · merged`
+        : "this tile";
+
   /** Prefix for a cost figure measured over an over-approximated region. */
   const bound = metrics && !metrics.exact ? "\u2264\u202f" : "";
+  /**
+   * Intensity takes `~`, not `\u2264`. Every other figure is a sum over the cone's
+   * regions, so widening a region can only raise it. Intensity is a ratio of
+   * two such sums, and widening moves both: extra elements that carry no work
+   * pull it down, extra work over bytes already counted pushes it up. The
+   * figure is disturbed in an unknown direction, which is what `~` says and
+   * `\u2264` would misstate.
+   */
+  const ratioBound = metrics && !metrics.exact ? "~\u202f" : "";
 
   /** Reuse factor (§5.5): sample selection-sized output tiles across the selected
    * tensor; count how many touch the current footprint on each input. The sweep
@@ -933,7 +1033,7 @@ export function Inspector(): React.ReactElement {
     if (!selection || !resolved) return;
     const fallback = selection.parts
       .map((_, index) => index)
-      .filter((index) => !hiddenBoxes.has(index))
+      .filter((index) => selection.parts[index].tensorId === activeTensorId && !hiddenBoxes.has(index))
       .pop();
     const probeIndex = focusedBox !== null && !hiddenBoxes.has(focusedBox)
       ? focusedBox
@@ -962,12 +1062,14 @@ export function Inspector(): React.ReactElement {
         ) : (
           <>
             <TileIdentity
+              activeTensorId={activeTensorId}
+              focusedBox={focusedBox}
               onCopyAll={copyCone}
               copyState={copyFeedback?.key === "cone" ? copyFeedback.state : null}
             />
             {/* The tiles list is the selector for everything below it: it picks
                 which cone the two sections describe, so it sits above them. */}
-            <RegionEditor />
+            <RegionEditor activeTensorId={activeTensorId} onSelectGroup={selectGroup} />
 
             <ConeSection
               direction="backward"
@@ -981,7 +1083,7 @@ export function Inspector(): React.ReactElement {
               empty={upstreamEmpty}
               copiedKey={copyFeedback?.key ?? null}
               copyFeedback={copyFeedback?.state ?? null}
-              perBox={perBox}
+              perBox={scopedAttribution}
               hiddenBoxes={hiddenBoxes}
               focusedBox={focusedBox}
               dark={dark}
@@ -1000,7 +1102,7 @@ export function Inspector(): React.ReactElement {
               empty={downstreamEmpty}
               copiedKey={copyFeedback?.key ?? null}
               copyFeedback={copyFeedback?.state ?? null}
-              perBox={perBox}
+              perBox={scopedAttribution}
               hiddenBoxes={hiddenBoxes}
               focusedBox={focusedBox}
               dark={dark}
@@ -1084,9 +1186,7 @@ export function Inspector(): React.ReactElement {
                     in the other direction, which it cannot. */}
                 <div className="ins-section">
                   <div className="ins-title">
-                    {focusedBox !== null && perBox
-                      ? `Cost to compute tile ${focusedBox + 1}`
-                      : "Cost to compute this tile"}
+                    {`Cost to compute ${costScope}`}
                     {/* Every figure below is measured over the cone's regions,
                         so an over-approximated region makes all of them upper
                         bounds. The rows already say so individually; without
@@ -1103,26 +1203,44 @@ export function Inspector(): React.ReactElement {
                     <span>output bytes</span><span>{bound}{formatBytes(metrics.outputBytes)}</span>
                     <span>working set</span>
                     <span>{bound}{formatBytes(metrics.inputBytes + metrics.intermediateBytes + metrics.outputBytes)}</span>
-                    <span>intensity</span><span>{bound}{metrics.intensity.toFixed(2)} FLOP/B</span>
+                    {/* Two scenarios across both operations and tiles, not a
+                        guaranteed interval for a real kernel. */}
+                    <span title={
+                      bounds
+                        ? `one kernel over every op and every tile: intermediates never reach memory and a shared operand band is fetched once - ${fmt(bounds.fused.flops)} FLOP / ${formatBytes(bounds.fused.bytes)}`
+                        : undefined
+                    }>
+                      intensity · fused
+                    </span>
+                    <span>
+                      {bounds && bounds.fused.bytes > 0
+                        ? `${ratioBound}${(bounds.fused.flops / bounds.fused.bytes).toFixed(2)} FLOP/B`
+                        : "—"}
+                    </span>
+                    <span title={
+                      bounds?.unfused
+                        ? `every op of every tile as its own job: each intermediate written and read back, each tile fetching its own operands - ${fmt(bounds.unfused.flops)} FLOP / ${formatBytes(bounds.unfused.bytes)}`
+                        : `per-tile cones are not traced past ${MAX_PER_BOX_PROPS} tiles, and the merged result cannot be taken apart again`
+                    }>
+                      intensity · unfused
+                    </span>
+                    <span>
+                      {bounds?.unfused && bounds.unfused.bytes > 0
+                        ? `${ratioBound}${(bounds.unfused.flops / bounds.unfused.bytes).toFixed(2)} FLOP/B`
+                        : "—"}
+                    </span>
                   </div>
+                  <p className="hint">Idealized scenarios, not hardware bounds: fused assumes perfect sharing;
+                    unfused sums per-op reads and writes per tile, materializing views and assuming no cross-op cache reuse.</p>
                   {!metrics.exact && (
                     <p className="hint overlap">
-                      Upper bounds, not counts: {metrics.reasons.join(", ")} widened a
-                      region these figures were measured on. Read each as “no more
-                      than”. They are never understated.
+                      Bounds, not counts: {metrics.reasons.join(", ")} widened a
+                      region these figures were measured on. Read every ≤ as “no
+                      more than” - those are never understated. The two ~
+                      intensities are ratios of such figures, so they are
+                      disturbed in an unknown direction.
                     </p>
                   )}
-                  {/* This moves the intensity denominator and nothing else.
-                      The `intermediate` row above is counted either way, so a
-                      label naming intermediates rather than intensity read as
-                      a switch on that row. */}
-                  <label
-                    className="chk"
-                    title="intensity divides FLOPs by traffic; the denominator is input bytes, plus intermediate bytes when this is on"
-                  >
-                    <input type="checkbox" checked={countIntermediates} onChange={(e) => setCountIntermediates(e.target.checked)} />
-                    intensity counts intermediates
-                  </label>
                 </div>
                 <div className="ins-section">
                   <div className="ins-title">

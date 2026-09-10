@@ -323,9 +323,18 @@ Metrics are derived from the backward dependency result in `src/core/metrics.ts`
 
 - **FLOPs:** estimated from affected operation outputs. Operators may provide box-local or whole-region cost functions.
 - **Input bytes:** bytes read from leaf tensors.
-- **Intermediate bytes:** bytes associated with contributing produced tensors, optionally included in arithmetic intensity.
+- **Intermediate bytes:** unique footprint of contributing produced tensors, not read/write traffic.
 - **Output bytes:** bytes in the selected producer output.
-- **Arithmetic intensity:** FLOPs divided by the configured byte denominator.
+- **Arithmetic intensity:** two idealized execution scenarios. Fused counts the merged cone's leaf
+  inputs and selected output once. Unfused sums each tile's per-operation distinct input reads and
+  output writes, without cross-operation cache reuse; views are assumed materialized. Consumer
+  branches pay separately, while repeated operand slots within an operation share their reads.
+  These are not guaranteed hardware bounds. Approximate ratios use `~`, not `≤`.
+
+Inspector group headers select one tensor's merged enabled tiles independently of tile focus.
+Hovering or pinning a tile temporarily narrows that scope; clearing focus restores the group.
+Footprint attribution preserves global color indices but excludes other tensor groups. Above the
+per-tile cap, group selection still works, but the unfused per-tile scenario is unavailable.
 
 Symbolic extents travel that path too, and are a **separate** propagation from axis names -
 `inferSymShapes` rather than `inferAxisNames`. A name says what an axis *is* and survives a change
