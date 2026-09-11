@@ -137,6 +137,15 @@ export function anchorTensorId(selection: Selection, focusedBox: number | null):
   if (focusedBox !== null && parts[focusedBox]) return parts[focusedBox].tensorId;
   return parts[parts.length - 1].tensorId;
 }
+
+/** Shared target for inspector analysis, movement, and hidden-axis controls. */
+export function analysisTarget(parts: SelPart[], group: string | null, focus: number | null) {
+  const tensorId = group && parts.some((part) => part.tensorId === group)
+    ? group : anchorTensorId({ parts }, null);
+  const focusedBox = focus !== null && parts[focus]?.tensorId === tensorId ? focus : null;
+  const index = focusedBox ?? parts.reduce((last, part, i) => part.tensorId === tensorId ? i : last, -1);
+  return { tensorId, focusedBox, index };
+}
 /**
  * The operation a tile on this tensor is "at", for the operations list.
  *
@@ -266,6 +275,18 @@ type State = {
    * remap it by object identity for untouched parts on other tensors.
    */
   hiddenBoxes: Set<number>;
+  /**
+   * The tensor whose tiles the inspector analyses, when the user has said so.
+   *
+   * Scope is deliberate state rather than something read off the pointer: a
+   * draw, a pin, or a group header names it, and it survives until one of those
+   * three names another. Hovering deliberately cannot reach it - a preview must
+   * not change what the panel is *about*, and the group header sits inside the
+   * hovered list, so letting hover re-scope made reaching for the header undo
+   * the click that got there. Null falls back to the anchor tensor, which is
+   * where a workspace with one group stays.
+   */
+  analysisGroup: string | null;
   /** True while any drag is in progress : a card rubber-band or a canvas pan :
    * so Escape can cancel the band and text selection can be suppressed. */
   dragging: boolean;
@@ -350,6 +371,10 @@ type State = {
   togglePinBox: (index: number) => void;
   /** Drop both hover and pin. What Escape does. */
   clearFocus: () => void;
+  /** Scope every readout below the tiles list to one tensor's tiles. Releases
+   * the pin, which is itself a group choice and would otherwise outrank this
+   * one and block hovering the group just chosen. */
+  selectAnalysisGroup: (tensorId: string | null) => void;
   /** Include/exclude one part from merged analysis and dependency paint. */
   toggleBoxHidden: (index: number) => void;
   setDragging: (v: boolean) => void;
@@ -598,6 +623,11 @@ function editSelection(
     // Anything else can renumber the parts, which would leave these indexes
     // pointing at the wrong cone.
     hiddenBoxes: keepFocus ? get().hiddenBoxes : new Set<number>(),
+    // A group is named by tensor, not by index, so an edit that renumbers parts
+    // leaves it intact. Deleting the last tile on it is what retires it.
+    analysisGroup: parts.some((part) => part.tensorId === get().analysisGroup)
+      ? get().analysisGroup
+      : null,
     preview: null,
     ...recompute(resolved, sel, { selection, perBox, entangled }),
   });
@@ -655,7 +685,7 @@ function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
   | "byTensorRes"
   | "entangled"
   | "perBox" | "focusedBox" | "pinnedBox" | "viewCfgs" | "preview" | "graphPx"
-  | "hiddenBoxes" | "workspaceHistory" | "tensorOffsets"
+  | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "tensorOffsets"
 > {
   const viewCfgs: Record<string, ViewCfg> = {};
   for (const t of Object.values(resolved.tensors)) viewCfgs[t.id] = defaultViewCfg(t.resolved!);
@@ -677,6 +707,7 @@ function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
     focusedBox: null,
     pinnedBox: null,
     hiddenBoxes: new Set<number>(),
+    analysisGroup: null,
     preview: null,
     viewCfgs,
     graphPx: graphScale(planesOf(resolved)),
@@ -704,6 +735,7 @@ export const useStore = create<State>((set, get) => ({
   focusedBox: null,
   pinnedBox: null,
   hiddenBoxes: new Set<number>(),
+  analysisGroup: null,
   dragging: false,
   preview: null,
   viewCfgs: {},
@@ -860,7 +892,6 @@ export const useStore = create<State>((set, get) => ({
       resolved,
       workspaceHistory,
       tensorOffsets,
-      pinnedBox,
       hiddenBoxes,
       perBox,
       entangled,
@@ -899,7 +930,6 @@ export const useStore = create<State>((set, get) => ({
       if (mode === "replace" || !selection) return null;
       return newIndex.get(selection.parts[index]) ?? null;
     };
-    const nextPinned = pinnedBox === null ? null : remap(pinnedBox);
     const nextHidden = new Set<number>();
     for (const index of hiddenBoxes) {
       const mapped = remap(index);
@@ -911,9 +941,18 @@ export const useStore = create<State>((set, get) => ({
       // Null is a real workspace state: the first selection must be undoable
       // without also rewinding an earlier tensor move.
       workspaceHistory: appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets }),
-      focusedBox: nextPinned,
-      pinnedBox: nextPinned,
+      // Drawing releases the pin, and the analysis follows the pointer to this
+      // tensor. Remapping it was never able to keep a pin on the tensor being
+      // drawn on - those parts are rebuilt, so their identity is gone - and
+      // kept one on any *other* tensor, which is exactly backwards: it left the
+      // panel describing the tile the reader had just left while the tile they
+      // drew sat dimmed in another group.
+      focusedBox: null,
+      pinnedBox: null,
       hiddenBoxes: nextHidden,
+      // A subtract gesture can empty the tensor it was aimed at; the store then
+      // holds no group rather than one nothing is drawn on.
+      analysisGroup: parts.some((part) => part.tensorId === tensorId) ? tensorId : null,
       preview: null,
       ...recompute(resolved, sel, { selection, perBox, entangled }),
     });
@@ -935,6 +974,7 @@ export const useStore = create<State>((set, get) => ({
       focusedBox: null,
       pinnedBox: null,
       hiddenBoxes: new Set<number>(),
+      analysisGroup: null,
       preview: null,
     });
   },
@@ -972,6 +1012,9 @@ export const useStore = create<State>((set, get) => ({
       focusedBox: null,
       pinnedBox: null,
       hiddenBoxes: new Set<number>(),
+      // The restored selection may not contain the group at all, and undo is
+      // not the place to guess which of its tensors the reader meant.
+      analysisGroup: null,
       preview: null,
       ...recompute(resolved, prev.selection, { selection, perBox, entangled }),
     });
@@ -983,12 +1026,15 @@ export const useStore = create<State>((set, get) => ({
    * applied across tensors of different rank -- parts elsewhere hold still.
    */
   moveSelection: (axis, delta, record = true) => {
-    const focused = get().focusedBox;
+    const state = get();
+    const target = analysisTarget(state.selection?.parts ?? [], state.analysisGroup,
+      state.perBox ? state.focusedBox : null);
+    const focused = target.focusedBox;
     editSelection(
       get,
       set,
       (parts, shapeOf) => {
-        const anchor = anchorTensorId({ parts }, focused);
+        const anchor = target.tensorId;
         if (!anchor) return parts;
         const shape = shapeOf(anchor);
         const local: number[] = [];
@@ -1034,12 +1080,21 @@ export const useStore = create<State>((set, get) => ({
   },
 
   togglePinBox: (index) => {
-    if (get().hiddenBoxes.has(index)) return;
-    const pinned = get().pinnedBox === index ? null : index;
-    set({ pinnedBox: pinned, focusedBox: pinned });
+    const { hiddenBoxes, pinnedBox, selection, analysisGroup } = get();
+    if (hiddenBoxes.has(index)) return;
+    const pinned = pinnedBox === index ? null : index;
+    // Pinning a tile is a deliberate click on that tile, so it names the group
+    // as well as the tile - otherwise clicking a row in another group would
+    // emphasise a tile the readout below was not about. Unpinning leaves the
+    // group where the pin put it, which is what Escape should return to.
+    const tensorId = pinned === null ? analysisGroup : selection?.parts[pinned]?.tensorId ?? null;
+    set({ pinnedBox: pinned, focusedBox: pinned, analysisGroup: tensorId });
   },
 
   clearFocus: () => set({ pinnedBox: null, focusedBox: null }),
+
+  selectAnalysisGroup: (tensorId) =>
+    set({ analysisGroup: tensorId, pinnedBox: null, focusedBox: null }),
 
   toggleBoxHidden: (index) => {
     const next = new Set(get().hiddenBoxes);

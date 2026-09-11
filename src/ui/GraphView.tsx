@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { isExpandable } from "../core/expand";
 import { constrainRectMotion, Rect } from "./graph-geometry";
 import {
@@ -9,7 +9,7 @@ import {
 } from "./graph-scene";
 import { cardSize, TensorCard } from "./TensorCard";
 import { shapeLabel, symbolicExtentLabel } from "./shape-label";
-import { enabledPropResult, planesOf, selectedTensorIds, useStore } from "./store";
+import { enabledPropResult, PANEL_RAIL, planesOf, selectedTensorIds, useStore } from "./store";
 import type { TensorOffset } from "./tensor-layout";
 import { MIN_SIDE_PX, settledTiles } from "./tiling";
 import { overviewLabels } from "./overview-labels";
@@ -359,15 +359,58 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
     fit();
   }, [resolved, fit]);
 
-  // Re-fit when the viewport changes size - panel collapse/restore, panel drag,
-  // window resize. An observer is used rather than a timeout after each of those
-  // actions because it fires when layout has actually settled, and it covers
-  // window resize (which never re-fitted at all) for free.
+  /**
+   * Hold the world still when the left panel opens, closes, or is dragged.
+   *
+   * The scene is translated from this container's top-left corner, and the left
+   * panel *is* that corner: its width is the container's origin. Opening or
+   * closing it therefore slides the whole world by that width, for a gesture
+   * that was about the panel. Only the left panel can do this - the right one
+   * and the window move the far edge, which a top-left origin does not follow.
+   *
+   * The correction has to happen in the same commit as the width change, which
+   * is why it reads the panel's width from the store rather than measuring the
+   * container afterwards. A `ResizeObserver` fires after layout *and paint*, so
+   * compensating there drew the displaced scene for a frame and then pulled it
+   * back - the shift was still happening, just briefly. Here the width and the
+   * transform that cancels it are one render: React flushes a layout effect's
+   * state update before the browser paints, so the displaced position is never
+   * on screen at all.
+   *
+   * `movedRef` is untouched. Cancelling a shift is not a gesture, and a view
+   * that was fitted is still showing everything afterwards.
+   */
+  const leftInset = useStore((s) => (s.panelCollapsed.left ? PANEL_RAIL : s.panelW.left));
+  const leftInsetRef = useRef(leftInset);
+  useLayoutEffect(() => {
+    const dx = leftInset - leftInsetRef.current;
+    leftInsetRef.current = leftInset;
+    if (dx !== 0) setTf((t) => ({ ...t, x: t.x - dx }));
+  }, [leftInset]);
+
+  /**
+   * Keep an untouched overview an overview when the room available changes.
+   *
+   * A window resize genuinely changes what "show me all of it" means, so a view
+   * nobody has moved re-fits. A panel does not: how much room the reader wants
+   * *beside* the graph is not a question answered by moving the graph, and the
+   * left panel's own displacement is already cancelled above. The observer is
+   * used rather than a window listener because it fires when layout has settled
+   * and covers the container reaching a usable size on first paint.
+   */
   useEffect(() => {
     const el = containerRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
+    const panelSignature = () => {
+      const { panelW, panelCollapsed } = useStore.getState();
+      return `${panelCollapsed.left}:${panelW.left}:${panelCollapsed.right}:${panelW.right}`;
+    };
+    let lastPanels = panelSignature();
     const ro = new ResizeObserver(() => {
-      if (!movedRef.current) fit();
+      const panels = panelSignature();
+      const panelDriven = panels !== lastPanels;
+      lastPanels = panels;
+      if (!panelDriven && !movedRef.current) fit();
     });
     ro.observe(el);
     return () => ro.disconnect();

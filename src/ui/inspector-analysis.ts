@@ -3,19 +3,56 @@ import { contributions } from "../core/contribution";
 import { AggregateReadout, coneReadout, computeMetrics } from "../core/metrics";
 import { coneFindings } from "../core/notes";
 import type { PropResult } from "../core/propagate";
-import { fromBox, Region, union } from "../core/region";
+import { count, fromBox, Region, union } from "../core/region";
 import type { ResolvedGraph } from "../core/graph";
-import { anchorTensorId, groupPropResult } from "./store";
+import { analysisTarget, groupPropResult } from "./store";
 import type { BoxProp, Direction, SelPart } from "./store";
 
 export type ConeCost = { flops: number; bytes: number };
 export type ConeBounds = { fused: ConeCost; unfused: ConeCost | null };
 
-/** Tile focus temporarily overrides a selected group; clearing it restores the group. */
-export function analysisTensorId(parts: SelPart[], focus: number | null, group: string | null): string | null {
-  if (focus !== null && parts[focus]) return parts[focus].tensorId;
-  return group && parts.some((part) => part.tensorId === group)
-    ? group : anchorTensorId({ parts }, null);
+/**
+ * Which tensor's tiles the readout below the list describes.
+ *
+ * Deliberately not a function of tile focus. Focus *narrows* within the group -
+ * `groupFocus` below is what applies it - and never re-scopes: a hover is a
+ * preview, and a preview that changes what the panel is about makes the pointer
+ * an editor. It also made the group header unusable, since the header sits
+ * inside the hovered list and the pointer must cross other groups' rows to
+ * reach it. A click that means "go there" pins the tile, and pinning names the
+ * group in the store.
+ *
+ * Falls back to the anchor when the group holds no tiles, which is the state a
+ * workspace with a single group stays in.
+ */
+export function analysisTensorId(parts: SelPart[], group: string | null): string | null {
+  return analysisTarget(parts, group, null).tensorId;
+}
+
+/** The measured tile set; above the attribution cap all group tiles contribute. */
+export function measuredParts(parts: SelPart[], tensorId: string | null, hidden: Set<number>, focus: number | null, attributed: boolean) {
+  const localFocus = attributed ? groupFocus(parts, focus, tensorId) : null;
+  return parts.filter((part, index) => part.tensorId === tensorId &&
+    (!attributed || (!hidden.has(index) && (localFocus === null || index === localFocus))));
+}
+
+export function measuredElements(parts: SelPart[]): number {
+  return count({ boxes: parts.map((part) => part.box), exact: true, reasons: [] });
+}
+
+/**
+ * The focused tile, but only where it belongs to the group being analysed.
+ *
+ * One expression of "focus narrows, it never re-scopes", read by everything
+ * below the tiles list. The list itself keeps the raw focus, because the row
+ * under the pointer should light up whichever group it is in.
+ */
+export function groupFocus(
+  parts: SelPart[],
+  focus: number | null,
+  tensorId: string | null
+): number | null {
+  return focus !== null && parts[focus]?.tensorId === tensorId ? focus : null;
 }
 
 /** Preserve global indices, which own tile colors, while excluding other groups. */

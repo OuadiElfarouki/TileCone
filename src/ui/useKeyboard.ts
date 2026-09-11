@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { anchorTensorId, useStore } from "./store";
+import { analysisTarget, useStore } from "./store";
 import { nudgeDelta, nudgeUnit } from "./grid";
 import { matchesShortcut, SHORTCUTS } from "./shortcuts";
 import { viewAxes } from "./tensor-view";
@@ -92,9 +92,9 @@ export function useKeyboard({
         window.dispatchEvent(new Event(FIT_GRAPH_EVENT));
         return;
       }
-      // Arrow keys and slider keys act on one tensor's axes, so they follow the
-      // anchor: the focused tile's tensor, else the last one drawn on.
-      const anchor = anchorTensorId(s.selection, s.focusedBox);
+      // The same group/focus policy as the inspector and movement action.
+      const target = analysisTarget(s.selection?.parts ?? [], s.analysisGroup, s.perBox ? s.focusedBox : null);
+      const anchor = target.tensorId;
       const cfg = anchor ? s.viewCfgs[anchor] : null;
       const shape = anchor ? s.resolved?.tensors[anchor].resolved : null;
 
@@ -125,9 +125,7 @@ export function useKeyboard({
         if (axis < 0) return;
         e.preventDefault();
         const parts = s.selection?.parts ?? [];
-        const anchorIndex = s.focusedBox !== null && parts[s.focusedBox]
-          ? s.focusedBox
-          : parts.length - 1;
+        const anchorIndex = target.index;
         const interval = parts[anchorIndex]?.box[axis];
         if (!interval) return;
         const delta = nudgeDelta(
