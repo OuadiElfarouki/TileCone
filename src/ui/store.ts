@@ -1270,3 +1270,6 @@ export const useStore = create<State>((set, get) => ({
     }
   },
 }));
+
+/** Four components derive the same boolean from the theme to mix tile hues. */
+export const useDark = (): boolean => useStore((s) => s.theme === "dark");

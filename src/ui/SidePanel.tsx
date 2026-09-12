@@ -3,7 +3,7 @@ import { fromBox } from "../core/region";
 import { EXAMPLES } from "../examples";
 import { tileOf } from "./grid";
 import { selectionToLink, shareTarget } from "./share";
-import { copyText } from "./clipboard";
+import { CopyButton } from "./CopyButton";
 import { enabledPropResult, useStore } from "./store";
 import { matchesShortcut, SHORTCUTS } from "./shortcuts";
 import { viewAxes } from "./tensor-view";
@@ -15,46 +15,36 @@ import { overlayTokens } from "./dsl-highlight";
  * because the source is most of what it encodes.
  */
 function ShareButton(): React.ReactElement {
-  const dslText = useStore((s) => s.dslText);
-  const selection = useStore((s) => s.selection);
-  const direction = useStore((s) => s.direction);
-  const showEntangled = useStore((s) => s.showEntangled);
-  const tileScale = useStore((s) => s.tileScale);
-  const snapToGrid = useStore((s) => s.snapToGrid);
-  const axisMode = useStore((s) => s.axisMode);
-  const tensorOffsets = useStore((s) => s.tensorOffsets);
-  const viewCfgs = useStore((s) => s.viewCfgs);
-  const [copyState, setCopyState] = useState<"copied" | "failed" | null>(null);
-
-  const copy = async () => {
-    const target = shareTarget(location.origin, location.pathname, {
-      dsl: dslText,
-      dir: direction,
-      ent: showEntangled,
-      tile: tileScale,
-      snap: snapToGrid,
-      axes: axisMode,
-      views: Object.fromEntries(Object.entries(viewCfgs).filter(
-        ([, cfg]) => !cfg.projection || cfg.sliders.some((v) => v !== 0)
-      )),
-      pos: Object.fromEntries(
-        Object.entries(tensorOffsets).map(([id, { dx, dy }]) => [id, [dx, dy]])
+  // Read at click time rather than subscribing: the link is built from nine
+  // pieces of state and none of them change how this button looks.
+  const link = () => {
+    const s = useStore.getState();
+    return shareTarget(location.origin, location.pathname, {
+      dsl: s.dslText,
+      dir: s.direction,
+      ent: s.showEntangled,
+      tile: s.tileScale,
+      snap: s.snapToGrid,
+      axes: s.axisMode,
+      views: Object.fromEntries(
+        Object.entries(s.viewCfgs).filter(
+          ([, cfg]) => !cfg.projection || cfg.sliders.some((v) => v !== 0)
+        )
       ),
-      sel: selectionToLink(selection),
+      pos: Object.fromEntries(
+        Object.entries(s.tensorOffsets).map(([id, { dx, dy }]) => [id, [dx, dy]])
+      ),
+      sel: selectionToLink(s.selection),
     });
-    setCopyState((await copyText(target)) ? "copied" : "failed");
-    setTimeout(() => setCopyState(null), 1600);
   };
 
   return (
-    <button
-      className={`mini share-btn${copyState === "failed" ? " copy-failed" : ""}`}
-      onClick={copy}
+    <CopyButton
+      className="mini share-btn"
       title="copy a link that restores this source, selection, graph layout, and analysis views"
-      aria-live="polite"
-    >
-      {copyState === "copied" ? "copied ✓" : copyState === "failed" ? "copy failed" : "share"}
-    </button>
+      label="share"
+      text={link}
+    />
   );
 }
 

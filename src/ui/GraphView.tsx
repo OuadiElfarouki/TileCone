@@ -15,6 +15,7 @@ import { MIN_SIDE_PX, settledTiles } from "./tiling";
 import { overviewLabels } from "./overview-labels";
 import { paintScale } from "./grid";
 import { FIT_GRAPH_EVENT } from "./useKeyboard";
+import { GridControls } from "./GridControls";
 
 type CardDrag = {
   id: string;
@@ -117,7 +118,7 @@ export function graphZoomBounds(
 }
 
 /** Elements that own their pointer gesture instead of panning the viewport. */
-const GRAPH_PAN_BLOCKERS = ".card-slot, .op-node, .zoom-controls";
+const GRAPH_PAN_BLOCKERS = ".card-slot, .op-node, .zoom-controls, .grid-controls";
 
 /** @internal DOM-light hit-test seam for the graph interaction tests. */
 export function canStartGraphPan(target: unknown): boolean {
@@ -154,7 +155,7 @@ export function visibleEntangledTensorIds(
   return visible;
 }
 
-export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }): React.ReactElement {
+export function GraphView(): React.ReactElement {
   const resolved = useStore((s) => s.resolved);
   const graphPx = useStore((s) => s.graphPx);
   const tileScale = useStore((s) => s.tileScale);
@@ -723,13 +724,15 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
         })}
         {renderEdges("front")}
       </div>
+      {/* Everything that changes the canvas, on the canvas: the viewport on the
+          left, the lattice a tile is cut against on the right, where the strip
+          that used to carry it sat. */}
       <div className="graph-hud">
         <div className="zoom-controls">
           <button onClick={() => zoomBy(1 / 1.25)} title="zoom out">−</button>
           <button onClick={() => zoomBy(1.25)} title="zoom in">+</button>
           <button onClick={fit} title="fit to view (f)">fit</button>
           <button onClick={resetLayout} disabled={!Object.keys(tensorOffsets).length} title="restore generated tensor layout (undoable)">reset</button>
-          <button onClick={onShowShortcuts} title="keyboard shortcuts (?)" aria-label="show keyboard shortcuts">?</button>
           {/* At the floor the percentage is a number with no reference — 12%
               of what, and why will it not go lower. `fit` names the scale the
               zoom-out is actually resting against, which D72 made a derived
@@ -738,6 +741,7 @@ export function GraphView({ onShowShortcuts }: { onShowShortcuts: () => void }):
             {Math.abs(tf.k - lowZoom()) < ZOOM_EPSILON ? "fit" : `${Math.round(tf.k * 100)}%`}
           </span>
         </div>
+        <GridControls />
       </div>
     </div>
   );

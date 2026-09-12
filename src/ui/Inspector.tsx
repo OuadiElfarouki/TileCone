@@ -20,20 +20,14 @@ import {
   ConeDirection,
   MAX_PER_BOX_PROPS,
   partsOn,
-  planesOf,
   selectedTensorIds,
   startingTiles,
+  useDark,
   useStore,
 } from "./store";
 import { formatSelectionBox, parseSelectionBox } from "./selection-range";
-import { copyText } from "./clipboard";
-import { hasSymbolicShape } from "./shape-label";
-import {
-  effectiveTileScaleIndex,
-  effectiveTileScaleStops,
-  settledTiles,
-  TILE_SCALE_NONE,
-} from "./tiling";
+import { SHORTCUTS } from "./shortcuts";
+import { CopyButton } from "./CopyButton";
 import { viewAxes } from "./tensor-view";
 
 function fmt(n: number): string {
@@ -43,98 +37,6 @@ function fmt(n: number): string {
   if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
   if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
   return n.toFixed(n < 10 && !Number.isInteger(n) ? 2 : 0);
-}
-
-/** What the graph actually settled on, which the request only asks for. */
-function settledLabel(min: number, max: number): string {
-  return min === max ? `${min} × ${min}` : `${min} × ${min} – ${max} × ${max}`;
-}
-
-function stopLabel(
-  scale: number,
-  settled: { min: number; max: number }
-): string {
-  const lattice = settledLabel(settled.min, settled.max);
-  return scale === TILE_SCALE_NONE ? `none → ${lattice}` : lattice;
-}
-
-/**
- * Setup, pinned below the reading path. The lattice is chosen once and then
- * stops being read, so it earns a strip rather than the top of the panel, but
- * it stays visible, because the slider changes what a drawn tile means.
- */
-function SetupStrip(): React.ReactElement {
-  const resolved = useStore((s) => s.resolved)!;
-  const graphPx = useStore((s) => s.graphPx);
-  const tileScale = useStore((s) => s.tileScale);
-  const setTileScale = useStore((s) => s.setTileScale);
-  const snapToGrid = useStore((s) => s.snapToGrid);
-  const setSnapToGrid = useStore((s) => s.setSnapToGrid);
-  const axisMode = useStore((s) => s.axisMode);
-  const setAxisMode = useStore((s) => s.setAxisMode);
-  const selection = useStore((s) => s.selection);
-  const clearSelection = useStore((s) => s.clearSelection);
-  const detail = useMemo(() => {
-    const planes = planesOf(resolved);
-    const stops = effectiveTileScaleStops(planes, graphPx);
-    const index = effectiveTileScaleIndex(planes, graphPx, stops, tileScale);
-    const settled = stops.map((scale) => settledTiles(planes, scale, graphPx));
-    return { stops, index, settled, labels: stops.map((scale, i) => stopLabel(scale, settled[i])) };
-  }, [resolved, graphPx, tileScale]);
-  const requested = detail.stops[detail.index];
-  const { min, max } = detail.settled[detail.index];
-  const hasSemanticLabels = Object.values(resolved.tensors).some(hasSymbolicShape);
-
-  return (
-    <section className="inspector-setup">
-      <div className="setup-row">
-        <span className="setup-kicker">grid · all tensors</span>
-        <span
-          className="tile-settled"
-          title={
-            requested === TILE_SCALE_NONE
-              ? "one logical tile per element; boundaries are omitted where they are too dense to draw"
-              : min === max
-                ? "the tile every tensor settles on"
-                : "tiles differ per tensor: the fit rule coarsens the largest ones"
-          }
-        >
-          {settledLabel(min, max)}
-        </span>
-        <button
-          className={`mini toggle${snapToGrid ? " on" : ""}`}
-          aria-pressed={snapToGrid}
-          onClick={() => setSnapToGrid(!snapToGrid)}
-          title="snap a drawn box out to whole tiles; off cuts an exact element range"
-        >
-          snap
-        </button>
-        <button
-          className={`mini toggle${axisMode === "symbolic" ? " on" : ""}`}
-          aria-pressed={axisMode === "symbolic"}
-          onClick={() => setAxisMode(axisMode === "symbolic" ? "numeric" : "symbolic")}
-          disabled={!hasSemanticLabels}
-          title="read compact shapes as semantic labels or numeric extents; hover a tensor name for all readings"
-        >
-          {axisMode === "symbolic" ? "labels" : "extents"}
-        </button>
-        <button className="mini clear-all" onClick={clearSelection} disabled={!selection}>
-          clear all
-        </button>
-      </div>
-      <input
-        type="range"
-        min={0}
-        max={Math.max(0, detail.stops.length - 1)}
-        step={1}
-        value={detail.index}
-        onChange={(event) => setTileScale(detail.stops[Number(event.target.value)])}
-        aria-label="tile grid detail"
-        aria-valuetext={detail.labels[detail.index]}
-        title={`global tile detail - ${detail.labels.join(" · ")}`}
-      />
-    </section>
-  );
 }
 
 function SelectionRangeInput({
@@ -259,26 +161,40 @@ function DependencyNotes({
   );
 }
 
+/** Past the cap there is no per-tile propagation left to read, and three places
+ *  used to say so in three different ways. */
+const MERGED_AT_CAP = `over ${MAX_PER_BOX_PROPS} tiles: traced as one merged region, not per tile`;
+/** Both cones report an empty selection the same way. */
+const NO_ENABLED_TILES = "No tiles are enabled, include one above to analyse it.";
+
 const EMPTY_REGION: Region = { boxes: [], exact: true, reasons: [] };
+
+/**
+ * How a readout is attributed to individual tiles: the per-tile propagation
+ * when there is one, which tiles are switched off, which one is focused, and
+ * the theme the tile hues are mixed for. The footprint bar, the row around it
+ * and the section around that all need the same four, so they travel together
+ * rather than being restated at every level.
+ */
+type TileAttribution = {
+  perBox: ReturnType<typeof useStore.getState>["perBox"];
+  hiddenBoxes: Set<number>;
+  focusedBox: number | null;
+  dark: boolean;
+};
 
 function FootprintBar({
   tensorId,
   direction,
   elements,
   totalElements,
-  perBox,
-  hiddenBoxes,
-  focusedBox,
-  dark,
+  attr: { perBox, hiddenBoxes, focusedBox, dark },
 }: {
   tensorId: string;
   direction: ConeDirection;
   elements: number;
   totalElements: number;
-  perBox: ReturnType<typeof useStore.getState>["perBox"];
-  hiddenBoxes: Set<number>;
-  focusedBox: number | null;
-  dark: boolean;
+  attr: TileAttribution;
 }): React.ReactElement {
   if (totalElements <= 0) return <span className="footprint-bar" />;
 
@@ -347,7 +263,6 @@ function FootprintBar({
 /** Slice expressions minus the over-approximation comment the readout appends. */
 const sliceLines = (row: TensorReadout) =>
   row.sliceExprs.filter((line) => !line.startsWith("#"));
-type CopyFeedback = { key: string; state: "copied" | "failed" } | null;
 
 /**
  * One tensor in one direction: how much of it the tile touches, why it has that
@@ -359,24 +274,14 @@ function ConeRow({
   hue,
   flags,
   contribution,
-  perBox,
-  hiddenBoxes,
-  focusedBox,
-  dark,
-  onCopy,
-  copyState,
+  attr,
 }: {
   row: TensorReadout;
   direction: ConeDirection;
   hue: string;
   flags: string[];
   contribution?: Contribution;
-  perBox: ReturnType<typeof useStore.getState>["perBox"];
-  hiddenBoxes: Set<number>;
-  focusedBox: number | null;
-  dark: boolean;
-  onCopy: () => void;
-  copyState: "copied" | "failed" | null;
+  attr: TileAttribution;
 }): React.ReactElement {
   const exprs = sliceLines(row);
   const share = row.totalElements > 0 ? (row.elements / row.totalElements) * 100 : 0;
@@ -413,16 +318,13 @@ function ConeRow({
           )}
         </span>
       </div>
-      {perBox ? (
+      {attr.perBox ? (
         <FootprintBar
           tensorId={row.tensorId}
           direction={direction}
           elements={row.elements}
           totalElements={row.totalElements}
-          perBox={perBox}
-          hiddenBoxes={hiddenBoxes}
-          focusedBox={focusedBox}
-          dark={dark}
+          attr={attr}
         />
       ) : (
         <span
@@ -454,22 +356,26 @@ function ConeRow({
           )}
         </div>
       )}
-      <button
-        className={`mini copy-exprs${copyState === "failed" ? " copy-failed" : ""}`}
+      <CopyButton
+        className="mini copy-exprs"
         title="copy this tensor's slice expressions"
-        onClick={onCopy}
-        aria-live="polite"
-      >
-        {copyState === "copied" ? "copied ✓" : copyState === "failed" ? "copy failed" : "copy"}
-      </button>
+        text={() => exprs.join("\n")}
+        label="copy"
+      />
     </div>
   );
 }
 
+/* One direction, one identity: the heading, the glyph, the paint and the key
+   that toggles it all follow from `direction`, so a call site names only the
+   direction. The shortcut letters come from the manifest that binds them. */
+const CONE = {
+  backward: { title: "Backward Cone", arrow: "↑", paint: "needs", key: SHORTCUTS.needs },
+  forward: { title: "Forward Cone", arrow: "↓", paint: "feeds", key: SHORTCUTS.feeds },
+} as const satisfies Record<ConeDirection, unknown>;
+
 function ConeSection({
   direction,
-  arrow,
-  title,
   rows,
   hue,
   flags,
@@ -477,17 +383,9 @@ function ConeSection({
   enabled,
   onToggle,
   empty,
-  copiedKey,
-  copyFeedback,
-  perBox,
-  hiddenBoxes,
-  focusedBox,
-  dark,
-  onCopy,
+  attr,
 }: {
   direction: ConeDirection;
-  arrow: string;
-  title: string;
   rows: TensorReadout[];
   hue: string;
   flags: Map<string, string[]>;
@@ -495,14 +393,9 @@ function ConeSection({
   enabled: boolean;
   onToggle: () => void;
   empty: string;
-  copiedKey: string | null;
-  copyFeedback: "copied" | "failed" | null;
-  perBox: ReturnType<typeof useStore.getState>["perBox"];
-  hiddenBoxes: Set<number>;
-  focusedBox: number | null;
-  dark: boolean;
-  onCopy: (row: TensorReadout, key: string) => void;
+  attr: TileAttribution;
 }): React.ReactElement {
+  const { title, arrow, paint, key } = CONE[direction];
   const bytes = rows.reduce((total, row) => total + row.bytes, 0);
   const verdicts = contrib ? [...contrib.values()] : [];
   const partial = verdicts.filter((item) => item.partial).length;
@@ -516,12 +409,9 @@ function ConeSection({
           onClick={onToggle}
           aria-pressed={enabled}
           aria-expanded={enabled}
-          title={`${enabled ? "hide" : "show"} ${title.toLowerCase()} (${direction === "backward" ? "u" : "d"})`}
+          title={`${enabled ? "hide" : "show"} ${title.toLowerCase()} (${key.keys[0]})`}
         >
-          <span
-            className={`cone-key ${direction === "backward" ? "needs" : "feeds"}`}
-            aria-hidden
-          />
+          <span className={`cone-key ${paint}`} aria-hidden />
           <span className="cone-arrow" aria-hidden>{arrow}</span>
           <span>{title}</span>
         </button>
@@ -533,25 +423,17 @@ function ConeSection({
       </div>
       {enabled &&
         (rows.length ? (
-          rows.map((row) => {
-            const key = `${title}:${row.tensorId}`;
-            return (
-              <ConeRow
-                key={row.tensorId}
-                row={row}
-                direction={direction}
-                hue={hue}
-                flags={flags.get(row.tensorId) ?? []}
-                contribution={contrib?.get(row.tensorId)}
-                perBox={perBox}
-                hiddenBoxes={hiddenBoxes}
-                focusedBox={focusedBox}
-                dark={dark}
-                copyState={copiedKey === key ? copyFeedback : null}
-                onCopy={() => onCopy(row, key)}
-              />
-            );
-          })
+          rows.map((row) => (
+            <ConeRow
+              key={row.tensorId}
+              row={row}
+              direction={direction}
+              hue={hue}
+              flags={flags.get(row.tensorId) ?? []}
+              contribution={contrib?.get(row.tensorId)}
+              attr={attr}
+            />
+          ))
         ) : (
           <p className="hint">{empty}</p>
         ))}
@@ -564,13 +446,11 @@ function ConeSection({
  * in the tile list, including when the workspace contains a single tile.
  */
 function TileIdentity({
-  onCopyAll,
-  copyState,
+  coneExprs,
   activeTensorId,
   focusedBox,
 }: {
-  onCopyAll: () => void;
-  copyState: "copied" | "failed" | null;
+  coneExprs: () => string;
   activeTensorId: string | null;
   focusedBox: number | null;
 }): React.ReactElement | null {
@@ -578,7 +458,7 @@ function TileIdentity({
   const selection = useStore((s) => s.selection);
   const hiddenBoxes = useStore((s) => s.hiddenBoxes);
   const perBox = useStore((s) => s.perBox);
-  const theme = useStore((s) => s.theme);
+  const dark = useDark();
 
   if (!selection) return null;
   const anchorId = activeTensorId;
@@ -613,21 +493,19 @@ function TileIdentity({
             own index rather than the first one. A merged readout belongs to no
             single hue, so it carries none. */}
         {!merged && (
-          <i className="swatch" style={{ background: rgbCss(boxColor(index, theme === "dark")) }} />
+          <i className="swatch" style={{ background: rgbCss(boxColor(index, dark)) }} />
         )}
         <span>
           {measured.length === 0 ? "no enabled tiles" : merged
             ? `${measured.length} of ${group.length} tiles · merged`
             : `tile ${ordinal + 1} of ${group.length}`}
         </span>
-        <button
-          className={`mini copy-cone${copyState === "failed" ? " copy-failed" : ""}`}
-          onClick={onCopyAll}
+        <CopyButton
+          className="mini copy-cone"
           title="copy slice expressions for everything this tile needs and feeds"
-          aria-live="polite"
-        >
-          {copyState === "copied" ? "copied ✓" : copyState === "failed" ? "copy failed" : "copy all"}
-        </button>
+          text={coneExprs}
+          label="copy all"
+        />
       </div>
       <div className="tile-name">
         <b
@@ -659,12 +537,12 @@ function RegionEditor({ activeTensorId, onSelectGroup }: {
   const pinned = useStore((s) => s.pinnedBox);
   const hoverBox = useStore((s) => s.hoverBox);
   const togglePinBox = useStore((s) => s.togglePinBox);
+  const clearSelection = useStore((s) => s.clearSelection);
   const toggleBoxHidden = useStore((s) => s.toggleBoxHidden);
-  const theme = useStore((s) => s.theme);
+  const dark = useDark();
 
   if (!resolved || !selection || selection.parts.length === 0) return null;
   const parts = selection.parts;
-  const dark = theme === "dark";
   /**
    * Tiles in drawn order, split into one group per tensor.
    *
@@ -689,8 +567,13 @@ function RegionEditor({ activeTensorId, onSelectGroup }: {
 
   return (
     <div className="ins-section">
-      <div className="ins-title">Tiles</div>
-      {!perBox && <p className="hint">too many tiles to trace individually (over {MAX_PER_BOX_PROPS}), showing merged needs and feeds</p>}
+      <div className="ins-title tiles">
+        Tiles
+        <button className="mini" onClick={clearSelection} title="remove every tile from the selection">
+          clear all
+        </button>
+      </div>
+      {!perBox && <p className="hint">{MERGED_AT_CAP}</p>}
       {overlap.summed > overlap.unique && (
         <p className="hint overlap">
           tiles overlap: {fmt(overlap.summed)} counted across parts,{" "}
@@ -714,10 +597,8 @@ function RegionEditor({ activeTensorId, onSelectGroup }: {
                 <span className="muted">
                   {group.rows.length} tile{group.rows.length === 1 ? "" : "s"}
                 </span>
-                {group.tensorId === activeTensorId ? (
+                {group.tensorId === activeTensorId && (
                   <span className="tile-group-mark">analysed below</span>
-                ) : (
-                  <span className="tile-group-mark muted">select group or tile</span>
                 )}
               </div>
             )}
@@ -839,8 +720,8 @@ function EmptyPanel(): React.ReactElement {
             Co-access Surface
           </dt>
           <dd>
-            Everything on the same level as the tile that is co-accessed with it. 
-            Not a hop along the graph, press <kbd>e</kbd>.
+            Everything on the same level as the tile that is co-accessed with it.
+            Not a hop along the graph; press <kbd>e</kbd> to show it.
           </dd>
         </div>
       </dl>
@@ -866,7 +747,7 @@ function EmptyPanel(): React.ReactElement {
 
 export function Inspector(): React.ReactElement {
   const resolved = useStore((s) => s.resolved);
-  const theme = useStore((s) => s.theme);
+  const dark = useDark();
   const selection = useStore((s) => s.selection);
   const byTensorRes = useStore((s) => s.byTensorRes);
   const direction = useStore((s) => s.direction);
@@ -897,12 +778,9 @@ export function Inspector(): React.ReactElement {
   /** Everything below the tiles list reads the narrowed focus, never the raw
    *  one, so a hover outside the group cannot reach any of it. */
   const focusedBox = groupFocus(parts, rawFocus, activeTensorId);
-  const scopedAttribution = useMemo(() => groupAttribution(perBox, parts, activeTensorId),
-    [perBox, parts, activeTensorId]);
   const selectGroup = useStore((s) => s.selectAnalysisGroup);
 
   const [reuse, setReuse] = useState<ReuseEstimate[] | null>(null);
-  const [copyFeedback, setCopyFeedback] = useState<CopyFeedback>(null);
 
   const {
     metrics,
@@ -935,7 +813,13 @@ export function Inspector(): React.ReactElement {
   const groupParts = activeTensorId ? partsOn(selection, activeTensorId) : [];
   const selBoxes = groupParts.length;
   const enabledBoxes = groupParts.filter((part) => !hiddenBoxes.has(part.index)).length;
-  const dark = theme === "dark";
+  /** What the cone sections need to paint a readout per tile, in one piece. */
+  const attribution: TileAttribution = {
+    perBox: groupAttribution(perBox, parts, activeTensorId),
+    hiddenBoxes,
+    focusedBox,
+    dark,
+  };
   /** Past the cap the cones are still correct, but merged rather than attributed.
    *  The cap counts the whole selection, because that is what `perBox` tracks. */
   const merged = !perBox;
@@ -958,12 +842,12 @@ export function Inspector(): React.ReactElement {
   // and is therefore not something it reads or feeds.
   const seedIds = [...seeds.keys()];
   const upstreamEmpty = enabledBoxes === 0
-    ? "No tiles are enabled, include one above to analyse it."
+    ? NO_ENABLED_TILES
     : seedIds.some((id) => resolved.tensors[id].producer)
       ? "Everything the selection needs is itself selected."
       : "Every selected tensor is a graph input, it needs nothing earlier.";
   const downstreamEmpty = enabledBoxes === 0
-    ? "No tiles are enabled, include one above to analyse it."
+    ? NO_ENABLED_TILES
     : seedIds.some((id) => resolved.consumers[id]?.length)
       ? "Everything the selection feeds is itself selected."
       : "Nothing consumes this selection, it feeds no later tensor.";
@@ -1033,17 +917,6 @@ export function Inspector(): React.ReactElement {
     setReuse(estimateInputReuse(resolved, { tensorId: probe.tensorId, region: fromBox(probe.box) }));
   };
 
-  const copy = async (text: string, key: string) => {
-    setCopyFeedback({ key, state: (await copyText(text)) ? "copied" : "failed" });
-    setTimeout(() => setCopyFeedback(null), 1600);
-  };
-  const copyRow = (row: TensorReadout, key: string) => copy(sliceLines(row).join("\n"), key);
-  const copyCone = () =>
-    copy(
-      [...upstream, ...downstream].flatMap((row) => sliceLines(row)).join("\n"),
-      "cone"
-    );
-
   return (
     <aside className="inspector">
       <div className="inspector-scroll">
@@ -1054,8 +927,9 @@ export function Inspector(): React.ReactElement {
             <TileIdentity
               activeTensorId={activeTensorId}
               focusedBox={focusedBox}
-              onCopyAll={copyCone}
-              copyState={copyFeedback?.key === "cone" ? copyFeedback.state : null}
+              coneExprs={() =>
+                [...upstream, ...downstream].flatMap((row) => sliceLines(row)).join("\n")
+              }
             />
             {/* The tiles list is the selector for everything below it: it picks
                 which cone the two sections describe, so it sits above them. */}
@@ -1063,26 +937,16 @@ export function Inspector(): React.ReactElement {
 
             <ConeSection
               direction="backward"
-              arrow="↑"
-              title="Backward Cone"
               rows={upstream}
               hue={coneHue("upstream")}
               flags={findings?.flags ?? new Map()}
               enabled={showUpstream}
               onToggle={() => toggleDirection("backward")}
               empty={upstreamEmpty}
-              copiedKey={copyFeedback?.key ?? null}
-              copyFeedback={copyFeedback?.state ?? null}
-              perBox={scopedAttribution}
-              hiddenBoxes={hiddenBoxes}
-              focusedBox={focusedBox}
-              dark={dark}
-              onCopy={copyRow}
+              attr={attribution}
             />
             <ConeSection
               direction="forward"
-              arrow="↓"
-              title="Forward Cone"
               rows={downstream}
               hue={coneHue("downstream")}
               flags={new Map()}
@@ -1090,13 +954,7 @@ export function Inspector(): React.ReactElement {
               enabled={showDownstream}
               onToggle={() => toggleDirection("forward")}
               empty={downstreamEmpty}
-              copiedKey={copyFeedback?.key ?? null}
-              copyFeedback={copyFeedback?.state ?? null}
-              perBox={scopedAttribution}
-              hiddenBoxes={hiddenBoxes}
-              focusedBox={focusedBox}
-              dark={dark}
-              onCopy={copyRow}
+              attr={attribution}
             />
             {direction === "none" && (
               <p className="view-mode-note" role="status">
@@ -1105,8 +963,8 @@ export function Inspector(): React.ReactElement {
             )}
             {showDownstream && contrib?.capped && (
               <p className="hint">
-                more than {MAX_CONTRIBUTION_PROBES} tensors are fed: rows below do not say
-                whether this tile completes them or only feeds them
+                more than {MAX_CONTRIBUTION_PROBES} tensors are fed: the rows above do not
+                say whether this tile completes them or only feeds them
               </p>
             )}
 
@@ -1120,7 +978,7 @@ export function Inspector(): React.ReactElement {
                   onClick={toggleEntangled}
                   aria-pressed={showEntangled}
                   aria-expanded={showEntangled}
-                  title={`${showEntangled ? "hide" : "show"} what it is combined with (e)`}
+                  title={`${showEntangled ? "hide" : "show"} the co-access surface (${SHORTCUTS.entangled.keys[0]})`}
                 >
                   <span className="cone-key combined" aria-hidden="true" />
                   Co-access Surface
@@ -1128,9 +986,7 @@ export function Inspector(): React.ReactElement {
               </div>
               {showEntangled &&
                 (merged ? (
-                  <p className="hint">
-                    too many tiles to trace individually (over {MAX_PER_BOX_PROPS})
-                  </p>
+                  <p className="hint">{MERGED_AT_CAP}</p>
                 ) : entangledRows.length ? (
                   <ul className="ent-list">
                     {entangledRows.map((row, i) => (
@@ -1149,9 +1005,7 @@ export function Inspector(): React.ReactElement {
                     ))}
                   </ul>
                 ) : (
-                  <p className="hint">
-                    Nothing.
-                  </p>
+                  <p className="hint">Nothing meets this tile in a shared term.</p>
                 ))}
             </section>
 
@@ -1229,10 +1083,8 @@ export function Inspector(): React.ReactElement {
                   </div>
                   {!metrics.exact && (
                     <p className="hint overlap">
-                      Bounds, not counts: {metrics.reasons.join(", ")} widened a
-                      region these figures were measured on. Read every ≤ as “no
-                      more than” - those are never understated. The two ~
-                      intensities are ratios of such figures, so they are
+                      Bounds, not counts: read ≤ as “no more than”, never understated.
+                      The ~ intensities are ratios of such figures, so they are
                       disturbed in an unknown direction.
                     </p>
                   )}
@@ -1275,7 +1127,6 @@ export function Inspector(): React.ReactElement {
           </>
         )}
       </div>
-      <SetupStrip />
     </aside>
   );
 }

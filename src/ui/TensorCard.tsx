@@ -23,7 +23,7 @@ import {
   stripeAngleDeg,
 } from "./grid";
 import { aggregateColors, boxColor } from "./palette";
-import { BoxProp, Direction, partsOn, useStore } from "./store";
+import { BoxProp, Direction, partsOn, useDark, useStore } from "./store";
 import { cardPx, planeExtents } from "./tiling";
 import { shapeLabel, shapeReadings } from "./shape-label";
 import { OVERVIEW_SCALE } from "./overview-labels";
@@ -348,7 +348,6 @@ export function TensorCard({
   const axisMode = useStore((s) => s.axisMode);
   const tileScale = useStore((s) => s.tileScale);
   const graphPx = useStore((s) => s.graphPx);
-  const theme = useStore((s) => s.theme);
   const setDragging = useStore((s) => s.setDragging);
   const showEntangled = useStore((s) => s.showEntangled);
   const entangledAll = useStore((s) => s.entangled);
@@ -380,7 +379,7 @@ export function TensorCard({
   const isSelected = parts.length > 0;
   const back = backwardRes?.tensors.get(tensor.id);
   const fwd = forwardRes?.tensors.get(tensor.id);
-  const dark = theme === "dark";
+  const dark = useDark();
 
   useEffect(() => {
     const canvas = canvasRef.current;
