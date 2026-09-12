@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { analysisTarget, useStore } from "./store";
+import { analysisTarget, useStore, type InspectorTab } from "./store";
 import { nudgeDelta, nudgeUnit } from "./grid";
 import { matchesShortcut, SHORTCUTS } from "./shortcuts";
 import { viewAxes } from "./tensor-view";
@@ -21,6 +21,20 @@ const ownsArrowKeys = (el: EventTarget | null) => {
   const t = el as HTMLElement | null;
   return isTyping(t) || !!t?.closest?.('[role="listbox"], [role="menu"]');
 };
+
+/**
+ * The tile a removal acts on, or `null` when the keys should do nothing.
+ *
+ * Unlike a move, a removal takes only a tile that is actually pointed at: the
+ * focused one, hovered or pinned, which is the tile the canvas draws with the
+ * emphasised border and the list lights. The arrows may fall back to the anchor
+ * because a move is visible where it lands and is reversed by the opposite key;
+ * a removal that took the anchor deleted a tile the reader had just let go of
+ * with Escape, which is the one gesture that means "I am done pointing at it".
+ */
+export function removalTarget(focusedBox: number | null, tab: InspectorTab): number | null {
+  return tab === "dependencies" ? focusedBox : null;
+}
 
 /** GraphView owns viewport geometry; the one global keyboard listener asks it
  * to fit through this UI-local event rather than installing a second listener. */
@@ -149,13 +163,12 @@ export function useKeyboard({
         return;
       }
 
-      /* Remove the tile the keyboard is already driving: the one the arrows
-         move and the one the list lights, which is the focused tile when there
-         is one and the last drawn otherwise. `deleteBox` records a workspace
-         history entry, so this is one Ctrl/Cmd+Z away like any other tile edit. */
-      if (editsTiles && matchesShortcut(e, SHORTCUTS.deleteTile)) {
+      /* `deleteBox` records a workspace history entry, so a removal is one
+         Ctrl/Cmd+Z away like any other tile edit. */
+      const removable = removalTarget(s.focusedBox, s.inspectorTab);
+      if (matchesShortcut(e, SHORTCUTS.deleteTile) && removable !== null) {
         e.preventDefault();
-        s.deleteBox(target.index);
+        s.deleteBox(removable);
         return;
       }
 

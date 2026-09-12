@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Inspector } from "../ui/Inspector";
+import { Inspector, neighbourShares, reuseQualifiers } from "../ui/Inspector";
 import { compileDSL } from "../parse/compiler";
 import {
   groupPropResult,
@@ -13,6 +13,7 @@ import {
   type SelPart,
 } from "../ui/store";
 import { executeQuery } from "../core/executor";
+import { removalTarget } from "../ui/useKeyboard";
 import { box, count, fromBox } from "../core/region";
 import type { ResolvedGraph } from "../core/graph";
 import { analysisTensorId, groupAttribution, groupFocus, measuredParts, measuredElements } from "../ui/inspector-analysis";
@@ -57,6 +58,30 @@ const byTensorOf = (resolved: ResolvedGraph, parts: SelPart[]) => {
   }
   return out;
 };
+
+describe("reuse presentation", () => {
+  it("distinguishes sampling uncertainty from conservative geometry", () => {
+    expect(reuseQualifiers({ exhaustive: true, geometryExact: true }))
+      .toEqual({ count: "", fraction: "" });
+    expect(reuseQualifiers({ exhaustive: true, geometryExact: false }))
+      .toEqual({ count: "≤ ", fraction: "~ " });
+    expect(reuseQualifiers({ exhaustive: false, geometryExact: true }))
+      .toEqual({ count: "~ ", fraction: "~ " });
+    expect(reuseQualifiers({ exhaustive: false, geometryExact: false }))
+      .toEqual({ count: "~ ", fraction: "~ " });
+  });
+
+  it("keeps neighbour precision and approximation reasons visible", () => {
+    expect(neighbourShares([
+      { axis: 0, delta: -1, sharedFraction: 0.5, exact: false, reasons: ["box cap"] },
+      { axis: 0, delta: 1, sharedFraction: 0.5, exact: true, reasons: [] },
+      { axis: 1, delta: 1, sharedFraction: 1, exact: true, reasons: [] },
+    ], (axis) => `ax${axis}`)).toEqual({
+      text: "ax0 −~50% / +50% · ax1 100%",
+      reasons: ["box cap"],
+    });
+  });
+});
 
 describe("tile groups", () => {
   it("counts the enabled union in the header, including the cap fallback", () => {
@@ -260,17 +285,15 @@ D = matmul(CC, W)
     expect(groupFocus(S().selection!.parts, S().focusedBox, active())).toBe(2);
   });
 
-  /* What the Del binding removes: the tile the arrows already move, which is
-     the focused one when there is one and the last drawn otherwise. */
-  it("removes the tile the keyboard is driving, dropping the pin with it", () => {
+  /* What the Del binding removes: only a tile that is actually pointed at. */
+  it("removes the focused tile, dropping the pin with it", () => {
     const drawn = S().selection!.parts.length;
-    const anchorOf = () =>
-      analysisTarget(S().selection!.parts, S().analysisGroup, S().perBox ? S().focusedBox : null);
-    expect(anchorOf().index).toBe(drawn - 1);
+    expect(removalTarget(S().focusedBox, S().inspectorTab)).toBeNull();
 
     S().togglePinBox(0);
-    expect(anchorOf().index).toBe(0);
-    S().deleteBox(anchorOf().index);
+    const victim = removalTarget(S().focusedBox, S().inspectorTab);
+    expect(victim).toBe(0);
+    S().deleteBox(victim!);
 
     expect(S().selection!.parts).toHaveLength(drawn - 1);
     // The removed tile was the pinned one, and a surviving index would now name
@@ -279,6 +302,11 @@ D = matmul(CC, W)
     expect(S().focusedBox).toBeNull();
     S().undoWorkspace();
     expect(S().selection!.parts).toHaveLength(drawn);
+
+    // Escape means "I am done pointing at it", so the key stops acting.
+    S().togglePinBox(0);
+    S().clearFocus();
+    expect(removalTarget(S().focusedBox, S().inspectorTab)).toBeNull();
   });
 
   it("retires a group once nothing is drawn on it", () => {
@@ -321,7 +349,7 @@ D = matmul(CC, W)
     const dependencies = render();
     expect(dependencies).toContain("Cost to compute");
     expect(dependencies).toContain("Backward Cone");
-    expect(dependencies).toContain("Shared across tiles");
+    expect(dependencies).toContain("Shared graph-input demand");
     expect(dependencies).not.toContain("Arithmetic intensity");
     expect(dependencies).not.toContain("Reuse sweep");
     expect(dependencies).not.toContain("materialized views, and no cross-op cache reuse");
@@ -347,6 +375,23 @@ D = matmul(CC, W)
     /* No roving tabindex, and no arrow handler behind it: the arrows are the
        tile's, and a focused tab that answered them shadowed that binding. */
     expect(html).not.toContain("tabindex");
+  });
+
+  it("reports when per-tile sharing is unavailable past the attribution cap", () => {
+    S().setSelection("D", fromBox(box([0, 1], [0, 1])), "replace");
+    for (let index = 1; index <= MAX_PER_BOX_PROPS; index++) {
+      S().setSelection(
+        "D",
+        fromBox(box([index * 2, index * 2 + 1], [0, 1])),
+        "union"
+      );
+    }
+
+    expect(S().selection!.parts).toHaveLength(MAX_PER_BOX_PROPS + 1);
+    expect(S().perBox).toBeNull();
+    const html = render();
+    expect(html).toContain(`Per-tile sharing is unavailable above ${MAX_PER_BOX_PROPS} total tiles.`);
+    expect(html).not.toContain("Enable and analyse at least two tiles together");
   });
 
   it("does not render another group's entanglement in the inspector", () => {

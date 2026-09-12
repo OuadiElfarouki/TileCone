@@ -1,35 +1,43 @@
 import { executeQuery } from "./executor";
 import { ResolvedGraph } from "./graph";
 import { PropResult, Selection } from "./propagate";
-import { count, fromBox, intersect } from "./region";
+import { count, fromBox, intersect, isEmpty } from "./region";
 import { DTYPE_BYTES } from "./dtypes";
 
 export type ReuseEstimate = {
   tensorId: string;
-  touches: number;
   probes: number;
   totalTiles: number;
   estimatedTiles: number;
   exhaustive: boolean;
   /** Average fraction of the anchor footprint shared by overlapping grid tiles. */
   meanSharedFraction: number | null;
-  exact: boolean;
+  /** Precision of the propagated regions, independent of sampling error. */
+  geometryExact: boolean;
   reasons: string[];
   /** Local probes displaced by one tile extent, not a claim of global invariance. */
-  neighbors: { axis: number; delta: number; sharedFraction: number; exact: boolean }[];
+  neighbors: {
+    axis: number;
+    delta: number;
+    sharedFraction: number;
+    exact: boolean;
+    reasons: string[];
+  }[];
 };
 
 export type InputSharing = {
   tensorId: string;
-  tiles: number;
-  independentBytes: number;
-  unionBytes: number;
-  duplicateBytes: number | null;
-  exact: boolean;
+  selectedTiles: number;
+  contributingTiles: number;
+  summedDemandBytes: number;
+  distinctDemandBytes: number;
+  duplicateDemandBytes: number;
+  geometryExact: boolean;
   reasons: string[];
 };
 
-/** Leaf footprints only; excludes cache effects, internal rereads and output traffic.
+/** Element-granular leaf demand only; excludes memory transactions, caches,
+ * internal reads and output traffic. This is shareable footprint, not measured traffic.
  * Count a represented union directly, without introducing a box-cap approximation. */
 export function inputSharing(graph: ResolvedGraph, cones: PropResult[]): InputSharing[] {
   if (new Set(cones.flatMap((cone) => cone.roots)).size > 1)
@@ -37,17 +45,29 @@ export function inputSharing(graph: ResolvedGraph, cones: PropResult[]): InputSh
   return Object.values(graph.tensors).filter((t) => !t.producer).flatMap((input) => {
     const regions = cones.flatMap((cone) => {
       const region = cone.tensors.get(input.id)?.region;
-      return region ? [region] : [];
+      return region && !isEmpty(region) ? [region] : [];
     });
     const boxes = regions.flatMap((region) => region.boxes);
     if (!boxes.length) return [];
     const exact = regions.every((region) => region.exact);
     const reasons = [...new Set(regions.flatMap((region) => region.reasons))];
     const bytes = DTYPE_BYTES[input.dtype];
-    const independentBytes = regions.reduce((sum, region) => sum + count(region) * bytes, 0);
-    const unionBytes = count({ boxes, exact, reasons }) * bytes;
-    return [{ tensorId: input.id, tiles: cones.length, independentBytes, unionBytes,
-      duplicateBytes: exact ? Math.max(0, independentBytes - unionBytes) : null, exact, reasons }];
+    const summedDemandBytes = regions.reduce((sum, region) => sum + count(region) * bytes, 0);
+    const distinctDemandBytes = count({ boxes, exact, reasons }) * bytes;
+    /* This difference remains an upper bound when regions are conservative.
+       At each element, widening can only increase the number of tile regions
+       containing it; max(membership - 1, 0) is monotone in that membership. */
+    const duplicateDemandBytes = Math.max(0, summedDemandBytes - distinctDemandBytes);
+    return [{
+      tensorId: input.id,
+      selectedTiles: cones.length,
+      contributingTiles: regions.length,
+      summedDemandBytes,
+      distinctDemandBytes,
+      duplicateDemandBytes,
+      geometryExact: exact,
+      reasons,
+    }];
   });
 }
 
@@ -103,7 +123,6 @@ export function estimateInputReuse(
   const flatIndices = sampledTileIndices(totalTiles, sampleCap, seed);
   const inputs = Object.values(graph.tensors).filter((candidate) =>
     !candidate.producer && current.tensors.has(candidate.id));
-  const touches = new Map(inputs.map((input) => [input.id, 0]));
   const estimated = new Map(inputs.map((input) => [input.id, 0]));
   const overlapTotals = new Map(inputs.map((input) => [input.id, 0]));
   const exact = new Map(inputs.map((input) => [input.id, current.tensors.get(input.id)!.region.exact]));
@@ -148,7 +167,6 @@ export function estimateInputReuse(
     for (const input of inputs) {
       const probed = overlap(input.id, probe);
       if (probed.fraction <= 0) continue; // see NOTE below: a reported miss is a true miss
-      touches.set(input.id, touches.get(input.id)! + 1);
       estimated.set(input.id, estimated.get(input.id)! + weight);
       overlapTotals.set(input.id, overlapTotals.get(input.id)! + probed.fraction * weight);
       if (!probed.exact) {
@@ -160,14 +178,15 @@ export function estimateInputReuse(
 
   /* NOTE: only a probe that reported a touch can have reported it falsely.
      Regions are over-approximations, so an empty intersection of two of them is
-     an empty intersection of the truth, and the count stays an upper bound
-     rather than an unknown.
+     an empty intersection of the truth. Region widening therefore makes an
+     exhaustive count an upper bound. A sampled sweep remains an estimate in
+     either direction because a sample stands in for every tile in its stratum.
 
      Probe local spatial sharing independently of the global sample. Keep the
      other coordinates fixed, and skip out-of-bounds neighbors (no edge
      resizing). These probes are not part of the sampled count, so their
      precision is reported per neighbor and does not travel into the
-     estimate's own `exact`. */
+     estimate's own `geometryExact`. */
   shape.forEach((extent, axis) => {
     for (const delta of [-1, 1]) {
       const lo = rootBox[axis].lo + delta * tileExtents[axis];
@@ -177,20 +196,25 @@ export function estimateInputReuse(
       const probe = executeQuery(graph, { tensorId: root.tensorId, region: fromBox(box), direction: "backward" }).backward!;
       for (const input of inputs) {
         const result = overlap(input.id, probe);
-        neighbors.get(input.id)!.push({ axis, delta, sharedFraction: result.fraction, exact: result.exact });
+        neighbors.get(input.id)!.push({
+          axis,
+          delta,
+          sharedFraction: result.fraction,
+          exact: result.exact,
+          reasons: result.reasons,
+        });
       }
     }
   });
 
   return inputs.map((input) => ({
     tensorId: input.id,
-    touches: touches.get(input.id)!,
     probes: flatIndices.length,
     totalTiles,
     estimatedTiles: estimated.get(input.id)!,
     exhaustive: flatIndices.length === totalTiles,
     meanSharedFraction: estimated.get(input.id)! > 0 ? overlapTotals.get(input.id)! / estimated.get(input.id)! : null,
-    exact: exact.get(input.id)!,
+    geometryExact: exact.get(input.id)!,
     reasons: [...reasons.get(input.id)!],
     neighbors: neighbors.get(input.id)!,
   }));

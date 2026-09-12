@@ -21,16 +21,15 @@ describe("reuse estimation", () => {
     expect(result).toEqual([
       {
         tensorId: "X",
-        touches: 1,
         probes: 2,
         totalTiles: 2,
         estimatedTiles: 1,
         exhaustive: true,
         meanSharedFraction: 1,
-        exact: true,
+        geometryExact: true,
         reasons: [],
         // The tile below the anchor is out of bounds and is not resized to fit.
-        neighbors: [{ axis: 0, delta: 1, sharedFraction: 0, exact: true }],
+        neighbors: [{ axis: 0, delta: 1, sharedFraction: 0, exact: true, reasons: [] }],
       },
     ]);
   });
@@ -60,12 +59,12 @@ describe("reuse estimation", () => {
 
     // Stepping along C's columns keeps A's rows and moves off B's columns.
     expect(a.neighbors).toEqual([
-      { axis: 0, delta: 1, sharedFraction: 0, exact: true },
-      { axis: 1, delta: 1, sharedFraction: 1, exact: true },
+      { axis: 0, delta: 1, sharedFraction: 0, exact: true, reasons: [] },
+      { axis: 1, delta: 1, sharedFraction: 1, exact: true, reasons: [] },
     ]);
     expect(b.neighbors).toEqual([
-      { axis: 0, delta: 1, sharedFraction: 1, exact: true },
-      { axis: 1, delta: 1, sharedFraction: 0, exact: true },
+      { axis: 0, delta: 1, sharedFraction: 1, exact: true, reasons: [] },
+      { axis: 1, delta: 1, sharedFraction: 0, exact: true, reasons: [] },
     ]);
   });
 
@@ -93,6 +92,20 @@ describe("reuse estimation", () => {
     expect(estimateInputReuse(resolved, root, { sampleCap: 12, seed: 1234 })).toEqual(first);
   });
 
+  it("treats a sampled result as an estimate that may undershoot", () => {
+    const { resolved } = compileDSL("X = Tensor(100, dtype=fp32)\nY = identity(X)\n");
+    const [sampled] = estimateInputReuse(resolved, {
+      tensorId: "Y",
+      region: fromBox(box([0, 2])),
+    }, { sampleCap: 12, seed: 0 });
+
+    // Only tile zero overlaps. Seed zero samples another tile from the first
+    // four-tile stratum, proving that sampling is not an upper bound.
+    expect(sampled.exhaustive).toBe(false);
+    expect(sampled.geometryExact).toBe(true);
+    expect(sampled.estimatedTiles).toBe(0);
+  });
+
   it("rejects a sample cap that cannot describe a sweep", () => {
     const { resolved } = compileDSL("X = Tensor(4, dtype=fp32)\nY = identity(X)\n");
     const root = { tensorId: "Y", region: fromBox(box([0, 2])) };
@@ -101,7 +114,7 @@ describe("reuse estimation", () => {
 });
 
 describe("input sharing across the enabled tiles", () => {
-  it("separates bytes read twice from bytes read once", () => {
+  it("separates duplicate graph-input demand from distinct demand", () => {
     const { resolved } = compileDSL(GEMM);
     // Two tiles side by side in the same tile-row of C.
     const cones = [
@@ -110,22 +123,58 @@ describe("input sharing across the enabled tiles", () => {
     ];
     const [a, b] = inputSharing(resolved, cones);
 
-    // Both tiles read the same 2 x 8 band of A: half of what they read is a re-read.
+    // Both cones demand the same 2 x 8 band of A, so half of their summed
+    // element demand is duplicate. This does not assume a hardware reload.
     expect(a).toEqual({
       tensorId: "A",
-      tiles: 2,
-      independentBytes: 2 * 2 * 8 * 2,
-      unionBytes: 2 * 8 * 2,
-      duplicateBytes: 2 * 8 * 2,
-      exact: true,
+      selectedTiles: 2,
+      contributingTiles: 2,
+      summedDemandBytes: 2 * 2 * 8 * 2,
+      distinctDemandBytes: 2 * 8 * 2,
+      duplicateDemandBytes: 2 * 8 * 2,
+      geometryExact: true,
       reasons: [],
     });
-    // The two tiles read disjoint columns of B, so nothing is fetched twice.
-    expect([b.tensorId, b.duplicateBytes, b.independentBytes]).toEqual([
+    // The two cones demand disjoint columns of B, so none of it is duplicate.
+    expect([b.tensorId, b.duplicateDemandBytes, b.summedDemandBytes]).toEqual([
       "B",
       0,
       2 * 8 * 2 * 2,
     ]);
+  });
+
+  it("counts only tiles whose cone reaches a given input", () => {
+    const { resolved } = compileDSL(`A = Tensor(2, dtype=fp16)
+B = Tensor(2, dtype=fp16)
+C = concat(A, B, axis=0)
+`);
+    const rows = inputSharing(resolved, [
+      coneOf(resolved, "C", fromBox(box([0, 2]))),
+      coneOf(resolved, "C", fromBox(box([2, 4]))),
+    ]);
+
+    expect(rows.map((row) => [row.tensorId, row.contributingTiles, row.selectedTiles]))
+      .toEqual([["A", 1, 2], ["B", 1, 2]]);
+  });
+
+  it("keeps duplicate demand as an upper bound for widened footprints", () => {
+    const { resolved } = compileDSL("X = Tensor(8, dtype=fp32)\nY = identity(X)\n");
+    const first = coneOf(resolved, "Y", fromBox(box([0, 2])));
+    const second = coneOf(resolved, "Y", fromBox(box([3, 5])));
+    first.tensors.set("X", {
+      region: { boxes: [box([0, 3])], exact: false, reasons: ["test widening"] },
+      depth: 1,
+    });
+    second.tensors.set("X", {
+      region: { boxes: [box([2, 5])], exact: false, reasons: ["test widening"] },
+      depth: 1,
+    });
+
+    const [row] = inputSharing(resolved, [first, second]);
+    expect(row.geometryExact).toBe(false);
+    expect(row.summedDemandBytes).toBe(6 * 4);
+    expect(row.distinctDemandBytes).toBe(5 * 4);
+    expect(row.duplicateDemandBytes).toBe(1 * 4);
   });
 
   it("refuses to compare tiles that live on different tensors", () => {

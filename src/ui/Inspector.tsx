@@ -266,19 +266,43 @@ function FootprintBar({
  * shares with this tile. Both directions usually agree, and printing "50/50%"
  * for that would be noise, so equal shares collapse to one figure.
  */
-function neighbourShares(
+export function neighbourShares(
   neighbors: ReuseEstimate["neighbors"],
   label: (axis: number) => string
-): string {
-  const byAxis = new Map<number, number[]>();
+): { text: string; reasons: string[] } {
+  const byAxis = new Map<number, ReuseEstimate["neighbors"]>();
+  const reasons = new Set<string>();
   for (const probe of neighbors) {
     const shares = byAxis.get(probe.axis) ?? [];
-    shares.push(Math.round(probe.sharedFraction * 100));
+    shares.push(probe);
     byAxis.set(probe.axis, shares);
+    if (!probe.exact) probe.reasons.forEach((reason) => reasons.add(reason));
   }
-  return [...byAxis]
-    .map(([axis, shares]) => `${label(axis)} ${[...new Set(shares)].join("/")}%`)
+  const text = [...byAxis]
+    .map(([axis, probes]) => {
+      const values = probes.map((probe) =>
+        `${probe.exact ? "" : "~"}${Math.round(probe.sharedFraction * 100)}%`
+      );
+      const distinct = [...new Set(values)];
+      if (distinct.length === 1) return `${label(axis)} ${distinct[0]}`;
+      return `${label(axis)} ${probes.map((probe, index) =>
+        `${probe.delta < 0 ? "−" : "+"}${values[index]}`
+      ).join(" / ")}`;
+    })
     .join(" · ");
+  return { text, reasons: [...reasons] };
+}
+
+/** Sampling and conservative geometry are independent sources of uncertainty. */
+export function reuseQualifiers(
+  estimate: Pick<ReuseEstimate, "exhaustive" | "geometryExact">
+): { count: string; fraction: string } {
+  return {
+    count: estimate.exhaustive ? (estimate.geometryExact ? "" : "≤ ") : "~ ",
+    // A ratio of widened regions has no one-sided bound. Sampling likewise
+    // makes the reported mean an estimate even when every region is exact.
+    fraction: estimate.exhaustive && estimate.geometryExact ? "" : "~ ",
+  };
 }
 
 /** Slice expressions minus the over-approximation comment the readout appends. */
@@ -973,8 +997,6 @@ export function Inspector(): React.ReactElement {
    */
   const ratioBound = metrics && !metrics.exact ? "~\u202f" : "";
 
-  /** Same rule as the cost figures: a widened region can only overstate bytes. */
-  const bytesBound = "\u2264\u202f";
   /** Reuse neighbours step along the anchor tensor's axes, so it names them. */
   const axisLabelOf = (axis: number) =>
     (activeTensorId ? resolved.tensors[activeTensorId]?.axisNames?.[axis] : null) ?? `ax${axis}`;
@@ -1145,12 +1167,13 @@ export function Inspector(): React.ReactElement {
                     </p>
                   )}
                 </div>
-                {/* Exact, and a function of the tiles on screen: what the drawn
-                    tiles read twice between them. The sweep that asks the same
-                    question of tiles nobody drew is modelled, and lives under
-                    Execution. */}
+                {/* A function of the tiles on screen: duplicate element demand
+                    at graph inputs. It is a shareable footprint, not a claim
+                    about cache hits, transactions, or bytes actually loaded.
+                    The sweep that asks the same question of tiles nobody drew
+                    is modelled, and lives under Execution. */}
                 <div className="ins-section">
-                  <div className="ins-title">Shared across tiles</div>
+                  <div className="ins-title">Shared graph-input demand</div>
                   {sharing && sharing.length > 0 ? (
                     <ul className="reuse-list">
                       {sharing.map((row) => (
@@ -1158,24 +1181,31 @@ export function Inspector(): React.ReactElement {
                           <code>{resolved.tensors[row.tensorId].name}</code>
                           <span
                             className="muted"
-                            title={`${row.tiles} tiles read ${formatBytes(row.independentBytes)} in total, ${formatBytes(row.unionBytes)} of it distinct`}
+                            title={row.geometryExact
+                              ? `${row.contributingTiles} of ${row.selectedTiles} tiles demand ${formatBytes(row.summedDemandBytes)} in total; ${formatBytes(row.distinctDemandBytes)} distinct`
+                              : `${row.contributingTiles} of ${row.selectedTiles} tiles have widened footprints; duplicate demand is no more than ${formatBytes(row.duplicateDemandBytes)}`}
                           >
-                            {row.duplicateBytes === null
-                              ? `${bytesBound}${formatBytes(row.independentBytes)} read`
-                              : row.duplicateBytes > 0
-                                ? `${(row.independentBytes / row.unionBytes).toFixed(2)}× · ${formatBytes(row.duplicateBytes)} re-read`
-                                : "read once, no overlap"}
+                            {row.duplicateDemandBytes > 0
+                              ? `${row.geometryExact ? "" : "~ "}${(row.summedDemandBytes / row.distinctDemandBytes).toFixed(2)}× demand · ${row.geometryExact ? "" : "≤ "}${formatBytes(row.duplicateDemandBytes)} duplicate`
+                              : "no duplicate demand"}
                           </span>
-                          {!row.exact && (
+                          {!row.geometryExact && (
                             <span className="badge approx" title={row.reasons.join("; ")}>≈</span>
                           )}
                         </li>
                       ))}
                     </ul>
+                  ) : !perBox && parts.length > MAX_PER_BOX_PROPS ? (
+                    <p className="hint">
+                      Per-tile sharing is unavailable above {MAX_PER_BOX_PROPS} total tiles.
+                    </p>
+                  ) : enabledBoxes < 2 || focusedBox !== null ? (
+                    <p className="hint">
+                      Enable and analyse at least two tiles together to compare their demand.
+                    </p>
                   ) : (
                     <p className="hint">
-                      One tile at a time reads its own footprint and nothing else; enable a
-                      second to see what they read in common.
+                      These tiles have no graph-input demand.
                     </p>
                   )}
                 </div>
@@ -1245,23 +1275,24 @@ export function Inspector(): React.ReactElement {
                     <button
                       className="mini"
                       onClick={computeReuse}
-                      title="sample tiles of the selection's size across the anchor tensor and count how many touch each input's current footprint"
+                      title="sample tiles of the selection's size across the anchor tensor and estimate how many demand part of each graph-input footprint"
                     >
                       estimate
                     </button>
                   </div>
                   <p className="hint">
-                    Tiles of this tile's size, laid over the whole tensor: how many of them read
-                    part of what this one reads.
+                    Tiles of this tile's size, laid over the whole tensor: how many of them demand
+                    part of the same graph-input footprint.
                   </p>
                   {!reuse ? (
                     <p className="hint">sampled sweep · run on demand</p>
                   ) : reuse.length === 0 ? (
-                    <p className="hint">This tile reads no graph input directly.</p>
+                    <p className="hint">This tile has no graph-input demand.</p>
                   ) : (
                     <ul className="reuse-list">
                       {reuse.map((estimate) => {
                         const neighbours = neighbourShares(estimate.neighbors, axisLabelOf);
+                        const qualifier = reuseQualifiers(estimate);
                         return (
                           <li key={estimate.tensorId}>
                             <code>{resolved.tensors[estimate.tensorId].name}</code>
@@ -1273,19 +1304,24 @@ export function Inspector(): React.ReactElement {
                                   : `${estimate.probes} of ${estimate.totalTiles} tiles probed, one per stratum`
                               }
                             >
-                              {estimate.exact ? "" : "≤ "}
+                              {qualifier.count}
                               {estimate.estimatedTiles} of {estimate.totalTiles} tiles
                               {estimate.meanSharedFraction !== null &&
-                                ` · ${Math.round(estimate.meanSharedFraction * 100)}% of the footprint each`}
+                                ` · ${qualifier.fraction}${Math.round(estimate.meanSharedFraction * 100)}% of the footprint each`}
                             </span>
-                            {!estimate.exact && (
+                            {!estimate.geometryExact && (
                               <span className="badge approx" title={estimate.reasons.join("; ")}>≈</span>
                             )}
-                            {(!estimate.exhaustive || neighbours) && (
-                              <span className="reuse-detail">
+                            {(!estimate.exhaustive || neighbours.text) && (
+                              <span
+                                className="reuse-detail"
+                                title={neighbours.reasons.length
+                                  ? `approximate neighbours: ${neighbours.reasons.join("; ")}`
+                                  : undefined}
+                              >
                                 {!estimate.exhaustive && `${estimate.probes} sampled`}
-                                {!estimate.exhaustive && neighbours && " · "}
-                                {neighbours && `neighbouring tile shares ${neighbours}`}
+                                {!estimate.exhaustive && neighbours.text && " · "}
+                                {neighbours.text && `neighbouring tile shares ${neighbours.text}`}
                               </span>
                             )}
                           </li>

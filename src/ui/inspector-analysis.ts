@@ -183,10 +183,10 @@ export function useInspectorAnalysis({
   }, [resolved, scopedBack]);
 
   /**
-   * What the enabled tiles actually share, per input, beside what a full sweep
-   * would reuse. Exact and already-propagated, so unlike the sampled estimate
-   * it costs nothing to show and needs no button; with one tile there is
-   * nothing to share, and the rows would all read 1x.
+   * Duplicate graph-input element demand among enabled tiles, beside what a
+   * full sweep would reuse. It is unsampled and already propagated, so it costs
+   * nothing to show and needs no button. Conservative regions make duplicate
+   * demand an upper bound, and this says nothing about actual cache traffic.
    */
   const sharing = useMemo(() => {
     const cones = enabledBackwardProps(perBox, parts, hiddenBoxes, focusedBox, activeTensorId);
