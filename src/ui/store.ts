@@ -64,6 +64,38 @@ export function enabledPropResult(
   );
 }
 /**
+ * Which tensors a highlight should reach: the drawn tiles' own, plus the cones
+ * the direction filter is actually showing.
+ *
+ * Both cones are computed whatever the filter says, so this has to be derived
+ * from what was *asked for* rather than from what was computed - otherwise
+ * hiding a cone leaves its tensors lit. The graph canvas and the operations
+ * list are two views of one answer, and they were drifting: the canvas followed
+ * the filter while the list stayed on the union of both directions and never
+ * changed. With both cones off, what stays lit is what the reader drew.
+ */
+export function involvedTensorIds(
+  selection: Selection,
+  backwardRes: PropResult | null,
+  forwardRes: PropResult | null,
+  perBox: BoxProp[] | null,
+  hiddenBoxes: Set<number>,
+  direction: Direction
+): Set<string> {
+  const involved = new Set<string>(selectedTensorIds(selection));
+  const shown = [
+    direction === "backward" || direction === "both"
+      ? enabledPropResult(backwardRes, perBox, hiddenBoxes, null, "backward")
+      : null,
+    direction === "forward" || direction === "both"
+      ? enabledPropResult(forwardRes, perBox, hiddenBoxes, null, "forward")
+      : null,
+  ];
+  for (const res of shown) if (res) for (const id of res.tensors.keys()) involved.add(id);
+  return involved;
+}
+
+/**
  * The user's ordered parts (identity-stable, may overlap, may span tensors),
  * never a canonicalized set. See the note in core/region.ts.
  */

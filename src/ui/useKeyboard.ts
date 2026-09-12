@@ -149,6 +149,16 @@ export function useKeyboard({
         return;
       }
 
+      /* Remove the tile the keyboard is already driving: the one the arrows
+         move and the one the list lights, which is the focused tile when there
+         is one and the last drawn otherwise. `deleteBox` records a workspace
+         history entry, so this is one Ctrl/Cmd+Z away like any other tile edit. */
+      if (editsTiles && matchesShortcut(e, SHORTCUTS.deleteTile)) {
+        e.preventDefault();
+        s.deleteBox(target.index);
+        return;
+      }
+
       // include/exclude the focused part from merged analysis and paint. Also a
       // selection edit, so it follows the same rule as movement above: a pin
       // survives a tab switch, and this would otherwise change which tiles are

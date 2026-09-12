@@ -9,7 +9,7 @@ import {
 } from "./graph-scene";
 import { cardSize, TensorCard } from "./TensorCard";
 import { shapeLabel, symbolicExtentLabel } from "./shape-label";
-import { enabledPropResult, PANEL_RAIL, planesOf, selectedTensorIds, useStore } from "./store";
+import { involvedTensorIds, PANEL_RAIL, planesOf, useStore } from "./store";
 import type { TensorOffset } from "./tensor-layout";
 import { MIN_SIDE_PX, settledTiles } from "./tiling";
 import { overviewLabels } from "./overview-labels";
@@ -192,21 +192,10 @@ export function GraphView(): React.ReactElement {
 
   // Highlighting follows the direction filter, not the analysis: both cones are
   // always computed, and a hot edge should mean "the cone you asked for".
-  const contributing = useMemo(() => {
-    const s = new Set<string>();
-    for (const id of selectedTensorIds(selection)) s.add(id);
-    const shown = [
-      direction === "backward" || direction === "both"
-        ? enabledPropResult(backwardRes, perBox, hiddenBoxes, null, "backward")
-        : null,
-      direction === "forward" || direction === "both"
-        ? enabledPropResult(forwardRes, perBox, hiddenBoxes, null, "forward")
-        : null,
-    ];
-    for (const res of shown)
-      if (res) for (const id of res.tensors.keys()) s.add(id);
-    return s;
-  }, [backwardRes, direction, forwardRes, hiddenBoxes, perBox, selection]);
+  const contributing = useMemo(
+    () => involvedTensorIds(selection, backwardRes, forwardRes, perBox, hiddenBoxes, direction),
+    [backwardRes, direction, forwardRes, hiddenBoxes, perBox, selection]
+  );
 
   const hasResult = contributing.size > 0;
   const visibleEntangled = useMemo(

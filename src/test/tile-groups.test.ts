@@ -260,6 +260,27 @@ D = matmul(CC, W)
     expect(groupFocus(S().selection!.parts, S().focusedBox, active())).toBe(2);
   });
 
+  /* What the Del binding removes: the tile the arrows already move, which is
+     the focused one when there is one and the last drawn otherwise. */
+  it("removes the tile the keyboard is driving, dropping the pin with it", () => {
+    const drawn = S().selection!.parts.length;
+    const anchorOf = () =>
+      analysisTarget(S().selection!.parts, S().analysisGroup, S().perBox ? S().focusedBox : null);
+    expect(anchorOf().index).toBe(drawn - 1);
+
+    S().togglePinBox(0);
+    expect(anchorOf().index).toBe(0);
+    S().deleteBox(anchorOf().index);
+
+    expect(S().selection!.parts).toHaveLength(drawn - 1);
+    // The removed tile was the pinned one, and a surviving index would now name
+    // a different tile.
+    expect(S().pinnedBox).toBeNull();
+    expect(S().focusedBox).toBeNull();
+    S().undoWorkspace();
+    expect(S().selection!.parts).toHaveLength(drawn);
+  });
+
   it("retires a group once nothing is drawn on it", () => {
     S().setSelection("CC", fromBox(box([112, 144], [192, 224])), "union");
     expect(active()).toBe("CC");

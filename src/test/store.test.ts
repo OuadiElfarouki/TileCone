@@ -5,6 +5,8 @@ import { EXAMPLES } from "../examples";
 import {
   operationForTensor,
   enabledPropResult,
+  involvedTensorIds,
+  type Direction,
   MAX_PER_BOX_PROPS, PANEL_COLLAPSE_AT, PANEL_MAX, PANEL_MIN,
   planesOf, startingTiles, useStore,
 } from "../ui/store";
@@ -49,6 +51,29 @@ describe("independent cone toggles", () => {
   it("keeps figures-only when set directly", () => {
     S().setDirection("none");
     expect(S().direction).toBe("none");
+  });
+
+  /* The canvas and the operations list both ask "what does this reach", and the
+     answer has to be the cone the reader asked for rather than the union of the
+     two that were computed. */
+  it("lights only the tensors of the cone that is shown", () => {
+    loadExampleNamed("Multi-head attention");
+    const resolved = S().resolved!;
+    const mid = Object.values(resolved.tensors).find(
+      (t) => t.producer && resolved.consumers[t.id]?.length
+    )!;
+    S().setSelection(mid.id, fromBox(mid.resolved!.map(() => ({ lo: 0, hi: 1 }))), "replace");
+
+    const lit = (direction: Direction) =>
+      involvedTensorIds(S().selection, S().backwardRes, S().forwardRes, S().perBox, S().hiddenBoxes, direction);
+    const upstream = [...S().backwardRes!.tensors.keys()].find((id) => id !== mid.id)!;
+    const downstream = [...S().forwardRes!.tensors.keys()].find((id) => id !== mid.id)!;
+
+    expect([lit("both").has(upstream), lit("both").has(downstream)]).toEqual([true, true]);
+    expect([lit("backward").has(upstream), lit("backward").has(downstream)]).toEqual([true, false]);
+    expect([lit("forward").has(upstream), lit("forward").has(downstream)]).toEqual([false, true]);
+    // With both cones hidden, what stays lit is what the reader drew.
+    expect([...lit("none")]).toEqual([mid.id]);
   });
 
   it("filters what is shown without gating what is analysed", () => {

@@ -26,6 +26,15 @@ export const SHORTCUTS = {
     keys: ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"],
     shift: true,
   },
+  deleteTile: {
+    id: "delete-tile",
+    label: "Del / Backspace",
+    action: "remove the focused tile",
+    /* Backspace as well as Delete: it is the key that says "remove this" on a
+       laptop keyboard that has no Delete. Neither can reach a text field - the
+       global bindings stand down wherever focus is typing. */
+    keys: ["Delete", "Backspace"],
+  },
   toggleTile: {
     id: "toggle-tile",
     label: "H",
@@ -91,7 +100,14 @@ export const SHORTCUT_GROUPS = [
      read as five separate rules. */
   {
     title: "Selection",
-    items: [SHORTCUTS.move, SHORTCUTS.moveFast, SHORTCUTS.toggleTile, SHORTCUTS.escape, SHORTCUTS.undo],
+    items: [
+      SHORTCUTS.move,
+      SHORTCUTS.moveFast,
+      SHORTCUTS.deleteTile,
+      SHORTCUTS.toggleTile,
+      SHORTCUTS.escape,
+      SHORTCUTS.undo,
+    ],
     note: "Tile edits apply while the inspector is on Dependencies, the tab that lists them.",
   },
   { title: "View", items: [SHORTCUTS.needs, SHORTCUTS.feeds, SHORTCUTS.entangled, SHORTCUTS.fit, SHORTCUTS.scrub, SHORTCUTS.zoom, SHORTCUTS.help] },

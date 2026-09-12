@@ -4,7 +4,7 @@ import { EXAMPLES } from "../examples";
 import { tileOf } from "./grid";
 import { selectionToLink, shareTarget } from "./share";
 import { CopyButton } from "./CopyButton";
-import { enabledPropResult, useStore } from "./store";
+import { involvedTensorIds, useStore } from "./store";
 import { matchesShortcut, SHORTCUTS } from "./shortcuts";
 import { viewAxes } from "./tensor-view";
 import { overlayTokens } from "./dsl-highlight";
@@ -155,6 +155,8 @@ function Operations(): React.ReactElement {
   const selectedOp = useStore((s) => s.selectedOp);
   const backwardRes = useStore((s) => s.backwardRes);
   const forwardRes = useStore((s) => s.forwardRes);
+  const direction = useStore((s) => s.direction);
+  const selection = useStore((s) => s.selection);
   const perBox = useStore((s) => s.perBox);
   const hiddenBoxes = useStore((s) => s.hiddenBoxes);
   const setSelection = useStore((s) => s.setSelection);
@@ -163,11 +165,9 @@ function Operations(): React.ReactElement {
 
   if (!resolved) return <p className="hint">no graph</p>;
 
-  const involved = new Set<string>();
-  const enabledBackward = enabledPropResult(backwardRes, perBox, hiddenBoxes, null, "backward");
-  const enabledForward = enabledPropResult(forwardRes, perBox, hiddenBoxes, null, "forward");
-  for (const res of [enabledBackward, enabledForward])
-    if (res) for (const id of res.tensors.keys()) involved.add(id);
+  /* The same set the canvas lights, so hiding a cone dims its operations here
+     too rather than leaving the list on the union of both directions. */
+  const involved = involvedTensorIds(selection, backwardRes, forwardRes, perBox, hiddenBoxes, direction);
 
   // The row names an operation, so the viewport goes to the operator. The
   // starter tile still lands on its first output, which is where a cone has to

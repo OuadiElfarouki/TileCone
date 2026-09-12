@@ -323,10 +323,14 @@ kbd {
    the editor draft without disabling the workspace it belongs to. */
 .operations-section.pending .operations-heading .panel-title,
 .operations-section.pending .operation-list { opacity: var(--dim-soft); }
-.operation-list { padding: 0 12px; }
+/* The row reaches further left than the panel's text column so that the
+   selected row's rule has a lane of its own; the row's own left padding puts
+   the status dot back on the 12px column everything else here starts at. */
+.operation-list { padding: 0 12px 0 5px; }
 .operation-row {
   display: grid; grid-template-columns: 7px 1fr; gap: 8px; width: 100%;
-  align-items: start; padding: 7px 0; border: 0; border-bottom: 1px solid var(--line);
+  align-items: start; padding: 7px 0 7px 7px; border: 0;
+  border-bottom: 1px solid var(--line);
   border-radius: 0; background: transparent; text-align: left;
 }
 .operation-row > i { width: 7px; height: 7px; border-radius: 50%; margin-top: 5px; background: var(--line); }
