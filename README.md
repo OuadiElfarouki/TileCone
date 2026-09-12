@@ -4,7 +4,7 @@
 
 Select any region of any tensor in a compute graph. TileCone draws the sub-DAG that region actually
 touches - the operations on the path, and for every tensor among them, the exact index range
-involved. Upstream is what the tile reads; downstream is what it feeds.
+involved. Upstream is what the tile reads, downstream is what it feeds.
 
 For `C[M,N] = A[M,K] @ B[K,N]`, the tile `C[64:128, 0:64]` yields a cone reaching `A[64:128, :]`
 and `B[:, 0:64]` - a row band and a column band, and nothing else.

@@ -66,3 +66,20 @@ export function highlightDSL(source: string): DSLHighlightToken[] {
   push("plain", source.slice(plainStart));
   return tokens;
 }
+
+/**
+ * The same tokens, padded for the highlight layer that sits under the textarea.
+ *
+ * A textarea keeps an empty last line after a trailing newline; a `pre` drops
+ * it, so the two layers disagree about how tall the source is and the overlay
+ * ends one line short of the caret as soon as the box scrolls. One appended
+ * newline restores that line. It is unconditional: when the source does not end
+ * in a newline the extra one is itself the dropped last line, so the padded
+ * text always renders exactly the lines the textarea does.
+ */
+export function overlayTokens(source: string): DSLHighlightToken[] {
+  const tokens = highlightDSL(source);
+  const last = tokens[tokens.length - 1];
+  if (last?.kind === "plain") return [...tokens.slice(0, -1), { ...last, text: last.text + "\n" }];
+  return [...tokens, { kind: "plain", text: "\n" }];
+}

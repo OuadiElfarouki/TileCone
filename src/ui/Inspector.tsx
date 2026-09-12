@@ -794,7 +794,7 @@ function RegionEditor({ activeTensorId, onSelectGroup }: {
   );
 }
 
-/** Nothing drawn yet: teach the two questions instead of rendering empty tables. */
+/** Nothing drawn yet: teach the three relations instead of rendering empty tables. */
 function EmptyPanel(): React.ReactElement {
   const resolved = useStore((s) => s.resolved)!;
   const tileScale = useStore((s) => s.tileScale);
@@ -810,7 +810,7 @@ function EmptyPanel(): React.ReactElement {
       <h2 className="panel-title">No tile drawn</h2>
       <p className="hint">
         Drag a rectangle on any tensor to cut a tile. Shift adds another, Alt subtracts. This
-        panel then answers two questions about it.
+        panel then answers three questions about it.
       </p>
       <dl className="empty-questions">
         <div>
@@ -818,18 +818,30 @@ function EmptyPanel(): React.ReactElement {
             <span className="cone-arrow" aria-hidden>
               ↑
             </span>
-            What it needs
+            Backward Cone
           </dt>
-          <dd>Every upstream tensor the tile reads, and how much of each.</dd>
+          <dd>Everything upstream the tile requires.</dd>
         </div>
         <div>
           <dt>
             <span className="cone-arrow" aria-hidden>
               ↓
             </span>
-            What it feeds
+            Forward Cone
           </dt>
-          <dd>Everything downstream it reaches, and whether that contribution is partial.</dd>
+          <dd>Everything downstream the tile affects.</dd>
+        </div>
+        <div>
+          <dt>
+            <span className="cone-arrow" aria-hidden>
+              ×
+            </span>
+            Co-access Surface
+          </dt>
+          <dd>
+            Everything on the same level as the tile that is co-accessed with it. 
+            Not a hop along the graph, press <kbd>e</kbd>.
+          </dd>
         </div>
       </dl>
       {starts.length > 0 && (
@@ -1052,7 +1064,7 @@ export function Inspector(): React.ReactElement {
             <ConeSection
               direction="backward"
               arrow="↑"
-              title="What it needs"
+              title="Backward Cone"
               rows={upstream}
               hue={coneHue("upstream")}
               flags={findings?.flags ?? new Map()}
@@ -1070,7 +1082,7 @@ export function Inspector(): React.ReactElement {
             <ConeSection
               direction="forward"
               arrow="↓"
-              title="What it feeds"
+              title="Forward Cone"
               rows={downstream}
               hue={coneHue("downstream")}
               flags={new Map()}
@@ -1088,7 +1100,7 @@ export function Inspector(): React.ReactElement {
             />
             {direction === "none" && (
               <p className="view-mode-note" role="status">
-                Figures only · What it needs and What it feeds are hidden.
+                Figures only · Backward & Forward cones are hidden.
               </p>
             )}
             {showDownstream && contrib?.capped && (
@@ -1111,7 +1123,7 @@ export function Inspector(): React.ReactElement {
                   title={`${showEntangled ? "hide" : "show"} what it is combined with (e)`}
                 >
                   <span className="cone-key combined" aria-hidden="true" />
-                  What it is combined with
+                  Co-access Surface
                 </button>
               </div>
               {showEntangled &&
@@ -1138,7 +1150,7 @@ export function Inspector(): React.ReactElement {
                   </ul>
                 ) : (
                   <p className="hint">
-                    nothing: no operation reads this tile alongside another tensor
+                    Nothing.
                   </p>
                 ))}
             </section>
@@ -1164,14 +1176,14 @@ export function Inspector(): React.ReactElement {
                     in the other direction, which it cannot. */}
                 <div className="ins-section">
                   <div className="ins-title">
-                    {`Cost to compute ${costScope}`}
+                    {`Cost to compute ${costScope} `}
                     <span
                       className="muted"
                       role="img"
                       tabIndex={0}
                       aria-label="Idealized estimates, not hardware bounds. Fused assumes perfect sharing; unfused counts separate per-op reads and writes."
                       title="Idealized estimates, not hardware bounds. Fused assumes perfect sharing; unfused counts separate per-op reads and writes."
-                    >ⓘ</span>
+                    > ⓘ</span>
                     {/* Every figure below is measured over the cone's regions,
                         so an over-approximated region makes all of them upper
                         bounds. The rows already say so individually; without

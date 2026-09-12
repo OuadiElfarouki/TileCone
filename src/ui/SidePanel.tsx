@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { fromBox } from "../core/region";
 import { EXAMPLES } from "../examples";
 import { tileOf } from "./grid";
@@ -7,7 +7,7 @@ import { copyText } from "./clipboard";
 import { enabledPropResult, useStore } from "./store";
 import { matchesShortcut, SHORTCUTS } from "./shortcuts";
 import { viewAxes } from "./tensor-view";
-import { highlightDSL } from "./dsl-highlight";
+import { overlayTokens } from "./dsl-highlight";
 
 /**
  * Copies a link that restores this workspace - source, selection, analysis views
@@ -70,7 +70,7 @@ function SourceEditor(): React.ReactElement {
   const [ranAt, setRanAt] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const highlightRef = useRef<HTMLPreElement>(null);
-  const highlighted = useMemo(() => highlightDSL(text), [text]);
+  const highlighted = useMemo(() => overlayTokens(text), [text]);
 
   // Two ways to owe a run: the text has moved away from what was built, or the
   // app has not installed its initial graph yet.
@@ -80,6 +80,19 @@ function SourceEditor(): React.ReactElement {
     applyDSL(text);
     setRanAt(Date.now());
   };
+
+  /* The overlay carries the ink for a caret it cannot see, so it has to hold
+     the textarea's scroll offset exactly. The scroll event covers the usual
+     case; this covers the one it does not, where new text shortens the box and
+     the browser clamps the offset, which it reports only after the commit. */
+  const syncScroll = () => {
+    const ta = taRef.current;
+    const highlight = highlightRef.current;
+    if (!ta || !highlight) return;
+    highlight.scrollTop = ta.scrollTop;
+    highlight.scrollLeft = ta.scrollLeft;
+  };
+  useLayoutEffect(syncScroll, [text]);
 
   return (
     <>
@@ -96,11 +109,7 @@ function SourceEditor(): React.ReactElement {
           aria-label="graph source"
           spellCheck={false}
           onChange={(e) => setText(e.target.value)}
-          onScroll={(e) => {
-            if (!highlightRef.current) return;
-            highlightRef.current.scrollTop = e.currentTarget.scrollTop;
-            highlightRef.current.scrollLeft = e.currentTarget.scrollLeft;
-          }}
+          onScroll={syncScroll}
           onKeyDown={(e) => {
             if (matchesShortcut(e.nativeEvent, SHORTCUTS.run)) {
               e.preventDefault();
@@ -383,10 +392,6 @@ export function SidePanel(): React.ReactElement {
       <div className="side-panel-scroll">
         <header className="source-heading">
           <h2 className="panel-title">Graph source</h2>
-          <p>
-            Assign dimensions as numbers, graph inputs with <code>Tensor</code>, and learned weights
-            with <code>Parameter</code>. Shapes are inferred when the graph is rendered.
-          </p>
         </header>
         <div className="source-workspace">
           <SourceEditor />

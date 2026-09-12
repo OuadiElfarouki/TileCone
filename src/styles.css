@@ -350,12 +350,19 @@ kbd {
   position: relative; flex: none; width: 100%; height: 250px; min-height: 120px;
   resize: vertical; overflow: hidden;
 }
+/* The two layers are one editor seen twice: the textarea owns the caret and the
+   highlight owns the ink, so any geometry they do not share shows up as the
+   caret landing on a different line than the text under it. Every property that
+   can move a line break or a line box is set here, for both at once - including
+   the scrollbar gutter, which the textarea would otherwise take out of its own
+   wrap width alone the moment the source grows past the box. */
 .source-highlight,
 textarea.source {
   width: 100%; height: 100%; margin: 0;
   font: var(--t-body)/1.55 var(--mono);
   tab-size: 2; white-space: pre-wrap; overflow-wrap: break-word;
   border: 1px solid var(--line); border-radius: var(--r); padding: 8px 9px;
+  scrollbar-gutter: stable;
 }
 .source-highlight {
   position: absolute; inset: 0; z-index: 0; overflow: hidden;
@@ -363,10 +370,11 @@ textarea.source {
 }
 .syntax-keyword { color: var(--syntax-keyword); font-weight: 700; }
 .syntax-comment { color: var(--syntax-comment); }
+/* Border and padding are not repeated here: they are part of the shared
+   geometry above, and a second copy is a second thing to keep in step. */
 textarea.source {
   position: relative; z-index: 1; resize: none;
   background: transparent; color: transparent; caret-color: var(--ink);
-  border: 1px solid var(--line); border-radius: var(--r); padding: 8px 9px;
 }
 textarea.source::selection { background: color-mix(in srgb, var(--accent) 24%, transparent); }
 textarea.source:focus { outline: none; border-color: var(--accent); }
@@ -664,7 +672,7 @@ textarea.source.error-state { border-color: var(--err); }
 .cone-row .copy-exprs { margin-top: 4px; opacity: 0; transition: opacity .12s; }
 .cone-row:hover .copy-exprs, .cone-row .copy-exprs:focus-visible { opacity: 1; }
 
-/* Nothing drawn: teach the two questions rather than render empty tables. */
+/* Nothing drawn: teach the three relations rather than render empty tables. */
 .empty-panel { padding: 13px 30px 0 0; }
 .empty-panel .hint { margin: 6px 0 14px; line-height: 1.6; }
 .empty-questions { display: flex; flex-direction: column; gap: 10px; margin: 0 0 4px; }
