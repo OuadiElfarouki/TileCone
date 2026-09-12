@@ -39,6 +39,7 @@ export function ShortcutsDialog({
                   </React.Fragment>
                 ))}
               </dl>
+              {"note" in group && <p className="hint">{group.note}</p>}
             </section>
           ))}
         </div>

@@ -119,7 +119,14 @@ export function useKeyboard({
         ArrowUp: [rowAx, -1],
         ArrowDown: [rowAx, 1],
       };
-      const hit = matchesShortcut(e, SHORTCUTS.move) ? arrows[e.key] : undefined;
+      /* Moving a tile is an edit to the selection, and the selection is the
+         Dependencies tab's subject: its list is what shows which tile the
+         arrows are about to move. Under Execution that list is not on screen,
+         and the panel is a readout of an assumed schedule rather than a place
+         to redraw the thing being scheduled - so the keys do nothing there
+         instead of editing something the reader cannot see. */
+      const editsTiles = s.inspectorTab === "dependencies";
+      const hit = editsTiles && matchesShortcut(e, SHORTCUTS.move) ? arrows[e.key] : undefined;
       if (hit) {
         const [axis, sign] = hit;
         if (axis < 0) return;
@@ -142,8 +149,11 @@ export function useKeyboard({
         return;
       }
 
-      // include/exclude the focused part from merged analysis and paint
-      if (matchesShortcut(e, SHORTCUTS.toggleTile) && s.focusedBox !== null && s.perBox) {
+      // include/exclude the focused part from merged analysis and paint. Also a
+      // selection edit, so it follows the same rule as movement above: a pin
+      // survives a tab switch, and this would otherwise change which tiles are
+      // measured while the list saying so is on the other tab.
+      if (editsTiles && matchesShortcut(e, SHORTCUTS.toggleTile) && s.focusedBox !== null && s.perBox) {
         e.preventDefault();
         s.toggleBoxHidden(s.focusedBox);
         return;

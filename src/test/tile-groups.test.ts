@@ -189,6 +189,7 @@ D = matmul(CC, W)
   const render = () => renderToStaticMarkup(createElement(Inspector));
 
   beforeEach(() => {
+    S().setInspectorTab("dependencies");
     S().applyDSL(SRC);
     S().setSelection("D", fromBox(box([160, 224], [48, 80])));
     S().setSelection("D", fromBox(box([16, 80], [128, 160])), "union");
@@ -288,9 +289,43 @@ D = matmul(CC, W)
     expect(header).not.toContain("selection range");
     expect(html).not.toContain("hover an enabled tile");
     expect(html).not.toContain("Select a tensor header");
-    expect(html).toContain('title="Idealized estimates, not hardware bounds.');
-    expect(html).not.toContain('<p class="hint">Idealized scenarios');
-    expect(html).toContain("materialized views, and no cross-op cache reuse");
+  });
+
+  /* The split the panel promises in its tab labels: a figure is either a
+     function of the graph and the drawn region, or it assumes an execution, and
+     the second kind never renders beside the first. */
+  it("keeps modelled figures behind the execution tab", () => {
+    S().setSelection("D", fromBox(box([0, 16], [0, 16])), "replace");
+
+    const dependencies = render();
+    expect(dependencies).toContain("Cost to compute");
+    expect(dependencies).toContain("Backward Cone");
+    expect(dependencies).toContain("Shared across tiles");
+    expect(dependencies).not.toContain("Arithmetic intensity");
+    expect(dependencies).not.toContain("Reuse sweep");
+    expect(dependencies).not.toContain("materialized views, and no cross-op cache reuse");
+
+    S().setInspectorTab("execution");
+    const execution = render();
+    expect(execution).toContain("Arithmetic intensity");
+    expect(execution).toContain("Reuse sweep");
+    // The assumptions each scenario rests on stay on the figure itself.
+    expect(execution).toContain("materialized views, and no cross-op cache reuse");
+    expect(execution).toContain("models, not bounds");
+    expect(execution).not.toContain("Cost to compute");
+    expect(execution).not.toContain("Backward Cone");
+    expect(execution).not.toContain('<p class="hint">Idealized scenarios');
+  });
+
+  it("names the tab strip for assistive technology and the pointer alike", () => {
+    const html = render();
+    expect(html).toContain('role="tablist"');
+    expect(html).toContain('id="ins-tab-dependencies" role="tab"');
+    expect(html).toContain('aria-selected="true" aria-controls="ins-panel-dependencies"');
+    expect(html).toContain('aria-selected="false" aria-controls="ins-panel-execution"');
+    /* No roving tabindex, and no arrow handler behind it: the arrows are the
+       tile's, and a focused tab that answered them shadowed that binding. */
+    expect(html).not.toContain("tabindex");
   });
 
   it("does not render another group's entanglement in the inspector", () => {

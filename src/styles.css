@@ -697,9 +697,32 @@ textarea.source.error-state { border-color: var(--err); }
 /* Cost, Reuse, Footprint and Notes support the answer rather than being it, so
    they sit one step below the two directional headings instead of matching them. */
 .ins-title { margin-bottom: 4px; color: var(--muted); font: 600 var(--t-body)/1.3 var(--mono); }
-/* Only this heading pairs a name with an action, so only it becomes a row. */
-.ins-title.tiles { display: flex; align-items: baseline; justify-content: space-between; }
-.ins-title.tiles .mini { font-weight: 400; }
+/* Headings that pair a name with an action become a row; the rest stay text. */
+.ins-title.with-action { display: flex; align-items: baseline; justify-content: space-between; }
+.ins-title.with-action .mini { font-weight: 400; }
+
+/* The two classes of question, as two panels rather than two registers of the
+   same column: a modelled figure sitting under an exact one reads as exact. */
+.ins-tabs {
+  display: flex; gap: 2px; margin: 9px 0 2px;
+  border-bottom: 1px solid var(--line);
+}
+.ins-tab {
+  padding: 4px 10px 5px; border: 0; border-bottom: 2px solid transparent;
+  border-radius: 0; background: transparent;
+  color: var(--muted); font: 600 var(--t-body)/1.3 var(--mono);
+}
+.ins-tab:hover { color: var(--ink); }
+/* Selection is read from the ARIA state rather than a second class, which also
+   keeps the tabs clear of the framed chrome `button.on` gives active chips. */
+.ins-tab[aria-selected="true"] {
+  color: var(--accent); border-bottom-color: var(--accent); box-shadow: none;
+}
+/* What a whole panel of figures rests on, stated once at the top of it. */
+.tab-note {
+  margin: 10px 0 2px; padding: 6px 8px; color: var(--muted);
+  border-left: 2px solid var(--line); font-size: var(--t-small); line-height: 1.55;
+}
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; font-size: var(--t-body); }
 .kv span:nth-child(odd) { color: var(--muted); }
 .kv span:nth-child(even) { text-align: right; font-variant-numeric: tabular-nums; }
@@ -810,9 +833,19 @@ textarea.source.error-state { border-color: var(--err); }
 .overview .tc-approx { position: absolute; right: 0; bottom: 3px; }
 .overview .tc-info { transform: translateX(-50%) scale(calc(1 / var(--view-scale))); transform-origin: top center; }
 
-.ent-list { list-style: none; margin: 4px 0 0; padding: 0; }
-.ent-list li { display: flex; align-items: baseline; gap: 4px; font-size: var(--t-body); }
-.ent-list code { background: var(--bg); padding: 1px 5px; border-radius: var(--r); }
+.ent-list, .reuse-list { list-style: none; margin: 4px 0 0; padding: 0; }
+.ent-list li, .reuse-list li {
+  display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; font-size: var(--t-body);
+}
+.ent-list code, .reuse-list code { background: var(--bg); padding: 1px 5px; border-radius: var(--r); }
+.reuse-list li + li { margin-top: 3px; }
+/* Sampling coverage and the neighbour probes qualify the figure above them, the
+   way a cone row's flags qualify its bar. */
+.reuse-detail { flex: 1 0 100%; color: var(--muted); font-size: var(--t-micro); line-height: 1.5; }
+/* The kicker names the scope; the button belongs to the line it opens. */
+.setup-kicker.sweep-head {
+  display: flex; align-items: center; gap: 7px; margin-top: 9px;
+}
 
 /* Releasing now would collapse the panel. The content fades and the inner edge
    lights, so the gesture reads as pushing the panel off the screen — the state

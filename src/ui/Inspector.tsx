@@ -18,6 +18,7 @@ import { analysisTensorId, groupAttribution, groupFocus, measuredParts, measured
 import { aggregateColors, boxColor, MAX_DISTINCT_HUES, rgbCss } from "./palette";
 import {
   ConeDirection,
+  InspectorTab,
   MAX_PER_BOX_PROPS,
   partsOn,
   selectedTensorIds,
@@ -260,6 +261,26 @@ function FootprintBar({
   );
 }
 
+/**
+ * The local half of the reuse answer: what one tile's step along each axis still
+ * shares with this tile. Both directions usually agree, and printing "50/50%"
+ * for that would be noise, so equal shares collapse to one figure.
+ */
+function neighbourShares(
+  neighbors: ReuseEstimate["neighbors"],
+  label: (axis: number) => string
+): string {
+  const byAxis = new Map<number, number[]>();
+  for (const probe of neighbors) {
+    const shares = byAxis.get(probe.axis) ?? [];
+    shares.push(Math.round(probe.sharedFraction * 100));
+    byAxis.set(probe.axis, shares);
+  }
+  return [...byAxis]
+    .map(([axis, shares]) => `${label(axis)} ${[...new Set(shares)].join("/")}%`)
+    .join(" · ");
+}
+
 /** Slice expressions minus the over-approximation comment the readout appends. */
 const sliceLines = (row: TensorReadout) =>
   row.sliceExprs.filter((line) => !line.startsWith("#"));
@@ -373,6 +394,57 @@ const CONE = {
   backward: { title: "Backward Cone", arrow: "↑", paint: "needs", key: SHORTCUTS.needs },
   forward: { title: "Forward Cone", arrow: "↓", paint: "feeds", key: SHORTCUTS.feeds },
 } as const satisfies Record<ConeDirection, unknown>;
+
+/* The two classes of question the panel answers, and the promise each one
+   makes. A figure under Dependencies is a function of the graph and the drawn
+   region - exact, or a bound that names why. A figure under Execution exists
+   only once an execution is assumed, so it is modelled and could be wrong in
+   either direction; mixing the two in one column would lend the models the
+   others' credibility. */
+const TABS = [
+  {
+    id: "dependencies",
+    label: "Dependencies",
+    hint: "what the drawn tiles need, feed and share: exact, or bounded with its reason named",
+  },
+  {
+    id: "execution",
+    label: "Execution",
+    hint: "what an assumed execution would do with them: modelled, not bounded",
+  },
+] as const satisfies readonly { id: InspectorTab; label: string; hint: string }[];
+
+/**
+ * Both tabs stay in the tab order, and neither answers an arrow key.
+ *
+ * The usual tab pattern is one stop with a roving tabindex and arrows moving
+ * inside it, but the arrows already mean "move the focused tile" everywhere in
+ * this app. Clicking a tab left focus on it, so the next arrow press switched
+ * tabs rather than moving the tile the panel was describing - one binding
+ * silently shadowing another. Tab reaches both, Enter and Space activate.
+ */
+function InspectorTabs(): React.ReactElement {
+  const tab = useStore((s) => s.inspectorTab);
+  const setTab = useStore((s) => s.setInspectorTab);
+  return (
+    <div className="ins-tabs" role="tablist" aria-label="analysis class">
+      {TABS.map(({ id, label, hint }) => (
+        <button
+          key={id}
+          id={`ins-tab-${id}`}
+          role="tab"
+          className="ins-tab"
+          aria-selected={tab === id}
+          aria-controls={`ins-panel-${id}`}
+          title={hint}
+          onClick={() => setTab(id)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function ConeSection({
   direction,
@@ -567,7 +639,7 @@ function RegionEditor({ activeTensorId, onSelectGroup }: {
 
   return (
     <div className="ins-section">
-      <div className="ins-title tiles">
+      <div className="ins-title with-action">
         Tiles
         <button className="mini" onClick={clearSelection} title="remove every tile from the selection">
           clear all
@@ -757,6 +829,7 @@ export function Inspector(): React.ReactElement {
   const entangled = useStore((s) => s.entangled);
   const perBox = useStore((s) => s.perBox);
   const hiddenBoxes = useStore((s) => s.hiddenBoxes);
+  const tab = useStore((s) => s.inspectorTab);
   const tileFocus = useStore((s) => s.focusedBox);
   /**
    * The tile group everything below the tiles list describes, and the focus
@@ -785,6 +858,7 @@ export function Inspector(): React.ReactElement {
   const {
     metrics,
     bounds,
+    sharing,
     findings,
     seeds,
     contribution: contrib,
@@ -899,6 +973,12 @@ export function Inspector(): React.ReactElement {
    */
   const ratioBound = metrics && !metrics.exact ? "~\u202f" : "";
 
+  /** Same rule as the cost figures: a widened region can only overstate bytes. */
+  const bytesBound = "\u2264\u202f";
+  /** Reuse neighbours step along the anchor tensor's axes, so it names them. */
+  const axisLabelOf = (axis: number) =>
+    (activeTensorId ? resolved.tensors[activeTensorId]?.axisNames?.[axis] : null) ?? `ax${axis}`;
+
   /** Reuse factor (§5.5): sample selection-sized output tiles across the selected
    * tensor; count how many touch the current footprint on each input. The sweep
    * is defined by one tile on one tensor, so it follows the anchor part (the
@@ -931,6 +1011,17 @@ export function Inspector(): React.ReactElement {
                 [...upstream, ...downstream].flatMap((row) => sliceLines(row)).join("\n")
               }
             />
+            {/* The tile header sits above the strip: both classes of question
+                are about the same tile, and it is the tiles list below that
+                picks which one. */}
+            <InspectorTabs />
+            {tab === "dependencies" ? (
+              <div
+                className="ins-tabpanel"
+                role="tabpanel"
+                id="ins-panel-dependencies"
+                aria-labelledby="ins-tab-dependencies"
+              >
             {/* The tiles list is the selector for everything below it: it picks
                 which cone the two sections describe, so it sits above them. */}
             <RegionEditor activeTensorId={activeTensorId} onSelectGroup={selectGroup} />
@@ -1031,13 +1122,6 @@ export function Inspector(): React.ReactElement {
                 <div className="ins-section">
                   <div className="ins-title">
                     {`Cost to compute ${costScope} `}
-                    <span
-                      className="muted"
-                      role="img"
-                      tabIndex={0}
-                      aria-label="Idealized estimates, not hardware bounds. Fused assumes perfect sharing; unfused counts separate per-op reads and writes."
-                      title="Idealized estimates, not hardware bounds. Fused assumes perfect sharing; unfused counts separate per-op reads and writes."
-                    > ⓘ</span>
                     {/* Every figure below is measured over the cone's regions,
                         so an over-approximated region makes all of them upper
                         bounds. The rows already say so individually; without
@@ -1054,14 +1138,80 @@ export function Inspector(): React.ReactElement {
                     <span>output bytes</span><span>{bound}{formatBytes(metrics.outputBytes)}</span>
                     <span>working set</span>
                     <span>{bound}{formatBytes(metrics.inputBytes + metrics.intermediateBytes + metrics.outputBytes)}</span>
-                    {/* Two scenarios across both operations and tiles, not a
-                        guaranteed interval for a real kernel. */}
+                  </div>
+                  {!metrics.exact && (
+                    <p className="hint overlap">
+                      Bounds, not counts: read ≤ as “no more than”, never understated.
+                    </p>
+                  )}
+                </div>
+                {/* Exact, and a function of the tiles on screen: what the drawn
+                    tiles read twice between them. The sweep that asks the same
+                    question of tiles nobody drew is modelled, and lives under
+                    Execution. */}
+                <div className="ins-section">
+                  <div className="ins-title">Shared across tiles</div>
+                  {sharing && sharing.length > 0 ? (
+                    <ul className="reuse-list">
+                      {sharing.map((row) => (
+                        <li key={row.tensorId}>
+                          <code>{resolved.tensors[row.tensorId].name}</code>
+                          <span
+                            className="muted"
+                            title={`${row.tiles} tiles read ${formatBytes(row.independentBytes)} in total, ${formatBytes(row.unionBytes)} of it distinct`}
+                          >
+                            {row.duplicateBytes === null
+                              ? `${bytesBound}${formatBytes(row.independentBytes)} read`
+                              : row.duplicateBytes > 0
+                                ? `${(row.independentBytes / row.unionBytes).toFixed(2)}× · ${formatBytes(row.duplicateBytes)} re-read`
+                                : "read once, no overlap"}
+                          </span>
+                          {!row.exact && (
+                            <span className="badge approx" title={row.reasons.join("; ")}>≈</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="hint">
+                      One tile at a time reads its own footprint and nothing else; enable a
+                      second to see what they read in common.
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
+            <DependencyNotes
+              findings={findings}
+              hasSelection={enabledBoxes > 0}
+              focusedBox={focusedBox}
+              attributed={!!perBox}
+            />
+              </div>
+            ) : (
+              <div
+                className="ins-tabpanel"
+                role="tabpanel"
+                id="ins-panel-execution"
+                aria-labelledby="ins-tab-execution"
+              >
+                <p className="tab-note">
+                  Everything here assumes an execution the graph does not fix: a tiling of the
+                  whole tensor, an order to run it in, what fuses with what. These are models,
+                  not bounds - a wrong assumption moves them in either direction.
+                </p>
+                {/* Both scenarios assume a fusion decision the graph does not
+                    make, which is what moved them off the cost table: the
+                    counts there are measured, these are argued. */}
+                <div className="ins-section">
+                  <div className="ins-title">Arithmetic intensity</div>
+                  <div className="kv">
                     <span title={
                       bounds
                         ? `one kernel over every op and every tile: intermediates never reach memory and a shared operand band is fetched once - ${fmt(bounds.fused.flops)} FLOP / ${formatBytes(bounds.fused.bytes)}`
                         : undefined
                     }>
-                      intensity · fused
+                      fused
                     </span>
                     <span>
                       {bounds && bounds.fused.bytes > 0
@@ -1073,7 +1223,7 @@ export function Inspector(): React.ReactElement {
                         ? `every op of every tile as its own job: separate input reads and output writes, materialized views, and no cross-op cache reuse - ${fmt(bounds.unfused.flops)} FLOP / ${formatBytes(bounds.unfused.bytes)}`
                         : `per-tile cones are not traced past ${MAX_PER_BOX_PROPS} tiles, and the merged result cannot be taken apart again`
                     }>
-                      intensity · unfused
+                      unfused
                     </span>
                     <span>
                       {bounds?.unfused && bounds.unfused.bytes > 0
@@ -1081,49 +1231,71 @@ export function Inspector(): React.ReactElement {
                         : "—"}
                     </span>
                   </div>
-                  {!metrics.exact && (
+                  {metrics && !metrics.exact && (
                     <p className="hint overlap">
-                      Bounds, not counts: read ≤ as “no more than”, never understated.
-                      The ~ intensities are ratios of such figures, so they are
-                      disturbed in an unknown direction.
+                      Both are ratios of figures measured over a widened region, which moves
+                      the numerator and the denominator at once: ~ says disturbed in an
+                      unknown direction, where ≤ would claim a side.
                     </p>
                   )}
                 </div>
                 <div className="ins-section">
-                  <div className="ins-title">
-                    Reuse{" "}
+                  <div className="ins-title with-action">
+                    Reuse sweep
                     <button
                       className="mini"
                       onClick={computeReuse}
-                      title="sample selection-sized output tiles across the graph and count how many touch each input's current footprint"
+                      title="sample tiles of the selection's size across the anchor tensor and count how many touch each input's current footprint"
                     >
                       estimate
                     </button>
                   </div>
-                  {reuse ? (
-                    <div className="kv">
-                      {reuse.map((estimate) => (
-                        <React.Fragment key={estimate.tensorId}>
-                          <span>{resolved.tensors[estimate.tensorId].name}</span>
-                          <span>
-                            {estimate.estimatedTiles.toFixed(estimate.estimatedTiles < 10 ? 1 : 0)}×
-                            {` (of ${estimate.totalTiles} tiles)`}
-                          </span>
-                        </React.Fragment>
-                      ))}
-                    </div>
-                  ) : (
+                  <p className="hint">
+                    Tiles of this tile's size, laid over the whole tensor: how many of them read
+                    part of what this one reads.
+                  </p>
+                  {!reuse ? (
                     <p className="hint">sampled sweep · run on demand</p>
+                  ) : reuse.length === 0 ? (
+                    <p className="hint">This tile reads no graph input directly.</p>
+                  ) : (
+                    <ul className="reuse-list">
+                      {reuse.map((estimate) => {
+                        const neighbours = neighbourShares(estimate.neighbors, axisLabelOf);
+                        return (
+                          <li key={estimate.tensorId}>
+                            <code>{resolved.tensors[estimate.tensorId].name}</code>
+                            <span
+                              className="muted"
+                              title={
+                                estimate.exhaustive
+                                  ? "every tile of this size was probed"
+                                  : `${estimate.probes} of ${estimate.totalTiles} tiles probed, one per stratum`
+                              }
+                            >
+                              {estimate.exact ? "" : "≤ "}
+                              {estimate.estimatedTiles} of {estimate.totalTiles} tiles
+                              {estimate.meanSharedFraction !== null &&
+                                ` · ${Math.round(estimate.meanSharedFraction * 100)}% of the footprint each`}
+                            </span>
+                            {!estimate.exact && (
+                              <span className="badge approx" title={estimate.reasons.join("; ")}>≈</span>
+                            )}
+                            {(!estimate.exhaustive || neighbours) && (
+                              <span className="reuse-detail">
+                                {!estimate.exhaustive && `${estimate.probes} sampled`}
+                                {!estimate.exhaustive && neighbours && " · "}
+                                {neighbours && `neighbouring tile shares ${neighbours}`}
+                              </span>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
                   )}
                 </div>
-              </>
+              </div>
             )}
-            <DependencyNotes
-              findings={findings}
-              hasSelection={enabledBoxes > 0}
-              focusedBox={focusedBox}
-              attributed={!!perBox}
-            />
           </>
         )}
       </div>

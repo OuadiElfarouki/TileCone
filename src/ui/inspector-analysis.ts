@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { contributions } from "../core/contribution";
 import { AggregateReadout, coneReadout, computeMetrics } from "../core/metrics";
 import { coneFindings } from "../core/notes";
+import { inputSharing } from "../core/reuse";
 import type { PropResult } from "../core/propagate";
 import { count, fromBox, Region, union } from "../core/region";
 import type { ResolvedGraph } from "../core/graph";
@@ -181,6 +182,18 @@ export function useInspectorAnalysis({
     return computeMetrics(resolved, scopedBack);
   }, [resolved, scopedBack]);
 
+  /**
+   * What the enabled tiles actually share, per input, beside what a full sweep
+   * would reuse. Exact and already-propagated, so unlike the sampled estimate
+   * it costs nothing to show and needs no button; with one tile there is
+   * nothing to share, and the rows would all read 1x.
+   */
+  const sharing = useMemo(() => {
+    const cones = enabledBackwardProps(perBox, parts, hiddenBoxes, focusedBox, activeTensorId);
+    if (!resolved || !cones || cones.length < 2) return null;
+    return inputSharing(resolved, cones);
+  }, [resolved, perBox, parts, hiddenBoxes, focusedBox, activeTensorId]);
+
   /** @see coneBounds - idealized execution scenarios. */
   const bounds = useMemo(() => {
     if (!resolved || !metrics) return null;
@@ -235,5 +248,5 @@ export function useInspectorAnalysis({
     return coneReadout(resolved, scopedFwd).filter((row) => !roots.has(row.tensorId));
   }, [resolved, scopedFwd]);
 
-  return { metrics, bounds, findings, seeds, contribution, upstream, downstream };
+  return { metrics, bounds, sharing, findings, seeds, contribution, upstream, downstream };
 }

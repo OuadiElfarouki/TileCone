@@ -29,6 +29,8 @@ export type Direction = "none" | "backward" | "forward" | "both";
 export type ConeDirection = "backward" | "forward";
 export type PanelSide = "left" | "right";
 export type Theme = "light" | "dark";
+/** The two classes of question the inspector answers; see `inspectorTab`. */
+export type InspectorTab = "dependencies" | "execution";
 /** Defensive share-state bound; far beyond any usable graph arrangement while
  * preventing finite-but-overflowing coordinates from poisoning scene bounds. */
 export const MAX_TENSOR_OFFSET = 1_000_000;
@@ -303,6 +305,17 @@ type State = {
   /** Parallel to `selection.parts`; null without a selection or past the attribution cap. */
   entangled: Entanglement[][] | null;
 
+  /**
+   * Which class of question the inspector is answering.
+   *
+   * `dependencies` is every figure that is a function of the graph and the
+   * drawn region: exact, or a bound with its reason named. `execution` is the
+   * figures that only exist once an execution is assumed - an order, a tiling
+   * of the whole tensor, a fusion decision - which are modelled rather than
+   * bounded and would be read as facts if they shared a panel with them.
+   */
+  inspectorTab: InspectorTab;
+
   viewCfgs: Record<string, ViewCfg>;
   /** Px per element for every card in this graph. A property of the resolved
    * graph, not of the view: derived once at load, so equal dimensions render at
@@ -385,6 +398,7 @@ type State = {
   setTileScale: (v: number) => void;
   setSnapToGrid: (v: boolean) => void;
   setAxisMode: (v: AxisMode) => void;
+  setInspectorTab: (tab: InspectorTab) => void;
   setFocusNode: (node: { kind: "tensor" | "op"; id: string } | null) => void;
   /** Light one row of the operations list, or clear it with `null`. */
   setSelectedOp: (nodeId: string | null) => void;
@@ -723,6 +737,7 @@ export const useStore = create<State>((set, get) => ({
   loadError: null,
   diagnostics: [],
   showEntangled: false,
+  inspectorTab: "dependencies",
   entangled: null,
   selection: null,
   workspaceHistory: [],
@@ -1141,6 +1156,7 @@ export const useStore = create<State>((set, get) => ({
 
   setSnapToGrid: (v) => set({ snapToGrid: v }),
   setAxisMode: (v) => set({ axisMode: v }),
+  setInspectorTab: (tab) => set({ inspectorTab: tab }),
 
   setTileScale: (v) =>
     set({ tileScale: Math.max(TILE_SCALE_MIN, Math.min(TILE_SCALE_MAX, Math.round(v))) }),
