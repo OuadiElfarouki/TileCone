@@ -127,6 +127,20 @@ export interface OpSpec {
    */
   inferSymShapes?(inSyms: Sym[][], ctx: OpCtx): Sym[][];
 
+  /**
+   * What to call an instance of this operation on screen, when the registry
+   * name is not what the author wrote.
+   *
+   * Several operations are one implementation behind many names: `relu` and
+   * `gelu` are both `elementwise`, `sum` and `amax` are both `reduce`, and an
+   * imported barrier is `opaque` standing in for something with a name of its
+   * own. The registry name is the right identity for dispatch and the wrong one
+   * for a card, which was reading "elementwise" over a node whose source line
+   * said `relu`. Derived from the attributes rather than stored beside them, so
+   * an edit to the attributes cannot leave a stale label behind.
+   */
+  displayName?(attrs: Attrs): string | undefined;
+
   /** Infer canonical output dtypes and validate input dtype compatibility. */
   inferDTypes(inDTypes: DType[], attrs: Attrs, outShapes: number[][]): DType[];
 

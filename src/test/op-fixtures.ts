@@ -24,6 +24,16 @@ export type OpFixture = {
   nodeId: string;
   /** Why this instance and not a simpler one, when that is not obvious. */
   note?: string;
+  /**
+   * This operation cannot produce an exact region at any configuration.
+   *
+   * The adjointness law compares `forward` against `backward` only where both
+   * are exact, so it has nothing to say here. The flag turns its "this fixture
+   * asserted nothing" guard into the opposite assertion - that the op really is
+   * inexact everywhere - rather than letting the guard be skipped. The oracle
+   * corpus still checks the op, under the superset rule.
+   */
+  inexactByDesign?: boolean;
 };
 
 type NodeSpec = [
@@ -64,9 +74,10 @@ function one(
   ins: string[],
   outs: string[],
   attrs?: Record<string, unknown>,
-  note?: string
+  note?: string,
+  extra?: Pick<OpFixture, "inexactByDesign">
 ): OpFixture {
-  return { op, graph: build(inputs, [["n", op, ins, outs, attrs]]), nodeId: "n", note };
+  return { op, graph: build(inputs, [["n", op, ins, outs, attrs]]), nodeId: "n", note, ...extra };
 }
 
 const f = (shape: number[]) => ({ shape });
@@ -170,4 +181,13 @@ export const OP_FIXTURES: OpFixture[] = [
   one("identity", { X: f([3, 4]) }, ["X"], ["Y"]),
   one("cast", { X: f([3, 4]) }, ["X"], ["Y"], { dtype: "f16" }),
   one("contiguous", { X: f([3, 4]) }, ["X"], ["Y"]),
+  one(
+    "opaque",
+    { X: f([2, 3]), W: f([3, 4]) },
+    ["X", "W"],
+    ["Y"],
+    { op: "SomeUnsupportedOp", shapes: [[2, 4]] },
+    "two inputs of different shapes, so a barrier that reached only one of them would show",
+    { inexactByDesign: true }
+  ),
 ];

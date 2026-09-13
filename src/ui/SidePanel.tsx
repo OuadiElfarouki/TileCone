@@ -4,6 +4,7 @@ import { EXAMPLES } from "../examples";
 import { tileOf } from "./grid";
 import { selectionToLink, shareTarget } from "./share";
 import { CopyButton } from "./CopyButton";
+import { opLabel } from "../core/ops/index";
 import { involvedTensorIds, useStore } from "./store";
 import { matchesShortcut, SHORTCUTS } from "./shortcuts";
 import { viewAxes } from "./tensor-view";
@@ -200,7 +201,7 @@ function Operations(): React.ReactElement {
       {resolved.topo.map((node) => {
         const outputs = node.outputs.map((id) => resolved.tensors[id]);
         const hot = [...node.inputs, ...node.outputs].some((id) => involved.has(id));
-        const signature = `${outputs.map((t) => t.name).join(", ")} = ${node.op}(${node.inputs
+        const signature = `${outputs.map((t) => t.name).join(", ")} = ${opLabel(node)}(${node.inputs
           .map((id) => resolved.tensors[id].name)
           .join(", ")})`;
         const meta = outputs

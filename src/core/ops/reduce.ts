@@ -53,6 +53,8 @@ function reduceDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
 
 export const reduceOp: OpSpec = {
   name: "reduce",
+  /** `max`/`min` are the op's names; the DSL spells them `amax`/`amin`. */
+  displayName: (attrs) => ({ max: "amax", min: "amin" }[attrs.fn as string] ?? (attrs.fn as string)),
   dependencyNote: reduceDependencyNote,
   attrSchema: z.object({
     fn: z.enum(["sum", "max", "min", "mean", "prod", "logsumexp"]),

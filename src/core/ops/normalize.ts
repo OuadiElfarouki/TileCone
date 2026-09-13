@@ -85,6 +85,7 @@ function normalizeDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
 
 export const normalizeOp: OpSpec = {
   name: "normalize",
+  displayName: (attrs) => attrs.kind as string,
   dependencyNote: normalizeDependencyNote,
   attrSchema: z.object({
     kind: z.enum(["layernorm", "rmsnorm"]),

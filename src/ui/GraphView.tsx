@@ -9,6 +9,7 @@ import {
 } from "./graph-scene";
 import { cardSize, TensorCard } from "./TensorCard";
 import { shapeLabel, symbolicExtentLabel } from "./shape-label";
+import { opLabel } from "../core/ops/index";
 import { involvedTensorIds, PANEL_RAIL, planesOf, useStore } from "./store";
 import type { TensorOffset } from "./tensor-layout";
 import { MIN_SIDE_PX, settledTiles } from "./tiling";
@@ -255,7 +256,7 @@ export function GraphView(): React.ReactElement {
         Object.values(resolved?.tensors ?? {}).map((tensor) => [tensor.id, tensor.name])
       ),
       ...Object.fromEntries(
-        (resolved?.nodes ?? []).map((node) => [node.id, node.label ?? node.op])
+        (resolved?.nodes ?? []).map((node) => [node.id, opLabel(node)])
       ),
     }
   ), [scene, labelScale, resolved]);
@@ -648,10 +649,12 @@ export function GraphView(): React.ReactElement {
                   left: p.x, top: p.y, width: p.w, height: p.h,
                   "--view-scale": tf.k,
                 } as React.CSSProperties}
+                /* The registry name stays in the tooltip beside the attributes:
+                   the card says what was written, the title says what runs. */
                 title={`${node.op}\n${JSON.stringify(node.attrs)}`}
               >
                 <span style={label ? { width: label.w, top: label.dy } : undefined}>
-                  {node.label ?? node.op}
+                  {opLabel(node)}
                 </span>
                 {isExpandable(node.op) && (
                   <button

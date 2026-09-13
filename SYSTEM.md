@@ -59,7 +59,7 @@ src/
 │   ├── notes.ts          plain-language dependency constraints
 │   ├── shapes.ts         symbolic dimensions and shape errors
 │   ├── dtypes.ts         canonical dtypes, byte widths, and the promotion lattice
-│   └── ops/              operation semantics, registry, and fallback thresholds
+│   └── ops/              operation semantics, registry, barriers, and fallback thresholds
 ├── parse/
 │   ├── lexical.ts        identifier, string, and comment rules, shared with the highlighter
 │   ├── ast.ts            DSL syntax tree
@@ -256,6 +256,18 @@ The source map connects compiler errors back to declarations or operation calls.
 
 - **Coverage.** `src/test/op-fixtures.ts` holds one representative instance of every op; `registry.test.ts` asserts the table covers `listOps()`, so registering an operation without a fixture fails the suite instead of shipping untested. Each fixture is also run against the brute-force oracle, so "registered" implies "oracle-checked".
 - **Adjointness.** `forward` and `backward` are two implementations of one relation, and for exact regions they must agree about whether it is empty: `forward(inBox) ∩ outBox ≠ ∅` iff `backward(outBox) ∩ inBox ≠ ∅`. This needs no oracle, so it runs on every op at every fixture size, covering the ops the random-graph corpus does not compose.
+
+### Barriers
+
+`opaque` is the registry's escape hatch: an operation whose output shapes are declared and whose semantics are not. It exists because of what the resolver does with an operation it does not know. `resolveGraphCollecting` prunes the failing node and, transitively, everything downstream of it - the right answer for one line of hand-written DSL, where the author gets one error and no invented cascade, and the wrong one for an imported model, where a single unrecognised node silently replaces the graph with a shorter one. A cone that stops early is a **subset** of the truth, which is the one failure this engine treats as critical.
+
+A barrier keeps the node instead. Every output element is assumed to read every input element and every input element to reach every output: the weakest true statement about an operation nobody described, a superset by construction, marked inexact with the original operation's name as its reason. Everything downstream then behaves as it does for any other approximation - hatched paint, `≈` on the rows, `≤` on the figures - and implementing the operation for real later is purely a narrowing, with nothing else to change. Its `oracleDeps` states that same total dependence, so the corpus checks it like any other op; the adjointness law has nothing to say about an operation that is never exact, and `op-fixtures.ts` marks that claim explicitly (`inexactByDesign`) so the law asserts the op really is inexact everywhere rather than being quietly skipped.
+
+The one quantity a barrier cannot bound is its own arithmetic. `flopsFor` returns zero, so FLOPs measured through a barrier are a floor while every other figure beside them is a ceiling; the dependency note says so where the reader will see it.
+
+### Display names
+
+An operation's registry name is its identity for dispatch and frequently not what the author wrote: `relu` and `gelu` are both `elementwise`, `sum` and `amax` are both `reduce`, and a barrier is `opaque` standing in for something with a name of its own. `OpSpec.displayName(attrs)` derives the name to show, `opLabel(node)` resolves it once for every surface that names an operation (graph cards, their layout measurement, the operations list), and an explicit `node.label` still wins for a caller that has a better name. Derived rather than stored, on the same principle as resolved shapes: an edit to the attributes cannot leave a stale label behind.
 
 ### Dtypes
 

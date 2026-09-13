@@ -13,7 +13,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { listOps } from "../core/ops/index";
+import { listOps, opLabel } from "../core/ops/index";
 import { OpCtx } from "../core/ops/types";
 import { resolveGraph } from "../core/graph";
 import { Box, Region, intersect, isEmpty, iv } from "../core/region";
@@ -41,6 +41,23 @@ describe("registry coverage", () => {
         typeof spec.arity.inputs === "number" ? spec.arity.inputs : spec.arity.inputs.min;
       expect(min, `${spec.name} accepts zero inputs`).toBeGreaterThan(0);
     }
+  });
+});
+
+/* The registry name is the identity for dispatch; a reader is owed the name
+   they wrote, or - for a barrier - the name of the operation it stands for. */
+describe("what an operation is called on screen", () => {
+  it("prefers the written name to the implementation's", () => {
+    expect(opLabel({ op: "elementwise", attrs: { fn: "relu", nary: 1 } })).toBe("relu");
+    expect(opLabel({ op: "reduce", attrs: { fn: "max", axes: [0] } })).toBe("amax");
+    expect(opLabel({ op: "normalize", attrs: { kind: "layernorm" } })).toBe("layernorm");
+    expect(opLabel({ op: "opaque", attrs: { op: "BatchNormalization" } })).toBe("BatchNormalization");
+  });
+
+  it("falls back to the registry name, and yields to an explicit label", () => {
+    expect(opLabel({ op: "matmul", attrs: {} })).toBe("matmul");
+    expect(opLabel({ op: "conv" })).toBe("conv");
+    expect(opLabel({ op: "opaque", attrs: { op: "Gemm" }, label: "fused block" })).toBe("fused block");
   });
 });
 
@@ -127,8 +144,12 @@ describe("adjointness: forward and backward describe one relation", () => {
         }
       }
       // A fixture that produced only inexact regions would pass every check
-      // above without testing anything.
-      expect(asserted, `${fixture.op}: no exact pair was available to assert on`).toBeGreaterThan(0);
+      // above without testing anything - unless being inexact everywhere is the
+      // operation's contract, which is then what gets asserted instead.
+      if (fixture.inexactByDesign)
+        expect(asserted, `${fixture.op}: declared inexact everywhere, but an exact pair appeared`).toBe(0);
+      else
+        expect(asserted, `${fixture.op}: no exact pair was available to assert on`).toBeGreaterThan(0);
     });
   }
 });

@@ -57,6 +57,7 @@ each underlining the part it is about.
 | **Shape** | `reshape`, `transpose`, `slice` (strided), `pad` (constant/reflect/replicate), `concat`, `split`, `expand`, `identity`, `contiguous` |
 | **Spatial** | `conv` (1–3D, grouped, strided, dilated, padded), `pool` (max/avg) |
 | **Other** | `cumsum` (forward and reverse), `gather`, `cast` |
+| **Barrier** | `opaque` : an operation whose shapes are known and whose semantics are not |
 
 Dtypes are `fp32` `fp16` `bf16` `fp8` `int32` `int8` `bool`. Operations that compute from several
 tensors promote (`fp16 + fp32 → fp32`, following PyTorch); operations that only move data require
@@ -79,6 +80,18 @@ it feeds.
 no ellipsis; `reshape` takes no `-1`; slices have no negative steps; there is no `conv_transpose`,
 batch/group norm, `where`, `argmax`/`topk`, or comparison operator; a name is bound once, so
 `X = relu(X)` is an error.
+
+Anything missing can still be carried, rather than blocking the graph it sits in:
+
+```
+H = opaque(X, S, op="BatchNormalization", shapes=[[N, C]])
+```
+
+A barrier declares its output shapes and nothing else. Every output element is assumed to read
+every input element and every input to reach every output : the weakest true statement about an
+operation nobody has described, so it is a superset by construction, marked inexact with the
+original name as its reason. Cards show that name rather than `opaque`. The one figure it cannot
+bound is its own arithmetic: FLOPs under a barrier are a floor, not a ceiling.
 
 ## The core invariant
 

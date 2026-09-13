@@ -1,5 +1,6 @@
 import dagre from "dagre";
 import type { ResolvedGraph, Tensor } from "../core/graph";
+import { opLabel } from "../core/ops/index";
 import {
   cubicPath,
   curvedEdge,
@@ -77,7 +78,7 @@ export function buildBaseGraphLayout(
     graph.setNode(`t:${tensor.id}`, { width: w, height: h });
   }
   for (const node of resolved.nodes) {
-    const label = node.label ?? node.op;
+    const label = opLabel(node);
     graph.setNode(`n:${node.id}`, {
       width: Math.max(64, label.length * 8 + 22),
       height: 30,

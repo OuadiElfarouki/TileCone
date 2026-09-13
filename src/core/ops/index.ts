@@ -1,4 +1,4 @@
-import { OpSpec } from "./types";
+import { Attrs, OpSpec } from "./types";
 import { einsumOp, matmulOp, bmmOp, linearOp } from "./einsum";
 import { elementwiseOp } from "./elementwise";
 import { reduceOp } from "./reduce";
@@ -18,6 +18,7 @@ import { reshapeOp } from "./reshape";
 import { convOp, poolOp } from "./conv";
 import { cumsumOp } from "./scan";
 import { gatherOp } from "./gather";
+import { opaqueOp } from "./opaque";
 
 const registry = new Map<string, OpSpec>();
 
@@ -28,6 +29,12 @@ function registerOp(spec: OpSpec): void {
 
 export function getOp(name: string): OpSpec | undefined {
   return registry.get(name);
+}
+
+/** What to call a node on screen: its own label, its op's display name, or the
+ *  registry name. Used by every surface that shows an operation to a reader. */
+export function opLabel(node: { op: string; attrs?: Attrs; label?: string }): string {
+  return node.label ?? registry.get(node.op)?.displayName?.(node.attrs ?? {}) ?? node.op;
 }
 
 /**
@@ -65,4 +72,5 @@ export function listOps(): OpSpec[] {
   identityLike("identity"),
   castOp,
   identityLike("contiguous"),
+  opaqueOp,
 ].forEach(registerOp);

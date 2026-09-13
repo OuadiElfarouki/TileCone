@@ -93,6 +93,7 @@ export function broadcastOracleIndex(outIndex: number[], inShape: number[]): num
 
 export const elementwiseOp: OpSpec = {
   name: "elementwise",
+  displayName: (attrs) => attrs.fn as string,
   attrSchema: z.object({
     fn: z.enum(ELEMENTWISE_FN_NAMES),
     nary: z.number().int().min(1),
