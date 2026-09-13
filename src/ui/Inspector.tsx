@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Contribution, MAX_CONTRIBUTION_PROBES } from "../core/contribution";
+import type { ResolvedGraph } from "../core/graph";
 import { TensorReadout } from "../core/metrics";
 import type { ConeFindings } from "../core/notes";
 import { estimateInputReuse, ReuseEstimate } from "../core/reuse";
@@ -43,10 +44,12 @@ function fmt(n: number): string {
 function SelectionRangeInput({
   box,
   shape,
+  label,
   onCommit,
 }: {
   box: Box;
   shape: number[];
+  label: string;
   onCommit: (box: Box) => void;
 }): React.ReactElement {
   const formatted = formatSelectionBox(box);
@@ -75,7 +78,7 @@ function SelectionRangeInput({
     <input
       className={`box-range${invalid ? " invalid" : ""}`}
       value={draft}
-      aria-label="selection range"
+      aria-label={label}
       aria-invalid={invalid}
       title={invalid ? `expected ${shape.length} in-bounds index or lo:hi fields` : "edit range; Enter or blur applies"}
       spellCheck={false}
@@ -305,6 +308,34 @@ export function reuseQualifiers(
   };
 }
 
+type ReuseProbe = { tensorId: string; box: Box };
+type ReuseRun = {
+  graph: ResolvedGraph;
+  probe: ReuseProbe;
+  rows: ReuseEstimate[];
+};
+
+const sameBox = (left: Box, right: Box) =>
+  left.length === right.length && left.every(
+    (interval, axis) => interval.lo === right[axis].lo && interval.hi === right[axis].hi
+  );
+
+/**
+ * A reuse sweep is a cache keyed by the graph and the exact tile that seeded
+ * it. Effect-based clearing is too late: React renders once with the new graph
+ * before an effect runs, and an old input ID can crash that render.
+ */
+export function currentReuseRows(
+  run: ReuseRun | null,
+  graph: ResolvedGraph | null,
+  probe: ReuseProbe | null
+): ReuseEstimate[] | null {
+  return run && graph === run.graph && probe &&
+    probe.tensorId === run.probe.tensorId && sameBox(probe.box, run.probe.box)
+    ? run.rows
+    : null;
+}
+
 /** Slice expressions minus the over-approximation comment the readout appends. */
 const sliceLines = (row: TensorReadout) =>
   row.sliceExprs.filter((line) => !line.startsWith("#"));
@@ -439,26 +470,22 @@ const TABS = [
 ] as const satisfies readonly { id: InspectorTab; label: string; hint: string }[];
 
 /**
- * Both tabs stay in the tab order, and neither answers an arrow key.
- *
- * The usual tab pattern is one stop with a roving tabindex and arrows moving
- * inside it, but the arrows already mean "move the focused tile" everywhere in
- * this app. Clicking a tab left focus on it, so the next arrow press switched
- * tabs rather than moving the tile the panel was describing - one binding
- * silently shadowing another. Tab reaches both, Enter and Space activate.
+ * A two-button view switch, deliberately not the ARIA tab pattern. Tabs would
+ * promise roving focus and arrow navigation, while arrows already move the
+ * tile this panel describes. Both buttons remain ordinary tab stops and expose
+ * their current state through `aria-pressed`.
  */
 function InspectorTabs(): React.ReactElement {
   const tab = useStore((s) => s.inspectorTab);
   const setTab = useStore((s) => s.setInspectorTab);
   return (
-    <div className="ins-tabs" role="tablist" aria-label="analysis class">
+    <div className="ins-tabs" role="group" aria-label="analysis class">
       {TABS.map(({ id, label, hint }) => (
         <button
           key={id}
           id={`ins-tab-${id}`}
-          role="tab"
           className="ins-tab"
-          aria-selected={tab === id}
+          aria-pressed={tab === id}
           aria-controls={`ins-panel-${id}`}
           title={hint}
           onClick={() => setTab(id)}
@@ -736,17 +763,31 @@ function RegionEditor({ activeTensorId, onSelectGroup }: {
                 aria-pressed={!hidden}
               />
               <span className="box-body">
-                <span className="box-label">
+                <button
+                  className="box-label box-pin"
+                  disabled={!perBox || hidden}
+                  aria-label={`${pinned === i ? "unpin" : "pin"} tile ${i + 1} on ${t.name}`}
+                  aria-pressed={pinned === i}
+                  title={pinned === i
+                    ? "unpin this tile so the group is analysed together"
+                    : "pin this tile so the readout follows it"}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    togglePinBox(i);
+                  }}
+                >
                   <b>{t.name}</b> · {fmt(b.reduce((a, I) => a * (I.hi - I.lo), 1))} elements
-                </span>
+                </button>
                 <SelectionRangeInput
                   box={b}
                   shape={shape}
+                  label={`selection range for tile ${i + 1} on ${t.name}`}
                   onCommit={(next) => replaceBox(i, next)}
                 />
               </span>
               <button
                 className="mini danger"
+                aria-label={`remove tile ${i + 1} from ${t.name}`}
                 title="remove this tile from the selection"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -877,7 +918,24 @@ export function Inspector(): React.ReactElement {
   const focusedBox = groupFocus(parts, rawFocus, activeTensorId);
   const selectGroup = useStore((s) => s.selectAnalysisGroup);
 
-  const [reuse, setReuse] = useState<ReuseEstimate[] | null>(null);
+  /** The one enabled tile that defines a sweep. Keeping this derivation beside
+   *  the cache key prevents its button and its displayed result from choosing
+   *  subtly different fallbacks. */
+  const reuseProbe = useMemo<ReuseProbe | null>(() => {
+    if (!selection || !activeTensorId) return null;
+    const fallback = selection.parts
+      .map((_, index) => index)
+      .filter((index) =>
+        selection.parts[index].tensorId === activeTensorId && !hiddenBoxes.has(index)
+      )
+      .pop();
+    const probeIndex = focusedBox !== null && !hiddenBoxes.has(focusedBox)
+      ? focusedBox
+      : fallback;
+    const probe = probeIndex === undefined ? null : selection.parts[probeIndex];
+    return probe ? { tensorId: probe.tensorId, box: probe.box } : null;
+  }, [selection, activeTensorId, hiddenBoxes, focusedBox]);
+  const [reuseRun, setReuseRun] = useState<ReuseRun | null>(null);
 
   const {
     metrics,
@@ -899,9 +957,8 @@ export function Inspector(): React.ReactElement {
     direction,
   });
 
-  useEffect(() => setReuse(null), [resolved, selection, focusedBox, hiddenBoxes, activeTensorId]);
-
-  if (!resolved) return <aside className="inspector" />;
+  if (!resolved) return <aside className="inspector" aria-label="Tile inspector" />;
+  const reuse = currentReuseRows(reuseRun, resolved, reuseProbe);
 
   /**
    * Everything below the tiles list is counted over the active group, not over
@@ -1006,21 +1063,19 @@ export function Inspector(): React.ReactElement {
    * is defined by one tile on one tensor, so it follows the anchor part (the
    * focused one) else the last drawn rather than mixing tensors. */
   const computeReuse = () => {
-    if (!selection || !resolved) return;
-    const fallback = selection.parts
-      .map((_, index) => index)
-      .filter((index) => selection.parts[index].tensorId === activeTensorId && !hiddenBoxes.has(index))
-      .pop();
-    const probeIndex = focusedBox !== null && !hiddenBoxes.has(focusedBox)
-      ? focusedBox
-      : fallback;
-    const probe = probeIndex === undefined ? null : selection.parts[probeIndex];
-    if (!probe) return;
-    setReuse(estimateInputReuse(resolved, { tensorId: probe.tensorId, region: fromBox(probe.box) }));
+    if (!reuseProbe) return;
+    setReuseRun({
+      graph: resolved,
+      probe: reuseProbe,
+      rows: estimateInputReuse(resolved, {
+        tensorId: reuseProbe.tensorId,
+        region: fromBox(reuseProbe.box),
+      }),
+    });
   };
 
   return (
-    <aside className="inspector">
+    <aside className="inspector" aria-label="Tile inspector">
       <div className="inspector-scroll">
         {!selection ? (
           <EmptyPanel />
@@ -1040,7 +1095,7 @@ export function Inspector(): React.ReactElement {
             {tab === "dependencies" ? (
               <div
                 className="ins-tabpanel"
-                role="tabpanel"
+                role="region"
                 id="ins-panel-dependencies"
                 aria-labelledby="ins-tab-dependencies"
               >
@@ -1221,7 +1276,7 @@ export function Inspector(): React.ReactElement {
             ) : (
               <div
                 className="ins-tabpanel"
-                role="tabpanel"
+                role="region"
                 id="ins-panel-execution"
                 aria-labelledby="ins-tab-execution"
               >
@@ -1275,6 +1330,7 @@ export function Inspector(): React.ReactElement {
                     <button
                       className="mini"
                       onClick={computeReuse}
+                      disabled={!reuseProbe}
                       title="sample tiles of the selection's size across the anchor tensor and estimate how many demand part of each graph-input footprint"
                     >
                       estimate

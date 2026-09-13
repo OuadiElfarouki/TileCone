@@ -98,6 +98,9 @@ function SourceEditor(): React.ReactElement {
           className={loadError ? "source error-state" : "source"}
           value={text}
           aria-label="graph source"
+          aria-invalid={!!loadError}
+          aria-describedby="source-status"
+          aria-errormessage={loadError ? "source-status" : undefined}
           spellCheck={false}
           onChange={(e) => setText(e.target.value)}
           onScroll={syncScroll}
@@ -114,7 +117,12 @@ function SourceEditor(): React.ReactElement {
           ▶ run
         </button>
         <ShareButton />
-        <span className="source-status">
+        <span
+          className="source-status"
+          id="source-status"
+          role={loadError ? "alert" : "status"}
+          aria-live={loadError ? "assertive" : "polite"}
+        >
           {diagnostics.length ? (
             /* Every independent error, not just the first. The compiler finds
                them in one pass, and showing one at a time would put the author
@@ -379,7 +387,7 @@ function ExamplePicker(): React.ReactElement {
 export function SidePanel(): React.ReactElement {
   const sourcePending = useStore((s) => s.draftText !== s.dslText);
   return (
-    <nav className="side-panel">
+    <aside className="side-panel" aria-label="Graph source and operations">
       <div className="side-panel-scroll">
         <header className="source-heading">
           <h2 className="panel-title">Graph source</h2>
@@ -402,6 +410,6 @@ export function SidePanel(): React.ReactElement {
           <Operations />
         </section>
       </div>
-    </nav>
+    </aside>
   );
 }

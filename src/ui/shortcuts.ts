@@ -95,7 +95,7 @@ export const SHORTCUTS = {
 } as const satisfies Record<string, Shortcut>;
 
 export const SHORTCUT_GROUPS = [
-  /* The tab condition is a property of the group, not of each binding: every
+  /* The view condition is a property of the group, not of each binding: every
      key that edits the selection wants it, and repeating it five times would
      read as five separate rules. */
   {
@@ -108,7 +108,7 @@ export const SHORTCUT_GROUPS = [
       SHORTCUTS.escape,
       SHORTCUTS.undo,
     ],
-    note: "Tile edits apply while the inspector is on Dependencies, the tab that lists them.",
+    note: "Tile edits apply while the inspector shows Dependencies, the view that lists them.",
   },
   { title: "View", items: [SHORTCUTS.needs, SHORTCUTS.feeds, SHORTCUTS.entangled, SHORTCUTS.fit, SHORTCUTS.scrub, SHORTCUTS.zoom, SHORTCUTS.help] },
   /* `run` builds the source; it is not a panel control. The sheet is the one

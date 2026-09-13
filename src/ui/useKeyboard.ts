@@ -83,6 +83,11 @@ export function useKeyboard({
         return; // nothing active: do nothing
       }
 
+      // A modal shortcut reference is not a translucent route to the workspace
+      // behind it. Tab remains owned by the dialog's focus trap; every app-level
+      // binding waits until the sheet closes.
+      if (shortcutsOpen) return;
+
       // Panel shortcuts remain global even while focus is inside the source or
       // an inspector control. They do not modify the field's contents.
       const panel = matchesShortcut(e, SHORTCUTS.leftPanel)
@@ -134,7 +139,7 @@ export function useKeyboard({
         ArrowDown: [rowAx, 1],
       };
       /* Moving a tile is an edit to the selection, and the selection is the
-         Dependencies tab's subject: its list is what shows which tile the
+         Dependencies view's subject: its list is what shows which tile the
          arrows are about to move. Under Execution that list is not on screen,
          and the panel is a readout of an assumed schedule rather than a place
          to redraw the thing being scheduled - so the keys do nothing there
@@ -174,8 +179,8 @@ export function useKeyboard({
 
       // include/exclude the focused part from merged analysis and paint. Also a
       // selection edit, so it follows the same rule as movement above: a pin
-      // survives a tab switch, and this would otherwise change which tiles are
-      // measured while the list saying so is on the other tab.
+      // survives a view switch, and this would otherwise change which tiles are
+      // measured while the list saying so is in the other view.
       if (editsTiles && matchesShortcut(e, SHORTCUTS.toggleTile) && s.focusedBox !== null && s.perBox) {
         e.preventDefault();
         s.toggleBoxHidden(s.focusedBox);

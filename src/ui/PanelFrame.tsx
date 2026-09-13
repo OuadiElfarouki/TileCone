@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useLayoutEffect, useRef, useState } from "react";
 import {
   PANEL_COLLAPSE_AT,
   PANEL_MAX,
@@ -32,6 +32,9 @@ export function PanelFrame({
   const togglePanel = useStore((s) => s.togglePanel);
   const setDragging = useStore((s) => s.setDragging);
   const frameRef = useRef<HTMLDivElement>(null);
+  const railRef = useRef<HTMLButtonElement>(null);
+  const collapseRef = useRef<HTMLButtonElement>(null);
+  const wasCollapsedRef = useRef(collapsed);
   const dragRef = useRef(false);
   const rawWidthRef = useRef(width);
   const startWidthRef = useRef(width);
@@ -48,7 +51,18 @@ export function PanelFrame({
    */
   const [willCollapse, setWillCollapse] = useState(false);
 
+  /* The control that caused a collapse/expand disappears in the next render.
+     Put focus on its replacement instead of dropping keyboard users onto the
+     document body. Initial collapsed state is not a transition and gets no
+     unsolicited focus. */
+  useLayoutEffect(() => {
+    if (wasCollapsedRef.current === collapsed) return;
+    (collapsed ? railRef.current : collapseRef.current)?.focus();
+    wasCollapsedRef.current = collapsed;
+  }, [collapsed]);
+
   const onPointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     dragRef.current = true;
@@ -86,13 +100,13 @@ export function PanelFrame({
       }`}
       style={{ width: collapsed ? PANEL_RAIL : width }}
     >
-      {/* Keep children mounted while collapsed. The source editor owns its draft
-          locally, so unmounting it here would silently discard unrun work. */}
-      <div className="panel-content" aria-hidden={collapsed || undefined}>
-        {children}
-      </div>
+      {/* Draft source and selection state live in the store. Unmount transient
+          panel UI while collapsed so a hidden field cannot retain focus and an
+          open picker cannot reappear later in stale local state. */}
+      {!collapsed && <div className="panel-content">{children}</div>}
       {collapsed ? (
         <button
+          ref={railRef}
           className={`panel-rail ${side}`}
           onClick={() => togglePanel(side)}
           title={`show ${label} (alt+${side === "left" ? "1" : "2"})`}
@@ -102,6 +116,7 @@ export function PanelFrame({
       ) : (
         <>
           <button
+            ref={collapseRef}
             className={`panel-collapse ${side}`}
             onClick={() => togglePanel(side)}
             title={`collapse ${label} (alt+${side === "left" ? "1" : "2"})`}
@@ -112,17 +127,31 @@ export function PanelFrame({
           <div
             className="panel-resize"
             role="separator"
+            tabIndex={0}
+            aria-label={`${label} panel width`}
             aria-orientation="vertical"
             aria-valuenow={width}
             aria-valuemin={PANEL_MIN}
             aria-valuemax={PANEL_MAX}
-            title={`drag to resize · release below ${PANEL_COLLAPSE_AT}px to collapse`}
+            aria-valuetext={`${width} pixels`}
+            title={`drag or use arrow keys to resize · release below ${PANEL_COLLAPSE_AT}px to collapse · double-click to collapse`}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={() => endDrag(true)}
             onPointerCancel={() => endDrag(false)}
             onLostPointerCapture={() => endDrag(false)}
             onDoubleClick={() => togglePanel(side)}
+            onKeyDown={(event) => {
+              const movement = event.key === "ArrowLeft" ? -16
+                : event.key === "ArrowRight" ? 16
+                  : 0;
+              if (!movement) return;
+              event.preventDefault();
+              event.stopPropagation();
+              // Move the separator in the direction of the key. The right
+              // panel grows when its inner edge moves left, hence the reversal.
+              setPanelWidth(side, width + (side === "left" ? movement : -movement));
+            }}
           />
         </>
       )}

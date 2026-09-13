@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Inspector, neighbourShares, reuseQualifiers } from "../ui/Inspector";
+import { currentReuseRows, Inspector, neighbourShares, reuseQualifiers } from "../ui/Inspector";
 import { compileDSL } from "../parse/compiler";
 import {
   groupPropResult,
@@ -60,6 +60,23 @@ const byTensorOf = (resolved: ResolvedGraph, parts: SelPart[]) => {
 };
 
 describe("reuse presentation", () => {
+  it("never presents a result against another graph or probe", () => {
+    const original = chain();
+    const replacement = compileDSL("X = Tensor(8)\nY = relu(X)\n").resolved;
+    const probe = { tensorId: "D", box: box([0, 8], [0, 8]) };
+    const run = { graph: original, probe, rows: [] };
+
+    expect(currentReuseRows(run, original, {
+      tensorId: "D",
+      box: box([0, 8], [0, 8]),
+    })).toEqual([]);
+    expect(currentReuseRows(run, replacement, probe)).toBeNull();
+    expect(currentReuseRows(run, original, {
+      tensorId: "D",
+      box: box([8, 16], [0, 8]),
+    })).toBeNull();
+  });
+
   it("distinguishes sampling uncertainty from conservative geometry", () => {
     expect(reuseQualifiers({ exhaustive: true, geometryExact: true }))
       .toEqual({ count: "", fraction: "" });
@@ -333,17 +350,19 @@ D = matmul(CC, W)
   it("renders ranges only in tile rows, including a single-tile workspace", () => {
     S().setSelection("D", fromBox(box([0, 16], [0, 16])), "replace");
     const html = render();
-    expect(html.match(/aria-label="selection range"/g)).toHaveLength(1);
+    expect(html.match(/aria-label="selection range for tile/g)).toHaveLength(1);
     const header = html.match(/<header class="tile-identity">[\s\S]*?<\/header>/)![0];
     expect(header).not.toContain("selection range");
+    expect(html).toContain('aria-label="pin tile 1 on D"');
+    expect(html).toContain('aria-label="remove tile 1 from D"');
     expect(html).not.toContain("hover an enabled tile");
     expect(html).not.toContain("Select a tensor header");
   });
 
-  /* The split the panel promises in its tab labels: a figure is either a
+  /* The split the panel promises in its view labels: a figure is either a
      function of the graph and the drawn region, or it assumes an execution, and
      the second kind never renders beside the first. */
-  it("keeps modelled figures behind the execution tab", () => {
+  it("keeps modelled figures in the execution view", () => {
     S().setSelection("D", fromBox(box([0, 16], [0, 16])), "replace");
 
     const dependencies = render();
@@ -366,15 +385,14 @@ D = matmul(CC, W)
     expect(execution).not.toContain('<p class="hint">Idealized scenarios');
   });
 
-  it("names the tab strip for assistive technology and the pointer alike", () => {
+  it("exposes the view switch as buttons without claiming tab arrow navigation", () => {
     const html = render();
-    expect(html).toContain('role="tablist"');
-    expect(html).toContain('id="ins-tab-dependencies" role="tab"');
-    expect(html).toContain('aria-selected="true" aria-controls="ins-panel-dependencies"');
-    expect(html).toContain('aria-selected="false" aria-controls="ins-panel-execution"');
-    /* No roving tabindex, and no arrow handler behind it: the arrows are the
-       tile's, and a focused tab that answered them shadowed that binding. */
-    expect(html).not.toContain("tabindex");
+    expect(html).toContain('role="group" aria-label="analysis class"');
+    expect(html).toContain('id="ins-tab-dependencies" class="ins-tab" aria-pressed="true"');
+    expect(html).toContain('id="ins-tab-execution" class="ins-tab" aria-pressed="false"');
+    expect(html).toContain('role="region" id="ins-panel-dependencies"');
+    expect(html).not.toContain('role="tab"');
+    expect(html).not.toContain('role="tablist"');
   });
 
   it("reports when per-tile sharing is unavailable past the attribution cap", () => {
