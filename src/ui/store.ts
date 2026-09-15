@@ -14,14 +14,68 @@ import {
   translatePart,
 } from "../core/region";
 import { EXAMPLES } from "../examples/index";
+import { parseImportJSON } from "../import/json";
+import { preflightImport } from "../import/preflight";
+import {
+  ImportError,
+  type ImportDiagnostic,
+  type ImportFormat,
+  type ImportReport,
+  type ImportResult,
+} from "../import/types";
 import type { CompilerDiagnostic } from "../parse/compiler";
 import { compileDSL, tryCompileDSL } from "../parse/compiler";
 import { toDSL } from "../parse/dsl";
+import { GraphError } from "../core/shapes";
+import { resolveGraph } from "../core/graph";
 import { graphScale, MAX_ELEM_PX, planeExtents, TILE_SCALE_MAX, TILE_SCALE_MIN } from "./tiling";
 import { tileOf } from "./grid";
 import type { AxisMode } from "./shape-label";
 import type { TensorOffset, TensorOffsets } from "./tensor-layout";
 import { defaultViewCfg, viewAxes, viewCfgFits, type ViewCfg } from "./tensor-view";
+
+/**
+ * Where the installed graph came from.
+ *
+ * `applyDSL` used to be the only way anything reached `graph`/`resolved`, which
+ * made "the source" and "the DSL text" the same string by accident rather than
+ * by design. They are not the same thing. An imported model has no DSL text and
+ * must not be given one: `toDSL` uses `Tensor.name` as its identifier and
+ * regenerates node ids, so a round trip through text renames the very nodes an
+ * import report addresses. Generated DSL stays available as an explicit, lossy
+ * conversion; it is not how an import is held.
+ *
+ * Both arms land on the same `Graph` → `resolveGraph` → `SymbolicExecutor`
+ * pipeline. Nothing below this type knows which one it is looking at.
+ */
+export type WorkspaceSource =
+  | { kind: "dsl"; text: string; exampleIndex: number }
+  | {
+      kind: "import";
+      format: ImportFormat;
+      fileName: string;
+      report: ImportReport;
+    };
+
+/** The installed DSL text, or null when the workspace was imported. */
+export const dslTextOf = (source: WorkspaceSource): string | null =>
+  source.kind === "dsl" ? source.text : null;
+
+/** Which built-in example is installed; -1 for edited or imported workspaces. */
+export const exampleIndexOf = (source: WorkspaceSource): number =>
+  source.kind === "dsl" ? source.exampleIndex : -1;
+
+/**
+ * A source that is exactly a built-in example *is* that example, however it got
+ * here - picked from the menu, restored from a link, or typed back by hand.
+ * Deriving the index from the text keeps the picker honest after an edit is
+ * undone, which a remembered index could not.
+ */
+export const dslSource = (text: string): Extract<WorkspaceSource, { kind: "dsl" }> => ({
+  kind: "dsl",
+  text,
+  exampleIndex: EXAMPLES.findIndex((ex) => ex.dsl === text),
+});
 
 /** Which independently toggled views are active in the workspace. `none` is
  * the explicit figures-only state: analysis remains live while paint and rows hide. */
@@ -217,7 +271,7 @@ type WorkspaceSnapshot = {
    *
    * Absent on the ordinary entries, which change neither.
    */
-  source?: { dslText: string; draftText: string; graph: Graph; exampleIndex: number };
+  source?: { source: WorkspaceSource; draftText: string; graph: Graph };
 };
 const WORKSPACE_HISTORY_LIMIT = 40;
 
@@ -256,12 +310,14 @@ export const PANEL_RAIL = 30;
 type Compose = "union" | "subtract" | "replace";
 
 type State = {
-  /** Source currently installed in `graph`/`resolved` and encoded by Share. */
-  dslText: string;
-  /** Editable source. It may differ from `dslText` while the built workspace
-   * remains live; a successful `applyDSL` advances both together. */
+  /** Where the graph currently installed in `graph`/`resolved` came from. */
+  source: WorkspaceSource;
+  /** Editable DSL. It may differ from the installed source while the built
+   * workspace remains live; a successful `applyDSL` advances both together.
+   * An imported workspace leaves it empty: there is no text behind that graph,
+   * and showing the previous model's source beside it would be a lie about
+   * what is installed. */
   draftText: string;
-  exampleIndex: number;
   graph: Graph | null;
   resolved: ResolvedGraph | null;
   loadError: string | null;
@@ -275,6 +331,16 @@ type State = {
    * fix-one-recompile loop the collecting phases exist to end.
    */
   diagnostics: CompilerDiagnostic[];
+  /**
+   * Why the last import failed, addressed by node rather than by span.
+   *
+   * A DSL diagnostic underlines the text it is about, through the source map.
+   * An imported graph has no source map and no text, so a failure names the
+   * node instead and the canvas highlights it. Kept separate from
+   * `diagnostics` for that reason: the two are addressed differently, and
+   * merging them would force one presentation to fake the other's anchor.
+   */
+  importDiagnostics: ImportDiagnostic[];
 
   /** `region.boxes` are the user's ordered PARTS (identity-stable, may overlap),
    * never a canonicalized set. See the note in core/region.ts. */
@@ -398,6 +464,13 @@ type State = {
   stageExample: (i: number) => void;
   setDraftText: (text: string) => void;
   applyDSL: (text: string) => void;
+  /**
+   * Install an already-converted model. The boundary a decoder lands on,
+   * whatever decoded it. Returns whether it installed.
+   */
+  installImport: (result: ImportResult) => boolean;
+  /** The JSON door: read an import document, then install it. */
+  importJSON: (text: string, options?: { fileName?: string; format?: ImportFormat }) => boolean;
   /** Compile, validate, and install a shared workspace as one transaction. */
   restoreWorkspace: (workspace: WorkspaceRestore) => boolean;
   setSelection: (tensorId: string, region: Region, compose?: Compose) => void;
@@ -725,21 +798,44 @@ export function startingTiles(
   });
 }
 
-function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
+/**
+ * Put a resolved graph in the workspace, whatever produced it.
+ *
+ * This is the install boundary, and it takes its source as an argument rather
+ * than assuming one. Every path that replaces the graph goes through here -
+ * compiling DSL, restoring a link, undoing an expansion, importing a model -
+ * so the rule that source and graph are one transaction is structural instead
+ * of a convention each call site remembers to repeat. An importer writes two
+ * thousand nodes and has no text to show for them; that is a difference in
+ * where the graph came from, and nothing below this line needs to know it.
+ *
+ * `draftText` is deliberately not set here. The editable buffer does not always
+ * follow the installed source - an undo restores a draft that was mid-edit when
+ * the expansion happened - so the callers that do own it say so.
+ */
+function installGraph(
+  graph: Graph,
+  resolved: ResolvedGraph,
+  source: WorkspaceSource
+): Pick<
   State,
-  | "graph" | "resolved" | "loadError" | "diagnostics" | "selection" | "backwardRes" | "forwardRes"
+  | "graph" | "resolved" | "source" | "loadError" | "diagnostics" | "importDiagnostics"
+  | "selection" | "backwardRes" | "forwardRes"
   | "byTensorRes"
   | "entangled"
   | "perBox" | "focusedBox" | "pinnedBox" | "viewCfgs" | "preview" | "graphPx"
-  | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "tensorOffsets"
+  | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "tensorOffsets" | "focusNode"
 > {
   const viewCfgs: Record<string, ViewCfg> = {};
   for (const t of Object.values(resolved.tensors)) viewCfgs[t.id] = defaultViewCfg(t.resolved!);
   return {
     graph,
     resolved,
+    source,
+    focusNode: null,
     loadError: null,
     diagnostics: [],
+    importDiagnostics: [],
     entangled: null,
     selection: null,
     // Undo entries refer to tensor IDs and coordinates in one resolved graph.
@@ -761,13 +857,13 @@ function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
 }
 
 export const useStore = create<State>((set, get) => ({
-  dslText: EXAMPLES[0].dsl,
+  source: { kind: "dsl", text: EXAMPLES[0].dsl, exampleIndex: 0 },
   draftText: EXAMPLES[0].dsl,
-  exampleIndex: 0,
   graph: null,
   resolved: null,
   loadError: null,
   diagnostics: [],
+  importDiagnostics: [],
   showEntangled: false,
   inspectorTab: "dependencies",
   entangled: null,
@@ -806,6 +902,7 @@ export const useStore = create<State>((set, get) => ({
       draftText: EXAMPLES[i].dsl,
       loadError: null,
       diagnostics: [],
+      importDiagnostics: [],
     });
   },
 
@@ -820,26 +917,17 @@ export const useStore = create<State>((set, get) => ({
       set({
         draftText: text,
         diagnostics: result.diagnostics,
+        importDiagnostics: [],
         loadError: `line ${result.diagnostics[0].span.start.line}: ${result.diagnostics[0].message}`,
       });
       return;
     }
     try {
       const program = result.program;
-      const base = loadResolvedGraph(program.graph, program.resolved);
-      // A source that is exactly a built-in example *is* that example, however
-      // it got here - picked from the menu, restored from a link, or typed.
-      // Deriving this from the text keeps the picker honest after an edit is
-      // undone back to the original, which a remembered index could not.
-      const exampleIndex = EXAMPLES.findIndex((ex) => ex.dsl === text);
-      const example = exampleIndex >= 0 ? EXAMPLES[exampleIndex] : null;
-      const st: Partial<State> = {
-        ...base,
-        dslText: text,
-        draftText: text,
-        exampleIndex,
-        focusNode: null,
-      };
+      const source = dslSource(text);
+      const base = installGraph(program.graph, program.resolved, source);
+      const example = source.exampleIndex >= 0 ? EXAMPLES[source.exampleIndex] : null;
+      const st: Partial<State> = { ...base, draftText: text };
       if (example?.defaultSelection && base.resolved) {
         st.selection = {
           parts: [
@@ -859,8 +947,100 @@ export const useStore = create<State>((set, get) => ({
     } catch (e) {
       // Compilation succeeded; anything failing here is a workspace-build
       // problem with no source span to attach it to.
-      set({ draftText: text, loadError: (e as Error).message, diagnostics: [] });
+      set({
+        draftText: text,
+        loadError: (e as Error).message,
+        diagnostics: [],
+        importDiagnostics: [],
+      });
     }
+  },
+
+  installImport: (result) => {
+    // Preflight first, and not because resolution would miss these: it would
+    // catch most of them, one at a time, in graph terms. This reports every
+    // problem at once so a converter author is not on a fix-one-reload loop
+    // over four hundred nodes, and it separates the dimensions the file simply
+    // left free - a dynamic batch axis is ordinary, not a defect - from the
+    // defects no binding can fix.
+    const preflight = preflightImport(result);
+    if (preflight.errors.length || preflight.unbound.length) {
+      const asking = preflight.unbound.length
+        ? [
+            {
+              severity: "error" as const,
+              message:
+                `${preflight.unbound.length === 1 ? "dimension" : "dimensions"}` +
+                ` ${preflight.unbound.join(", ")} ${preflight.unbound.length === 1 ? "is" : "are"}` +
+                ` left free by the model and need a value before any region can be measured`,
+            },
+          ]
+        : [];
+      const diagnostics = [...asking, ...preflight.errors];
+      set({
+        loadError: diagnostics[0].message,
+        diagnostics: [],
+        importDiagnostics: diagnostics,
+      });
+      return false;
+    }
+
+    // `resolveGraph`, never `resolveGraphCollecting`. The collecting form
+    // prunes a failing node and everything downstream of it, which is right for
+    // a line of hand-written DSL - one error, no invented cascade - and exactly
+    // wrong here: a four-hundred-node model would install minus whatever hung
+    // off the bad node, and every cone drawn on it would answer a question
+    // about a shorter model than the one that was opened. That is a subset of
+    // the truth, the one failure this engine treats as critical. An unresolved
+    // import fails, named.
+    let resolved;
+    try {
+      resolved = resolveGraph(result.graph);
+    } catch (e) {
+      const error = e as Error;
+      const subject = e instanceof GraphError ? e.subject : undefined;
+      set({
+        loadError: error.message,
+        diagnostics: [],
+        importDiagnostics: [
+          { severity: "error", message: error.message, ...(subject ? { subject } : {}) },
+        ],
+      });
+      return false;
+    }
+    const { origin } = result.report;
+    set({
+      ...installGraph(result.graph, resolved, {
+        kind: "import",
+        format: origin.format,
+        fileName: origin.fileName,
+        report: result.report,
+      }),
+      // No text stands behind an imported graph. Leaving the previous model's
+      // source in the editor would offer a Run that silently replaces what was
+      // just imported with something else entirely.
+      draftText: "",
+    });
+    return true;
+  },
+
+  importJSON: (text, options) => {
+    let result: ImportResult;
+    try {
+      result = parseImportJSON(text, options ?? {});
+    } catch (e) {
+      const diagnostics =
+        e instanceof ImportError
+          ? e.diagnostics
+          : [{ severity: "error" as const, message: (e as Error).message }];
+      set({
+        loadError: diagnostics[0].message,
+        diagnostics: [],
+        importDiagnostics: diagnostics,
+      });
+      return false;
+    }
+    return get().installImport(result);
   },
 
   restoreWorkspace: ({
@@ -883,7 +1063,7 @@ export const useStore = create<State>((set, get) => ({
         !["symbolic", "numeric"].includes(axisMode)
       ) return false;
       const program = compileDSL(dsl);
-      const base = loadResolvedGraph(program.graph, program.resolved);
+      const base = installGraph(program.graph, program.resolved, dslSource(dsl));
       for (const [id, cfg] of Object.entries(viewCfgs ?? {})) {
         const shape = program.resolved.tensors[id]?.resolved;
         if (!shape || !viewCfgFits(shape, cfg)) throw new Error(`invalid view for tensor "${id}"`);
@@ -914,10 +1094,7 @@ export const useStore = create<State>((set, get) => ({
       );
       set({
         ...base,
-        dslText: dsl,
         draftText: dsl,
-        exampleIndex: -1,
-        focusNode: null,
         direction,
         showEntangled: showEntangled ?? false,
         tileScale: clampedTile,
@@ -1034,18 +1211,20 @@ export const useStore = create<State>((set, get) => ({
       // Undoing a composite expansion: the graph itself goes back, so the
       // selection has to be restored against *that* graph rather than the
       // expanded one it was recorded beside.
+      //
+      // Resolving the stored graph rather than recompiling the stored text:
+      // the snapshot already holds the graph, and going back through the
+      // compiler made undo depend on there being source text to compile, which
+      // an imported workspace does not have.
       try {
-        const program = compileDSL(prev.source.dslText);
+        const resolved = resolveGraph(prev.source.graph);
         set({
-          ...loadResolvedGraph(program.graph, program.resolved),
-          dslText: prev.source.dslText,
+          ...installGraph(prev.source.graph, resolved, prev.source.source),
           draftText: prev.source.draftText,
-          exampleIndex: prev.source.exampleIndex,
           tensorOffsets: prev.tensorOffsets,
           selection: prev.selection,
           workspaceHistory: workspaceHistory.slice(0, -1),
-          focusNode: null,
-          ...recompute(program.resolved, prev.selection),
+          ...recompute(resolved, prev.selection),
         });
       } catch (e) {
         set({ loadError: (e as Error).message });
@@ -1285,32 +1464,39 @@ export const useStore = create<State>((set, get) => ({
     const state = get();
     const { graph } = state;
     if (!graph) return;
+    // Expansion rewrites the workspace as generated DSL, and an imported model
+    // must not take that path. `toDSL` identifies tensors by name and
+    // regenerates node ids, so the round trip renames exactly the nodes the
+    // import report addresses - the report would still be displayed, now
+    // pointing at nodes that no longer exist. Refusing is the explicit
+    // limitation; converting an import to DSL is a separate, declared-lossy
+    // action rather than a side effect of clicking a glyph.
+    if (state.source.kind === "import") {
+      set({
+        loadError:
+          "expanding a composite rewrites the workspace as generated DSL," +
+          " which would rename the nodes the import report names",
+      });
+      return;
+    }
     try {
       const g2 = expandNode(graph, nodeId);
       // Source and graph remain one transaction: rerunning or sharing the text
       // must restore the same primitive graph currently shown in the workspace.
-      const source = toDSL(g2);
-      const program = compileDSL(source);
-      // `loadResolvedGraph` clears the history, and rightly: its entries name
+      const text = toDSL(g2);
+      const program = compileDSL(text);
+      // `installGraph` clears the history, and rightly: its entries name
       // tensors and coordinates in the graph being replaced. The one entry that
       // survives is the one it cannot invalidate, because it is what to go back
       // *to* — recorded after the clear, for that reason.
       const restore: WorkspaceSnapshot = {
         selection: state.selection,
         tensorOffsets: state.tensorOffsets,
-        source: {
-          dslText: state.dslText,
-          draftText: state.draftText,
-          graph,
-          exampleIndex: state.exampleIndex,
-        },
+        source: { source: state.source, draftText: state.draftText, graph },
       };
       set({
-        ...loadResolvedGraph(program.graph, program.resolved),
-        dslText: source,
-        draftText: source,
-        exampleIndex: -1,
-        focusNode: null,
+        ...installGraph(program.graph, program.resolved, dslSource(text)),
+        draftText: text,
         workspaceHistory: [restore],
       });
     } catch (e) {

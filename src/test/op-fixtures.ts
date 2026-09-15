@@ -190,4 +190,16 @@ export const OP_FIXTURES: OpFixture[] = [
     "two inputs of different shapes, so a barrier that reached only one of them would show",
     { inexactByDesign: true }
   ),
+  one(
+    "opaque",
+    { X: f([2, 3]), W: f([3, 2]), C: i32([2]) },
+    ["X", "W", "C"],
+    ["V", "I"],
+    { op: "Loop", domain: "", opset: 17, shapes: [[2, 2], [2]], dtypes: [null, "i64"] },
+    "a barrier the way an importer builds one: several outputs with different " +
+      "element types, and a third input that is a captured value rather than one " +
+      "of the source operation's own - the oracle is what confirms every output " +
+      "still reaches every input, including that one",
+    { inexactByDesign: true }
+  ),
 ];

@@ -6,6 +6,8 @@ import {
   operationForTensor,
   enabledPropResult,
   involvedTensorIds,
+  dslTextOf,
+  exampleIndexOf,
   type Direction,
   MAX_PER_BOX_PROPS, PANEL_COLLAPSE_AT, PANEL_MAX, PANEL_MIN,
   planesOf, startingTiles, useStore,
@@ -104,24 +106,24 @@ describe("staging an example", () => {
     S().stageExample(target);
 
     expect(S().draftText).toBe(EXAMPLES[target].dsl);
-    expect(S().dslText).toBe(EXAMPLES[0].dsl);
+    expect(dslTextOf(S().source)).toBe(EXAMPLES[0].dsl);
     expect(S().graph).toBe(before.graph);
     expect(S().resolved).toBe(before.resolved);
     expect(S().selection).toBe(before.selection);
     expect(S().backwardRes).toBe(before.backwardRes);
     expect(S().perBox).toBe(before.perBox);
     // The accent still identifies the graph that remains on the canvas.
-    expect(S().exampleIndex).toBe(0);
+    expect(exampleIndexOf(S().source)).toBe(0);
   });
 
   it("builds and claims the example only once the source is run", () => {
     const target = EXAMPLES.findIndex((ex) => ex.name === "Plain GEMM");
     S().loadExample(EXAMPLES.findIndex((ex) => ex.name === "Reshape trap"));
     S().stageExample(target);
-    expect(S().exampleIndex).not.toBe(target);
+    expect(exampleIndexOf(S().source)).not.toBe(target);
 
     S().applyDSL(S().draftText);
-    expect(S().exampleIndex).toBe(target);
+    expect(exampleIndexOf(S().source)).toBe(target);
     expect(S().resolved).not.toBeNull();
     // Running an example's exact source still seeds its canonical selection.
     expect(selTensors()).toEqual([EXAMPLES[target].defaultSelection!.tensor]);
@@ -130,28 +132,28 @@ describe("staging an example", () => {
   it("recognises an example typed or restored rather than picked", () => {
     const target = EXAMPLES.findIndex((ex) => ex.name === "Reshape trap");
     S().applyDSL("X = Tensor(2, 3, dtype=fp32)\nY = relu(X)\n");
-    expect(S().exampleIndex).toBe(-1);
+    expect(exampleIndexOf(S().source)).toBe(-1);
 
     S().applyDSL(EXAMPLES[target].dsl);
-    expect(S().exampleIndex).toBe(target);
+    expect(exampleIndexOf(S().source)).toBe(target);
   });
 
   it("keeps direct editor drafts separate from the built source", () => {
-    const built = S().dslText;
+    const built = dslTextOf(S().source);
     const resolved = S().resolved;
     S().setDraftText("X = Tensor(2, 3, dtype=fp32)\nY = relu(X)\n");
     expect(S().draftText).not.toBe(built);
-    expect(S().dslText).toBe(built);
+    expect(dslTextOf(S().source)).toBe(built);
     expect(S().resolved).toBe(resolved);
   });
 
   it("reselecting the running example is idempotent", () => {
     const resolved = S().resolved;
     const selection = S().selection;
-    S().stageExample(S().exampleIndex);
+    S().stageExample(exampleIndexOf(S().source));
     expect(S().resolved).toBe(resolved);
     expect(S().selection).toBe(selection);
-    expect(S().draftText).toBe(S().dslText);
+    expect(S().draftText).toBe(dslTextOf(S().source));
   });
 });
 
@@ -178,10 +180,10 @@ P = softmax(S, axis=-1)
     expect(S().loadError).toBeNull();
     expect(S().resolved?.tensors.P.resolved).toEqual([2, 4]);
     expect(S().resolved?.nodes.some((node) => node.op === "softmax")).toBe(false);
-    expect(S().dslText).not.toContain("softmax(");
-    expect(S().dslText).toContain("softmax_P$max");
+    expect(dslTextOf(S().source)).not.toContain("softmax(");
+    expect(dslTextOf(S().source)).toContain("softmax_P$max");
 
-    const expandedSource = S().dslText;
+    const expandedSource = dslTextOf(S().source)!;
     const expandedOps = S().resolved?.nodes.map((node) => node.op);
     S().applyDSL(expandedSource);
     expect(S().loadError).toBeNull();
@@ -189,7 +191,7 @@ P = softmax(S, axis=-1)
   });
 
   it("surfaces semantic failures with the originating DSL line", () => {
-    const builtSource = S().dslText;
+    const builtSource = dslTextOf(S().source);
     const resolved = S().resolved;
     const selection = S().selection;
     const invalid = `A = Tensor(2, 3, dtype=fp32)
@@ -199,7 +201,7 @@ C = matmul(A, B)
     S().applyDSL(invalid);
     expect(S().loadError).toMatch(/^line 3: node "matmul_C".*shape inference failed/);
     expect(S().draftText).toBe(invalid);
-    expect(S().dslText).toBe(builtSource);
+    expect(dslTextOf(S().source)).toBe(builtSource);
     expect(S().resolved).toBe(resolved);
     expect(S().selection).toBe(selection);
   });
@@ -251,7 +253,7 @@ describe("transactional workspace restore", () => {
     });
 
     expect(restored).toBe(true);
-    expect(S().dslText).toContain("Y = relu(X)");
+    expect(dslTextOf(S().source)).toContain("Y = relu(X)");
     expect(S().direction).toBe("both");
     expect(S().showEntangled).toBe(true);
     expect(S().tileScale).toBe(2);
@@ -259,7 +261,7 @@ describe("transactional workspace restore", () => {
     expect(S().tensorOffsets).toEqual({ X: { dx: -30, dy: 25 } });
     expect(selTensors()).toEqual(["Y", "X"]);
     expect(S().workspaceHistory).toEqual([]);
-    expect(S().exampleIndex).toBe(-1);
+    expect(exampleIndexOf(S().source)).toBe(-1);
   });
 
   it("leaves the current workspace untouched when compilation fails", () => {
@@ -1316,8 +1318,8 @@ describe("tiles on different tensors coexist", () => {
     // A is an input tensor, so its bytes land in inputBytes either way; C is
     // the producer output. What matters is that nothing seeded is counted as
     // an intermediate.
-    expect(m.intermediateBytes).toBe(0);
-    expect(m.outputBytes).toBeGreaterThan(0);
+    expect(m.intermediateBytes.value!).toBe(0);
+    expect(m.outputBytes.value!).toBeGreaterThan(0);
   });
 
   it("drops per-part attribution past the cap but still merges every tensor", () => {
@@ -1471,12 +1473,12 @@ Y = softmax(X, axis=-1)
   it("restores the graph, the source, and the author's own text", () => {
     S().applyDSL(source);
     expandFirstSoftmax();
-    expect(S().dslText).not.toBe(source);
+    expect(dslTextOf(S().source)).not.toBe(source);
 
     S().undoWorkspace();
     expect(S().graph!.nodes.some((n) => n.op === "softmax")).toBe(true);
     // Not merely an equivalent graph: the text as written, comment included.
-    expect(S().dslText).toBe(source);
+    expect(dslTextOf(S().source)).toBe(source);
     expect(S().draftText).toBe(source);
     expect(S().resolved!.tensors.Y.resolved).toEqual([2, 4]);
   });

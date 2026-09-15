@@ -3,7 +3,7 @@
 import { ZodObject, ZodType, ZodIssue } from "zod";
 import { getOp } from "./ops/index";
 import { GraphError, GraphErrorSubject, resolveShape, Shape } from "./shapes";
-import { DTYPES, DType } from "./dtypes";
+import { DTYPES, DType, type DTypeWidening } from "./dtypes";
 import type { AxisNames, Cardinality } from "./ops/types";
 
 export type { Shape, Sym } from "./shapes";
@@ -16,6 +16,8 @@ export type Tensor = {
   resolved?: number[]; // populated by resolveGraph
   /** Inputs declare this; produced tensors are canonicalized by `inferDTypes` during resolution. */
   dtype: DType;
+  /** Source storage was represented by a wider canonical dtype; byte counts are upper bounds. */
+  dtypeWidening?: DTypeWidening;
   /** One name per axis, parallel to `shape`; holes are axes with no name. */
   axisNames?: AxisNames;
   /**
@@ -101,6 +103,9 @@ function cloneGraph(source: Graph): Graph {
       name: tensor.name,
       shape: tensor.shape.slice(),
       dtype: tensor.dtype,
+      ...(tensor.dtypeWidening
+        ? { dtypeWidening: { ...tensor.dtypeWidening } }
+        : {}),
       ...(tensor.axisNames ? { axisNames: tensor.axisNames.slice() } : {}),
       ...(tensor.symShape ? { symShape: tensor.symShape.slice() } : {}),
       ...(tensor.role ? { role: tensor.role } : {}),

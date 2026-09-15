@@ -8,9 +8,18 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { DTYPES, DType, DTYPE_BYTES, promoteDType, promoteDTypes } from "../core/dtypes";
+import {
+  DTYPES,
+  DType,
+  DTYPE_BYTES,
+  dtypeFamily,
+  promoteDType,
+  promoteDTypes,
+} from "../core/dtypes";
+import { acceptDType, ONNX_ELEM_TYPE } from "../import/dtypes";
 
 const pairs: [DType, DType][] = DTYPES.flatMap((a) => DTYPES.map((b) => [a, b] as [DType, DType]));
+const inFamily = (family: string) => DTYPES.filter((d) => dtypeFamily(d) === family);
 
 describe("promoteDType is a join", () => {
   it("is idempotent", () => {
@@ -36,10 +45,8 @@ describe("promoteDType is a join", () => {
      PyTorch. NumPy's older value-based rule answered `f64`, which describes no
      kernel anyone runs. */
   it("never narrows within a family", () => {
-    const family = (d: DType) =>
-      d === "bool" ? "bool" : d === "i8" || d === "i32" ? "int" : "float";
     for (const [a, b] of pairs) {
-      if (family(a) !== family(b)) continue;
+      if (dtypeFamily(a) !== dtypeFamily(b)) continue;
       const r = promoteDType(a, b);
       expect(DTYPE_BYTES[r], `${a} + ${b} -> ${r}`).toBeGreaterThanOrEqual(
         Math.max(DTYPE_BYTES[a], DTYPE_BYTES[b])
@@ -63,12 +70,32 @@ describe("the lattice's specific commitments", () => {
   });
 
   it("a float beats any integer", () => {
-    for (const f of ["f8", "f16", "bf16", "f32"] as DType[])
-      for (const i of ["i8", "i32"] as DType[]) expect(promoteDType(f, i)).toBe(f);
+    for (const f of inFamily("float"))
+      for (const i of inFamily("int")) expect(promoteDType(f, i), `${f} vs ${i}`).toBe(f);
   });
 
   it("integers order by width", () => {
     expect(promoteDType("i8", "i32")).toBe("i32");
+    expect(promoteDType("i32", "i64")).toBe("i64");
+    expect(promoteDType("i8", "i64")).toBe("i64");
+  });
+
+  /* The same argument as f16 with bf16, one family over. Both are one byte and
+     neither contains the other - i8 reaches -128, u8 reaches 255 - so the join
+     is the narrowest integer holding both. Answering `f32` here, as a single
+     hardcoded equal-rank result once did, would change category on a pair of
+     integers. */
+  it("i8 with u8 widens to i32 rather than picking one", () => {
+    expect(promoteDType("i8", "u8")).toBe("i32");
+    expect(promoteDType("u8", "i8")).toBe("i32");
+  });
+
+  it("keeps an index type's full width rather than narrowing it", () => {
+    // Every axis, shape and index tensor an exporter writes is int64. Meeting
+    // one must not produce a type half its size.
+    expect(DTYPE_BYTES.i64).toBe(8);
+    expect(promoteDType("i64", "i32")).toBe("i64");
+    expect(promoteDType("i64", "bool")).toBe("i64");
   });
 
   it("floats order f8 < f16 < f32", () => {
@@ -101,5 +128,18 @@ describe("promoteDTypes folds the list", () => {
 
   it("rejects an empty list rather than inventing a type", () => {
     expect(() => promoteDTypes([])).toThrow(/no dtypes/);
+  });
+});
+
+describe("the ONNX dtype boundary", () => {
+  it("returns widening provenance in the tensor field's wire shape", () => {
+    expect(acceptDType(ONNX_ELEM_TYPE.UINT16)).toEqual({
+      status: "widened",
+      dtype: "i32",
+      dtypeWidening: {
+        from: "uint16",
+        note: "held as int32: two bytes per element becomes four, so its footprint is an over-estimate",
+      },
+    });
   });
 });

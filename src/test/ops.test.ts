@@ -471,7 +471,7 @@ T = einsum("ij,jk->ik", A, B)
 D = einsum("ik,kl->il", T, C)
 `);
     const flopsOf = (p: ReturnType<typeof compileDSL>) =>
-      p.executor.metrics("D", full(p.resolved.tensors.D.resolved!)).flops;
+      p.executor.metrics("D", full(p.resolved.tensors.D.resolved!)).flops.value!;
     expect(flopsOf(pairwise)).toBeLessThan(flopsOf(fused));
   });
 });

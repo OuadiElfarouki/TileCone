@@ -15,15 +15,15 @@ C = matmul(A, B)
     const m = executor.metrics("C", fromBox(box([0, 32], [0, 32])));
 
     // 32x32 tile of C reads a 32x128 band of A and a 128x32 band of B.
-    expect(m.inputBytes).toBe(2 * 32 * 128 * 4);
-    expect(m.outputBytes).toBe(32 * 32 * 4);
-    expect(m.intermediateBytes).toBe(0);
+    expect(m.inputBytes.value!).toBe(2 * 32 * 128 * 4);
+    expect(m.outputBytes.value!).toBe(32 * 32 * 4);
+    expect(m.intermediateBytes.value!).toBe(0);
 
     // The denominator is traffic, so it includes the write. Dropping the
     // output - what this figure used to do - reports 8.00 instead.
-    expect(m.fusedIntensity).toBeCloseTo(m.flops / (m.inputBytes + m.outputBytes), 6);
-    expect(m.fusedIntensity).toBeCloseTo(7.111, 3);
-    expect(m.fusedIntensity).not.toBeCloseTo(m.flops / m.inputBytes, 3);
+    expect(m.fusedIntensity.value!).toBeCloseTo(m.flops.value! / (m.inputBytes.value! + m.outputBytes.value!), 6);
+    expect(m.fusedIntensity.value!).toBeCloseTo(7.111, 3);
+    expect(m.fusedIntensity.value!).not.toBeCloseTo(m.flops.value! / m.inputBytes.value!, 3);
   });
 
   it("reports one figure twice when there is nothing to fuse", () => {
@@ -33,8 +33,8 @@ C = matmul(A, B)
 `);
     const m = executor.metrics("C", fromBox(box([0, 32], [0, 32])));
 
-    expect(m.intermediateBytes).toBe(0);
-    expect(m.unfusedIntensity).toBeCloseTo(m.fusedIntensity, 9);
+    expect(m.intermediateBytes.value!).toBe(0);
+    expect(m.unfusedIntensity.value!).toBeCloseTo(m.fusedIntensity.value!, 9);
   });
 
   it("separates the two readings by exactly the intermediate traffic", () => {
@@ -45,15 +45,15 @@ Z = relu(Y)
     const m = executor.metrics("Z", fromBox(box([0, 16], [0, 16])));
 
     // One 16x16 tile: read X, write Y, read Y, write Z. 512 FLOPs over two ops.
-    expect(m.flops).toBe(512);
-    expect(m.inputBytes).toBe(1024);
-    expect(m.intermediateBytes).toBe(1024);
-    expect(m.outputBytes).toBe(1024);
+    expect(m.flops.value!).toBe(512);
+    expect(m.inputBytes.value!).toBe(1024);
+    expect(m.intermediateBytes.value!).toBe(1024);
+    expect(m.outputBytes.value!).toBe(1024);
 
-    expect(m.fusedIntensity).toBeCloseTo(512 / 2048, 6);
-    expect(m.unfusedBytes).toBe(4096);
-    expect(m.unfusedIntensity).toBeCloseTo(512 / 4096, 6);
-    expect(m.fusedIntensity / m.unfusedIntensity).toBeCloseTo(2, 6);
+    expect(m.fusedIntensity.value!).toBeCloseTo(512 / 2048, 6);
+    expect(m.unfusedBytes.value!).toBe(4096);
+    expect(m.unfusedIntensity.value!).toBeCloseTo(512 / 4096, 6);
+    expect(m.fusedIntensity.value! / m.unfusedIntensity.value!).toBeCloseTo(2, 6);
   });
 
   it("charges shared inputs separately for each operation that reads them", () => {
@@ -66,14 +66,14 @@ Z = add(A, B)
     const m = executor.metrics("Z", fromBox(box([0, 16])));
     // Y: read X/write Y; A and B: each read Y/write output;
     // Z: read A and B/write Z. Nine tensor footprints, not six.
-    expect(m.unfusedBytes).toBe(9 * 16 * 4);
+    expect(m.unfusedBytes.value!).toBe(9 * 16 * 4);
   });
 
   it("deduplicates overlapping operand reads within one operation", () => {
     const { executor } = compileDSL(`X = Tensor(16, dtype=fp32)
 Y = add(X, X)
 `);
-    expect(executor.metrics("Y", fromBox(box([0, 16]))).unfusedBytes).toBe(2 * 16 * 4);
+    expect(executor.metrics("Y", fromBox(box([0, 16]))).unfusedBytes.value!).toBe(2 * 16 * 4);
   });
 
   it("never divides by zero on a cone with no traffic", () => {
@@ -84,8 +84,8 @@ Y = relu(X)
     // ratio has no denominator to divide by.
     const m = executor.metrics("Y", { boxes: [], exact: true, reasons: [] });
 
-    expect(m.inputBytes + m.intermediateBytes + m.outputBytes).toBe(0);
-    expect(m.fusedIntensity).toBe(0);
-    expect(m.unfusedIntensity).toBe(0);
+    expect(m.inputBytes.value! + m.intermediateBytes.value! + m.outputBytes.value!).toBe(0);
+    expect(m.fusedIntensity.value!).toBe(0);
+    expect(m.unfusedIntensity.value!).toBe(0);
   });
 });

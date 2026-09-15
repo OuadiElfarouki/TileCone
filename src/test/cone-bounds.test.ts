@@ -20,8 +20,8 @@ function boundsOf(resolved: ResolvedGraph, tiles: PropResult[]) {
   const merged = computeMetrics(resolved, mergeProps(tiles)!);
   const b = coneBounds(resolved, merged, tiles);
   return {
-    fused: b.fused.flops / b.fused.bytes,
-    unfused: b.unfused!.flops / b.unfused!.bytes,
+    fused: b.fused.flops.value! / b.fused.bytes.value!,
+    unfused: b.unfused!.flops.value! / b.unfused!.bytes.value!,
   };
 }
 
@@ -67,8 +67,8 @@ Z = relu(Y)
 
     // With a single tile there is nothing to share, so the range is exactly
     // the op-fusion range that `computeMetrics` reports for that one cone.
-    expect(b.fused.flops / b.fused.bytes).toBeCloseTo(merged.fusedIntensity, 9);
-    expect(b.unfused!.flops / b.unfused!.bytes).toBeCloseTo(merged.unfusedIntensity, 9);
+    expect(b.fused.flops.value! / b.fused.bytes.value!).toBeCloseTo(merged.fusedIntensity.value!, 9);
+    expect(b.unfused!.flops.value! / b.unfused!.bytes.value!).toBeCloseTo(merged.unfusedIntensity.value!, 9);
   });
 
   it("charges overlapping tiles twice at the worst end and once at the best", () => {
@@ -79,8 +79,8 @@ Z = relu(Y)
 
     // The shared output columns are real work done twice if the tiles are
     // computed as separate jobs, and once if they are merged.
-    expect(b.unfused!.flops).toBeGreaterThan(b.fused.flops);
-    expect(b.fused.flops).toBe(merged.flops);
+    expect(b.unfused!.flops.value!).toBeGreaterThan(b.fused.flops.value!);
+    expect(b.fused.flops.value!).toBe(merged.flops.value!);
   });
 
   it("reports no unfused bound when per-tile cones were not traced", () => {

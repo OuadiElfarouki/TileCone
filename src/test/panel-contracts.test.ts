@@ -73,6 +73,60 @@ describe("panel accessibility contracts", () => {
     expect(open).toContain('aria-valuenow="330"');
   });
 
+  it("shows an imported model its report rather than an editor it has no text for", () => {
+    S().importJSON(
+      JSON.stringify({
+        graph: {
+          nodes: [
+            {
+              id: "/head/Resize",
+              op: "opaque",
+              inputs: ["input"],
+              outputs: ["/head/Resize_output_0"],
+              attrs: { op: "Resize", shapes: [[4, 12]], dtypes: ["f32"] },
+            },
+          ],
+          tensors: {
+            input: { id: "input", name: "input", shape: [4, 6], dtype: "f32" },
+            "/head/Resize_output_0": {
+              id: "/head/Resize_output_0",
+              name: "/head/Resize_output_0",
+              shape: [],
+              dtype: "f32",
+            },
+          },
+          params: {},
+        },
+        report: {
+          origin: { fileName: "tiny.onnx", format: "onnx", opset: 17 },
+          entries: [
+            { kind: "barrier", node: "/head/Resize", sourceOp: "Resize", reason: "no mapping" },
+          ],
+        },
+      }),
+      { fileName: "tiny.onnx", format: "onnx" }
+    );
+    const html = renderToStaticMarkup(createElement(SidePanel));
+
+    expect(html).toContain("Imported model");
+    expect(html).toContain("tiny.onnx · onnx · opset 17");
+    expect(html).toContain("regions through them are bounds");
+    // No editor, because there is no text behind this graph. A textarea here
+    // would offer a Run that replaces the imported model with whatever it held.
+    expect(html).not.toContain('aria-label="graph source"');
+    // Sharing is refused in the open, not by producing a link that restores
+    // nothing: a link carries DSL source and this workspace has none.
+    expect(html).toMatch(/<button class="mini share-btn" disabled/);
+
+    // A failed replacement preserves the installed model, so its error must be
+    // rendered by the import summary rather than by the unmounted DSL editor.
+    expect(S().importJSON("{ not json")).toBe(false);
+    const failed = renderToStaticMarkup(createElement(SidePanel));
+    expect(failed).toContain('class="import-errors error" role="alert"');
+    expect(failed).toContain("invalid JSON");
+    expect(failed).toContain("tiny.onnx · onnx · opset 17");
+  });
+
   it("marks the shortcut sheet as modal", () => {
     const html = renderToStaticMarkup(createElement(ShortcutsDialog, {
       open: true,

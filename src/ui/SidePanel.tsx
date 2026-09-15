@@ -5,7 +5,8 @@ import { tileOf } from "./grid";
 import { selectionToLink, shareTarget } from "./share";
 import { CopyButton } from "./CopyButton";
 import { opLabel } from "../core/ops/index";
-import { involvedTensorIds, useStore } from "./store";
+import { dslTextOf, exampleIndexOf, involvedTensorIds, useStore } from "./store";
+import { formatReport, reportHeadline, reportLines } from "../import/report";
 import { matchesShortcut, SHORTCUTS } from "./shortcuts";
 import { viewAxes } from "./tensor-view";
 import { overlayTokens } from "./dsl-highlight";
@@ -16,12 +17,28 @@ import { overlayTokens } from "./dsl-highlight";
  * because the source is most of what it encodes.
  */
 function ShareButton(): React.ReactElement {
+  // A link carries the source as DSL text, and an imported model has none. The
+  // honest answer is to say so rather than to share a link that would restore
+  // an empty workspace, or to silently share the text of whatever was open
+  // before the import. This is the declared limitation, not an oversight.
+  const imported = useStore((s) => s.source.kind === "import");
+  if (imported)
+    return (
+      <button
+        className="mini share-btn"
+        disabled
+        title="an imported model is not shareable as a link: a link carries DSL source, and this workspace has none"
+      >
+        share
+      </button>
+    );
+
   // Read at click time rather than subscribing: the link is built from nine
   // pieces of state and none of them change how this button looks.
   const link = () => {
     const s = useStore.getState();
     return shareTarget(location.origin, location.pathname, {
-      dsl: s.dslText,
+      dsl: dslTextOf(s.source) ?? "",
       dir: s.direction,
       ent: s.showEntangled,
       tile: s.tileScale,
@@ -49,13 +66,154 @@ function ShareButton(): React.ReactElement {
   );
 }
 
+/**
+ * Open a converted model.
+ *
+ * JSON only, and that is the boundary rather than a placeholder for one: a
+ * converter that runs where the shape inference actually exists hands its
+ * result over as a document, and this is where the document lands. A decoder
+ * that reads bytes in the browser will call the same store action.
+ */
+function OpenModelButton(): React.ReactElement {
+  const importJSON = useStore((s) => s.importJSON);
+  const input = useRef<HTMLInputElement>(null);
+
+  return (
+    <>
+      <button
+        className="mini open-model"
+        title="open a converted model (JSON graph or import document)"
+        onClick={() => input.current?.click()}
+      >
+        open model
+      </button>
+      <input
+        ref={input}
+        type="file"
+        accept=".json,application/json"
+        hidden
+        onChange={async (event) => {
+          const file = event.target.files?.[0];
+          // Cleared before the await: the same file picked twice in a row fires
+          // no change event otherwise, so a failed import could not be retried.
+          event.target.value = "";
+          if (file) importJSON(await file.text(), { fileName: file.name });
+        }}
+      />
+    </>
+  );
+}
+
+/**
+ * What an imported workspace shows where the editor would be.
+ *
+ * Not an editor, because there is no text behind an imported graph and
+ * generating some would rename the very nodes the report addresses. What the
+ * reader needs instead is the conversion's own account of itself: what was
+ * mapped, what was assumed, and which nodes are barriers whose regions are
+ * bounds rather than counts. Two barriers named here is a fact about precision
+ * you can act on; two dropped nodes would be a wrong answer you could not see.
+ */
+function ImportSummary(): React.ReactElement {
+  const report = useStore((s) => (s.source.kind === "import" ? s.source.report : null));
+  const setFocusNode = useStore((s) => s.setFocusNode);
+  if (!report) return <p className="hint">no import</p>;
+  const lines = reportLines(report);
+
+  return (
+    <>
+      <div className="import-report">
+        <p className="import-headline">{reportHeadline(report)}</p>
+        {lines.length ? (
+          <dl className="import-lines">
+            {lines.map((line) => (
+              <div key={line.label} className="import-line">
+                <dt>{line.label}</dt>
+                <dd>
+                  {line.nodes.length ? (
+                    /* The import path's substitute for a source span: a
+                       diagnostic with no text to underline points at a node,
+                       and the canvas is where the reader sees it. */
+                    <button
+                      className="linky"
+                      title={`show ${line.nodes.length === 1 ? "this operation" : "the first of these operations"} on the canvas`}
+                      onClick={() => setFocusNode({ kind: "op", id: line.nodes[0] })}
+                    >
+                      {line.text}
+                    </button>
+                  ) : (
+                    line.text
+                  )}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        ) : (
+          <p className="hint">
+            the document made no claims about its conversion, so nothing here is
+            marked as approximate
+          </p>
+        )}
+      </div>
+      <div className="source-actions">
+        <CopyButton
+          title="copy the import report"
+          label="copy report"
+          text={() => formatReport(report)}
+        />
+        <ShareButton />
+        <span className="source-status" id="source-status" role="status" aria-live="polite">
+          <span className="muted">imported · no source text</span>
+        </span>
+      </div>
+    </>
+  );
+}
+
+/** Import failures are attempts, not properties of whichever source remains installed. */
+function ImportFailures(): React.ReactElement | null {
+  const sourceIsImport = useStore((s) => s.source.kind === "import");
+  const loadError = useStore((s) => s.loadError);
+  const importDiagnostics = useStore((s) => s.importDiagnostics);
+  // A failed replacement preserves the installed source. Show its diagnostics
+  // in either source mode; store-only refusals such as expanding an imported
+  // graph have no ImportDiagnostic, so they use the same surface only while an
+  // import remains installed.
+  const failures = importDiagnostics.length
+    ? importDiagnostics
+    : sourceIsImport && loadError
+      ? [{ severity: "error" as const, message: loadError }]
+      : [];
+  if (!failures.length) return null;
+
+  return (
+    <div className="import-errors error" role="alert" aria-live="assertive">
+      {failures.length > 1 && <b>{failures.length} import errors</b>}
+      {failures.map((diagnostic, index) => (
+        <span className="diag" key={index}>
+          {diagnostic.subject && (
+            <b>
+              {diagnostic.subject.kind} {diagnostic.subject.id}
+              {diagnostic.subject.attribute ? ` · ${diagnostic.subject.attribute}` : ""}
+              {": "}
+            </b>
+          )}
+          {diagnostic.message}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 /** The graph source, editable in place. Ctrl/Cmd+Enter runs it. */
-function SourceEditor(): React.ReactElement {
-  const dslText = useStore((s) => s.dslText);
+function DSLEditor(): React.ReactElement {
+  const dslText = useStore((s) => dslTextOf(s.source) ?? "");
   const text = useStore((s) => s.draftText);
   const setText = useStore((s) => s.setDraftText);
   const applyDSL = useStore((s) => s.applyDSL);
-  const loadError = useStore((s) => s.loadError);
+  // An import attempt must not mark valid installed DSL as invalid. It has its
+  // own source-independent alert above this editor.
+  const loadError = useStore((s) => (s.importDiagnostics.length ? null : s.loadError));
   const diagnostics = useStore((s) => s.diagnostics);
   const built = useStore((s) => s.resolved !== null);
   const [ranAt, setRanAt] = useState(0);
@@ -246,7 +404,7 @@ function Operations(): React.ReactElement {
  * is a smaller version of the panel, not a native widget dropped into it.
  */
 function ExamplePicker(): React.ReactElement {
-  const exampleIndex = useStore((s) => s.exampleIndex);
+  const exampleIndex = useStore((s) => exampleIndexOf(s.source));
   const draftText = useStore((s) => s.draftText);
   const stageExample = useStore((s) => s.stageExample);
   const [open, setOpen] = useState(false);
@@ -385,15 +543,21 @@ function ExamplePicker(): React.ReactElement {
 }
 
 export function SidePanel(): React.ReactElement {
-  const sourcePending = useStore((s) => s.draftText !== s.dslText);
+  const imported = useStore((s) => s.source.kind === "import");
+  // An imported workspace has no built source to be pending against: the draft
+  // is empty and the graph did not come from it, so the operations list is
+  // never showing an older graph than the editor.
+  const sourcePending = useStore((s) => s.source.kind === "dsl" && s.draftText !== s.source.text);
   return (
     <aside className="side-panel" aria-label="Graph source and operations">
       <div className="side-panel-scroll">
         <header className="source-heading">
-          <h2 className="panel-title">Graph source</h2>
+          <h2 className="panel-title">{imported ? "Imported model" : "Graph source"}</h2>
+          <OpenModelButton />
         </header>
         <div className="source-workspace">
-          <SourceEditor />
+          <ImportFailures />
+          {imported ? <ImportSummary /> : <DSLEditor />}
         </div>
 
         <ExamplePicker />

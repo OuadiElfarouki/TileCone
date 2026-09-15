@@ -70,6 +70,12 @@ src/
 │   ├── compiler.ts       three-phase facade and collected diagnostics
 │   ├── source.ts         source spans, source maps, per-argument spans
 │   └── json.ts           JSON graph import/export
+├── import/
+│   ├── types.ts          import result, report entries, and import diagnostics
+│   ├── json.ts           the JSON door: a document becomes an `ImportResult`
+│   ├── dtypes.ts         which ONNX element types are accepted, and what happens to the rest
+│   ├── preflight.ts      every problem at once, and the dimensions awaiting a value
+│   └── report.ts         the report, rendered as lines that address nodes
 ├── ui/
 │   ├── store.ts          application state and analysis orchestration
 │   ├── GraphView.tsx     graph rendering, gestures, highlighting, and viewport
@@ -263,7 +269,13 @@ The source map connects compiler errors back to declarations or operation calls.
 
 A barrier keeps the node instead. Every output element is assumed to read every input element and every input element to reach every output: the weakest true statement about an operation nobody described, a superset by construction, marked inexact with the original operation's name as its reason. Everything downstream then behaves as it does for any other approximation - hatched paint, `≈` on the rows, `≤` on the figures - and implementing the operation for real later is purely a narrowing, with nothing else to change. Its `oracleDeps` states that same total dependence, so the corpus checks it like any other op; the adjointness law has nothing to say about an operation that is never exact, and `op-fixtures.ts` marks that claim explicitly (`inexactByDesign`) so the law asserts the op really is inexact everywhere rather than being quietly skipped.
 
-The one quantity a barrier cannot bound is its own arithmetic. `flopsFor` returns zero, so FLOPs measured through a barrier are a floor while every other figure beside them is a ceiling; the dependency note says so where the reader will see it.
+The one quantity a barrier cannot bound is its own arithmetic. `flopsFor` returns zero, and the spec declares `unknownWork` so that zero is never summed into a total beside real upper bounds as though it were a measurement. A FLOP total spanning a barrier reports `unknown` rather than a number (§8), and the dependency note says so where the reader will see it.
+
+A barrier declares its outputs one at a time: `shapes` and a parallel `dtypes`, because real operations do not have a single output type - `TopK` returns f32 values beside i64 indices, `MaxPool` an optional index tensor, `LayerNormalization` a mean and an inverse standard deviation. Bytes are measured per tensor from that tensor's own dtype, so one declared type for all outputs would misreport the footprint of whichever it did not fit. Hand-authored DSL may omit the list or use a `null` entry to take the promotion of the inputs; imported barriers may not, because an unknown source operation's result type cannot be inferred safely from its operands. Import preflight requires one concrete dtype per output. The two lists are parallel rather than a list of `{ shape, dtype }` records because the DSL has no record literal and adding one to the grammar to serve a single attribute is not a trade this codebase makes; their lengths are checked against the output count instead.
+
+It also carries `domain`, `opset` and `sourceName` as provenance. None of it changes what the barrier claims; it is what a reader needs in order to decide whether implementing the operation is worth it, and `domain` qualifies the displayed name where it is not the default one, so a vendor's `Attention` is distinguishable from anyone else's on the card, in the approximation reason, and in the note.
+
+Zero inputs is allowed, and is the one place the registry-wide "every op reads something" rule is exempted by name. A node that reads nothing and produces a value is constant-like and is usually better imported as a declared tensor, but the metadata has to be able to express it: the fallback from "no representation" is dropping the node, which shortens the graph.
 
 ### Display names
 
@@ -271,7 +283,9 @@ An operation's registry name is its identity for dispatch and frequently not wha
 
 ### Dtypes
 
-Operations that *compute* from several tensors promote (`promotingDTypeOutputs`); operations that *move* data require a match (`uniformDTypeOutputs`). The lattice follows PyTorch rather than NumPy's older value-based rule: category dominates width across families, so `f16` with `i32` is `f16` and not a widening to `f64` that no inference kernel performs. Mixed precision is ordinary inference practice and has an obvious result for an add or a matmul; a `concat` of fp16 and fp32 has none, since the output is one buffer, so it stays an error that names the cast to insert. `f16` with `bf16` widens to `f32`: same width, neither contains the other, and picking either would silently discard range or precision.
+Operations that *compute* from several tensors promote (`promotingDTypeOutputs`); operations that *move* data require a match (`uniformDTypeOutputs`). The lattice follows PyTorch rather than NumPy's older value-based rule: category dominates width across families, so `f16` with `i32` is `f16` and not a widening to `f64` that no inference kernel performs. Mixed precision is ordinary inference practice and has an obvious result for an add or a matmul; a `concat` of fp16 and fp32 has none, since the output is one buffer, so it stays an error that names the cast to insert. Two distinct types of the same width promote to the next width up in their own family rather than to each other: `f16` with `bf16` gives `f32`, and `i8` with `u8` gives `i32`. Neither pair contains the other - bf16 trades mantissa for f32's exponent range while f16 does the reverse, and i8 reaches -128 where u8 reaches 255 - so picking a winner would silently discard range or precision.
+
+`i64` and `u8` exist for imported models rather than for the DSL. Every index, axis and shape tensor an exporter writes is int64, and holding one as `i32` would halve its byte count in every footprint that counted it; `u8` is the same argument for a quantised model's `zero_point`. `src/import/dtypes.ts` states the accept-list once - which ONNX element types map exactly, which are widened, and which are refused with a reason - so an importer never decides on the spot what to do with a type it has not met before. A widened tensor carries `dtypeWidening` beside its canonical dtype. Tensor and aggregate byte figures include its note and report `upper`; the representation therefore cannot silently turn a two-byte source element held as four bytes into an exact footprint claim.
 
 The elementwise function table in `ops/elementwise.ts` is the definition of what `fn` may be - the attribute schema enumerates its keys, and the DSL's call-name sugar reads the same table. It also carries each function's own arity, so `relu(a, b)` and `div(a, b, c)` are rejected rather than quietly computing something else.
 
@@ -394,7 +408,16 @@ Byte estimates use the dtype inferred during graph resolution, so dtype propagat
 
 einsum FLOPs count the fused loop: `(operands - 1)` multiplies plus one add per contracted position, each term dropping out where it should. An outer product only multiplies, a reduction only adds, a transpose does neither, and the ordinary two-operand contraction comes out at the conventional `2K` per element.
 
-`AggregateReadout` carries `exact` and `reasons` alongside the figures. Every total is measured over the cone's regions, so a widened region makes all of them upper bounds: it contributes bytes that are not really needed and FLOPs for work that is not really done. The flag is *derived* from the per-tensor rows rather than set independently, and the relation is strictly "no more than" - a region is never a subset of the truth, so a figure is never understated. The inspector prefixes each bounded figure with `≤` and states the reasons, which is what keeps the totals inside the rule the rest of the system follows: an over-approximation is never presented as ground truth.
+Every figure in `AggregateReadout` is a `Figure` - `{ value, status, reasons }` - because a number alone cannot say which direction it is wrong in, and these are wrong in three different ways:
+
+- `exact` is a count.
+- `upper` is "no more than this". A byte figure measured over a widened region is one: a superset contributes bytes that are not really needed, and a region is never a subset of the truth, so the figure is never understated.
+- `approximate` is a number that moved in an unknown direction. Only ratios are this. Widening a region raises an intensity's numerator *and* its denominator, so the quotient can land either side of the truth, and `≤` would claim a side it does not have.
+- `unknown` has no number at all, and `value` is `null` rather than a partial total. A barrier contributes zero FLOPs while the mapped operations around it contribute upper bounds, so their sum is neither a ceiling nor a floor. It used to be printed with `≤`, which was wrong rather than merely incomplete.
+
+Statuses combine through `addFigures` and `ratioFigure`, which keep the weaker claim: a sum containing an unknown loses its number, and a ratio of an unknown quantity is not a looser ratio but no ratio. Each figure is qualified only by the regions it actually summed, so a widened weight no longer puts `≤` on an output-byte count that is exact. `exact` and `reasons` remain on the readout, derived from the figures rather than tracked beside them, for callers that want the one-line answer.
+
+The inspector writes what each figure has earned - nothing on a count, `≤`, `~`, or the word `unknown` - and says beside it that only the arithmetic is missing while the byte figures still hold.
 
 ## 8a. Dependency notes
 
@@ -432,7 +455,17 @@ The React layer is a projection over the headless compiler and executor.
 
 `src/ui/store.ts` is the single Zustand store. Its state is divided conceptually into:
 
-- **Source:** DSL text, selected example, unresolved/resolved graph, and load errors.
+- **Source:** where the installed graph came from, the editable draft, unresolved/resolved graph,
+  and load errors. `WorkspaceSource` is a union: a `dsl` arm carrying the installed text and which
+  built-in example it matches, and an `import` arm carrying the format, file name, and the
+  conversion's own report. Both arms reach the graph through one `installGraph`, so source and
+  graph are replaced as a single transaction rather than by each call site remembering to set both.
+  The union exists because the two are not interchangeable. `toDSL` identifies a tensor by its
+  name and regenerates node ids, so printing an imported graph renames the very nodes its report
+  addresses; an imported model therefore has no DSL text and is not given one. Two consequences are
+  stated in the UI rather than worked around: a link encodes DSL source, so an imported workspace
+  is explicitly not shareable, and expanding a composite is refused there because it would rewrite
+  the workspace as generated DSL.
 - **Selection:** ordered parts, each naming its own tensor, and the independently enabled **Backward Cone** / **Forward Cone** views. Their controls live on the matching inspector section heads; both may collapse into the explicitly labelled figures-only state without disabling analysis. Direct canvas gestures add by default and Alt subtracts; both compose against the drawn tensor's parts only, so a gesture on one tensor can never edit or discard a part on another. Replacement is reserved for controlled internal transitions. Composition retains object identity for untouched parts, allowing their index-based UI metadata to be remapped safely if another tensor loses parts.
 - **Attribution:** which part is focused (emphasised, one at a time) and which parts are enabled in the merged analysis (any number, sticky). Disabled parts retain a faint selection rectangle and an inspector row so they can be included again, but their cached propagation is excluded from directional rows, metrics, notes, contribution verdicts, segmented footprints, and graph dependency highlights. Disabling the focused part clears its focus. Metadata is cleared for edited parts and follows untouched parts by identity when their indices shift. Alongside these sits `analysisGroup`, the tensor whose tiles the readout describes; it is set by a draw, a pin, or a group header and never by hovering (§8).
 - **Analysis:** aggregate backward/forward results, bounded per-box results, focus/pin state, and hover previews. **Both directions are always computed.** `direction` is a view filter over the analysis, not a gate on producing it: the inspector answers "what does this tile need" and "what does it feed" from one result, and a view choice must not decide whether a number exists. The filter is applied where highlights and directional rows are drawn, so switching it changes the picture without discarding the underlying analysis. `none` is the named figures-only combination: both section heads remain available to reopen either view while rows and graph highlights are hidden.
@@ -540,6 +573,28 @@ For a typical edit-and-select interaction:
 
 This flow keeps parsing and execution synchronous and deterministic. React components do not implement operation semantics; they only create queries and render results.
 
+An imported model differs only in steps 1 to 3. `src/import/` reads a document into an
+`ImportResult` - a `Graph` and a structured `ImportReport` - and `installImport` resolves and
+installs it through the same `installGraph` the compiler's output goes through. Everything from
+step 4 down is unchanged, because by that point there is only a `ResolvedGraph`.
+
+Before any of that, `preflightImport` checks the converted graph. It does not duplicate
+`resolveGraph`, which validates thoroughly but throws on the first problem it meets - right for one
+line of hand-written DSL, and a fix-one-reload loop over four hundred nodes. Preflight reports every
+problem at once, each naming its node, and separates the dimensions the file simply left free from
+the defects no binding can fix: a dynamic batch axis is the ordinary case in an exported model, and
+the useful response is to ask for a value rather than to report an unbound symbol as a broken shape.
+It is also where a barrier's safety condition is enforced, since a barrier is safe only because its
+output metadata is concrete and there is no conservative guess available for a missing shape.
+
+Two further differences are deliberate. Import resolves with the throwing `resolveGraph` rather than
+`resolveGraphCollecting`: pruning a failing node and everything downstream is right for one line of
+hand-written DSL and wrong for a model, where it would install a shorter graph than the one that
+was opened and make every cone on it a subset of the truth. And an import has no source map, so a
+failure is addressed by subject rather than by span - `importDiagnostics` name a node, and the
+report's own lines name the nodes they are about, which is what the canvas highlights instead of
+underlining text.
+
 ## 11. Testing strategy
 
 The test suite checks the architecture at several levels:
@@ -555,6 +610,22 @@ The test suite checks the architecture at several levels:
 - dependency notes: that a note claims only what the cone did, names axes as the source does, and merges look-alikes rather than crowding out distinct ones;
 - canvas encoding: solid upstream versus ruled downstream paint, approximation hatching, focus fading rather than hiding, and regions drawn at element precision rather than rounded to the lattice;
 - workspace link round-trips, including refusal of malformed payloads;
+- the import path: that a document with exporter-shaped names installs, analyses and reports with
+  no DSL text anywhere in it, that a graph which fails to resolve installs nothing rather than
+  installing a pruned version of itself, that a report's rendered lines are stable and point at the
+  nodes they name, and that the two declared limitations - no share link, no composite expansion -
+  are refused in the open;
+- preflight: that every problem is reported at once rather than one per attempt, that a free
+  dimension is a request for a value and not an error, and that a barrier without concrete output
+  metadata is refused;
+- figures: that a sum keeps the weaker of its parts' claims, that an unknown loses its number
+  rather than keeping the measurable half, that a ratio of two bounds is approximate rather than
+  upper, and that a FLOP total across a barrier is unavailable while the byte figures beside it
+  remain bounds;
+- the barrier as an importer builds one: several outputs with different element types and a
+  captured value among its inputs, checked against the brute-force oracle like any other fixture,
+  since a dependency absent from a node's own input list is exactly the subset this engine must
+  never produce;
 - note severity, cap selection, and the per-tensor flags, including that the hardest constraint survives the cap and that a full-axis pull is still seen once its region is split into disjoint boxes;
 - partial versus complete downstream contribution, including the over-approximated case;
 - shared-operand reporting end to end: that `matmul(A, A)` names two bands rather than three fragments, that elements and bytes count the shared square once, and that the FLOP estimate does not pay for it twice;
@@ -625,6 +696,17 @@ Keep shape/index logic in the core or pure UI geometry helpers. The store should
 - The partial-contribution flag can over-warn on an over-approximated region and never under-warns; past its probe cap, downstream rows are simply unflagged.
 - Per-part attribution is intentionally capped to keep interaction responsive; aggregate propagation remains complete.
 - Expanding a composite can expose intermediate traffic, so dependency and FLOP semantics may remain equivalent while displayed intermediate-byte estimates change.
-- JSON graph support exists below the UI, but the main interactive authoring path is the DSL.
+- The DSL is the authoring path; a converted model arrives as a JSON document through
+  `src/import/` instead. No decoder reads model bytes yet, so what can be opened today is a graph
+  a converter emitted, not an ONNX or torch file.
+- An import report describes the conversion, and its entries address nodes by id. Nothing keeps
+  those ids valid across a later graph rewrite, which is why expansion is refused on an imported
+  workspace rather than allowed to leave the report pointing at nodes that no longer exist.
+- A barrier contributes zero FLOPs, so a FLOP total spanning one reports `unknown` rather than a
+  number. What is lost is the arithmetic only: byte figures through a barrier remain upper bounds,
+  because its output shapes are declared.
+- Preflight asks for a value for a dimension the model left free, but nothing yet supplies one:
+  there is no UI for binding a dynamic axis, so such a model reports what it needs and does not
+  install.
 
 These boundaries are useful when deciding where new work belongs: semantic truth should live in the graph, region, operation, and executor layers; orchestration belongs in the store; presentation belongs in React and the canvas helpers.
