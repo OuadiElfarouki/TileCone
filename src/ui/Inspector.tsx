@@ -1244,8 +1244,8 @@ export function Inspector(): React.ReactElement {
                        word `unknown` beside a full set of byte counts reads
                        as a glitch rather than as the answer. */
                     <p className="hint overlap">
-                      No FLOP total through {metrics.flops.reasons.length} unmodelled
-                      {metrics.flops.reasons.length === 1 ? " operation" : " operations"}:
+                      No FLOP total through {metrics.unknownOperations} unmodelled
+                      {metrics.unknownOperations === 1 ? " operation" : " operations"}:
                       its arithmetic is not described, so a sum across it would be
                       neither an upper nor a lower bound. The byte figures still hold.
                     </p>

@@ -76,6 +76,7 @@ function ShareButton(): React.ReactElement {
  */
 function OpenModelButton(): React.ReactElement {
   const importJSON = useStore((s) => s.importJSON);
+  const reportImportError = useStore((s) => s.reportImportError);
   const input = useRef<HTMLInputElement>(null);
 
   return (
@@ -97,7 +98,13 @@ function OpenModelButton(): React.ReactElement {
           // Cleared before the await: the same file picked twice in a row fires
           // no change event otherwise, so a failed import could not be retried.
           event.target.value = "";
-          if (file) importJSON(await file.text(), { fileName: file.name });
+          if (!file) return;
+          try {
+            importJSON(await file.text(), { fileName: file.name });
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            reportImportError(`could not read "${file.name}": ${detail}`);
+          }
         }}
       />
     </>
@@ -404,9 +411,10 @@ function Operations(): React.ReactElement {
  * is a smaller version of the panel, not a native widget dropped into it.
  */
 function ExamplePicker(): React.ReactElement {
+  const imported = useStore((s) => s.source.kind === "import");
   const exampleIndex = useStore((s) => exampleIndexOf(s.source));
   const draftText = useStore((s) => s.draftText);
-  const stageExample = useStore((s) => s.stageExample);
+  const chooseExample = useStore((s) => s.chooseExample);
   const [open, setOpen] = useState(false);
   // Which row the keyboard is on. It follows the current example when the menu
   // opens, so ↓ from a loaded example moves to the next one rather than to the
@@ -450,7 +458,11 @@ function ExamplePicker(): React.ReactElement {
   };
 
   const choose = (index: number) => {
-    if (index !== staged) stageExample(index);
+    // There is no editor in an imported workspace, so staging text would be an
+    // invisible no-op. The picker labels this as replacement there and commits
+    // the selected example immediately; DSL workspaces keep their preview/run
+    // transaction.
+    if (imported || index !== staged) chooseExample(index);
     setOpen(false);
     triggerRef.current?.focus();
   };
@@ -474,7 +486,9 @@ function ExamplePicker(): React.ReactElement {
 
   return (
     <div className="example-picker" ref={rootRef}>
-      <span className="side-kicker" id="example-picker-label">try an example</span>
+      <span className="side-kicker" id="example-picker-label">
+        {imported ? "replace with example" : "try an example"}
+      </span>
       <div className="example-menu">
         <button
           ref={triggerRef}
@@ -484,7 +498,9 @@ function ExamplePicker(): React.ReactElement {
           aria-controls={open ? "example-options" : undefined}
           aria-labelledby="example-picker-label example-picker-value"
           title={
-            current
+            imported
+              ? "replace the imported model with one of the built-in DSL graphs"
+              : current
               ? exampleIndex === staged
                 ? `${current.name} · running`
                 : `${current.name} · loaded, not run yet`
@@ -504,7 +520,7 @@ function ExamplePicker(): React.ReactElement {
               current && exampleIndex === staged ? " built" : ""
             }`}
           >
-            {current ? current.name : "custom source"}
+            {imported ? "choose replacement" : current ? current.name : "custom source"}
           </span>
           <i aria-hidden="true">▾</i>
         </button>

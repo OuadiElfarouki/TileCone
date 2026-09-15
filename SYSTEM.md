@@ -75,6 +75,7 @@ src/
 │   ├── json.ts           the JSON door: a document becomes an `ImportResult`
 │   ├── dtypes.ts         which ONNX element types are accepted, and what happens to the rest
 │   ├── preflight.ts      every problem at once, and the dimensions awaiting a value
+│   ├── validate.ts       cross-check report claims against the converted graph
 │   └── report.ts         the report, rendered as lines that address nodes
 ├── ui/
 │   ├── store.ts          application state and analysis orchestration
@@ -586,6 +587,11 @@ the defects no binding can fix: a dynamic batch axis is the ordinary case in an 
 the useful response is to ask for a value rather than to report an unbound symbol as a broken shape.
 It is also where a barrier's safety condition is enforced, since a barrier is safe only because its
 output metadata is concrete and there is no conservative guess available for a missing shape.
+`validateImportReport` is shared by the JSON door and preflight: report counts must agree with the
+graph, node and tensor references must exist, mapped and rewritten operation names must match, and
+every opaque node must have exactly one barrier entry. A bare graph derives those graph-visible
+barrier entries but makes no mapping or rewrite claims on a converter's behalf. JSON schemas reject
+unknown fields rather than silently stripping likely converter typos.
 
 Two further differences are deliberate. Import resolves with the throwing `resolveGraph` rather than
 `resolveGraphCollecting`: pruning a failing node and everything downstream is right for one line of

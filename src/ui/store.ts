@@ -462,6 +462,8 @@ type State = {
   loadExample: (i: number) => void;
   /** Put an example in the editor without replacing the built workspace. */
   stageExample: (i: number) => void;
+  /** Stage in DSL mode; replace immediately when no editor exists for an import. */
+  chooseExample: (i: number) => void;
   setDraftText: (text: string) => void;
   applyDSL: (text: string) => void;
   /**
@@ -471,6 +473,8 @@ type State = {
   installImport: (result: ImportResult) => boolean;
   /** The JSON door: read an import document, then install it. */
   importJSON: (text: string, options?: { fileName?: string; format?: ImportFormat }) => boolean;
+  /** Surface a failure that happened before bytes reached the JSON door. */
+  reportImportError: (message: string) => void;
   /** Compile, validate, and install a shared workspace as one transaction. */
   restoreWorkspace: (workspace: WorkspaceRestore) => boolean;
   setSelection: (tensorId: string, region: Region, compose?: Compose) => void;
@@ -825,6 +829,7 @@ function installGraph(
   | "entangled"
   | "perBox" | "focusedBox" | "pinnedBox" | "viewCfgs" | "preview" | "graphPx"
   | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "tensorOffsets" | "focusNode"
+  | "selectedOp"
 > {
   const viewCfgs: Record<string, ViewCfg> = {};
   for (const t of Object.values(resolved.tensors)) viewCfgs[t.id] = defaultViewCfg(t.resolved!);
@@ -833,6 +838,7 @@ function installGraph(
     resolved,
     source,
     focusNode: null,
+    selectedOp: null,
     loadError: null,
     diagnostics: [],
     importDiagnostics: [],
@@ -904,6 +910,11 @@ export const useStore = create<State>((set, get) => ({
       diagnostics: [],
       importDiagnostics: [],
     });
+  },
+
+  chooseExample: (i) => {
+    if (get().source.kind === "import") get().loadExample(i);
+    else get().stageExample(i);
   },
 
   setDraftText: (text) => set({ draftText: text }),
@@ -1042,6 +1053,13 @@ export const useStore = create<State>((set, get) => ({
     }
     return get().installImport(result);
   },
+
+  reportImportError: (message) =>
+    set({
+      loadError: message,
+      diagnostics: [],
+      importDiagnostics: [{ severity: "error", message }],
+    }),
 
   restoreWorkspace: ({
     dsl,

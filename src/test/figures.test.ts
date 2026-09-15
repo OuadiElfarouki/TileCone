@@ -174,6 +174,23 @@ Z = relu(H)
     expect(m.flops.reasons).toEqual(["unknown work in com.microsoft.Attention"]);
   });
 
+  it("counts unknown nodes independently even when their labels are identical", () => {
+    const m = metricsOf(
+      `X = Tensor(8, dtype=fp32)
+A = opaque(X, op="Resize", shapes=[[8]], dtypes=[fp32])
+B = opaque(A, op="Resize", shapes=[[8]], dtypes=[fp32])
+Z = relu(B)
+`,
+      "Z",
+      fromBox(box([0, 4]))
+    );
+
+    expect(m.unknownOperations).toBe(2);
+    // Explanations remain deduplicated for readability; the count comes from
+    // node identity rather than pretending reasons and operations are the same.
+    expect(m.flops.reasons).toEqual(["unknown work in Resize"]);
+  });
+
   it("still counts FLOPs for an exact cone that never reaches the barrier", () => {
     // H is produced by the barrier, but a cone rooted at H itself crosses no
     // operation on the way: nothing unknown was summed.

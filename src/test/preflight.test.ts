@@ -54,6 +54,18 @@ describe("preflight", () => {
     expect(unbound).toEqual([]);
   });
 
+  it("cross-checks reports from in-memory decoders as well as JSON", () => {
+    const result = resultOf({
+      nodes: [],
+      tensors: { x: tensor("x", [4]) },
+    });
+    result.report.operations = 1;
+
+    const { errors } = preflightImport(result);
+
+    expect(errors[0].message).toMatch(/operations says 1.*contains 0/);
+  });
+
   it("requires a concrete dtype for every imported barrier output", () => {
     const { errors } = preflightImport(
       resultOf({
@@ -247,7 +259,9 @@ describe("preflight", () => {
         origin: { fileName: "m.onnx", format: "onnx" },
         sourceNodes: 1,
         operations: 1,
-        entries: [],
+        entries: [
+          { kind: "barrier", node: "/TopK", sourceOp: "TopK", reason: "unmapped" },
+        ],
       },
     });
     expect(errors[0].message).toContain("output 1");

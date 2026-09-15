@@ -166,13 +166,30 @@ export class ImportError extends Error {
   }
 }
 
-/** An empty report for a source that makes no claims about its own conversion. */
+/**
+ * A minimal report for a source that makes no conversion claims.
+ *
+ * Opaque nodes are facts present in the canonical graph, not claims only its
+ * converter could know. Deriving those entries keeps a bare graph installable
+ * without letting its barriers disappear from the accuracy summary.
+ */
 export function emptyReport(origin: ImportOrigin, graph: Graph): ImportReport {
   return {
     origin,
     sourceNodes: graph.nodes.length,
     operations: graph.nodes.length,
-    entries: [],
+    entries: graph.nodes.flatMap((node): ImportEntry[] =>
+      node.op === "opaque"
+        ? [
+            {
+              kind: "barrier",
+              node: node.id,
+              sourceOp: String(node.attrs.op ?? "opaque"),
+              reason: "present in graph; no conversion report supplied",
+            },
+          ]
+        : []
+    ),
   };
 }
 

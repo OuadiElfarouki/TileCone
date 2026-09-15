@@ -111,6 +111,8 @@ export type AggregateReadout = {
    * zero, which bounds nothing in either direction.
    */
   flops: Figure;
+  /** Distinct graph nodes whose arithmetic is absent from `flops`. */
+  unknownOperations: number;
   inputBytes: Figure;
   intermediateBytes: Figure;
   outputBytes: Figure;
@@ -208,7 +210,7 @@ export function computeMetrics(graph: ResolvedGraph, back: PropResult): Aggregat
   // Nodes in this cone whose arithmetic nobody described. One of them is enough
   // to make the FLOP total meaningless; they are collected rather than counted
   // so the reason can name them.
-  const unknownWork = new Set<string>();
+  const unknownWork = new Map<string, string>();
   let unfusedBytes = 0;
   let trafficExact = true;
   const trafficReasons = new Set<string>();
@@ -244,7 +246,7 @@ export function computeMetrics(graph: ResolvedGraph, back: PropResult): Aggregat
       // contribution to a total: recording the node here is what stops that
       // zero from being summed in beside real upper bounds as if it were one.
       if (spec.unknownWork) {
-        unknownWork.add(opLabel(node));
+        unknownWork.set(node.id, opLabel(node));
         return;
       }
       if (!tr.region.exact) {
@@ -282,7 +284,7 @@ export function computeMetrics(graph: ResolvedGraph, back: PropResult): Aggregat
   // arithmetic entirely is not an upper bound on the work, and a reader who
   // saw one number would have no way to tell.
   const flopsFigure: Figure = unknownWork.size
-    ? figure(0, "unknown", [...unknownWork].map((op) => `unknown work in ${op}`))
+    ? figure(0, "unknown", [...unknownWork.values()].map((op) => `unknown work in ${op}`))
     : figure(flops, flopsExact ? "exact" : "upper", [...flopsReasons]);
 
   const unfusedFigure = figure(
@@ -302,6 +304,7 @@ export function computeMetrics(graph: ResolvedGraph, back: PropResult): Aggregat
   ];
   return {
     flops: flopsFigure,
+    unknownOperations: unknownWork.size,
     inputBytes,
     intermediateBytes,
     outputBytes,

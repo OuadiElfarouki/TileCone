@@ -111,6 +111,8 @@ describe("panel accessibility contracts", () => {
     expect(html).toContain("Imported model");
     expect(html).toContain("tiny.onnx · onnx · opset 17");
     expect(html).toContain("regions through them are bounds");
+    expect(html).toContain("replace with example");
+    expect(html).toContain("choose replacement");
     // No editor, because there is no text behind this graph. A textarea here
     // would offer a Run that replaces the imported model with whatever it held.
     expect(html).not.toContain('aria-label="graph source"');

@@ -24,7 +24,7 @@ const tensorSchema = z.object({
     .optional()
     .transform((names) => names?.map((name) => name ?? undefined)),
   role: z.enum(["activation", "weight"]).optional(),
-});
+}).strict();
 
 const nodeSchema = z.object({
   id: z.string(),
@@ -33,13 +33,13 @@ const nodeSchema = z.object({
   outputs: z.array(z.string()),
   attrs: z.record(z.unknown()).default({}),
   label: z.string().optional(),
-});
+}).strict();
 
 const graphSchema = z.object({
   nodes: z.array(nodeSchema),
   tensors: z.record(tensorSchema),
   params: z.record(z.number().int().min(1)).default({}),
-});
+}).strict();
 
 /**
  * Structurally validate an already-parsed graph value.

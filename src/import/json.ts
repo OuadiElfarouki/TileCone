@@ -8,6 +8,7 @@ import {
   emptyReport,
   type ImportFormat,
 } from "./types";
+import { validateImportReport } from "./validate";
 
 /**
  * The JSON door: a converted model arriving as a document rather than as bytes
@@ -20,20 +21,23 @@ import {
  * first, it emits this.
  *
  * Two documents are accepted. A bare graph is what `graphToJSON` already
- * writes, and it makes no claims about its own conversion, so it gets an empty
- * report: nothing was mapped, nothing was assumed, because nothing said. An
+ * writes, and it makes no claims about its own conversion, so it gets a minimal
+ * report: graph-visible barriers are derived, while nothing is called mapped or
+ * assumed because nothing said so. An
  * envelope carries the report beside the graph, which is what a real converter
  * emits - the graph alone cannot say which of its nodes is a barrier standing
  * in for a `Resize`, and a reader who cannot see that is reading bounds as
  * counts.
  */
 
-const originSchema = z.object({
-  fileName: z.string().min(1).optional(),
-  format: z.enum(IMPORT_FORMATS as [ImportFormat, ...ImportFormat[]]).optional(),
-  opset: z.number().int().min(1).optional(),
-  producer: z.string().optional(),
-});
+const originSchema = z
+  .object({
+    fileName: z.string().min(1).optional(),
+    format: z.enum(IMPORT_FORMATS as [ImportFormat, ...ImportFormat[]]).optional(),
+    opset: z.number().int().min(1).optional(),
+    producer: z.string().optional(),
+  })
+  .strict();
 
 const entrySchema = z.discriminatedUnion("kind", [
   z.object({
@@ -42,49 +46,53 @@ const entrySchema = z.discriminatedUnion("kind", [
     sourceOp: z.string().min(1),
     op: z.string().min(1),
     shapeChecked: z.boolean().default(false),
-  }),
+  }).strict(),
   z.object({
     kind: z.literal("evaluated"),
     node: z.string().min(1),
     sourceName: z.string().min(1),
     attribute: z.string().min(1),
-  }),
+  }).strict(),
   z.object({
     kind: z.literal("rewritten"),
     nodes: z.array(z.string().min(1)).min(1),
     sourceOp: z.string().min(1),
     ops: z.array(z.string().min(1)).min(1),
-  }),
+  }).strict(),
   z.object({
     kind: z.literal("bound"),
     dimension: z.string().min(1),
     value: z.number().int().min(1),
     assumed: z.boolean().default(true),
-  }),
+  }).strict(),
   z.object({
     kind: z.literal("barrier"),
     node: z.string().min(1),
     sourceOp: z.string().min(1),
     reason: z.string().default(""),
-  }),
+  }).strict(),
   z.object({
     kind: z.literal("renamed"),
     tensor: z.string().min(1),
     original: z.string().min(1),
-  }),
+  }).strict(),
 ]);
 
-const reportSchema = z.object({
-  origin: originSchema.default({}),
-  sourceNodes: z.number().int().min(0).optional(),
-  operations: z.number().int().min(0).optional(),
-  entries: z.array(entrySchema).default([]),
-});
+const reportSchema = z
+  .object({
+    origin: originSchema.default({}),
+    sourceNodes: z.number().int().min(0).optional(),
+    operations: z.number().int().min(0).optional(),
+    entries: z.array(entrySchema).default([]),
+  })
+  .strict();
 
-const envelopeSchema = z.object({
-  graph: z.unknown(),
-  report: reportSchema.optional(),
-});
+const envelopeSchema = z
+  .object({
+    graph: z.unknown(),
+    report: reportSchema.optional(),
+  })
+  .strict();
 
 /** A document is an envelope when it has a `graph` member; a bare graph has `nodes`. */
 function isEnvelope(raw: unknown): boolean {
@@ -105,14 +113,11 @@ export type ImportJSONOptions = {
 /**
  * Read an import document into the value the install boundary takes.
  *
- * Structural only, deliberately. Whether the graph resolves - shapes agree,
- * operations exist, the DAG is acyclic - is `resolveGraph`'s question, asked
- * once at install for every source, so that a graph arriving through this door
- * is held to exactly the standard a compiled one is.
- *
- * A `rewritten` entry whose `nodes` and `ops` disagree in length is rejected
- * here rather than carried: the two are parallel by definition, and a report
- * that misreports what an insertion produced is worse than one that is absent.
+ * The graph is structurally validated here; whether it resolves - shapes agree,
+ * operations exist, the DAG is acyclic - remains `resolveGraph`'s question at
+ * installation. Report claims are also cross-checked against the graph before
+ * this function returns. The same validator runs in preflight for in-memory
+ * decoder results, so neither entry path can display a stale or invented claim.
  */
 export function parseImportJSON(text: string, options: ImportJSONOptions = {}): ImportResult {
   let raw: unknown;
@@ -154,13 +159,6 @@ export function parseImportJSON(text: string, options: ImportJSONOptions = {}): 
   const parsed = envelope.data.report;
   if (!parsed) return { graph, report: emptyReport({ fileName, format }, graph) };
 
-  for (const entry of parsed.entries)
-    if (entry.kind === "rewritten" && entry.nodes.length !== entry.ops.length)
-      fail(
-        `report: rewrite of "${entry.sourceOp}" lists ${entry.nodes.length} node(s)` +
-          ` for ${entry.ops.length} operation(s); they are parallel`
-      );
-
   // Counts default to what the graph has rather than to zero. A document that
   // omits them is saying "I did not count", and a header reading "0 source
   // nodes -> 0 operations" over a graph with twelve would be a claim, not a
@@ -178,5 +176,8 @@ export function parseImportJSON(text: string, options: ImportJSONOptions = {}): 
     operations: parsed.operations ?? graph.nodes.length,
     entries: parsed.entries,
   };
-  return { graph, report };
+  const result = { graph, report };
+  const diagnostics = validateImportReport(result);
+  if (diagnostics.length) throw new ImportError(diagnostics);
+  return result;
 }

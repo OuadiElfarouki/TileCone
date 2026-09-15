@@ -1586,6 +1586,8 @@ describe("the operations list tracks where the reader is working", () => {
 
   it("starts clear on a freshly loaded graph", () => {
     S().applyDSL(chain);
+    S().setSelectedOp("matmul_C");
+    S().applyDSL("X = Tensor(4, 4)\nY = relu(X)\n");
     expect(S().selectedOp).toBeNull();
   });
 });

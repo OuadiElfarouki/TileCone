@@ -117,20 +117,34 @@ describe("the import contract", () => {
     expect(barrierNodes(result.report)).toEqual(["/head/Resize"]);
   });
 
-  it("accepts a bare graph, and claims nothing on its behalf", () => {
+  it("accepts a bare graph and derives only its graph-visible barriers", () => {
     const result = parseImportJSON(asText(ONNX_SHAPED.graph), { fileName: "bare.json" });
 
     expect(result.graph.nodes).toHaveLength(4);
-    // A document that said nothing about its conversion gets a report that says
-    // nothing - not a report full of zeroes, which would be a claim.
-    expect(result.report.entries).toEqual([]);
+    // Mapping and rewrite claims require a converter report. A barrier is
+    // already explicit in the graph and must not disappear from the summary.
+    expect(result.report.entries).toEqual([
+      {
+        kind: "barrier",
+        node: "/head/Resize",
+        sourceOp: "Resize",
+        reason: "present in graph; no conversion report supplied",
+      },
+    ]);
     expect(result.report.sourceNodes).toBe(4);
     expect(result.report.origin.fileName).toBe("bare.json");
   });
 
   it("defaults the counts to the graph rather than to zero", () => {
     const { report } = parseImportJSON(
-      asText({ graph: ONNX_SHAPED.graph, report: { entries: [] } })
+      asText({
+        graph: ONNX_SHAPED.graph,
+        report: {
+          entries: [
+            { kind: "barrier", node: "/head/Resize", sourceOp: "Resize", reason: "unmapped" },
+          ],
+        },
+      })
     );
     expect(report.sourceNodes).toBe(4);
     expect(report.operations).toBe(4);
@@ -152,6 +166,49 @@ describe("the import contract", () => {
   it("rejects malformed documents by name rather than by throwing something raw", () => {
     expect(() => parseImportJSON("{ not json")).toThrow(ImportError);
     expect(() => parseImportJSON(asText({ graph: { nodes: "no" } }))).toThrow(/at graph\.nodes/);
+  });
+
+  it("rejects report claims that disagree with the converted graph", () => {
+    const wrongCount = {
+      ...ONNX_SHAPED,
+      report: { ...ONNX_SHAPED.report, operations: 3 },
+    };
+    expect(() => parseImportJSON(asText(wrongCount))).toThrow(/operations says 3/);
+
+    const wrongMapping = {
+      ...ONNX_SHAPED,
+      report: {
+        ...ONNX_SHAPED.report,
+        entries: ONNX_SHAPED.report.entries.map((entry) =>
+          entry.kind === "mapped" && entry.node === "/act/Relu"
+            ? { ...entry, op: "relu" }
+            : entry
+        ),
+      },
+    };
+    expect(() => parseImportJSON(asText(wrongMapping))).toThrow(/claims operation "relu"/);
+
+    const missingBarrier = {
+      ...ONNX_SHAPED,
+      report: {
+        ...ONNX_SHAPED.report,
+        entries: ONNX_SHAPED.report.entries.filter((entry) => entry.kind !== "barrier"),
+      },
+    };
+    expect(() => parseImportJSON(asText(missingBarrier))).toThrow(/missing its barrier entry/);
+  });
+
+  it("rejects unknown report fields instead of silently stripping converter typos", () => {
+    const typo = {
+      ...ONNX_SHAPED,
+      report: {
+        ...ONNX_SHAPED.report,
+        entries: ONNX_SHAPED.report.entries.map((entry) =>
+          entry.kind === "mapped" ? { ...entry, shapeCheckd: true } : entry
+        ),
+      },
+    };
+    expect(() => parseImportJSON(asText(typo))).toThrow(/shapeCheckd/);
   });
 });
 
@@ -191,6 +248,7 @@ describe("the import report, rendered", () => {
         report: {
           entries: [
             { kind: "mapped", node: "/act/Relu", sourceOp: "Relu", op: "elementwise", shapeChecked: false },
+            { kind: "barrier", node: "/head/Resize", sourceOp: "Resize", reason: "unmapped" },
           ],
         },
       })
@@ -298,6 +356,17 @@ describe("installing an imported model", () => {
     expect(S().importDiagnostics[0].subject).toBeUndefined();
   });
 
+  it("surfaces a file read failure before parsing without disturbing the workspace", () => {
+    const before = S().resolved;
+
+    S().reportImportError('could not read "model.json": permission denied');
+
+    expect(S().resolved).toBe(before);
+    expect(S().importDiagnostics).toEqual([
+      { severity: "error", message: 'could not read "model.json": permission denied' },
+    ]);
+  });
+
   it("clears an earlier import failure once something installs", () => {
     S().importJSON("{ not json");
     expect(S().importDiagnostics).toHaveLength(1);
@@ -325,5 +394,16 @@ describe("installing an imported model", () => {
     expect(S().source.kind).toBe("dsl");
     expect(dslTextOf(S().source)).toContain("Y = relu(X)");
     expect(S().resolved!.tensors.Y.resolved).toEqual([2, 3]);
+  });
+
+  it("replaces an import when an example is chosen instead of staging invisible text", () => {
+    S().importJSON(asText(ONNX_SHAPED));
+    const target = 0;
+
+    S().chooseExample(target);
+
+    expect(S().source.kind).toBe("dsl");
+    expect(exampleIndexOf(S().source)).toBe(target);
+    expect(S().draftText).toBe(dslTextOf(S().source));
   });
 });

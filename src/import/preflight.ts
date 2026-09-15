@@ -2,6 +2,7 @@ import { Graph } from "../core/graph";
 import { DTYPES, DType } from "../core/dtypes";
 import { dimSymbols, resolveShape, Sym } from "../core/shapes";
 import { ImportDiagnostic, ImportResult } from "./types";
+import { validateImportReport } from "./validate";
 
 /**
  * Everything wrong with a converted model, before anything installs it.
@@ -53,10 +54,11 @@ function declaredShapes(attrs: Record<string, unknown>): Sym[][] | null {
 
 export function preflightImport(result: ImportResult): PreflightResult {
   const graph: Graph = result.graph;
-  const errors: ImportDiagnostic[] = [];
+  const errors: ImportDiagnostic[] = validateImportReport(result);
   const unbound: string[] = [];
   const seenUnbound = new Set<string>();
   const params = graph.params ?? {};
+  const produced = new Set(graph.nodes.flatMap((node) => node.outputs));
 
   const noteSymbols = (shape: Sym[]): void => {
     for (const dim of shape)
@@ -90,7 +92,6 @@ export function preflightImport(result: ImportResult): PreflightResult {
   };
 
   for (const [id, tensor] of Object.entries(graph.tensors)) {
-    const produced = graph.nodes.some((node) => node.outputs.includes(id));
     if (!isSupportedDType(tensor.dtype))
       errors.push({
         severity: "error",
@@ -103,7 +104,8 @@ export function preflightImport(result: ImportResult): PreflightResult {
     // there is the placeholder it is supposed to be. A declared tensor with no
     // shape is a rank-0 scalar, which is legitimate, so neither case is checked
     // for emptiness - only for extents that cannot be resolved.
-    if (!produced) checkShape(tensor.shape, { kind: "tensor", id }, `tensor "${tensor.name}"`);
+    if (!produced.has(id))
+      checkShape(tensor.shape, { kind: "tensor", id }, `tensor "${tensor.name}"`);
   }
 
   for (const node of graph.nodes) {
