@@ -4,6 +4,9 @@ import { Entanglement, entangledWith } from "../core/entangle";
 import { Graph, graphOutputs, ResolvedGraph } from "../core/graph";
 import { expandNode } from "../core/expand";
 import { PropResult, mergeProps } from "../core/propagate";
+import { supplyOf, type Supply } from "../core/plan/interfaces";
+import { tilePlan, type TaskRef, type TilePlan } from "../core/plan/plan";
+import { isTile, tileFamily } from "../core/plan/tile-family";
 import {
   Box,
   Region,
@@ -30,7 +33,7 @@ export type ConeDirection = "backward" | "forward";
 export type PanelSide = "left" | "right";
 export type Theme = "light" | "dark";
 /** The two classes of question the inspector answers; see `inspectorTab`. */
-export type InspectorTab = "dependencies" | "execution";
+export type InspectorTab = "dependencies" | "execution" | "plan";
 /** Defensive share-state bound; far beyond any usable graph arrangement while
  * preventing finite-but-overflowing coordinates from poisoning scene bounds. */
 export const MAX_TENSOR_OFFSET = 1_000_000;
@@ -201,9 +204,14 @@ export function operationForTensor(
   return distinct.length === 1 ? distinct[0] : null;
 }
 
+/** What a plan edit changes: the tile extents per planned tensor, and the task inspected. */
+export type PlanEdit = { tiles: Record<string, number[]>; task: TaskRef | null };
+
 type WorkspaceSnapshot = {
   selection: Selection;
   tensorOffsets: TensorOffsets;
+  /** Required so that no edit can record a snapshot that forgets the plan. */
+  plan: PlanEdit;
   /**
    * The source and graph as they were, for the one edit that replaces them.
    *
@@ -220,6 +228,16 @@ type WorkspaceSnapshot = {
   source?: { dslText: string; draftText: string; graph: Graph; exampleIndex: number };
 };
 const WORKSPACE_HISTORY_LIMIT = 40;
+
+function planEditOf(state: Pick<State, "planTiles" | "planTask">): PlanEdit {
+  return { tiles: state.planTiles, task: state.planTask };
+}
+
+const sameNumbers = (a: readonly number[], b: readonly number[]): boolean =>
+  a.length === b.length && a.every((value, index) => value === b[index]);
+
+const sameTask = (a: TaskRef | null, b: TaskRef | null): boolean =>
+  a === b || (!!a && !!b && a.tensorId === b.tensorId && sameNumbers(a.coord, b.coord));
 
 function appendWorkspaceHistory(
   history: WorkspaceSnapshot[],
@@ -392,6 +410,19 @@ type State = {
   /** User displacement from dagre's collision-free base placement. */
   tensorOffsets: TensorOffsets;
 
+  /**
+   * Tile extents per planned tensor (see `core/plan`). Independent of the
+   * canvas lattice: detail, zoom and projection never change it. Cleared when
+   * the graph is replaced, like the selection.
+   */
+  planTiles: Record<string, number[]>;
+  /** The task the Plan view describes. */
+  planTask: TaskRef | null;
+  /** Derived from `planTiles` against `resolved`; null when nothing is tiled. */
+  plan: TilePlan | null;
+  /** Derived: what `planTask` reads and which producer tasks supply it. */
+  planSupply: Supply | null;
+
   /** Compile and install an example immediately: app boot and tests. */
   loadExample: (i: number) => void;
   /** Put an example in the editor without replacing the built workspace. */
@@ -431,6 +462,18 @@ type State = {
   setSnapToGrid: (v: boolean) => void;
   setAxisMode: (v: AxisMode) => void;
   setInspectorTab: (tab: InspectorTab) => void;
+  /** Tile a produced tensor with these extents, or stop tiling it with `null`. Undoable. */
+  setPlanTile: (tensorId: string, tile: number[] | null) => void;
+  /** Inspect one task, or none. Undoable. */
+  selectPlanTask: (task: TaskRef | null) => void;
+  /**
+   * Inspect the task whose tile contains `element`. A produced tensor the plan
+   * does not tile yet is tiled at `defaultTile` first; a graph input has no
+   * tasks and is ignored.
+   */
+  planTaskAt: (tensorId: string, element: number[], defaultTile: number[]) => void;
+  /** Step the inspected task `delta` tiles along `axis`, stopping at the grid's edge. */
+  movePlanTask: (axis: number, delta: number, record?: boolean) => void;
   setFocusNode: (node: { kind: "tensor" | "op"; id: string } | null) => void;
   /** Light one row of the operations list, or clear it with `null`. */
   setSelectedOp: (nodeId: string | null) => void;
@@ -661,7 +704,7 @@ function editSelection(
     selectedOp: operationForTensor(resolved, anchor),
     selection: sel,
     workspaceHistory: record
-      ? appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets })
+      ? appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets, plan: planEditOf(get()) })
       : workspaceHistory,
     focusedBox: nextFocus,
     pinnedBox: nextFocus === null ? null : get().pinnedBox,
@@ -725,6 +768,42 @@ export function startingTiles(
   });
 }
 
+const NO_PLAN = { planTiles: {}, planTask: null, plan: null, planSupply: null } as const;
+
+/**
+ * The checked plan and the inspected task's supply for one graph.
+ *
+ * Every stored entry was checked when it was set, against the graph it is
+ * stored beside. Entries are still checked one at a time here, so an entry the
+ * graph cannot support is dropped instead of failing the whole plan, and a task
+ * that no longer names a tile is cleared.
+ */
+function derivePlan(
+  resolved: ResolvedGraph | null,
+  tiles: Record<string, number[]>,
+  task: TaskRef | null
+): Pick<State, "planTiles" | "planTask" | "plan" | "planSupply"> {
+  if (!resolved) return NO_PLAN;
+  const valid: Record<string, number[]> = {};
+  for (const [tensorId, tile] of Object.entries(tiles)) {
+    try {
+      tilePlan(resolved, { [tensorId]: tile });
+      valid[tensorId] = tile;
+    } catch {
+      // not plannable on this graph
+    }
+  }
+  if (!Object.keys(valid).length) return NO_PLAN;
+  const plan = tilePlan(resolved, valid);
+  const family = task ? plan.families.get(task.tensorId) : undefined;
+  const kept = task && family && isTile(family, task.coord) ? task : null;
+  return { planTiles: valid, planTask: kept, plan, planSupply: kept ? supplyOf(plan, kept) : null };
+}
+
+/** The tile of a tiling that contains `element`. */
+const tileContaining = (tile: readonly number[], element: readonly number[]): number[] =>
+  element.map((i, axis) => Math.floor(i / tile[axis]));
+
 function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
   State,
   | "graph" | "resolved" | "loadError" | "diagnostics" | "selection" | "backwardRes" | "forwardRes"
@@ -732,6 +811,7 @@ function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
   | "entangled"
   | "perBox" | "focusedBox" | "pinnedBox" | "viewCfgs" | "preview" | "graphPx"
   | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "tensorOffsets"
+  | "planTiles" | "planTask" | "plan" | "planSupply"
 > {
   const viewCfgs: Record<string, ViewCfg> = {};
   for (const t of Object.values(resolved.tensors)) viewCfgs[t.id] = defaultViewCfg(t.resolved!);
@@ -757,6 +837,8 @@ function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
     preview: null,
     viewCfgs,
     graphPx: graphScale(planesOf(resolved)),
+    // A plan names tensors and tile coordinates in one graph, as the selection does.
+    ...NO_PLAN,
   };
 }
 
@@ -770,6 +852,7 @@ export const useStore = create<State>((set, get) => ({
   diagnostics: [],
   showEntangled: false,
   inspectorTab: "dependencies",
+  ...NO_PLAN,
   entangled: null,
   selection: null,
   workspaceHistory: [],
@@ -987,7 +1070,7 @@ export const useStore = create<State>((set, get) => ({
       selectedOp: sel ? drawnOp : null,
       // Null is a real workspace state: the first selection must be undoable
       // without also rewinding an earlier tensor move.
-      workspaceHistory: appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets }),
+      workspaceHistory: appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets, plan: planEditOf(get()) }),
       // Drawing releases the pin, and the analysis follows the pointer to this
       // tensor. Remapping it was never able to keep a pin on the tensor being
       // drawn on - those parts are rebuilt, so their identity is gone - and
@@ -1011,7 +1094,7 @@ export const useStore = create<State>((set, get) => ({
       selection: null,
       selectedOp: null,
       workspaceHistory: selection
-        ? appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets })
+        ? appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets, plan: planEditOf(get()) })
         : workspaceHistory,
       backwardRes: null,
       byTensorRes: null,
@@ -1046,6 +1129,7 @@ export const useStore = create<State>((set, get) => ({
           workspaceHistory: workspaceHistory.slice(0, -1),
           focusNode: null,
           ...recompute(program.resolved, prev.selection),
+          ...derivePlan(program.resolved, prev.plan.tiles, prev.plan.task),
         });
       } catch (e) {
         set({ loadError: (e as Error).message });
@@ -1064,6 +1148,7 @@ export const useStore = create<State>((set, get) => ({
       analysisGroup: null,
       preview: null,
       ...recompute(resolved, prev.selection, { selection, perBox, entangled }),
+      ...derivePlan(resolved, prev.plan.tiles, prev.plan.task),
     });
   },
 
@@ -1190,6 +1275,120 @@ export const useStore = create<State>((set, get) => ({
   setAxisMode: (v) => set({ axisMode: v }),
   setInspectorTab: (tab) => set({ inspectorTab: tab }),
 
+  setPlanTile: (tensorId, tile) => {
+    const state = get();
+    const { resolved, planTiles, planTask } = state;
+    if (!resolved) return;
+    const tiles = { ...planTiles };
+    if (tile) {
+      try {
+        tilePlan(resolved, { [tensorId]: tile });
+      } catch {
+        return; // the panel validates before calling; an invalid tile changes nothing
+      }
+      if (planTiles[tensorId] && sameNumbers(planTiles[tensorId], tile)) return;
+      tiles[tensorId] = [...tile];
+    } else if (tensorId in tiles) delete tiles[tensorId];
+    else return;
+    // A task on the retiled tensor moves to the new tile holding its first element.
+    const previous = planTask?.tensorId === tensorId ? planTiles[tensorId] : undefined;
+    const task =
+      planTask && previous
+        ? tile
+          ? {
+              tensorId,
+              coord: tileContaining(tile, planTask.coord.map((c, axis) => c * previous[axis])),
+            }
+          : null
+        : planTask;
+    set({
+      workspaceHistory: appendWorkspaceHistory(state.workspaceHistory, {
+        selection: state.selection,
+        tensorOffsets: state.tensorOffsets,
+        plan: planEditOf(state),
+      }),
+      ...derivePlan(resolved, tiles, task),
+    });
+  },
+
+  selectPlanTask: (task) => {
+    const state = get();
+    if (!state.resolved) return;
+    const next = derivePlan(state.resolved, state.planTiles, task);
+    if (task && !next.planTask) return; // not a task of this plan
+    if (sameTask(state.planTask, next.planTask)) {
+      const selectedOp = next.planTask
+        ? operationForTensor(state.resolved, next.planTask.tensorId)
+        : state.selectedOp;
+      if (selectedOp !== state.selectedOp) set({ selectedOp });
+      return;
+    }
+    set({
+      workspaceHistory: appendWorkspaceHistory(state.workspaceHistory, {
+        selection: state.selection,
+        tensorOffsets: state.tensorOffsets,
+        plan: planEditOf(state),
+      }),
+      selectedOp: next.planTask ? operationForTensor(state.resolved, next.planTask.tensorId) : state.selectedOp,
+      ...next,
+    });
+  },
+
+  planTaskAt: (tensorId, element, defaultTile) => {
+    const state = get();
+    const { resolved } = state;
+    const tensor = resolved?.tensors[tensorId];
+    if (!resolved || !tensor?.producer) return;
+    let tile = state.planTiles[tensorId];
+    if (!tile) {
+      try {
+        tileFamily(tensorId, tensor.resolved!, defaultTile);
+      } catch {
+        return;
+      }
+      tile = [...defaultTile];
+    }
+    const task = { tensorId, coord: tileContaining(tile, element) };
+    const addsFamily = !(tensorId in state.planTiles);
+    if (!addsFamily && sameTask(state.planTask, task)) {
+      const selectedOp = operationForTensor(resolved, tensorId);
+      if (selectedOp !== state.selectedOp) set({ selectedOp });
+      return;
+    }
+    const next = derivePlan(resolved, { ...state.planTiles, [tensorId]: tile }, task);
+    if (!next.planTask) return;
+    set({
+      workspaceHistory: appendWorkspaceHistory(state.workspaceHistory, {
+        selection: state.selection,
+        tensorOffsets: state.tensorOffsets,
+        plan: planEditOf(state),
+      }),
+      selectedOp: operationForTensor(resolved, tensorId),
+      ...next,
+    });
+  },
+
+  movePlanTask: (axis, delta, record = true) => {
+    const state = get();
+    const { plan, planTask, resolved } = state;
+    if (!plan || !planTask || !resolved) return;
+    const family = plan.families.get(planTask.tensorId)!;
+    if (axis < 0 || axis >= family.grid.length) return;
+    const coord = [...planTask.coord];
+    coord[axis] = Math.max(0, Math.min(family.grid[axis] - 1, coord[axis] + delta));
+    if (coord[axis] === planTask.coord[axis]) return;
+    set({
+      workspaceHistory: record
+        ? appendWorkspaceHistory(state.workspaceHistory, {
+            selection: state.selection,
+            tensorOffsets: state.tensorOffsets,
+            plan: planEditOf(state),
+          })
+        : state.workspaceHistory,
+      ...derivePlan(resolved, state.planTiles, { tensorId: planTask.tensorId, coord }),
+    });
+  },
+
   setTileScale: (v) =>
     set({ tileScale: Math.max(TILE_SCALE_MIN, Math.min(TILE_SCALE_MAX, Math.round(v))) }),
 
@@ -1248,6 +1447,7 @@ export const useStore = create<State>((set, get) => ({
       workspaceHistory: appendWorkspaceHistory(workspaceHistory, {
         selection,
         tensorOffsets: previousOffsets,
+        plan: planEditOf(get()),
       }),
     });
   },
@@ -1257,7 +1457,7 @@ export const useStore = create<State>((set, get) => ({
     if (!Object.keys(tensorOffsets).length) return;
     set({
       tensorOffsets: {},
-      workspaceHistory: appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets }),
+      workspaceHistory: appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets, plan: planEditOf(get()) }),
     });
   },
 
@@ -1298,6 +1498,7 @@ export const useStore = create<State>((set, get) => ({
       const restore: WorkspaceSnapshot = {
         selection: state.selection,
         tensorOffsets: state.tensorOffsets,
+        plan: planEditOf(state),
         source: {
           dslText: state.dslText,
           draftText: state.draftText,

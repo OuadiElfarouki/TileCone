@@ -133,6 +133,16 @@ export function checkGraph(graph: Graph, opts: CheckOpts = {}): CheckStats {
     if (!frontier) return open.tensors;
     const bounded = propagateWithin(g, sel, dir, frontier, limits);
     if (bounded.tensors.size < open.tensors.size) stats.cut++;
+    // Crossings split a stopped tensor's region by slot: each lands on a stop,
+    // and together they cover exactly the region the oracle checks below.
+    for (const c of bounded.crossings) expect(bounded.stoppedAt).toContain(c.tensorId);
+    for (const id of bounded.stoppedAt) {
+      const shape = g.tensors[id].resolved!;
+      const joined = new Set<number>();
+      for (const c of bounded.crossings)
+        if (c.tensorId === id) for (const f of regionToFlatSet(c.region, shape)) joined.add(f);
+      expect(joined, `crossings on ${id}`).toEqual(regionToFlatSet(bounded.tensors.get(id)!.region, shape));
+    }
     return bounded.tensors;
   };
 

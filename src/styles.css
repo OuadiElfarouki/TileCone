@@ -859,3 +859,45 @@ textarea.source.error-state { border-color: var(--err); }
 .panel-frame.will-collapse .panel-content { opacity: var(--dim-soft); }
 .panel-frame.will-collapse.left { box-shadow: inset -2px 0 0 var(--accent); }
 .panel-frame.will-collapse.right { box-shadow: inset 2px 0 0 var(--accent); }
+
+/* ---------------- plan view ---------------- */
+/* A tiled tensor: its name, its tile extents, what that costs in tasks, and the
+   control that stops tiling it. The extents field is the same editor the tile
+   ranges use, so the two read as the same kind of edit. */
+.plan-list { list-style: none; margin: 4px 0 0; padding: 0; }
+.plan-list li {
+  display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap;
+  font-size: var(--t-body); margin-bottom: 3px;
+}
+.plan-list code { background: var(--bg); padding: 1px 5px; border-radius: var(--r); }
+.plan-list .box-range { width: auto; flex: 1 1 96px; }
+
+/* A producer task is a link back to the regions that explain it: clicking makes
+   it the inspected task. */
+.plan-task {
+  padding: 1px 5px; border-radius: var(--r); background: var(--bg);
+  font: var(--t-body)/1.4 var(--mono); color: var(--ink); border: 1px solid transparent;
+}
+.plan-task:hover, .plan-task:focus-visible { border-color: var(--accent); }
+
+.plan-demand { padding: 5px 0; }
+.plan-demand + .plan-demand { border-top: 1px dashed var(--line); }
+.plan-demand-head { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; }
+.plan-demand-head code { background: var(--bg); padding: 1px 5px; border-radius: var(--r); }
+.plan-slice {
+  margin: 3px 0; color: var(--muted); font: var(--t-micro)/1.5 var(--mono);
+  white-space: pre-wrap; word-break: break-all;
+}
+.plan-need { margin: 3px 0 2px; font-size: var(--t-body); }
+.plan-op { margin: 2px 0; font-size: var(--t-body); }
+.plan-op code { background: var(--bg); padding: 1px 5px; border-radius: var(--r); }
+.plan-fan { flex: 1 0 100%; font-size: var(--t-micro); }
+
+/* Consumer tasks down, producer tiles across. The rows are a pointer
+   convenience; the arrow keys are the accessible route to the same move. */
+.plan-matrix-wrap { margin-top: 7px; }
+.plan-matrix-label { font-size: var(--t-micro); margin-bottom: 2px; }
+.plan-matrix { display: block; max-width: 100%; }
+.plan-matrix-row { fill: transparent; }
+.plan-matrix g:hover .plan-matrix-row { fill: color-mix(in srgb, var(--accent) 12%, transparent); }
+.plan-matrix-row.current { fill: color-mix(in srgb, var(--accent) 18%, transparent); }

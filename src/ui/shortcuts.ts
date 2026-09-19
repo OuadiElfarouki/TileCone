@@ -41,6 +41,12 @@ export const SHORTCUTS = {
     action: "show or hide the focused tile's needs and feeds",
     keys: ["h"],
   },
+  movePlanTask: {
+    id: "move-plan-task",
+    label: "Arrow keys",
+    action: "step the inspected task one tile",
+    keys: ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"],
+  },
   escape: {
     id: "escape",
     label: "Esc",
@@ -50,7 +56,7 @@ export const SHORTCUTS = {
   undo: {
     id: "undo",
     label: "Ctrl/Cmd + Z",
-    action: "undo the last tile or tensor move",
+    action: "undo the last tile, tensor or plan edit",
     keys: ["z"],
     primary: true,
   },
@@ -114,6 +120,11 @@ export const SHORTCUT_GROUPS = [
   /* `run` builds the source; it is not a panel control. The sheet is the one
      place the bindings are taught, so its grouping is the mental model a reader
      leaves with. */
+  {
+    title: "Plan",
+    items: [SHORTCUTS.movePlanTask],
+    note: "Applies while the inspector shows Plan, the view that names the task.",
+  },
   { title: "Panels", items: [SHORTCUTS.leftPanel, SHORTCUTS.rightPanel] },
   { title: "Source", items: [SHORTCUTS.run] },
 ] as const;

@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Tensor } from "../core/graph";
 import { DTYPE_BYTES } from "../core/dtypes";
+import type { Supply } from "../core/plan/interfaces";
+import type { TilePlan } from "../core/plan/plan";
+import { tileBox } from "../core/plan/tile-family";
 import { useFrameThrottle } from "./useFrameThrottle";
 import {
   Box,
@@ -19,6 +22,7 @@ import {
   gridGeometry,
   GridGeom,
   Layer,
+  PlanPaint,
   snapSpan,
   stripeAngleDeg,
 } from "./grid";
@@ -31,6 +35,29 @@ import { formatBytes } from "./format";
 import { viewAxes, type ViewCfg } from "./tensor-view";
 
 type CellDrag = { r0: number; c0: number; r1: number; c1: number };
+
+/**
+ * The exact tensor element under a card cell while inspecting a plan.
+ *
+ * Plan tiles have their own lattice, so display-lattice snapping must not
+ * participate here. Hidden axes keep the same semantics as a one-element
+ * selection: the active slice when sliced, and index zero when projected.
+ */
+/** @internal Pure interaction seam exported for plan-view tests. */
+export function planElementFromCell(
+  shape: number[],
+  cfg: ViewCfg,
+  geom: GridGeom,
+  cell: { row: number; col: number }
+): number[] {
+  return selectionBoxFromDrag(
+    shape,
+    cfg,
+    geom,
+    { r0: cell.row, c0: cell.col, r1: cell.row, c1: cell.col },
+    false
+  ).map((interval) => interval.lo);
+}
 
 /** Convert a visible-plane drag to the tensor region it visually promises.
  * Projection represents the union across hidden axes, so a projection gesture
@@ -308,6 +335,69 @@ export function buildLayers({
   return layers;
 }
 
+/**
+ * The Plan view's paint for one card.
+ *
+ * The meanings are the ones the cards already use. The inspected task's tile
+ * is drawn like a placed tile: outline and corner marks in the first hue. What
+ * it reads on this tensor is the solid needs fill in that hue, one layer per
+ * tensor so two slots reading one element do not paint it twice, with the
+ * approximation hatch when the demand is widened. The lattice is the plan's
+ * tiling, and the producer tiles the task needs are outlined in neutral ink.
+ */
+/** @internal Pure rendering seam exported for deterministic plan-view tests. */
+export function buildPlanPaint({
+  tensorId,
+  rowAxis,
+  colAxis,
+  dark,
+  plan,
+  supply,
+}: {
+  tensorId: string;
+  rowAxis: number;
+  colAxis: number;
+  dark: boolean;
+  plan: TilePlan | null;
+  supply: Supply | null;
+}): { layers: Layer[]; paint: PlanPaint } {
+  const family = plan?.families.get(tensorId);
+  const hue = boxColor(0, dark);
+  const layers: Layer[] = [];
+
+  const demand = supply?.demand.filter((d) => d.tensorId === tensorId) ?? [];
+  if (demand.length) {
+    const region: Region = {
+      boxes: demand.flatMap((d) => d.region.boxes),
+      exact: demand.every((d) => d.region.exact),
+      reasons: [...new Set(demand.flatMap((d) => d.region.reasons))],
+    };
+    layers.push({ region, color: hue, alpha: CONE_ALPHA, hatch: !region.exact });
+  }
+  if (family && supply?.task.tensorId === tensorId)
+    layers.push({
+      region: fromBox(tileBox(family, supply.task.coord)),
+      color: hue,
+      alpha: 0.35,
+      hatch: false,
+      outline: true,
+      seed: true,
+    });
+
+  const tiles = family
+    ? (supply?.producers ?? [])
+        .filter((p) => p.task.tensorId === tensorId)
+        .map((p) => ({ box: tileBox(family, p.task.coord), definite: p.definite }))
+    : [];
+  const lattice = family
+    ? {
+        rows: rowAxis >= 0 ? family.tile[rowAxis] : 1,
+        cols: colAxis >= 0 ? family.tile[colAxis] : 1,
+      }
+    : null;
+  return { layers, paint: { lattice, tiles } };
+}
+
 export function TensorCard({
   tensor,
   renderScale = 1,
@@ -351,6 +441,10 @@ export function TensorCard({
   const setDragging = useStore((s) => s.setDragging);
   const showEntangled = useStore((s) => s.showEntangled);
   const entangledAll = useStore((s) => s.entangled);
+  const planView = useStore((s) => s.inspectorTab === "plan");
+  const plan = useStore((s) => s.plan);
+  const planSupply = useStore((s) => s.planSupply);
+  const planTaskAt = useStore((s) => s.planTaskAt);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const previewKeyRef = useRef<string | null>(null);
@@ -384,6 +478,18 @@ export function TensorCard({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    if (planView) {
+      const { layers, paint } = buildPlanPaint({
+        tensorId: tensor.id,
+        rowAxis,
+        colAxis,
+        dark,
+        plan,
+        supply: planSupply,
+      });
+      drawGrid(canvas, shape, cfg, geom, layers, dark, renderScale, drawScale, paint);
+      return;
+    }
     const layers = buildLayers({
       tensorId: tensor.id,
       dark,
@@ -426,6 +532,11 @@ export function TensorCard({
     shape,
     snapToGrid,
     tensor.id,
+    planView,
+    plan,
+    planSupply,
+    rowAxis,
+    colAxis,
   ]);
 
   useEffect(() => {
@@ -477,10 +588,30 @@ export function TensorCard({
     }
   }, [cfg, requestPreview]);
 
+  /**
+   * The Plan view takes a click as "inspect the task here". The element is
+   * resolved as an unsnapped one-element selection, so the task named is the
+   * one under the pointer even when the plan lattice differs from the display
+   * lattice. An untiled produced tensor is tiled first, at the displayed tile
+   * on the visible axes and one element on the others: one task per hidden-axis
+   * index, as a kernel grid usually assigns batch and head.
+   */
+  const inspectTaskAt = (cell: { row: number; col: number }) => {
+    const element = planElementFromCell(shape, cfg, geom, cell);
+    const defaultTile = shape.map((extent, axis) =>
+      axis === rowAxis || axis === colAxis ? Math.min(extent, geom.tile) : 1
+    );
+    planTaskAt(tensor.id, element, defaultTile);
+  };
+
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const cell = elementFromEvent(e, canvasRef.current!, geom);
     if (!cell) return;
     e.preventDefault();
+    if (planView) {
+      inspectTaskAt(cell);
+      return;
+    }
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     if (previewKeyRef.current !== null) requestPreview(null);
     previewKeyRef.current = null;
@@ -499,6 +630,7 @@ export function TensorCard({
       const box = dragToBox({ r0: cell.row, c0: cell.col, r1: cell.row, c1: cell.col });
       const key = formatBoxIndices(box);
       setHover(`(${key})`);
+      if (planView) return; // the Plan view has no cone preview
       if (!drag && previewKeyRef.current !== key) {
         previewKeyRef.current = key;
         requestPreview(tensor.id, box, cfg);
@@ -553,7 +685,11 @@ export function TensorCard({
   // Exactness is carried by hatching on the canvas; this repeats it in the
   // header because an over-approximation must never be mistakable for ground
   // truth, and hatching is easy to miss on a small or sparsely covered card.
-  const approximation = visibleApproximation(
+  const planDemand = planView ? planSupply?.demand.filter((d) => d.tensorId === tensor.id) ?? [] : [];
+  const planFamily = planView ? plan?.families.get(tensor.id) : undefined;
+  const approximation = planView
+    ? visibleApproximation(...planDemand.map((d) => d.region))
+    : visibleApproximation(
     back?.region,
     fwd?.region,
     ...(showEntangled
@@ -583,10 +719,19 @@ export function TensorCard({
           </span>
         </span>
         <span className="tc-shape">{shownShape}</span>
-        {showTileSpan && (
-          <span className="tc-tile" title="current visible-plane tile size">
-            ⊞ {tileSpanRows}×{tileSpanCols}
-          </span>
+        {planView ? (
+          planFamily && (
+            <span className="tc-tile plan" title={`plan tile · ${planFamily.count} task${planFamily.count === 1 ? "" : "s"}`}>
+              ⊞ {Math.min(geom.rows, rowAxis >= 0 ? planFamily.tile[rowAxis] : 1)}×
+              {Math.min(geom.cols, colAxis >= 0 ? planFamily.tile[colAxis] : 1)}
+            </span>
+          )
+        ) : (
+          showTileSpan && (
+            <span className="tc-tile" title="current visible-plane tile size">
+              ⊞ {tileSpanRows}×{tileSpanCols}
+            </span>
+          )
         )}
         {roleTag && <span className="tc-role">{roleTag}</span>}
         {approximation.approximate && (

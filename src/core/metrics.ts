@@ -1,4 +1,4 @@
-import { ResolvedGraph } from "./graph";
+import { ResolvedGraph, Tensor } from "./graph";
 import { DTYPE_BYTES } from "./dtypes";
 import { getOp, opLabel } from "./ops/index";
 import { OpCtx } from "./ops/types";
@@ -154,7 +154,7 @@ export type AggregateReadout = {
  * slots reading one tensor produce two bands that share a corner, and naming
  * the bands is the point. The element total is measured on the union, so it is
  * smaller than these lines summed whenever they do overlap. */
-function regionSliceExprs(name: string, r: Region): string[] {
+export function regionSliceExprs(name: string, r: Region): string[] {
   const lines = r.boxes.map((b) => `${name}[${formatBoxIndices(b)}]`);
   const suffix = r.exact ? [] : [`# over-approximation: ${r.reasons.join(", ")}`];
   return [...lines, ...suffix];
@@ -168,6 +168,23 @@ function regionSliceExprs(name: string, r: Region): string[] {
  * the same region algebra and the panel shows them side by side. `depth` is
  * therefore steps *along the cone*, not steps upstream.
  */
+/**
+ * The bytes `elements` of tensor `t` occupy, measured over a region with the
+ * given precision. Exact only when the region is exact and the tensor's dtype
+ * was not widened from a narrower source type; otherwise an upper bound.
+ */
+export function byteFigure(
+  t: Tensor,
+  elements: number,
+  region: Pick<Region, "exact" | "reasons">
+): Figure {
+  return figure(
+    elements * DTYPE_BYTES[t.dtype],
+    region.exact && !t.dtypeWidening ? "exact" : "upper",
+    [...region.reasons, ...(t.dtypeWidening ? [t.dtypeWidening.note] : [])]
+  );
+}
+
 export function coneReadout(graph: ResolvedGraph, prop: PropResult): TensorReadout[] {
   const tensors: TensorReadout[] = [];
   for (const [tid, tr] of prop.tensors) {
@@ -175,10 +192,6 @@ export function coneReadout(graph: ResolvedGraph, prop: PropResult): TensorReado
     const elements = count(tr.region);
     const exprs = regionSliceExprs(t.name, tr.region);
     const bytes = elements * DTYPE_BYTES[t.dtype];
-    const byteReasons = [
-      ...tr.region.reasons,
-      ...(t.dtypeWidening ? [t.dtypeWidening.note] : []),
-    ];
     tensors.push({
       tensorId: tid,
       name: t.name,
@@ -186,11 +199,7 @@ export function coneReadout(graph: ResolvedGraph, prop: PropResult): TensorReado
       elements,
       totalElements: (t.resolved ?? []).reduce((a, b) => a * b, 1),
       bytes,
-      byteFigure: figure(
-        bytes,
-        tr.region.exact && !t.dtypeWidening ? "exact" : "upper",
-        byteReasons
-      ),
+      byteFigure: byteFigure(t, elements, tr.region),
       boxCount: tr.region.boxes.length,
       overlap: regionOverlap(tr.region).summed - elements,
       exact: tr.region.exact,

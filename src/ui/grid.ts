@@ -95,6 +95,27 @@ export type Layer = {
     | { kind: "stipple"; density: number };
 };
 
+/**
+ * What the Plan view draws on a card besides its layers.
+ *
+ * `lattice` replaces the display lattice: in the Plan view the lines on a card
+ * are the plan's tile boundaries, and a tensor the plan does not tile has none.
+ * `tiles` are the producer tiles the inspected task needs, outlined in neutral
+ * ink. The task's demand is a layer filled inside them, so the unfilled part
+ * of an outlined tile is the part the task does not read.
+ */
+export type PlanPaint = {
+  /** The plan's tile extents on the visible row and column axes, in elements. */
+  lattice: { rows: number; cols: number } | null;
+  /** Needed producer tiles; `definite` false draws the outline dashed. */
+  tiles: { box: Box; definite: boolean }[];
+};
+
+/** Width of a needed producer tile's outline, in screen px. */
+const PLAN_TILE_LINE_PX = 1.5;
+/** Dash pattern for a producer the task only possibly needs, in screen px. */
+const PLAN_TILE_DASH_PX = [3, 2.5] as const;
+
 /** Fraction of a box's hidden-axis volume that is currently visible. */
 function hiddenFraction(box: Box, shape: number[], cfg: ViewCfg, geom: GridGeom): number {
   let frac = 1;
@@ -523,7 +544,8 @@ export function drawGrid(
   layers: Layer[],
   dark: boolean,
   renderScale = 1,
-  viewScale = 1
+  viewScale = 1,
+  plan?: PlanPaint
 ): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -701,25 +723,54 @@ export function drawGrid(
 
   // tile boundaries : the cell grid *is* the tile grid, drawn at a stride that
   // keeps the lines apart on screen. Each axis strides on its own cell size, so
-  // a card with wide cells and short ones keeps the boundaries it can show.
-  const strideC = latticeStride(geom.cellW, tileCols, viewScale);
-  const strideR = latticeStride(geom.cellH, tileRows, viewScale);
-  if (strideC < tileCols || strideR < tileRows) {
-    ctx.strokeStyle = dark ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.10)";
-    ctx.lineWidth = 1 / viewScale;
-    ctx.beginPath();
-    for (let c = strideC; c < tileCols; c += strideC) {
-      const x = c * geom.cellW;
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, geom.canvasH);
+  // a card with wide cells and short ones keeps the boundaries it can show. In
+  // the Plan view the grid is the plan's, whose cells need not be square.
+  const lattice = plan
+    ? plan.lattice && {
+        cellW: (plan.lattice.cols / geom.cols) * geom.canvasW,
+        cellH: (plan.lattice.rows / geom.rows) * geom.canvasH,
+        count: {
+          cols: Math.ceil(geom.cols / plan.lattice.cols),
+          rows: Math.ceil(geom.rows / plan.lattice.rows),
+        },
+      }
+    : { cellW: geom.cellW, cellH: geom.cellH, count: { cols: tileCols, rows: tileRows } };
+  if (lattice) {
+    const strideC = latticeStride(lattice.cellW, lattice.count.cols, viewScale);
+    const strideR = latticeStride(lattice.cellH, lattice.count.rows, viewScale);
+    if (strideC < lattice.count.cols || strideR < lattice.count.rows) {
+      ctx.strokeStyle = dark ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.10)";
+      ctx.lineWidth = 1 / viewScale;
+      ctx.beginPath();
+      for (let c = strideC; c < lattice.count.cols; c += strideC) {
+        const x = c * lattice.cellW;
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, geom.canvasH);
+      }
+      for (let r = strideR; r < lattice.count.rows; r += strideR) {
+        const y = r * lattice.cellH;
+        ctx.moveTo(0, y);
+        ctx.lineTo(geom.canvasW, y);
+      }
+      ctx.stroke();
     }
-    for (let r = strideR; r < tileRows; r += strideR) {
-      const y = r * geom.cellH;
-      ctx.moveTo(0, y);
-      ctx.lineTo(geom.canvasW, y);
-    }
-    ctx.stroke();
   }
+
+  // Needed producer tiles: neutral ink, because hue on a card identifies a
+  // selected tile and these are not selected. Dashed when the need is only
+  // possible; the demand filled inside them carries the approximation hatch.
+  if (plan)
+    for (const { box, definite } of plan.tiles)
+      for (const q of regionRects({ boxes: [box], exact: true, reasons: [] }, shape, cfg, geom, viewScale)) {
+        if (!outlineFitsRect(q, PLAN_TILE_LINE_PX, viewScale)) continue;
+        ctx.save();
+        ctx.strokeStyle = dark ? "rgba(255,255,255,0.78)" : "rgba(0,0,0,0.72)";
+        ctx.lineWidth = PLAN_TILE_LINE_PX / viewScale;
+        ctx.setLineDash(definite ? [] : PLAN_TILE_DASH_PX.map((d) => d / viewScale));
+        const inset = ctx.lineWidth / 2;
+        ctx.strokeRect(q.x + inset, q.y + inset, q.w - ctx.lineWidth, q.h - ctx.lineWidth);
+        ctx.restore();
+      }
 
   ctx.strokeStyle = dark ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.18)";
   ctx.lineWidth = Math.min(1 / viewScale, geom.canvasW, geom.canvasH);

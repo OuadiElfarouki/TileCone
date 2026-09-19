@@ -28,6 +28,7 @@ export type PropResult = {
 };
 
 type PropagationStep = {
+  nodeId: string;
   spec: OpSpec;
   ctx: OpCtx;
   fromIds: string[];
@@ -67,6 +68,7 @@ function propagationPlan(graph: ResolvedGraph, limits?: Limits): PropagationPlan
   const steps = (direction: "backward" | "forward") => {
     const nodes = direction === "backward" ? [...graph.topo].reverse() : graph.topo;
     return nodes.map((node): PropagationStep => ({
+      nodeId: node.id,
       ...context.get(node.id)!,
       fromIds: direction === "backward" ? node.outputs : node.inputs,
       toIds: direction === "backward" ? node.inputs : node.outputs,
@@ -76,6 +78,13 @@ function propagationPlan(graph: ResolvedGraph, limits?: Limits): PropagationPlan
   if (!limits) planMemo.set(graph, plan);
   return plan;
 }
+
+/**
+ * The region a bounded cone carries into one frontier tensor through one
+ * operand slot. Backward, `slot` indexes the inputs of `node`; forward, its
+ * outputs.
+ */
+export type Crossing = { node: string; slot: number; tensorId: string; region: Region };
 
 /** No tensor blocked: the walk every transitive cone takes. */
 const OPEN: ReadonlySet<string> = new Set();
@@ -94,13 +103,14 @@ function walk(
   dir: "backward" | "forward",
   limits: Limits | undefined,
   blocked: ReadonlySet<string>
-): { tensors: Map<string, TensorResult>; reasons: string[] } {
+): { tensors: Map<string, TensorResult>; reasons: string[]; crossings: Crossing[] } {
   if (!graph.tensors[sel.tensorId]) throw new Error(`unknown tensor "${sel.tensorId}"`);
   const acc = new Map<string, TensorResult>();
+  const crossings: Crossing[] = [];
   const seed = canonicalize(sel.region);
   acc.set(sel.tensorId, { region: seed, depth: 0 });
 
-  for (const { spec, ctx, fromIds, toIds } of propagationPlan(graph, limits)[dir]) {
+  for (const { nodeId, spec, ctx, fromIds, toIds } of propagationPlan(graph, limits)[dir]) {
     // Most nodes in a wide graph may be unrelated to this seed. Test reachability
     // before allocating pending regions; structural context is already cached.
     const sources = fromIds.map((id) => (blocked.has(id) ? undefined : acc.get(id)));
@@ -139,6 +149,7 @@ function walk(
       if (p.boxes.length === 0) return;
       const r = canonicalize({ boxes: p.boxes, exact: p.exact, reasons: [...p.reasons] });
       if (isEmpty(r)) return;
+      if (blocked.has(id)) crossings.push({ node: nodeId, slot: ti, tensorId: id, region: sortRegion(r) });
       const prev = acc.get(id);
       const next: TensorResult = prev
         ? { region: union(prev.region, r), depth: Math.min(prev.depth, sourceDepth + 1) }
@@ -152,7 +163,11 @@ function walk(
     acc.set(id, { region: sortRegion(tr.region), depth: tr.depth });
     tr.region.reasons.forEach((r) => reasons.add(r));
   }
-  return { tensors: acc, reasons: [...reasons].sort() };
+  crossings.sort(
+    (a, b) =>
+      a.tensorId.localeCompare(b.tensorId) || a.node.localeCompare(b.node) || a.slot - b.slot
+  );
+  return { tensors: acc, reasons: [...reasons].sort(), crossings };
 }
 
 function propagate(
@@ -195,6 +210,13 @@ export type BoundedCone = {
    * demand lands on the boundary. Sorted.
    */
   stoppedAt: string[];
+  /**
+   * One entry per operand slot through which the cone reaches a frontier
+   * tensor, sorted by tensor, node and slot. A tensor read through two slots
+   * has two entries, and the union of a tensor's entries is its region in
+   * `tensors`.
+   */
+  crossings: Crossing[];
   tensors: Map<string, TensorResult>;
   reasons: string[];
 };
@@ -218,12 +240,13 @@ export function propagateWithin(
   const stop = [...new Set(frontier)].sort();
   for (const id of stop) if (!graph.tensors[id]) throw new Error(`unknown frontier tensor "${id}"`);
   const blocked = new Set(stop.filter((id) => id !== seed.tensorId));
-  const { tensors, reasons } = walk(graph, seed, direction, limits, blocked);
+  const { tensors, reasons, crossings } = walk(graph, seed, direction, limits, blocked);
   return {
     direction,
     seed,
     frontier: stop,
     stoppedAt: stop.filter((id) => blocked.has(id) && tensors.has(id)),
+    crossings,
     tensors,
     reasons,
   };

@@ -19,6 +19,7 @@ import { formatBytes, formatFigure } from "./format";
 import type { ConeCost } from "./inspector-analysis";
 import { analysisTensorId, groupAttribution, groupFocus, measuredParts, measuredElements, useInspectorAnalysis } from "./inspector-analysis";
 import { aggregateColors, boxColor, MAX_DISTINCT_HUES, rgbCss } from "./palette";
+import { PlanPanel } from "./PlanPanel";
 import {
   ConeDirection,
   InspectorTab,
@@ -468,6 +469,15 @@ const TABS = [
     id: "execution",
     label: "Execution",
     hint: "what an assumed execution would do with them: modelled, not bounded",
+  },
+  /* A third class, and a third promise. A plan figure rests on a declared
+     tiling rather than on the drawn region, and it is exact for that tiling or
+     bounded with its reason - so it belongs with neither the figures that need
+     no plan nor the ones that are modelled. */
+  {
+    id: "plan",
+    label: "Plan",
+    hint: "how a declared tiling divides the work: exact for that tiling, or bounded",
   },
 ] as const satisfies readonly { id: InspectorTab; label: string; hint: string }[];
 
@@ -1097,8 +1107,19 @@ export function Inspector(): React.ReactElement {
   return (
     <aside className="inspector" aria-label="Tile inspector">
       <div className="inspector-scroll">
-        {!selection ? (
-          <EmptyPanel />
+        {/* The Plan view describes tasks rather than drawn tiles, so it is
+            reachable with nothing drawn, and the switch sits above the empty
+            panel because it is the only route to it. */}
+        {tab === "plan" ? (
+          <>
+            <InspectorTabs />
+            <PlanPanel />
+          </>
+        ) : !selection ? (
+          <>
+            <InspectorTabs />
+            <EmptyPanel />
+          </>
         ) : (
           <>
             <TileIdentity
