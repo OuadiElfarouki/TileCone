@@ -36,15 +36,58 @@ export type OpaqueAttrs = {
   op: string;
   /** One shape per output: an importer knows them even when it knows nothing else. */
   shapes: Shape[];
-  /** Outputs' dtype when it is not the promotion of the inputs (argmax, cast-like ops). */
-  dtype?: DType;
+  /**
+   * One dtype per output, where they are not the promotion of the inputs.
+   *
+   * Per output, not one for all of them, because real operations do not have a
+   * single output type: `TopK` returns f32 values beside i64 indices, `MaxPool`
+   * an optional i64 index tensor beside its values, `LayerNormalization` a mean
+   * and an inverse standard deviation beside the normalised result. One dtype
+   * for all outputs could describe none of those, and byte estimates are
+   * measured per tensor from that tensor's own dtype, so getting it wrong
+   * misreports the footprint of every one of them.
+   *
+   * Parallel to `shapes` rather than a list of `{ shape, dtype }` records,
+   * which is what this wants to be: the DSL has no record literal, and adding
+   * one to the grammar to serve a single attribute is the kind of change the
+   * import plan already declined to make for the printer's sake. The lengths
+   * are checked against the output count instead, so the pairing cannot come
+   * apart unnoticed.
+   *
+   * A hole is an output that takes the promotion of the inputs. That is a
+   * convenience for a hand-authored barrier, where the author knows the result
+   * type is ordinary. A converter should not use it: an unknown source
+   * operation's result type cannot be inferred safely from its inputs, so
+   * anything generating barriers is expected to state one dtype per output.
+   */
+  dtypes?: (DType | null)[];
+  /**
+   * Where the operation came from, kept because the name alone is ambiguous.
+   *
+   * `domain` distinguishes a vendor's `Attention` from anyone else's, `opset`
+   * says which version of the operation was meant - the same name means
+   * different things across versions, and what is a barrier at one opset may be
+   * mappable at another - and `sourceName` is the node's own name in the model,
+   * which survives even when the converter has to rename the node to keep ids
+   * unique. None of it changes what the barrier claims; all of it is what a
+   * reader needs to decide whether implementing this operation is worth it.
+   */
+  domain?: string;
+  opset?: number;
+  sourceName?: string;
 };
 
 const attrSchema = z.object({
   op: z.string().min(1),
   shapes: z.array(shapeSchema).min(1),
-  dtype: z.enum(DTYPES).optional(),
+  dtypes: z.array(z.enum(DTYPES).nullable()).optional(),
+  domain: z.string().optional(),
+  opset: z.number().int().min(1).optional(),
+  sourceName: z.string().optional(),
 });
+
+/** ONNX's default domain, written either way, where an operation needs no qualifier. */
+const DEFAULT_DOMAINS = ["", "ai.onnx"];
 
 const attrsOf = (attrs: Attrs) => attrs as unknown as OpaqueAttrs;
 
@@ -55,18 +98,44 @@ const whole = (shape: number[], reason: string): Region => ({
   reasons: [reason],
 });
 
-const reasonFor = (attrs: Attrs) => `opaque op "${attrsOf(attrs).op}"`;
+/**
+ * The operation's name, qualified by its domain only where that says something.
+ *
+ * One helper for the card, the approximation reason and the note, so a reader
+ * who sees `com.microsoft.Attention` on a tensor's reasons finds the same words
+ * on the operation that put it there.
+ */
+const qualifiedName = (attrs: Attrs): string => {
+  const { op, domain } = attrsOf(attrs);
+  return domain && !DEFAULT_DOMAINS.includes(domain) ? `${domain}.${op}` : op;
+};
+
+const reasonFor = (attrs: Attrs) => `opaque op "${qualifiedName(attrs)}"`;
 
 export const opaqueOp: OpSpec = {
   name: "opaque",
   attrSchema,
-  arity: { inputs: { min: 1 }, outputs: { min: 1 } },
-  displayName: (attrs) => attrsOf(attrs).op,
+  /* Zero inputs is allowed, not encouraged. A node that reads nothing and
+     produces a value is constant-like, and a converter is nearly always better
+     off importing it as a declared tensor - which is a thing the graph
+     understands, rather than an operation it does not. But the metadata has to
+     be able to say it: refusing the arity would mean an importer meeting one
+     had no representation for it at all, and the fallback from "no
+     representation" is dropping the node. */
+  arity: { inputs: { min: 0 }, outputs: { min: 1 } },
+  // Qualified only where the qualifier carries information. Every ordinary
+  // operation is in the default domain, and prefixing all of them would cost
+  // card width to say nothing.
+  displayName: qualifiedName,
 
   validateArity(_inputCount, outputCount, attrs) {
-    const declared = attrsOf(attrs).shapes.length;
-    if (declared !== outputCount)
-      throw new Error(`declares ${declared} output shape(s) for ${outputCount} output(s)`);
+    const { shapes, dtypes } = attrsOf(attrs);
+    if (shapes.length !== outputCount)
+      throw new Error(`declares ${shapes.length} output shape(s) for ${outputCount} output(s)`);
+    // Checked here rather than trusted, because the two lists are what a record
+    // would have paired structurally.
+    if (dtypes && dtypes.length !== outputCount)
+      throw new Error(`declares ${dtypes.length} output dtype(s) for ${outputCount} output(s)`);
   },
 
   inferShapes: (_inShapes, attrs, params) =>
@@ -77,10 +146,18 @@ export const opaqueOp: OpSpec = {
      an input one. Both hooks are therefore deliberately absent. */
 
   inferDTypes: (inDTypes, attrs, outShapes) => {
-    const declared = attrsOf(attrs).dtype;
-    if (declared) return outShapes.map(() => declared);
-    if (!inDTypes.length) throw new Error("opaque: expected at least one input dtype");
-    return outShapes.map(() => promoteDTypes(inDTypes));
+    const declared = attrsOf(attrs).dtypes;
+    return outShapes.map((_shape, slot) => {
+      const stated = declared?.[slot];
+      if (stated) return stated;
+      // Nothing to promote and nothing declared: the barrier would have to
+      // invent a type for a tensor whose bytes every footprint below it counts.
+      if (!inDTypes.length)
+        throw new Error(
+          `output ${slot} has no declared dtype and no inputs to promote from`
+        );
+      return promoteDTypes(inDTypes);
+    });
   },
 
   backward: (_outSlot, _outBox, ctx) =>
@@ -105,17 +182,35 @@ export const opaqueOp: OpSpec = {
       return deps;
     }),
 
-  /** Unknown work, reported as none. See the note in the header. */
+  /* Unknown work, reported as none - and declared as unknown, so that "none"
+     is never summed into a total as if it were a measurement. See the note in
+     the header. */
+  unknownWork: true,
   flopsFor: () => 0,
   flopsPerElement: () => 0,
 
   dependencyNote: (ctx) => {
-    const { op } = attrsOf(ctx.attrs);
+    const attrs = attrsOf(ctx.attrs);
+    const op = qualifiedName(ctx.attrs);
+    // A barrier that reads nothing bounds nothing: there are no inputs to widen
+    // to, so the claim is not an over-approximation and saying "read in full"
+    // would describe operands it does not have. What a reader needs to know is
+    // the other half - that its arithmetic is still uncounted.
+    if (!ctx.inIds.length)
+      return {
+        text:
+          ` ${op} is carried as a barrier and reads no tensor in this graph, so nothing upstream` +
+          ` constrains it. Its own arithmetic is not counted.`,
+        key: `opaque-source:${op}`,
+        subject: ctx.outIds[0],
+        severity: 1,
+      };
     return {
       text:
         ` ${op} is carried as a barrier: its semantics are not modelled, so one output element` +
         ` is assumed to read every input element in full. Everything through it is a bound, and` +
-        ` its own arithmetic is not counted.`,
+        ` its own arithmetic is not counted.` +
+        (attrs.opset !== undefined ? ` Source opset ${attrs.opset}.` : ""),
       key: `opaque:${op}`,
       subject: ctx.outIds[0] ?? ctx.inIds[0],
       severity: 3,

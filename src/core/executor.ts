@@ -1,8 +1,10 @@
 import { computeMetrics, AggregateReadout } from "./metrics";
 import {
+  BoundedCone,
   PropResult,
   propagateBackward,
   propagateForward,
+  propagateWithin,
   Selection,
 } from "./propagate";
 import { canonicalize, Region } from "./region";
@@ -13,6 +15,16 @@ export type QueryDirection = "backward" | "forward" | "both";
 
 export type SymbolicQuery = Selection & {
   direction?: QueryDirection;
+};
+
+/**
+ * A query that stops at a frontier (see `propagateWithin`). The direction is
+ * required rather than defaulted: a frontier is usually a stage's whole
+ * boundary, and a default is how a caller gets the other half of it.
+ */
+export type BoundedQuery = Selection & {
+  direction: "backward" | "forward";
+  frontier: readonly string[];
 };
 
 export type SymbolicQueryResult = {
@@ -26,7 +38,8 @@ export type ExecutionErrorCode =
   | "EXEC_UNKNOWN_TENSOR"
   | "EXEC_DIRECTION"
   | "EXEC_REGION_RANK"
-  | "EXEC_REGION_BOUNDS";
+  | "EXEC_REGION_BOUNDS"
+  | "EXEC_FRONTIER";
 
 export class ExecutionError extends Error {
   constructor(
@@ -100,6 +113,30 @@ export function executeQuery(
 }
 
 /**
+ * Execute one frontier-bounded query against a resolved graph.
+ *
+ * A frontier naming a tensor that does not exist is refused rather than
+ * ignored. Ignored, it would stop nothing, and the cone would run past the
+ * boundary it was asked to respect - reporting demand on tensors the stage
+ * never reads, with nothing to say so.
+ */
+export function executeBoundedQuery(graph: ResolvedGraph, query: BoundedQuery): BoundedCone {
+  const selection = validateSelection(graph, query);
+  const { direction, frontier } = query;
+  if (direction !== "backward" && direction !== "forward")
+    throw new ExecutionError(
+      "EXEC_DIRECTION",
+      `a bounded query runs "backward" or "forward", not "${String(direction)}"`
+    );
+  if (!Array.isArray(frontier))
+    throw new ExecutionError("EXEC_FRONTIER", "frontier must be a list of tensor ids");
+  for (const id of frontier as unknown[])
+    if (typeof id !== "string" || !graph.tensors[id])
+      throw new ExecutionError("EXEC_FRONTIER", `frontier names unknown tensor "${String(id)}"`);
+  return propagateWithin(graph, selection, direction, frontier);
+}
+
+/**
  * Headless execution surface for CLIs, tests, and embedders.
  *
  * The low-level propagation functions remain available for op-level work; this
@@ -118,6 +155,16 @@ export class SymbolicExecutor {
 
   downstream(tensorId: string, region: Region): PropResult {
     return this.query({ tensorId, region, direction: "forward" }).forward!;
+  }
+
+  /** The backward cone, stopped at each `frontier` tensor it reaches. */
+  upstreamWithin(tensorId: string, region: Region, frontier: readonly string[]): BoundedCone {
+    return executeBoundedQuery(this.graph, { tensorId, region, direction: "backward", frontier });
+  }
+
+  /** The forward cone, stopped at each `frontier` tensor it reaches. */
+  downstreamWithin(tensorId: string, region: Region, frontier: readonly string[]): BoundedCone {
+    return executeBoundedQuery(this.graph, { tensorId, region, direction: "forward", frontier });
   }
 
   /**

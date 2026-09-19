@@ -77,12 +77,24 @@ function propagationPlan(graph: ResolvedGraph, limits?: Limits): PropagationPlan
   return plan;
 }
 
-function propagate(
+/** No tensor blocked: the walk every transitive cone takes. */
+const OPEN: ReadonlySet<string> = new Set();
+
+/**
+ * The one traversal behind both kinds of cone.
+ *
+ * A `blocked` tensor may still be reached - its region is recorded like any
+ * other - but it is never read as a source, so no dependency path continues
+ * through it. Blocking is applied here rather than in `propagationPlan`, which
+ * is memoized per graph and must stay the same plan for every caller.
+ */
+function walk(
   graph: ResolvedGraph,
   sel: Selection,
   dir: "backward" | "forward",
-  limits?: Limits
-): PropResult {
+  limits: Limits | undefined,
+  blocked: ReadonlySet<string>
+): { tensors: Map<string, TensorResult>; reasons: string[] } {
   if (!graph.tensors[sel.tensorId]) throw new Error(`unknown tensor "${sel.tensorId}"`);
   const acc = new Map<string, TensorResult>();
   const seed = canonicalize(sel.region);
@@ -91,7 +103,7 @@ function propagate(
   for (const { spec, ctx, fromIds, toIds } of propagationPlan(graph, limits)[dir]) {
     // Most nodes in a wide graph may be unrelated to this seed. Test reachability
     // before allocating pending regions; structural context is already cached.
-    const sources = fromIds.map((id) => acc.get(id));
+    const sources = fromIds.map((id) => (blocked.has(id) ? undefined : acc.get(id)));
     if (!sources.some((src) => src && !isEmpty(src.region))) continue;
 
     // Union of contributions per destination tensor, canonicalized ONCE per node.
@@ -140,7 +152,81 @@ function propagate(
     acc.set(id, { region: sortRegion(tr.region), depth: tr.depth });
     tr.region.reasons.forEach((r) => reasons.add(r));
   }
-  return { direction: dir, selection: sel, roots: [sel.tensorId], tensors: acc, reasons: [...reasons].sort() };
+  return { tensors: acc, reasons: [...reasons].sort() };
+}
+
+function propagate(
+  graph: ResolvedGraph,
+  sel: Selection,
+  dir: "backward" | "forward",
+  limits?: Limits
+): PropResult {
+  const { tensors, reasons } = walk(graph, sel, dir, limits, OPEN);
+  return { direction: dir, selection: sel, roots: [sel.tensorId], tensors, reasons };
+}
+
+/**
+ * A cone stopped at a frontier: what one stage demands of its boundary, rather
+ * than everything the seed transitively reaches.
+ *
+ * It relates the seed to the elements joined to it by a dependency path whose
+ * *interior* avoids the frontier. The endpoints of a path - the seed, and the
+ * tensor a region is reported on - may lie on it. So a frontier tensor is
+ * reached and carries its demand, but nothing is followed through it, and a
+ * tensor also reachable around the frontier keeps exactly the part that route
+ * supplies.
+ *
+ * Deliberately not a `PropResult`. Every consumer of that type - metrics,
+ * notes, contribution, input sharing, the canvas - reads absence as "no
+ * dependency" and treats a tensor without a producer as a graph input. A cone
+ * that stops early breaks both readings: graph inputs past the frontier are
+ * missing, and the frontier tensors that stand in for them have producers.
+ * Handed to `computeMetrics`, it would understate input bytes while presenting
+ * the result as a bound. The two records differ in shape so the compiler, not
+ * a runtime check, keeps them apart.
+ */
+export type BoundedCone = {
+  direction: "backward" | "forward";
+  seed: Selection;
+  /** The frontier as requested: sorted, each tensor once. */
+  frontier: string[];
+  /**
+   * The frontier tensors this cone reached, other than its seed: where its
+   * demand lands on the boundary. Sorted.
+   */
+  stoppedAt: string[];
+  tensors: Map<string, TensorResult>;
+  reasons: string[];
+};
+
+/**
+ * Propagate from `seed`, stopping at every `frontier` tensor it reaches.
+ *
+ * The seed is never blocked, even when it is on the frontier, because it is
+ * where every path starts rather than a point inside one. That is what lets a
+ * single boundary serve both directions: a stage's inputs and outputs together
+ * bound a backward walk from one of its outputs and a forward walk from one of
+ * its inputs, with no need to say which side the seed is on.
+ */
+export function propagateWithin(
+  graph: ResolvedGraph,
+  seed: Selection,
+  direction: "backward" | "forward",
+  frontier: readonly string[],
+  limits?: Limits
+): BoundedCone {
+  const stop = [...new Set(frontier)].sort();
+  for (const id of stop) if (!graph.tensors[id]) throw new Error(`unknown frontier tensor "${id}"`);
+  const blocked = new Set(stop.filter((id) => id !== seed.tensorId));
+  const { tensors, reasons } = walk(graph, seed, direction, limits, blocked);
+  return {
+    direction,
+    seed,
+    frontier: stop,
+    stoppedAt: stop.filter((id) => blocked.has(id) && tensors.has(id)),
+    tensors,
+    reasons,
+  };
 }
 
 export function propagateBackward(

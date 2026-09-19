@@ -206,3 +206,33 @@ function resolveDim(s: Sym, params: Record<string, number>): number {
 export function resolveShape(shape: Shape, params: Record<string, number>): number[] {
   return shape.map((s) => resolveDim(s, params));
 }
+
+/**
+ * The parameter names one dimension is written in terms of.
+ *
+ * Here rather than in the caller, and reading the same tree `resolveDim`
+ * evaluates, so the answer to "which symbols does this need" cannot drift from
+ * the answer to "what does this evaluate to". An importer asks because a model
+ * routinely leaves a dimension free - a dynamic batch axis is the ordinary
+ * case, not a defect - and the useful response is to ask for a value rather
+ * than to report an unbound symbol as a broken shape.
+ *
+ * A dimension that does not parse has no symbols to report; resolution says so
+ * in its own words, and guessing here would produce a second, worse message.
+ */
+export function dimSymbols(s: Sym): string[] {
+  if (typeof s === "number") return [];
+  const parsed = readDimExpr(s);
+  if (!parsed || skipWs(s, parsed.end) !== s.length) return [];
+  const names = new Set<string>();
+  const walk = (node: DimNode): void => {
+    if (node.kind === "sym") names.add(node.name);
+    else if (node.kind === "neg") walk(node.arg);
+    else if (node.kind === "bin") {
+      walk(node.left);
+      walk(node.right);
+    }
+  };
+  walk(parsed.node);
+  return [...names];
+}

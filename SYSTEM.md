@@ -49,7 +49,7 @@ src/
 ├── core/
 │   ├── graph.ts          graph IR validation and resolution
 │   ├── executor.ts       checked public query boundary
-│   ├── propagate.ts      generic forward/backward worklist
+│   ├── propagate.ts      generic forward/backward worklist, transitive or stopped at a frontier
 │   ├── entangle.ts       what a region is combined with, per operation
 │   ├── region.ts         exact and conservative region algebra
 │   ├── metrics.ts        FLOP, byte, and intensity estimates
@@ -263,7 +263,13 @@ The source map connects compiler errors back to declarations or operation calls.
 
 A barrier keeps the node instead. Every output element is assumed to read every input element and every input element to reach every output: the weakest true statement about an operation nobody described, a superset by construction, marked inexact with the original operation's name as its reason. Everything downstream then behaves as it does for any other approximation - hatched paint, `≈` on the rows, `≤` on the figures - and implementing the operation for real later is purely a narrowing, with nothing else to change. Its `oracleDeps` states that same total dependence, so the corpus checks it like any other op; the adjointness law has nothing to say about an operation that is never exact, and `op-fixtures.ts` marks that claim explicitly (`inexactByDesign`) so the law asserts the op really is inexact everywhere rather than being quietly skipped.
 
-The one quantity a barrier cannot bound is its own arithmetic. `flopsFor` returns zero, so FLOPs measured through a barrier are a floor while every other figure beside them is a ceiling; the dependency note says so where the reader will see it.
+The one quantity a barrier cannot bound is its own arithmetic. `flopsFor` returns zero, and the spec declares `unknownWork` so that zero is never summed into a total beside real upper bounds as though it were a measurement. A FLOP total spanning a barrier reports `unknown` rather than a number (§8), and the dependency note says so where the reader will see it.
+
+A barrier declares its outputs one at a time: `shapes` and a parallel `dtypes`, because real operations do not have a single output type - `TopK` returns f32 values beside i64 indices, `MaxPool` an optional index tensor, `LayerNormalization` a mean and an inverse standard deviation. Bytes are measured per tensor from that tensor's own dtype, so one declared type for all outputs would misreport the footprint of whichever it did not fit. The list may be omitted, or an entry left `null`, to take the promotion of the inputs. The two lists are parallel rather than a list of `{ shape, dtype }` records because the DSL has no record literal and adding one to the grammar to serve a single attribute is not a trade this codebase makes; their lengths are checked against the output count instead.
+
+It also carries `domain`, `opset` and `sourceName` as provenance. None of it changes what the barrier claims; it is what a reader needs in order to decide whether implementing the operation is worth it, and `domain` qualifies the displayed name where it is not the default one, so a vendor's `Attention` is distinguishable from anyone else's on the card, in the approximation reason, and in the note.
+
+Zero inputs is allowed, and is the one place the registry-wide "every op reads something" rule is exempted by name. A node that reads nothing and produces a value is constant-like and is usually better written as a declared tensor, but the metadata has to be able to express it: the fallback from "no representation" is dropping the node, which shortens the graph.
 
 ### Display names
 
@@ -272,6 +278,8 @@ An operation's registry name is its identity for dispatch and frequently not wha
 ### Dtypes
 
 Operations that *compute* from several tensors promote (`promotingDTypeOutputs`); operations that *move* data require a match (`uniformDTypeOutputs`). The lattice follows PyTorch rather than NumPy's older value-based rule: category dominates width across families, so `f16` with `i32` is `f16` and not a widening to `f64` that no inference kernel performs. Mixed precision is ordinary inference practice and has an obvious result for an add or a matmul; a `concat` of fp16 and fp32 has none, since the output is one buffer, so it stays an error that names the cast to insert. `f16` with `bf16` widens to `f32`: same width, neither contains the other, and picking either would silently discard range or precision.
+
+`i64` and `u8` are in the lattice because index and quantisation tensors need them, not because the DSL wanted more ways to write an integer. An index, axis or shape tensor is int64 wherever it comes from, and holding one as `i32` would halve its byte count in every footprint that counted it; `u8` is the same argument for a quantised model's `zero_point`. A tensor whose source storage was narrower than its canonical dtype carries `dtypeWidening`: tensor and aggregate byte figures then include its note and report `upper`, so a two-byte source element held as four bytes cannot become an exact footprint claim. Nothing sets that marker today - it exists so a later converter cannot introduce a widening without the figures noticing.
 
 The elementwise function table in `ops/elementwise.ts` is the definition of what `fn` may be - the attribute schema enumerates its keys, and the DSL's call-name sugar reads the same table. It also carries each function's own arity, so `relu(a, b)` and `div(a, b, c)` are rejected rather than quietly computing something else.
 
@@ -314,6 +322,20 @@ Some high-level operations are expandable. `src/core/expand.ts` rewrites `softma
 For each node, the engine calls the registered operation once per relevant source box, accumulates contributions for each destination tensor, and canonicalizes the union. It also carries approximation reasons and records the shortest propagation depth used by the visualization.
 
 Queries may request upstream, downstream, or both directions. Low-level propagation functions remain available for operation development and testing, but UI and external callers should normally use the executor so malformed selections fail at the boundary.
+
+### Bounded cones
+
+A transitive cone answers "what does this tile ultimately depend on". Planning a stage asks something narrower: what does this tile demand of the stage's own boundary. `propagateWithin(graph, seed, direction, frontier)` - checked as `executor.upstreamWithin` and `downstreamWithin` - answers it by stopping at a set of frontier tensors.
+
+The definition is one sentence: a bounded cone relates the seed to the elements joined to it by a dependency path whose *interior* avoids the frontier. The endpoints of a path - the seed, and the tensor a region is reported on - may lie on it. A frontier tensor is therefore reached and carries its demand, but nothing is followed through it. A tensor also reachable *around* the frontier keeps exactly the part that route supplies: for `D = add(transpose(A), A)` bounded at the transpose's output, `D[0,1]` demands `A[0,1]` and not `A[1,0]`. The frontier cuts paths, not tensors.
+
+Two consequences fall out of the definition rather than being added to it. The seed is never blocked, even when it is on the frontier, because it is where every path starts. And so one boundary serves both directions: a stage's inputs and outputs together bound a backward walk from one of its outputs and a forward walk from one of its inputs, with no need to say which side the seed is on. `stoppedAt` lists the frontier tensors a cone reached other than its seed - where its demand lands on the boundary.
+
+It is the same walk as the transitive cone, with a set of tensors that may be reached but are never read as a source. The blocking is applied in the loop rather than in the memoized propagation plan, which is shared by every query on the graph and must not change with one caller's frontier. An empty frontier gives the transitive regions exactly.
+
+`BoundedCone` is deliberately not a `PropResult`, and the two differ in shape so the compiler keeps them apart. Everything that consumes a `PropResult` - metrics, notes, contribution, input sharing, the canvas - reads a missing tensor as no dependency and a tensor without a producer as a graph input. A cone that stops early breaks both readings: the graph inputs past the frontier are absent, and the frontier tensors standing in for them have producers. Passed to `computeMetrics` it would understate input bytes while presenting them as a bound. A test holds a `@ts-expect-error` on exactly that call, so a change that made the types compatible fails the build.
+
+The checked boundary refuses a frontier naming a tensor that does not exist (`EXEC_FRONTIER`), because an ignored name stops nothing and the cone would run past the boundary it was given. It also refuses a frontier that is not a list: a string is iterable, and `"CW"` must not be read as two tensors. The direction is required and is one of the two, never `both`, since a frontier is usually a stage's whole boundary and a default direction is how a caller gets the other half of it.
 
 ## 7a. Entanglement
 
@@ -394,7 +416,16 @@ Byte estimates use the dtype inferred during graph resolution, so dtype propagat
 
 einsum FLOPs count the fused loop: `(operands - 1)` multiplies plus one add per contracted position, each term dropping out where it should. An outer product only multiplies, a reduction only adds, a transpose does neither, and the ordinary two-operand contraction comes out at the conventional `2K` per element.
 
-`AggregateReadout` carries `exact` and `reasons` alongside the figures. Every total is measured over the cone's regions, so a widened region makes all of them upper bounds: it contributes bytes that are not really needed and FLOPs for work that is not really done. The flag is *derived* from the per-tensor rows rather than set independently, and the relation is strictly "no more than" - a region is never a subset of the truth, so a figure is never understated. The inspector prefixes each bounded figure with `≤` and states the reasons, which is what keeps the totals inside the rule the rest of the system follows: an over-approximation is never presented as ground truth.
+Every figure in `AggregateReadout` is a `Figure` - `{ value, status, reasons }` - because a number alone cannot say which direction it is wrong in, and these are wrong in three different ways:
+
+- `exact` is a count.
+- `upper` is "no more than this". A byte figure measured over a widened region is one: a superset contributes bytes that are not really needed, and a region is never a subset of the truth, so the figure is never understated.
+- `approximate` is a number that moved in an unknown direction. Only ratios are this. Widening a region raises an intensity's numerator *and* its denominator, so the quotient can land either side of the truth, and `≤` would claim a side it does not have.
+- `unknown` has no number at all, and `value` is `null` rather than a partial total. A barrier contributes zero FLOPs while the operations around it contribute upper bounds, so their sum is neither a ceiling nor a floor. It used to be printed with `≤`, which was wrong rather than merely incomplete.
+
+Statuses combine through `addFigures` and `ratioFigure`, which keep the weaker claim: a sum containing an unknown loses its number, and a ratio of an unknown quantity is not a looser ratio but no ratio. Each figure is qualified only by the regions it actually summed, so a widened weight no longer puts `≤` on an output-byte count that is exact. `exact` and `reasons` remain on the readout, derived from the figures rather than tracked beside them, for callers that want the one-line answer.
+
+The inspector writes what each figure has earned - nothing on a count, `≤`, `~`, or the word `unknown` - and says beside it that only the arithmetic is missing while the byte figures still hold.
 
 ## 8a. Dependency notes
 
@@ -563,6 +594,9 @@ The test suite checks the architecture at several levels:
 - entanglement against brute-force terms, including that it is strictly tighter than the composition it falls back to, and that its paint is a texture distinct from the downstream ruling;
 - registry-wide properties: that every registered operation has a fixture, that each fixture agrees with the oracle, and that `forward` and `backward` agree about whether the dependency relation between a given pair of boxes is empty;
 - frame coalescing: that a burst of calls runs once with the most recent arguments, that the trailing call is never dropped, and that a later clear supersedes a pending one;
+- figures: that a sum keeps the weaker of its parts' claims, that an unknown loses its number rather than keeping the measurable half, that a ratio of two bounds is approximate rather than upper, and that a FLOP total across a barrier is unavailable while the byte figures beside it remain bounds;
+- a barrier with several outputs of different element types and an input the source operation does not name, checked against the brute-force oracle like any other fixture, since a dependency absent from a node's own input list is exactly the subset this engine must never produce;
+- bounded cones against a brute-force oracle that cuts at the same frontier pointwise, from `oracleDeps` alone: random graphs with a random frontier each, every tensor a seed, under default and lowered fallback thresholds. The corpus asserts that its frontiers actually shortened a share of the walks, since agreement on walks no frontier touched would test only the transitive case;
 - randomized graph and propagation cases.
 
 Some tests deliberately import pure implementation seams: reshape decomposition, the einsum
@@ -625,6 +659,8 @@ Keep shape/index logic in the core or pure UI geometry helpers. The store should
 - The partial-contribution flag can over-warn on an over-approximated region and never under-warns; past its probe cap, downstream rows are simply unflagged.
 - Per-part attribution is intentionally capped to keep interaction responsive; aggregate propagation remains complete.
 - Expanding a composite can expose intermediate traffic, so dependency and FLOP semantics may remain equivalent while displayed intermediate-byte estimates change.
+- A barrier contributes zero FLOPs, so a FLOP total spanning one reports `unknown` rather than a number. What is lost is the arithmetic only: byte figures through a barrier remain upper bounds, because its output shapes are declared.
+- A bounded cone has no metrics, notes, or contribution report. Those are defined over transitive cones, and a stage's figures - staged reads, partial work, live storage - are a different computation that does not exist yet.
 - JSON graph support exists below the UI, but the main interactive authoring path is the DSL.
 
 These boundaries are useful when deciding where new work belongs: semantic truth should live in the graph, region, operation, and executor layers; orchestration belongs in the store; presentation belongs in React and the canvas helpers.

@@ -4,11 +4,19 @@ import { DTYPES } from "../core/dtypes";
 
 const symSchema = z.union([z.string(), z.number().int().min(0)]);
 
+const dtypeWideningSchema = z
+  .object({
+    from: z.string().min(1),
+    note: z.string().min(1),
+  })
+  .strict();
+
 const tensorSchema = z.object({
   id: z.string(),
   name: z.string(),
   shape: z.array(symSchema),
   dtype: z.enum(DTYPES),
+  dtypeWidening: dtypeWideningSchema.optional(),
   // A hole is an axis with no name; JSON.stringify already writes `undefined`
   // array entries as null, so null is the wire form of a hole in both directions.
   axisNames: z
@@ -16,7 +24,7 @@ const tensorSchema = z.object({
     .optional()
     .transform((names) => names?.map((name) => name ?? undefined)),
   role: z.enum(["activation", "weight"]).optional(),
-});
+}).strict();
 
 const nodeSchema = z.object({
   id: z.string(),
@@ -25,13 +33,37 @@ const nodeSchema = z.object({
   outputs: z.array(z.string()),
   attrs: z.record(z.unknown()).default({}),
   label: z.string().optional(),
-});
+}).strict();
 
 const graphSchema = z.object({
   nodes: z.array(nodeSchema),
   tensors: z.record(tensorSchema),
   params: z.record(z.number().int().min(1)).default({}),
-});
+}).strict();
+
+/**
+ * Structurally validate an already-parsed graph value.
+ *
+ * Separate from `parseGraphJSON` so a document that *contains* a graph - an
+ * import envelope carrying a graph beside its report - validates the graph half
+ * through exactly this schema rather than a second copy of it that would be
+ * free to drift. Deep validation (DAG, shapes, op attrs) happens in
+ * `resolveGraph` either way.
+ *
+ * `where` names the position in the containing document, so an envelope's
+ * errors read as `at graph.nodes.0.id` rather than losing their path.
+ */
+export function parseGraphValue(raw: unknown, where = ""): Graph {
+  const res = graphSchema.safeParse(raw);
+  if (!res.success)
+    throw new Error(
+      "schema errors:\n" +
+        res.error.issues
+          .map((i) => `  at ${[where, ...i.path].filter(Boolean).join(".") || "<root>"}: ${i.message}`)
+          .join("\n")
+    );
+  return res.data as Graph;
+}
 
 /** Parse + structurally validate graph JSON. Deep validation (DAG, shapes, op
  * attrs) happens in resolveGraph. */
@@ -42,13 +74,7 @@ export function parseGraphJSON(text: string): Graph {
   } catch (e) {
     throw new Error(`invalid JSON: ${(e as Error).message}`);
   }
-  const res = graphSchema.safeParse(raw);
-  if (!res.success)
-    throw new Error(
-      "schema errors:\n" +
-        res.error.issues.map((i) => `  at ${i.path.join(".") || "<root>"}: ${i.message}`).join("\n")
-    );
-  return res.data as Graph;
+  return parseGraphValue(raw);
 }
 
 export function graphToJSON(g: Graph): string {
@@ -59,6 +85,7 @@ export function graphToJSON(g: Graph): string {
       name: t.name,
       shape: t.shape,
       dtype: t.dtype,
+      ...(t.dtypeWidening ? { dtypeWidening: t.dtypeWidening } : {}),
       ...(t.axisNames ? { axisNames: t.axisNames } : {}),
       ...(t.role ? { role: t.role } : {}),
     };

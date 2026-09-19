@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveGraph } from "../core/graph";
 import { propagateBackward } from "../core/propagate";
-import { checkGraph, G, rng, randInt } from "./harness";
+import { checkGraph, G, rng, randInt, randomGraph } from "./harness";
 import { einsumBackward } from "../core/ops/einsum";
 import { fromBox, box, count, full } from "../core/region";
 import { getOp } from "../core/ops/index";
@@ -285,144 +285,6 @@ describe("oracle corpus: random composed graphs with diamonds", () => {
   });
 });
 
-function randomGraph(r: () => number, nNodes: number) {
-  type T = { id: string; shape: number[] };
-  const inputs: Record<string, number[]> = {};
-  const pool: T[] = [];
-  let tid = 0;
-  const newInput = (shape: number[]) => {
-    const id = `in${tid++}`;
-    inputs[id] = shape;
-    const t = { id, shape };
-    pool.push(t);
-    return t;
-  };
-  newInput([randInt(r, 2, 5), randInt(r, 2, 5)]);
-  newInput([randInt(r, 2, 5), randInt(r, 2, 5), randInt(r, 2, 4)]);
-  const nodes: [string, string, string[], string[], Record<string, unknown>?][] = [];
-  let nid = 0;
-  const emit = (op: string, ins: T[], outShape: number[], attrs?: Record<string, unknown>) => {
-    const id = `t${tid++}`;
-    nodes.push([`n${nid++}`, op, ins.map((x) => x.id), [id], attrs]);
-    const t = { id, shape: outShape };
-    pool.push(t);
-    return t;
-  };
-  const pick = () => pool[randInt(r, 0, pool.length)];
-  for (let k = 0; k < nNodes; k++) {
-    const choice = randInt(r, 0, 14);
-    const t = pick();
-    const sh = t.shape;
-    if (choice === 0 && sh.length >= 2) {
-      const perm = sh.map((_, i) => i);
-      for (let i = perm.length - 1; i > 0; i--) {
-        const j = randInt(r, 0, i + 1);
-        [perm[i], perm[j]] = [perm[j], perm[i]];
-      }
-      emit("transpose", [t], perm.map((p) => sh[p]), { perm });
-    } else if (choice === 1) {
-      // diamond: t + t
-      emit("elementwise", [t, t], sh.slice(), { fn: "add", nary: 2 });
-    } else if (choice === 2 && sh.length >= 1) {
-      const axis = randInt(r, 0, sh.length);
-      emit("softmax", [t], sh.slice(), { axis });
-    } else if (choice === 3 && sh.length >= 2) {
-      const axis = randInt(r, 0, sh.length);
-      const out = sh.filter((_, i) => i !== axis);
-      emit("reduce", [t], out, { fn: "sum", axes: [axis], keepdim: false });
-    } else if (choice === 4) {
-      // reshape to random re-factorization
-      const vol = sh.reduce((a, b) => a * b, 1);
-      const dims: number[] = [];
-      let rest = vol;
-      while (rest > 1 && dims.length < 3) {
-        const divisors: number[] = [];
-        for (let d = 2; d <= rest; d++) if (rest % d === 0) divisors.push(d);
-        const d = divisors[randInt(r, 0, divisors.length)];
-        dims.push(d);
-        rest /= d;
-      }
-      if (rest > 1) dims.push(rest);
-      if (dims.length === 0) dims.push(1);
-      emit("reshape", [t], dims, { shape: dims });
-    } else if (choice === 5 && sh.length >= 1) {
-      const axis = randInt(r, 0, sh.length);
-      emit("cumsum", [t], sh.slice(), { axis, reverse: r() < 0.5 });
-    } else if (choice === 6 && sh.length >= 1) {
-      const axis = randInt(r, 0, sh.length);
-      const out = sh.slice();
-      out[axis] *= 2;
-      emit("concat", [t, t], out, { axis });
-    } else if (choice === 7 && sh.length === 2) {
-      const other = newInput([sh[1], randInt(r, 2, 4)]);
-      emit("matmul", [t, other], [sh[0], other.shape[1]]);
-    } else if (choice === 8 && sh.length >= 1) {
-      // slice, sometimes strided
-      const step = randInt(r, 1, 3);
-      const starts = sh.map(() => 0);
-      const stops = sh.slice();
-      const steps = sh.map(() => 1);
-      const axis = randInt(r, 0, sh.length);
-      steps[axis] = step;
-      starts[axis] = randInt(r, 0, Math.max(1, sh[axis] - 1));
-      const out = sh.map((e, i) =>
-        i === axis ? Math.max(1, Math.ceil((e - starts[i]) / steps[i])) : e
-      );
-      emit("slice", [t], out, { starts, stops, steps });
-    } else if (choice === 9 && sh.length >= 1) {
-      const axis = randInt(r, 0, sh.length);
-      const pads: [number, number][] = sh.map(() => [0, 0]);
-      const mode = ["constant", "replicate", "reflect"][randInt(r, 0, 3)];
-      // reflect cannot pad wider than extent-1
-      const cap = mode === "reflect" ? Math.max(0, sh[axis] - 1) : 2;
-      pads[axis] = [randInt(r, 0, Math.min(2, cap) + 1), randInt(r, 0, Math.min(2, cap) + 1)];
-      emit("pad", [t], sh.map((e, i) => e + pads[i][0] + pads[i][1]), { pads, mode });
-    } else if (choice === 10 && sh.length >= 1) {
-      const axis = randInt(r, 0, sh.length);
-      if (sh[axis] < 2) {
-        emit("elementwise", [t], sh.slice(), { fn: "relu", nary: 1 });
-      } else {
-        const cut = randInt(r, 1, sh[axis]);
-        const sizes = [cut, sh[axis] - cut];
-        const outs = sizes.map((sz) => sh.map((e, i) => (i === axis ? sz : e)));
-        // split is the only multi-output op; take the first piece onward
-        const id = `t${tid++}`;
-        const id2 = `t${tid++}`;
-        nodes.push([`n${nid++}`, "split", [t.id], [id, id2], { axis, sizes }]);
-        pool.push({ id, shape: outs[0] });
-        pool.push({ id: id2, shape: outs[1] });
-      }
-    } else if (choice === 11 && sh.length >= 1) {
-      // expand a fresh degenerate axis up to t's shape
-      const axis = randInt(r, 0, sh.length);
-      const src = newInput(sh.map((e, i) => (i === axis ? 1 : e)));
-      emit("expand", [src], sh.slice(), { shape: sh.slice() });
-    } else if (choice === 12 && sh.length >= 1) {
-      const perm = sh.map((_, i) => i);
-      emit("transpose", [t], perm.map((p) => sh[p]), { perm });
-    } else if (choice === 13 && sh.length >= 1) {
-      const axes = [randInt(r, 0, sh.length)];
-      const wShape = axes.map((a) => sh[a]);
-      // normalize's affine params must match the normalized axes, and
-      // expansion requires them to be trailing
-      if (axes[0] === sh.length - 1) {
-        const w = newInput(wShape);
-        emit("normalize", [t, w], sh.slice(), {
-          kind: r() < 0.5 ? "layernorm" : "rmsnorm",
-          axes,
-          hasWeight: true,
-          hasBias: false,
-        });
-      } else emit("elementwise", [t], sh.slice(), { fn: "relu", nary: 1 });
-    } else {
-      emit("elementwise", [t], sh.slice(), { fn: "relu", nary: 1 });
-    }
-  }
-  const graph = G(inputs, nodes);
-  // declared shapes for intermediates are unknown; leave empty (inferred)
-  return graph;
-}
-
 /**
  * FLOP counts for the equation as written. The cases that matter are the ones
  * where a term drops out: an outer product only multiplies, a reduction only
@@ -471,7 +333,7 @@ T = einsum("ij,jk->ik", A, B)
 D = einsum("ik,kl->il", T, C)
 `);
     const flopsOf = (p: ReturnType<typeof compileDSL>) =>
-      p.executor.metrics("D", full(p.resolved.tensors.D.resolved!)).flops;
+      p.executor.metrics("D", full(p.resolved.tensors.D.resolved!)).flops.value!;
     expect(flopsOf(pairwise)).toBeLessThan(flopsOf(fused));
   });
 });

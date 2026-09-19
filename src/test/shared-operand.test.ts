@@ -46,6 +46,6 @@ U = matmul(S, S)
     expect(region.boxes.length).toBeGreaterThan(1);
     // 9152 is the cost over the union. Summing the boxes instead pays 9216,
     // the extra 64 being the square where the two bands of S meet.
-    expect(p.executor.metrics("U", sel).flops).toBe(9152);
+    expect(p.executor.metrics("U", sel).flops.value!).toBe(9152);
   });
 });

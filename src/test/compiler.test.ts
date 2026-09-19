@@ -592,7 +592,7 @@ describe("elementwise function table", () => {
     const cheap = compileDSL("X = Tensor(64)\nY = relu(X)\n");
     const dear = compileDSL("X = Tensor(64)\nY = gelu(X)\n");
     const flopsOf = (p: ReturnType<typeof compileDSL>) =>
-      p.executor.metrics("Y", full(p.resolved.tensors.Y.resolved!)).flops;
+      p.executor.metrics("Y", full(p.resolved.tensors.Y.resolved!)).flops.value!;
     expect(flopsOf(dear)).toBeGreaterThan(flopsOf(cheap));
   });
 });

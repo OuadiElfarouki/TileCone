@@ -31,8 +31,8 @@ function assertEquivalent(graph: ReturnType<typeof G>, nodeId: string, selTensor
     const sel = { tensorId: selTensor, region: fromBox(idx.map((v) => ({ lo: v, hi: v + 1 }))) };
     const r1 = propagateBackward(g1, sel);
     const r2 = propagateBackward(g2, sel);
-    expect(computeMetrics(g2, r2).flops, `metric FLOPs @${f}`).toBe(
-      computeMetrics(g1, r1).flops
+    expect(computeMetrics(g2, r2).flops.value!, `metric FLOPs @${f}`).toBe(
+      computeMetrics(g1, r1).flops.value!
     );
     for (const tid of Object.keys(g1.tensors)) {
       const sh = g1.tensors[tid].resolved!;
@@ -114,8 +114,8 @@ describe("composite expansion equivalence", () => {
     const primitiveMetrics = computeMetrics(primitive, propagateBackward(primitive, selection));
     const expandedMetrics = computeMetrics(expanded, propagateBackward(expanded, selection));
 
-    expect(primitiveMetrics.flops).toBe(898);
-    expect(expandedMetrics.flops).toBe(primitiveMetrics.flops);
+    expect(primitiveMetrics.flops.value!).toBe(898);
+    expect(expandedMetrics.flops.value!).toBe(primitiveMetrics.flops.value!);
   });
 
   it("shares normalization statistics across disjoint selections before and after expansion", () => {
@@ -141,7 +141,7 @@ describe("composite expansion equivalence", () => {
     const primitiveMetrics = computeMetrics(primitive, propagateBackward(primitive, selection));
     const expandedMetrics = computeMetrics(expanded, propagateBackward(expanded, selection));
 
-    expect(primitiveMetrics.flops).toBe(522);
-    expect(expandedMetrics.flops).toBe(primitiveMetrics.flops);
+    expect(primitiveMetrics.flops.value!).toBe(522);
+    expect(expandedMetrics.flops.value!).toBe(primitiveMetrics.flops.value!);
   });
 });

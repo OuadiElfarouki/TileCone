@@ -42,8 +42,11 @@ export function parseDSLWithSource(text: string): ParsedDSL {
 // ------------------------------------------------------------------- toDSL
 
 function attrValueToDSL(v: unknown, name?: string): string {
-  if (Array.isArray(v)) return `[${v.map((item) => attrValueToDSL(item)).join(", ")}]`;
-  if (name === "dtype" && typeof v === "string" && v in DTYPE_TO_DSL)
+  // The attribute's name travels into its items: a per-output `dtypes` list
+  // holds canonical dtypes that have to come back out in the DSL's spellings,
+  // and dropping the name on the way in printed `f16` where only `fp16` parses.
+  if (Array.isArray(v)) return `[${v.map((item) => attrValueToDSL(item, name)).join(", ")}]`;
+  if ((name === "dtype" || name === "dtypes") && typeof v === "string" && v in DTYPE_TO_DSL)
     return DTYPE_TO_DSL[v as DType];
   if (typeof v === "string") return /^[A-Za-z_][A-Za-z0-9_]*$/.test(v) ? v : JSON.stringify(v);
   return String(v);

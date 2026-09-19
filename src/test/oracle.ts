@@ -4,6 +4,12 @@
  * op's pointwise `oracleDeps` semantics (never its box-level backward rule).
  * An element's id-set = its own id + all transitive upstream ids, so the true
  * dependency region of a selection on any tensor falls out by membership tests.
+ *
+ * Given a frontier, an element of a frontier tensor contributes only its own id
+ * to the elements that read it. Every path whose interior crosses the frontier
+ * is cut, and the frontier element survives as the path's endpoint - which is
+ * the whole definition of a bounded cone (`propagateWithin`), stated pointwise
+ * rather than derived from the propagator.
  */
 
 import { ResolvedGraph } from "../core/graph";
@@ -33,7 +39,10 @@ export function unflatIndex(flat: number, shape: number[]): number[] {
   return idx;
 }
 
-export function computeOracle(g: ResolvedGraph): Oracle {
+export function computeOracle(
+  g: ResolvedGraph,
+  frontier: ReadonlySet<string> = new Set()
+): Oracle {
   const base = new Map<string, number>();
   const owners: { tensorId: string; flat: number }[] = [];
   let next = 0;
@@ -68,8 +77,11 @@ export function computeOracle(g: ResolvedGraph): Oracle {
           const inId = node.inputs[inSlot];
           const inShape = g.tensors[inId].resolved!;
           const inSets = sets.get(inId)!;
+          const cut = frontier.has(inId);
           for (const tup of tuples) {
-            for (const id of inSets[flatIndex(tup, inShape)]) outSets[f].add(id);
+            const flat = flatIndex(tup, inShape);
+            if (cut) outSets[f].add(base.get(inId)! + flat);
+            else for (const id of inSets[flat]) outSets[f].add(id);
           }
         });
       }
