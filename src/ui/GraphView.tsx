@@ -193,9 +193,18 @@ export function GraphView(): React.ReactElement {
 
   // Highlighting follows the direction filter, not the analysis: both cones are
   // always computed, and a hot edge should mean "the cone you asked for".
+  const planView = useStore((s) => s.inspectorTab === "plan");
+  const planSupply = useStore((s) => s.planSupply);
   const contributing = useMemo(
-    () => involvedTensorIds(selection, backwardRes, forwardRes, perBox, hiddenBoxes, direction),
-    [backwardRes, direction, forwardRes, hiddenBoxes, perBox, selection]
+    () =>
+      // The Plan view lights the inspected task's tensor and the ones it reads,
+      // so the graph shows the relation the cards are showing.
+      planView
+        ? new Set(
+            planSupply ? [planSupply.task.tensorId, ...planSupply.demand.map((d) => d.tensorId)] : []
+          )
+        : involvedTensorIds(selection, backwardRes, forwardRes, perBox, hiddenBoxes, direction),
+    [backwardRes, direction, forwardRes, hiddenBoxes, perBox, selection, planView, planSupply]
   );
 
   const hasResult = contributing.size > 0;

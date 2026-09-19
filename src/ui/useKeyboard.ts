@@ -126,6 +126,31 @@ export function useKeyboard({
         return s.undoWorkspace();
       }
 
+      /* In the Plan view the arrows step the inspected task by one tile. The
+         same keys move the same kind of thing: the unit the panel below names.
+         This runs before the selection anchor is required, because a plan can
+         be inspected with nothing drawn. */
+      if (s.inspectorTab === "plan" && matchesShortcut(e, SHORTCUTS.movePlanTask)) {
+        const task = s.planTask;
+        const taskShape = task ? s.resolved?.tensors[task.tensorId].resolved : null;
+        if (task && taskShape) {
+          const axes = viewAxes(taskShape);
+          const steps: Record<string, [number, number]> = {
+            ArrowLeft: [axes.colAxis, -1],
+            ArrowRight: [axes.colAxis, 1],
+            ArrowUp: [axes.rowAxis, -1],
+            ArrowDown: [axes.rowAxis, 1],
+          };
+          const step = steps[e.key];
+          if (step && step[0] >= 0) {
+            e.preventDefault();
+            // Auto-repeat records no undo entry, as a held tile move does not.
+            s.movePlanTask(step[0], step[1] * (matchesShortcut(e, SHORTCUTS.moveFast) ? 8 : 1), !e.repeat);
+            return;
+          }
+        }
+      }
+
       if (!anchor || !cfg || !shape) return;
 
       const { rowAxis: rowAx, colAxis: colAx } = viewAxes(shape);

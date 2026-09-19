@@ -77,7 +77,7 @@ D = add(B, A)
     expect(count(executor.downstream("A", fromBox(box([0, 1], [1, 2]))).tensors.get("D")!.region)).toBe(2);
   });
 
-  it("reports a tensor read through two operand slots as one stop", () => {
+  it("reports a tensor read through two operand slots as one stop with two crossings", () => {
     const { executor } = compileDSL(`A = Tensor(4, 4)
 X = relu(A)
 C = matmul(X, X)
@@ -89,6 +89,12 @@ C = matmul(X, X)
     // Both bands, as stored: the row it is read by and the column it is read as.
     expect(count(regionOn(cone.tensors, "X")!)).toBe(7);
     expect(regionOn(cone.tensors, "X")).toEqual(regionOn(executor.upstream("C", tile).tensors, "X"));
+    // One crossing per slot keeps the two bands apart.
+    expect(cone.crossings.map(({ node, slot, tensorId, region }) => [node, slot, tensorId, region.boxes]))
+      .toEqual([
+        [cone.crossings[0].node, 0, "X", [box([0, 1], [0, 4])]],
+        [cone.crossings[0].node, 1, "X", [box([0, 4], [0, 1])]],
+      ]);
   });
 
   it("is the transitive cone when the frontier is empty", () => {
