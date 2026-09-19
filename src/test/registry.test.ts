@@ -34,13 +34,25 @@ describe("registry coverage", () => {
     expect(OP_FIXTURES.map((f) => f.op).filter((op) => !registered.includes(op))).toEqual([]);
   });
 
+  /* An operation that reads no tensor computes nothing from the graph, so a
+     zero-input arity is a mistake in every op that describes real semantics.
+     `opaque` is the one exception, and it is exempted by name rather than by
+     loosening the rule: a converter meeting a constant-like node has to be able
+     to represent it, and the alternative to representing it is dropping it. */
   it("every op declares an attribute schema and a positive input arity", () => {
     for (const spec of listOps()) {
       expect(spec.attrSchema, `${spec.name} has no attrSchema`).toBeDefined();
+      if (spec.name === "opaque") continue;
       const min =
         typeof spec.arity.inputs === "number" ? spec.arity.inputs : spec.arity.inputs.min;
       expect(min, `${spec.name} accepts zero inputs`).toBeGreaterThan(0);
     }
+  });
+
+  it("only the barrier reads nothing, and only because an importer may meet one", () => {
+    const opaque = listOps().find((spec) => spec.name === "opaque")!;
+    const inputs = opaque.arity.inputs;
+    expect(typeof inputs === "number" ? inputs : inputs.min).toBe(0);
   });
 });
 

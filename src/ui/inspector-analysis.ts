@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { contributions } from "../core/contribution";
-import { AggregateReadout, coneReadout, computeMetrics } from "../core/metrics";
+import { AggregateReadout, Figure, addFigures, coneReadout, computeMetrics, figure } from "../core/metrics";
 import { coneFindings } from "../core/notes";
 import { inputSharing } from "../core/reuse";
 import type { PropResult } from "../core/propagate";
@@ -9,7 +9,16 @@ import type { ResolvedGraph } from "../core/graph";
 import { analysisTarget, groupPropResult } from "./store";
 import type { BoxProp, Direction, SelPart } from "./store";
 
-export type ConeCost = { flops: number; bytes: number };
+/**
+ * One scenario's cost, as figures rather than numbers.
+ *
+ * Both halves carry their own status because they are qualified differently and
+ * combine: bytes over a widened region are an upper bound, while FLOPs across
+ * an operation nobody described are not a bound at all. A ratio of the two is
+ * only as good as its weaker half, and that is exactly what the figure algebra
+ * works out.
+ */
+export type ConeCost = { flops: Figure; bytes: Figure };
 export type ConeBounds = { fused: ConeCost; unfused: ConeCost | null };
 
 /**
@@ -116,7 +125,10 @@ export function coneBounds(
   merged: AggregateReadout,
   enabled: PropResult[] | null
 ): ConeBounds {
-  const fused = { flops: merged.flops, bytes: merged.inputBytes + merged.outputBytes };
+  const fused = {
+    flops: merged.flops,
+    bytes: addFigures(merged.inputBytes, merged.outputBytes),
+  };
   if (!enabled) return { fused, unfused: null };
   // Ratio of the sums, never the mean of the ratios: tiles differ in size, and
   // averaging their intensities would weight a one-element tile like a full row.
@@ -124,11 +136,11 @@ export function coneBounds(
     (total, prop) => {
       const m = computeMetrics(resolved, prop);
       return {
-        flops: total.flops + m.flops,
-        bytes: total.bytes + m.unfusedBytes,
+        flops: addFigures(total.flops, m.flops),
+        bytes: addFigures(total.bytes, m.unfusedBytes),
       };
     },
-    { flops: 0, bytes: 0 }
+    { flops: figure(0, "exact"), bytes: figure(0, "exact") }
   );
   return { fused, unfused };
 }

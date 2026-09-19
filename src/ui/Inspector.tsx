@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Contribution, MAX_CONTRIBUTION_PROBES } from "../core/contribution";
 import type { ResolvedGraph } from "../core/graph";
+import { ratioFigure, sumFigures } from "../core/metrics";
 import { TensorReadout } from "../core/metrics";
 import type { ConeFindings } from "../core/notes";
 import { estimateInputReuse, ReuseEstimate } from "../core/reuse";
@@ -14,7 +15,8 @@ import {
   subtract,
   union,
 } from "../core/region";
-import { formatBytes } from "./format";
+import { formatBytes, formatFigure } from "./format";
+import type { ConeCost } from "./inspector-analysis";
 import { analysisTensorId, groupAttribution, groupFocus, measuredParts, measuredElements, useInspectorAnalysis } from "./inspector-analysis";
 import { aggregateColors, boxColor, MAX_DISTINCT_HUES, rgbCss } from "./palette";
 import {
@@ -378,7 +380,7 @@ function ConeRow({
           d{row.depth}
         </span>
         <span className="row-stats">
-          {share.toFixed(1)}% · {formatBytes(row.bytes)} · {row.boxCount} box{row.boxCount === 1 ? "" : "es"}
+          {share.toFixed(1)}% · {formatFigure(row.byteFigure, formatBytes)} · {row.boxCount} box{row.boxCount === 1 ? "" : "es"}
           {/* Boxes may overlap - two operand slots reading one tensor give two
               bands sharing a corner. Without this the listed boxes visibly sum
               past the element total and the row looks like it is miscounting,
@@ -519,7 +521,7 @@ function ConeSection({
   attr: TileAttribution;
 }): React.ReactElement {
   const { title, arrow, paint, key } = CONE[direction];
-  const bytes = rows.reduce((total, row) => total + row.bytes, 0);
+  const bytes = sumFigures(rows.map((row) => row.byteFigure));
   const verdicts = contrib ? [...contrib.values()] : [];
   const partial = verdicts.filter((item) => item.partial).length;
   const completed = verdicts.length - partial;
@@ -541,7 +543,7 @@ function ConeSection({
         <span className="rollup">
           {rows.length} tensor{rows.length === 1 ? "" : "s"}
           {verdicts.length > 0 && ` · ${completed} completed, ${partial} partial`}
-          {` · ${formatBytes(bytes)}`}
+          {` · ${formatFigure(bytes, formatBytes)}`}
         </span>
       </div>
       {enabled &&
@@ -1042,17 +1044,35 @@ export function Inspector(): React.ReactElement {
         ? `${measuredBoxes === selBoxes ? measuredBoxes : `${measuredBoxes} of ${selBoxes}`} tiles · merged`
         : "this tile";
 
-  /** Prefix for a cost figure measured over an over-approximated region. */
-  const bound = metrics && !metrics.exact ? "\u2264\u202f" : "";
+  /* Each figure now carries its own status, so its mark comes from the figure
+     rather than from whether anything in the readout was approximate. One
+     widened weight used to put `\u2264` on an output-byte count that was exact, and
+     - worse - the same `\u2264` on a FLOP total spanning a barrier, which is not a
+     bound in that direction or any other. `formatFigure` writes what each one
+     has earned, including the word `unknown` where there is no number. */
+
   /**
-   * Intensity takes `~`, not `\u2264`. Every other figure is a sum over the cone's
-   * regions, so widening a region can only raise it. Intensity is a ratio of
-   * two such sums, and widening moves both: extra elements that carry no work
-   * pull it down, extra work over bytes already counted pushes it up. The
-   * figure is disturbed in an unknown direction, which is what `~` says and
-   * `\u2264` would misstate.
+   * A scenario's intensity, or the reason there isn't one.
+   *
+   * Built through `ratioFigure` so the quotient inherits what its parts know:
+   * `~` where both moved over a widened region, and `unknown` where the
+   * numerator crossed an operation nobody described - a ratio of an unknown
+   * quantity is not a looser ratio, it is not a ratio.
    */
-  const ratioBound = metrics && !metrics.exact ? "~\u202f" : "";
+  const intensityOf = (cost: ConeCost | null | undefined): string => {
+    if (!cost) return "—";
+    const ratio = ratioFigure(cost.flops, cost.bytes);
+    if (ratio.value === null) return "unknown";
+    if (cost.bytes.value === 0) return "—";
+    return formatFigure(ratio, (v) => `${v.toFixed(2)} FLOP/B`);
+  };
+
+  /* Summed through the figure algebra rather than by adding three numbers, so
+     the total inherits the weakest of the three claims instead of presenting
+     itself as whatever the last one was. */
+  const workingSet = metrics
+    ? sumFigures([metrics.inputBytes, metrics.intermediateBytes, metrics.outputBytes])
+    : null;
 
   /** Reuse neighbours step along the anchor tensor's axes, so it names them. */
   const axisLabelOf = (axis: number) =>
@@ -1191,32 +1211,46 @@ export function Inspector(): React.ReactElement {
 
             {metrics && (
               <>
-                {/* These figures are bounds when any region they were measured
-                    on was widened, and the relation is exactly "no more than" -
-                    a region is never a subset of the truth. `<=` says that;
-                    `~` would suggest the number could also be an overestimate
-                    in the other direction, which it cannot. */}
+                {/* Each figure says for itself what may be read into it: a
+                    bare number is a count, `<=` is "no more than", and a figure
+                    whose arithmetic crosses an operation nobody described says
+                    `unknown` instead of offering a number that is neither a
+                    ceiling nor a floor. */}
                 <div className="ins-section">
                   <div className="ins-title">
                     {`Cost to compute ${costScope} `}
-                    {/* Every figure below is measured over the cone's regions,
-                        so an over-approximated region makes all of them upper
-                        bounds. The rows already say so individually; without
-                        this the totals were the one place a bound was printed
-                        as a count. */}
                     {!metrics.exact && (
                       <span className="badge approx" title={metrics.reasons.join("; ")}>≈</span>
                     )}
                   </div>
                   <div className="kv">
-                    <span>FLOPs</span><span>{bound}{fmt(metrics.flops)}</span>
-                    <span>input bytes</span><span>{bound}{formatBytes(metrics.inputBytes)}</span>
-                    <span>intermediate</span><span>{bound}{formatBytes(metrics.intermediateBytes)}</span>
-                    <span>output bytes</span><span>{bound}{formatBytes(metrics.outputBytes)}</span>
+                    <span>FLOPs</span>
+                    <span title={metrics.flops.reasons.join("; ")}>
+                      {formatFigure(metrics.flops, fmt)}
+                    </span>
+                    <span>input bytes</span>
+                    <span>{formatFigure(metrics.inputBytes, formatBytes)}</span>
+                    <span>intermediate</span>
+                    <span>{formatFigure(metrics.intermediateBytes, formatBytes)}</span>
+                    <span>output bytes</span>
+                    <span>{formatFigure(metrics.outputBytes, formatBytes)}</span>
                     <span>working set</span>
-                    <span>{bound}{formatBytes(metrics.inputBytes + metrics.intermediateBytes + metrics.outputBytes)}</span>
+                    <span>{workingSet && formatFigure(workingSet, formatBytes)}</span>
                   </div>
-                  {!metrics.exact && (
+                  {metrics.flops.status === "unknown" && (
+                    /* The one qualification a reader cannot act on without
+                       being told: every other figure here is still a bound,
+                       and only the arithmetic is missing. Without this the
+                       word `unknown` beside a full set of byte counts reads
+                       as a glitch rather than as the answer. */
+                    <p className="hint overlap">
+                      No FLOP total through {metrics.unknownOperations} unmodelled
+                      {metrics.unknownOperations === 1 ? " operation" : " operations"}:
+                      its arithmetic is not described, so a sum across it would be
+                      neither an upper nor a lower bound. The byte figures still hold.
+                    </p>
+                  )}
+                  {metrics.exact || metrics.flops.status === "unknown" ? null : (
                     <p className="hint overlap">
                       Bounds, not counts: read ≤ as “no more than”, never understated.
                     </p>
@@ -1293,36 +1327,34 @@ export function Inspector(): React.ReactElement {
                   <div className="kv">
                     <span title={
                       bounds
-                        ? `one kernel over every op and every tile: intermediates never reach memory and a shared operand band is fetched once - ${fmt(bounds.fused.flops)} FLOP / ${formatBytes(bounds.fused.bytes)}`
+                        ? `one kernel over every op and every tile: intermediates never reach memory and a shared operand band is fetched once - ${formatFigure(bounds.fused.flops, fmt)} FLOP / ${formatFigure(bounds.fused.bytes, formatBytes)}`
                         : undefined
                     }>
                       fused
                     </span>
-                    <span>
-                      {bounds && bounds.fused.bytes > 0
-                        ? `${ratioBound}${(bounds.fused.flops / bounds.fused.bytes).toFixed(2)} FLOP/B`
-                        : "—"}
-                    </span>
+                    <span>{intensityOf(bounds?.fused)}</span>
                     <span title={
                       bounds?.unfused
-                        ? `every op of every tile as its own job: separate input reads and output writes, materialized views, and no cross-op cache reuse - ${fmt(bounds.unfused.flops)} FLOP / ${formatBytes(bounds.unfused.bytes)}`
+                        ? `every op of every tile as its own job: separate input reads and output writes, materialized views, and no cross-op cache reuse - ${formatFigure(bounds.unfused.flops, fmt)} FLOP / ${formatFigure(bounds.unfused.bytes, formatBytes)}`
                         : `per-tile cones are not traced past ${MAX_PER_BOX_PROPS} tiles, and the merged result cannot be taken apart again`
                     }>
                       unfused
                     </span>
-                    <span>
-                      {bounds?.unfused && bounds.unfused.bytes > 0
-                        ? `${ratioBound}${(bounds.unfused.flops / bounds.unfused.bytes).toFixed(2)} FLOP/B`
-                        : "—"}
-                    </span>
+                    <span>{intensityOf(bounds?.unfused)}</span>
                   </div>
-                  {metrics && !metrics.exact && (
+                  {metrics?.flops.status === "unknown" ? (
+                    <p className="hint overlap">
+                      Unavailable: the numerator is a FLOP total across an operation whose
+                      arithmetic is not modelled. A ratio of an unknown quantity is not a
+                      looser ratio, it is not one.
+                    </p>
+                  ) : metrics && !metrics.exact ? (
                     <p className="hint overlap">
                       Both are ratios of figures measured over a widened region, which moves
                       the numerator and the denominator at once: ~ says disturbed in an
                       unknown direction, where ≤ would claim a side.
                     </p>
-                  )}
+                  ) : null}
                 </div>
                 <div className="ins-section">
                   <div className="ins-title with-action">

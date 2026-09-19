@@ -47,11 +47,15 @@ describe("headless symbolic executor", () => {
 
     expect(executor.upstream("C", region).direction).toBe("backward");
     expect(executor.downstream("C", region).direction).toBe("forward");
-    expect(executor.metrics("C", region)).toMatchObject({
-      flops: 12,
-      inputBytes: 24,
-      outputBytes: 2,
-    });
+    const m = executor.metrics("C", region);
+    expect(m.flops.value).toBe(12);
+    expect(m.inputBytes.value).toBe(24);
+    expect(m.outputBytes.value).toBe(2);
+    // An exact cone over modelled operations: every figure is a count, so none
+    // of them carries a qualifier.
+    expect([m.flops.status, m.inputBytes.status, m.outputBytes.status]).toEqual([
+      "exact", "exact", "exact",
+    ]);
   });
 
   it("counts the shared prefix work required by a partial scan selection", () => {
@@ -64,7 +68,7 @@ Y = cumsum(X, axis=0)
       reasons: [],
     };
 
-    expect(executor.metrics("Y", region).flops).toBe(128);
+    expect(executor.metrics("Y", region).flops.value!).toBe(128);
   });
 
   it("charges overlapping output boxes once without constructing a partition", () => {
@@ -81,7 +85,7 @@ C = matmul(A, B)
       reasons: [],
     };
 
-    expect(executor.metrics("C", region).flops).toBe(count(region) * 2 * 512);
+    expect(executor.metrics("C", region).flops.value!).toBe(count(region) * 2 * 512);
   });
 
   it("uses inferred cast dtypes for output and intermediate byte metrics", () => {
@@ -91,16 +95,12 @@ Z = cast(Y, dtype=fp16)
 `);
     const region = fromBox(box([0, 4]));
 
-    expect(executor.metrics("Y", region)).toMatchObject({
-      inputBytes: 16,
-      intermediateBytes: 0,
-      outputBytes: 4,
-    });
-    expect(executor.metrics("Z", region)).toMatchObject({
-      inputBytes: 16,
-      intermediateBytes: 4,
-      outputBytes: 8,
-    });
+    const onY = executor.metrics("Y", region);
+    expect([onY.inputBytes.value, onY.intermediateBytes.value, onY.outputBytes.value])
+      .toEqual([16, 0, 4]);
+    const onZ = executor.metrics("Z", region);
+    expect([onZ.inputBytes.value, onZ.intermediateBytes.value, onZ.outputBytes.value])
+      .toEqual([16, 4, 8]);
   });
 
   it("rejects unknown tensors with a stable error code", () => {
@@ -179,7 +179,7 @@ describe("aggregate metrics carry their own exactness", () => {
     expect(m.reasons).toContain("diagonal einsum");
     // Bounds, never understatements: the widened region can only add.
     const truth = 300 * 4; // 300 diagonal elements, fp32
-    expect(m.inputBytes).toBeGreaterThan(truth);
+    expect(m.inputBytes.value!).toBeGreaterThan(truth);
   });
 
   it("tracks the rows rather than being set independently", () => {

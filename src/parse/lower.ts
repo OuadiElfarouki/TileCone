@@ -18,14 +18,18 @@ import { DSLError } from "./parser";
 import { sugarForCall } from "./sugar";
 import { DSLSourceMap, SourceSpan } from "./source";
 
-export const DSL_DTYPES = ["fp32", "fp16", "bf16", "fp8", "int32", "int8", "bool"] as const;
+export const DSL_DTYPES = [
+  "fp32", "fp16", "bf16", "fp8", "int64", "int32", "uint8", "int8", "bool",
+] as const;
 
 const DTYPE_FROM_DSL: Record<(typeof DSL_DTYPES)[number], DType> = {
   fp32: "f32",
   fp16: "f16",
   bf16: "bf16",
   fp8: "f8",
+  int64: "i64",
   int32: "i32",
+  uint8: "u8",
   int8: "i8",
   bool: "bool",
 };
@@ -35,7 +39,9 @@ export const DTYPE_TO_DSL: Record<DType, (typeof DSL_DTYPES)[number]> = {
   f16: "fp16",
   bf16: "bf16",
   f8: "fp8",
+  i64: "int64",
   i32: "int32",
+  u8: "uint8",
   i8: "int8",
   bool: "bool",
 };
@@ -219,6 +225,42 @@ export function lowerProgram(program: Program): LowerResult {
             continue;
           }
           attrs.dtype = d;
+          continue;
+        }
+        // A per-output dtype list, written in the DSL's own spellings like the
+        // singular is. `null` is a hole - an output that takes whatever the
+        // operation would have inferred - so a barrier naming one unusual
+        // output need not restate the ordinary ones beside it.
+        if (arg.name.value === "dtypes") {
+          if (arg.value.kind !== "list") {
+            fail("dtypes must be a list", arg.value.span, "DSL_SYNTAX");
+            bad = true;
+            continue;
+          }
+          const items: (DType | null)[] = [];
+          let ok = true;
+          for (const item of arg.value.items) {
+            if (item.kind === "dim" && item.text === "null") {
+              items.push(null);
+              continue;
+            }
+            const d = dtypeFromExpr(item);
+            if (!d) {
+              fail(
+                `dtype must be one of ${DSL_DTYPES.join(", ")}, or null`,
+                item.span,
+                "DSL_SYNTAX"
+              );
+              ok = false;
+              break;
+            }
+            items.push(d);
+          }
+          if (!ok) {
+            bad = true;
+            continue;
+          }
+          attrs.dtypes = items;
           continue;
         }
         attrs[arg.name.value] = exprToAttr(arg.value);

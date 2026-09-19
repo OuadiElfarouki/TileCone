@@ -1,7 +1,7 @@
 import { expect } from "vitest";
 import { Graph, ResolvedGraph, resolveGraph, Tensor } from "../core/graph";
 import { DType } from "../core/dtypes";
-import { propagateBackward, propagateForward } from "../core/propagate";
+import { propagateBackward, propagateForward, propagateWithin, Selection } from "../core/propagate";
 import { Region, fromBox, points } from "../core/region";
 import { DEFAULT_LIMITS, type Limits } from "../core/ops/limits";
 import { computeOracle, regionToFlatSet, truthBackward, truthForward, unflatIndex, Oracle } from "./oracle";
@@ -96,10 +96,20 @@ export type CheckOpts = {
   boxSelections?: number;
   forward?: boolean;
   backward?: boolean;
+  /** Check bounded cones instead: every walk stops at these tensors, and the
+   * oracle cuts its paths at the same ones. */
+  frontier?: readonly string[];
 };
 
+/**
+ * How many walks ran, and how many of them a frontier shortened. A bounded
+ * check whose frontiers never cut a path would pass while testing nothing
+ * beyond the transitive case, so callers assert on `cut`.
+ */
+export type CheckStats = { walks: number; cut: number };
+
 /** Exhaustive-ish oracle check of backward and forward propagation on a small graph. */
-export function checkGraph(graph: Graph, opts: CheckOpts = {}): void {
+export function checkGraph(graph: Graph, opts: CheckOpts = {}): CheckStats {
   const {
     limits: limitOverrides,
     seed = 42,
@@ -107,11 +117,24 @@ export function checkGraph(graph: Graph, opts: CheckOpts = {}): void {
     boxSelections = 2,
     forward = true,
     backward = true,
+    frontier,
   } = opts;
   const g = resolveGraph(graph);
-  const oracle: Oracle = computeOracle(g);
+  const oracle: Oracle = computeOracle(g, new Set(frontier));
   const r = rng(seed);
   const limits = limitOverrides ? { ...DEFAULT_LIMITS, ...limitOverrides } : undefined;
+  const stats: CheckStats = { walks: 0, cut: 0 };
+  const within = frontier ? ` within [${frontier.join(", ")}]` : "";
+
+  const run = (dir: "backward" | "forward", sel: Selection) => {
+    const open =
+      dir === "backward" ? propagateBackward(g, sel, limits) : propagateForward(g, sel, limits);
+    stats.walks++;
+    if (!frontier) return open.tensors;
+    const bounded = propagateWithin(g, sel, dir, frontier, limits);
+    if (bounded.tensors.size < open.tensors.size) stats.cut++;
+    return bounded.tensors;
+  };
 
   for (const t of Object.values(g.tensors)) {
     const shape = t.resolved!;
@@ -125,26 +148,166 @@ export function checkGraph(graph: Graph, opts: CheckOpts = {}): void {
     }
     for (const sel of sels) {
       const selDesc = JSON.stringify(sel.boxes);
-      if (backward) {
-        const res = propagateBackward(g, { tensorId: t.id, region: sel }, limits);
+      if (backward)
         assertAgainstTruth(
           g,
-          res.tensors,
+          run("backward", { tensorId: t.id, region: sel }),
           (on) => truthBackward(g, oracle, t.id, sel, on),
-          `backward from ${t.id} ${selDesc}`
+          `backward from ${t.id} ${selDesc}${within}`
         );
-      }
-      if (forward) {
-        const res = propagateForward(g, { tensorId: t.id, region: sel }, limits);
+      if (forward)
         assertAgainstTruth(
           g,
-          res.tensors,
+          run("forward", { tensorId: t.id, region: sel }),
           (on) => truthForward(oracle, t.id, sel, on),
-          `forward from ${t.id} ${selDesc}`
+          `forward from ${t.id} ${selDesc}${within}`
         );
-      }
     }
   }
+  return stats;
+}
+
+/**
+ * A random composed graph: transposes, reductions, reshapes, scans, concats,
+ * matmuls, slices, pads, splits, broadcasts and normalizations, with diamonds
+ * (an op reading one tensor twice). Small enough for the oracle to enumerate.
+ */
+export function randomGraph(r: () => number, nNodes: number) {
+  type T = { id: string; shape: number[] };
+  const inputs: Record<string, number[]> = {};
+  const pool: T[] = [];
+  let tid = 0;
+  const newInput = (shape: number[]) => {
+    const id = `in${tid++}`;
+    inputs[id] = shape;
+    const t = { id, shape };
+    pool.push(t);
+    return t;
+  };
+  newInput([randInt(r, 2, 5), randInt(r, 2, 5)]);
+  newInput([randInt(r, 2, 5), randInt(r, 2, 5), randInt(r, 2, 4)]);
+  const nodes: [string, string, string[], string[], Record<string, unknown>?][] = [];
+  let nid = 0;
+  const emit = (op: string, ins: T[], outShape: number[], attrs?: Record<string, unknown>) => {
+    const id = `t${tid++}`;
+    nodes.push([`n${nid++}`, op, ins.map((x) => x.id), [id], attrs]);
+    const t = { id, shape: outShape };
+    pool.push(t);
+    return t;
+  };
+  const pick = () => pool[randInt(r, 0, pool.length)];
+  for (let k = 0; k < nNodes; k++) {
+    const choice = randInt(r, 0, 14);
+    const t = pick();
+    const sh = t.shape;
+    if (choice === 0 && sh.length >= 2) {
+      const perm = sh.map((_, i) => i);
+      for (let i = perm.length - 1; i > 0; i--) {
+        const j = randInt(r, 0, i + 1);
+        [perm[i], perm[j]] = [perm[j], perm[i]];
+      }
+      emit("transpose", [t], perm.map((p) => sh[p]), { perm });
+    } else if (choice === 1) {
+      // diamond: t + t
+      emit("elementwise", [t, t], sh.slice(), { fn: "add", nary: 2 });
+    } else if (choice === 2 && sh.length >= 1) {
+      const axis = randInt(r, 0, sh.length);
+      emit("softmax", [t], sh.slice(), { axis });
+    } else if (choice === 3 && sh.length >= 2) {
+      const axis = randInt(r, 0, sh.length);
+      const out = sh.filter((_, i) => i !== axis);
+      emit("reduce", [t], out, { fn: "sum", axes: [axis], keepdim: false });
+    } else if (choice === 4) {
+      // reshape to random re-factorization
+      const vol = sh.reduce((a, b) => a * b, 1);
+      const dims: number[] = [];
+      let rest = vol;
+      while (rest > 1 && dims.length < 3) {
+        const divisors: number[] = [];
+        for (let d = 2; d <= rest; d++) if (rest % d === 0) divisors.push(d);
+        const d = divisors[randInt(r, 0, divisors.length)];
+        dims.push(d);
+        rest /= d;
+      }
+      if (rest > 1) dims.push(rest);
+      if (dims.length === 0) dims.push(1);
+      emit("reshape", [t], dims, { shape: dims });
+    } else if (choice === 5 && sh.length >= 1) {
+      const axis = randInt(r, 0, sh.length);
+      emit("cumsum", [t], sh.slice(), { axis, reverse: r() < 0.5 });
+    } else if (choice === 6 && sh.length >= 1) {
+      const axis = randInt(r, 0, sh.length);
+      const out = sh.slice();
+      out[axis] *= 2;
+      emit("concat", [t, t], out, { axis });
+    } else if (choice === 7 && sh.length === 2) {
+      const other = newInput([sh[1], randInt(r, 2, 4)]);
+      emit("matmul", [t, other], [sh[0], other.shape[1]]);
+    } else if (choice === 8 && sh.length >= 1) {
+      // slice, sometimes strided
+      const step = randInt(r, 1, 3);
+      const starts = sh.map(() => 0);
+      const stops = sh.slice();
+      const steps = sh.map(() => 1);
+      const axis = randInt(r, 0, sh.length);
+      steps[axis] = step;
+      starts[axis] = randInt(r, 0, Math.max(1, sh[axis] - 1));
+      const out = sh.map((e, i) =>
+        i === axis ? Math.max(1, Math.ceil((e - starts[i]) / steps[i])) : e
+      );
+      emit("slice", [t], out, { starts, stops, steps });
+    } else if (choice === 9 && sh.length >= 1) {
+      const axis = randInt(r, 0, sh.length);
+      const pads: [number, number][] = sh.map(() => [0, 0]);
+      const mode = ["constant", "replicate", "reflect"][randInt(r, 0, 3)];
+      // reflect cannot pad wider than extent-1
+      const cap = mode === "reflect" ? Math.max(0, sh[axis] - 1) : 2;
+      pads[axis] = [randInt(r, 0, Math.min(2, cap) + 1), randInt(r, 0, Math.min(2, cap) + 1)];
+      emit("pad", [t], sh.map((e, i) => e + pads[i][0] + pads[i][1]), { pads, mode });
+    } else if (choice === 10 && sh.length >= 1) {
+      const axis = randInt(r, 0, sh.length);
+      if (sh[axis] < 2) {
+        emit("elementwise", [t], sh.slice(), { fn: "relu", nary: 1 });
+      } else {
+        const cut = randInt(r, 1, sh[axis]);
+        const sizes = [cut, sh[axis] - cut];
+        const outs = sizes.map((sz) => sh.map((e, i) => (i === axis ? sz : e)));
+        // split is the only multi-output op; take the first piece onward
+        const id = `t${tid++}`;
+        const id2 = `t${tid++}`;
+        nodes.push([`n${nid++}`, "split", [t.id], [id, id2], { axis, sizes }]);
+        pool.push({ id, shape: outs[0] });
+        pool.push({ id: id2, shape: outs[1] });
+      }
+    } else if (choice === 11 && sh.length >= 1) {
+      // expand a fresh degenerate axis up to t's shape
+      const axis = randInt(r, 0, sh.length);
+      const src = newInput(sh.map((e, i) => (i === axis ? 1 : e)));
+      emit("expand", [src], sh.slice(), { shape: sh.slice() });
+    } else if (choice === 12 && sh.length >= 1) {
+      const perm = sh.map((_, i) => i);
+      emit("transpose", [t], perm.map((p) => sh[p]), { perm });
+    } else if (choice === 13 && sh.length >= 1) {
+      const axes = [randInt(r, 0, sh.length)];
+      const wShape = axes.map((a) => sh[a]);
+      // normalize's affine params must match the normalized axes, and
+      // expansion requires them to be trailing
+      if (axes[0] === sh.length - 1) {
+        const w = newInput(wShape);
+        emit("normalize", [t, w], sh.slice(), {
+          kind: r() < 0.5 ? "layernorm" : "rmsnorm",
+          axes,
+          hasWeight: true,
+          hasBias: false,
+        });
+      } else emit("elementwise", [t], sh.slice(), { fn: "relu", nary: 1 });
+    } else {
+      emit("elementwise", [t], sh.slice(), { fn: "relu", nary: 1 });
+    }
+  }
+  const graph = G(inputs, nodes);
+  // declared shapes for intermediates are unknown; leave empty (inferred)
+  return graph;
 }
 
 export { points };

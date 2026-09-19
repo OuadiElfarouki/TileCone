@@ -1316,8 +1316,8 @@ describe("tiles on different tensors coexist", () => {
     // A is an input tensor, so its bytes land in inputBytes either way; C is
     // the producer output. What matters is that nothing seeded is counted as
     // an intermediate.
-    expect(m.intermediateBytes).toBe(0);
-    expect(m.outputBytes).toBeGreaterThan(0);
+    expect(m.intermediateBytes.value!).toBe(0);
+    expect(m.outputBytes.value!).toBeGreaterThan(0);
   });
 
   it("drops per-part attribution past the cap but still merges every tensor", () => {

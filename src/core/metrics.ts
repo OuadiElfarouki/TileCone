@@ -1,6 +1,6 @@
 import { ResolvedGraph } from "./graph";
 import { DTYPE_BYTES } from "./dtypes";
-import { getOp } from "./ops/index";
+import { getOp, opLabel } from "./ops/index";
 import { OpCtx } from "./ops/types";
 import { PropResult } from "./propagate";
 import { Region, count, disjointify, formatBoxIndices, regionOverlap } from "./region";
@@ -12,6 +12,8 @@ export type TensorReadout = {
   elements: number;
   totalElements: number;
   bytes: number;
+  /** The byte count with source-dtype widening and region widening applied. */
+  byteFigure: Figure;
   boxCount: number;
   /** Elements this cone reads more than once, because two boxes share them.
    * `elements` already counts them once; this is the difference between that
@@ -26,14 +28,97 @@ export type TensorReadout = {
   sliceExprs: string[];
 };
 
+/**
+ * What is known about a figure, in the same vocabulary regions already use.
+ *
+ * A number on its own cannot say which direction it is wrong in, and these
+ * figures are wrong in three different directions:
+ *
+ * - `exact` is a count.
+ * - `upper` is "no more than this". Every byte figure measured over a widened
+ *   region is one: a superset contributes bytes that are not really needed, and
+ *   a region is never a subset of the truth, so the figure is never understated.
+ * - `approximate` is a number that moved in an unknown direction. Only ratios
+ *   are this: widening a region raises the numerator *and* the denominator, so
+ *   an intensity can land either side of the truth. Printing `≤` on one would
+ *   claim a direction it does not have.
+ * - `unknown` has no number at all. A barrier contributes zero FLOPs while the
+ *   mapped operations around it contribute upper bounds over widened regions,
+ *   so their sum is neither a ceiling nor a floor. `value` is `null` rather
+ *   than a partial total, because a partial total is exactly the thing a reader
+ *   would take for the answer.
+ */
+export type FigureStatus = "exact" | "upper" | "approximate" | "unknown";
+
+export type Figure =
+  | { value: number; status: "exact" | "upper" | "approximate"; reasons: string[] }
+  | { value: null; status: "unknown"; reasons: string[] };
+
+/** Worst-case ordering: a sum is only as good as its weakest contribution. */
+const STATUS_ORDER: Record<FigureStatus, number> = {
+  exact: 0,
+  upper: 1,
+  approximate: 2,
+  unknown: 3,
+};
+
+const worst = (a: FigureStatus, b: FigureStatus): FigureStatus =>
+  STATUS_ORDER[a] >= STATUS_ORDER[b] ? a : b;
+
+export function figure(value: number, status: FigureStatus, reasons: string[] = []): Figure {
+  const sorted = [...new Set(reasons)].sort();
+  return status === "unknown"
+    ? { value: null, status, reasons: sorted }
+    : { value, status, reasons: sorted };
+}
+
+/** Sum two figures, keeping the weaker claim of the two. */
+export function addFigures(a: Figure, b: Figure): Figure {
+  const status = worst(a.status, b.status);
+  const reasons = [...a.reasons, ...b.reasons];
+  if (status === "unknown" || a.value === null || b.value === null)
+    return figure(0, "unknown", reasons);
+  return figure(a.value + b.value, status, reasons);
+}
+
+export const sumFigures = (figures: Figure[]): Figure =>
+  figures.reduce(addFigures, figure(0, "exact"));
+
+/**
+ * A ratio of two figures.
+ *
+ * Unknown whenever either side is, because a ratio of an unknown quantity is
+ * not a smaller unknown. Otherwise `approximate` as soon as either side is
+ * inexact: both moved, so the quotient has no direction, which is what the `~`
+ * everywhere else in this app already means.
+ */
+export function ratioFigure(numerator: Figure, denominator: Figure): Figure {
+  const reasons = [...numerator.reasons, ...denominator.reasons];
+  if (numerator.value === null || denominator.value === null)
+    return figure(0, "unknown", reasons);
+  if (denominator.value === 0) return figure(0, numerator.status, reasons);
+  const inexact = numerator.status !== "exact" || denominator.status !== "exact";
+  return figure(numerator.value / denominator.value, inexact ? "approximate" : "exact", reasons);
+}
+
 export type AggregateReadout = {
-  flops: number;
-  inputBytes: number;
-  intermediateBytes: number;
-  outputBytes: number;
+  /**
+   * Arithmetic over the cone, or `unknown` where a barrier is in it.
+   *
+   * The one figure here that can have no number. `flopsFor` returns zero for an
+   * operation nobody described - the only honest answer, since inventing work
+   * would be worse - so a total spanning one is a sum of upper bounds and a
+   * zero, which bounds nothing in either direction.
+   */
+  flops: Figure;
+  /** Distinct graph nodes whose arithmetic is absent from `flops`. */
+  unknownOperations: number;
+  inputBytes: Figure;
+  intermediateBytes: Figure;
+  outputBytes: Figure;
   /** Ideal op-by-op traffic: distinct reads per operation plus its writes.
    * No cross-operation cache reuse; views are modeled as materialized ops. */
-  unfusedBytes: number;
+  unfusedBytes: Figure;
   /**
    * FLOPs per byte of memory traffic, under the two fusion assumptions a
    * kernel author actually chooses between.
@@ -48,25 +133,20 @@ export type AggregateReadout = {
    * somewhere in either world, and leaving it out overstated the ratio on
    * producer-output query.
    */
-  fusedIntensity: number;
-  unfusedIntensity: number;
+  fusedIntensity: Figure;
+  unfusedIntensity: Figure;
   tensors: TensorReadout[];
   /**
    * Whether every figure above is exact.
    *
-   * Each of them is measured over the cone's regions, so each inherits any
-   * over-approximation in them: a superset region contributes bytes it does not
-   * really need and FLOPs for work that is not really done, which makes these
-   * upper bounds rather than counts. The per-tensor rows have always carried
-   * their own `exact` flag, and every other layer refuses to let an
-   * approximation pass as truth - this field is what extends that rule to the
-   * totals, which were the one place a bound was printed as a number.
-   *
-   * False means "no more than this", never "this". It is never a *lower* bound,
-   * because a region is never a subset of the truth.
+   * Derived from the figures rather than tracked beside them, on the same
+   * principle their own statuses follow: two places that can disagree about
+   * whether a number is a count eventually will. It stays because callers
+   * routinely want the one-line answer - does anything here need qualifying -
+   * without inspecting seven statuses to find out.
    */
   exact: boolean;
-  /** Why the totals are bounds, deduplicated across the contributing rows. */
+  /** Why the totals are qualified, deduplicated across every figure. */
   reasons: string[];
 };
 
@@ -94,13 +174,23 @@ export function coneReadout(graph: ResolvedGraph, prop: PropResult): TensorReado
     const t = graph.tensors[tid];
     const elements = count(tr.region);
     const exprs = regionSliceExprs(t.name, tr.region);
+    const bytes = elements * DTYPE_BYTES[t.dtype];
+    const byteReasons = [
+      ...tr.region.reasons,
+      ...(t.dtypeWidening ? [t.dtypeWidening.note] : []),
+    ];
     tensors.push({
       tensorId: tid,
       name: t.name,
       depth: tr.depth,
       elements,
       totalElements: (t.resolved ?? []).reduce((a, b) => a * b, 1),
-      bytes: elements * DTYPE_BYTES[t.dtype],
+      bytes,
+      byteFigure: figure(
+        bytes,
+        tr.region.exact && !t.dtypeWidening ? "exact" : "upper",
+        byteReasons
+      ),
       boxCount: tr.region.boxes.length,
       overlap: regionOverlap(tr.region).summed - elements,
       exact: tr.region.exact,
@@ -115,6 +205,12 @@ export function coneReadout(graph: ResolvedGraph, prop: PropResult): TensorReado
 
 export function computeMetrics(graph: ResolvedGraph, back: PropResult): AggregateReadout {
   let flops = 0;
+  let flopsExact = true;
+  const flopsReasons = new Set<string>();
+  // Nodes in this cone whose arithmetic nobody described. One of them is enough
+  // to make the FLOP total meaningless; they are collected rather than counted
+  // so the reason can name them.
+  const unknownWork = new Map<string, string>();
   let unfusedBytes = 0;
   let trafficExact = true;
   const trafficReasons = new Set<string>();
@@ -145,6 +241,18 @@ export function computeMetrics(graph: ResolvedGraph, back: PropResult): Aggregat
           } : region);
         });
       }
+      // An operation that cannot say what it computes cannot say what it costs.
+      // Its `flopsFor` returns zero, which is the only honest answer and not a
+      // contribution to a total: recording the node here is what stops that
+      // zero from being summed in beside real upper bounds as if it were one.
+      if (spec.unknownWork) {
+        unknownWork.set(node.id, opLabel(node));
+        return;
+      }
+      if (!tr.region.exact) {
+        flopsExact = false;
+        tr.region.reasons.forEach((reason) => flopsReasons.add(reason));
+      }
       if (spec.flopsForRegion) flops += spec.flopsForRegion(slot, tr.region, ctx);
       else if (spec.flopsPerElement)
         flops += count(tr.region) * spec.flopsPerElement(slot, ctx);
@@ -158,33 +266,53 @@ export function computeMetrics(graph: ResolvedGraph, back: PropResult): Aggregat
   }
 
   const tensors = coneReadout(graph, back);
-  let inputBytes = 0;
-  let intermediateBytes = 0;
-  let outputBytes = 0;
-  for (const t of tensors) {
-    if (t.isInput) inputBytes += t.bytes;
-    else if (back.roots.includes(t.tensorId)) outputBytes += t.bytes;
-    else intermediateBytes += t.bytes;
-  }
+  // Each byte bucket carries only the rows it actually summed. A widened weight
+  // does not make the output-byte figure a bound, and saying it did would put a
+  // `\u2264` on a number that is a count.
+  const bucketOf = (t: TensorReadout) =>
+    t.isInput ? "input" : back.roots.includes(t.tensorId) ? "output" : "intermediate";
+  const bytesIn = (bucket: string): Figure => {
+    const rows = tensors.filter((t) => bucketOf(t) === bucket);
+    return sumFigures(rows.map((t) => t.byteFigure));
+  };
+
+  const inputBytes = bytesIn("input");
+  const intermediateBytes = bytesIn("intermediate");
+  const outputBytes = bytesIn("output");
+
+  // Unknown beats every other claim: a total that skipped an operation's
+  // arithmetic entirely is not an upper bound on the work, and a reader who
+  // saw one number would have no way to tell.
+  const flopsFigure: Figure = unknownWork.size
+    ? figure(0, "unknown", [...unknownWork.values()].map((op) => `unknown work in ${op}`))
+    : figure(flops, flopsExact ? "exact" : "upper", [...flopsReasons]);
+
+  const unfusedFigure = figure(
+    unfusedBytes,
+    trafficExact ? "exact" : "upper",
+    [...trafficReasons]
+  );
+
   // Traffic, not just what is read: the tile is written in both worlds.
-  const fusedBytes = inputBytes + outputBytes;
-  // Any inexact row taints every total, because each total sums over all of
-  // them. Taking the reasons from the rows rather than from `back.reasons`
-  // keeps the explanation to the regions these figures were actually measured
-  // on: propagation may have recorded a reason on a tensor this cone reached
-  // but no metric counted.
-  const inexact = tensors.filter((tensor) => !tensor.exact);
-  const reasons = [...new Set([...inexact.flatMap((tensor) => tensor.reasons), ...trafficReasons])].sort();
-  return {
-    flops,
+  const fusedBytes = addFigures(inputBytes, outputBytes);
+  const figures = [
+    flopsFigure,
     inputBytes,
     intermediateBytes,
     outputBytes,
-    unfusedBytes,
-    fusedIntensity: fusedBytes > 0 ? flops / fusedBytes : 0,
-    unfusedIntensity: unfusedBytes > 0 ? flops / unfusedBytes : 0,
+    unfusedFigure,
+  ];
+  return {
+    flops: flopsFigure,
+    unknownOperations: unknownWork.size,
+    inputBytes,
+    intermediateBytes,
+    outputBytes,
+    unfusedBytes: unfusedFigure,
+    fusedIntensity: ratioFigure(flopsFigure, fusedBytes),
+    unfusedIntensity: ratioFigure(flopsFigure, unfusedFigure),
     tensors,
-    exact: inexact.length === 0 && trafficExact,
-    reasons,
+    exact: figures.every((f) => f.status === "exact"),
+    reasons: [...new Set(figures.flatMap((f) => f.reasons))].sort(),
   };
 }

@@ -194,6 +194,19 @@ export interface OpSpec {
    */
   oracleTerms?(outSlot: number, outIndex: number[], ctx: OpCtx): (number[] | null)[][];
 
+  /**
+   * This operation's arithmetic is not known, so no total may span it.
+   *
+   * Different from returning zero, which is what a data-movement operation
+   * legitimately costs. A barrier also returns zero, but because nobody
+   * described what it computes - and a total that added that zero to the upper
+   * bounds around it would be neither a ceiling nor a floor while looking
+   * exactly like both. Declaring it here rather than switching on the op name
+   * in `computeMetrics` keeps the metric layer dispatching through the registry
+   * like every other layer.
+   */
+  unknownWork?: boolean;
+
   /** Approximate FLOPs to compute the given output box. Data movement ops return 0. */
   flopsFor(outSlot: number, outBox: Box, ctx: OpCtx): number;
 
