@@ -6,7 +6,7 @@ import { expandNode } from "../core/expand";
 import { PropResult, mergeProps } from "../core/propagate";
 import { supplyOf, type Supply } from "../core/plan/interfaces";
 import { tilePlan, type TaskRef, type TilePlan } from "../core/plan/plan";
-import { isTile, tileFamily } from "../core/plan/tile-family";
+import { isTile } from "../core/plan/tile-family";
 import {
   Box,
   Region,
@@ -231,6 +231,17 @@ const WORKSPACE_HISTORY_LIMIT = 40;
 
 function planEditOf(state: Pick<State, "planTiles" | "planTask">): PlanEdit {
   return { tiles: state.planTiles, task: state.planTask };
+}
+
+/** Whether two plan edits divide the same tensors the same way and inspect the same task. */
+function samePlanEdit(a: PlanEdit, b: PlanEdit): boolean {
+  const left = Object.keys(a.tiles).sort();
+  const right = Object.keys(b.tiles).sort();
+  return (
+    left.length === right.length &&
+    left.every((id, i) => id === right[i] && sameNumbers(a.tiles[id], b.tiles[id])) &&
+    sameTask(a.task, b.task)
+  );
 }
 
 const sameNumbers = (a: readonly number[], b: readonly number[]): boolean =>
@@ -471,7 +482,11 @@ type State = {
    * does not tile yet is tiled at `defaultTile` first; a graph input has no
    * tasks and is ignored.
    */
-  planTaskAt: (tensorId: string, element: number[], defaultTile: number[]) => void;
+  planTaskAt: (tensorId: string, element: number[]) => void;
+  /** Divide `tensorId` into tiles of `tile` and inspect the task holding `element`. */
+  setPlanTileAt: (tensorId: string, tile: number[], element: number[]) => void;
+  /** Tile a produced tensor at the default extents, leaving the inspected task alone. */
+  tilePlanTensor: (tensorId: string) => void;
   /** Step the inspected task `delta` tiles along `axis`, stopping at the grid's edge. */
   movePlanTask: (axis: number, delta: number, record?: boolean) => void;
   setFocusNode: (node: { kind: "tensor" | "op"; id: string } | null) => void;
@@ -800,6 +815,53 @@ function derivePlan(
   return { planTiles: valid, planTask: kept, plan, planSupply: kept ? supplyOf(plan, kept) : null };
 }
 
+/**
+ * The extents a tensor is first divided at: the tile the canvas is drawing on
+ * its visible axes, and one element on the others, which is how a kernel grid
+ * usually assigns batch and head.
+ *
+ * The canvas grid seeds a plan and never steers it again. Retiling on a detail
+ * change would make a plan a function of the view, so a plan written down at
+ * one zoom would mean something else at another.
+ */
+export function defaultPlanTile(
+  resolved: ResolvedGraph,
+  tensorId: string,
+  tileScale: number,
+  graphPx: number
+): number[] {
+  const shape = resolved.tensors[tensorId].resolved!;
+  const { rowAxis, colAxis } = viewAxes(shape);
+  const tile = tileOf(shape, tileScale, graphPx);
+  return shape.map((extent, axis) =>
+    axis === rowAxis || axis === colAxis ? Math.min(extent, tile) : 1
+  );
+}
+
+/**
+ * Tiling a consumer also tiles the produced tensors it reads.
+ *
+ * A task's producers cannot be named while the tensor holding them is untiled,
+ * and needing a second act before the view answers anything left the first
+ * click at a dead end. The extents are defaults like any other and can be
+ * changed or removed.
+ */
+function withProducedInputs(
+  state: Pick<State, "resolved" | "tileScale" | "graphPx">,
+  tiles: Record<string, number[]>,
+  tensorId: string
+): Record<string, number[]> {
+  const resolved = state.resolved!;
+  const producer = resolved.tensors[tensorId].producer;
+  const node = producer && resolved.nodes.find((n) => n.id === producer.nodeId);
+  if (!node) return tiles;
+  const next = { ...tiles };
+  for (const input of node.inputs)
+    if (resolved.tensors[input]?.producer && !next[input])
+      next[input] = defaultPlanTile(resolved, input, state.tileScale, state.graphPx);
+  return next;
+}
+
 /** The tile of a tiling that contains `element`. */
 const tileContaining = (tile: readonly number[], element: readonly number[]): number[] =>
   element.map((i, axis) => Math.floor(i / tile[axis]));
@@ -840,6 +902,48 @@ function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
     // A plan names tensors and tile coordinates in one graph, as the selection does.
     ...NO_PLAN,
   };
+}
+
+/**
+ * Divide `tensorId` at `tile` and inspect the task holding `element`, together
+ * with one history entry. Shared by the click that takes the tile under the
+ * pointer and the drag that sets the extents first.
+ */
+function inspectTask(
+  state: State,
+  set: (partial: Partial<State>) => void,
+  tensorId: string,
+  tile: number[],
+  element: number[]
+): void {
+  const resolved = state.resolved!;
+  try {
+    tilePlan(resolved, { [tensorId]: tile });
+  } catch {
+    return; // callers offer extents from a gesture or a field; an invalid one changes nothing
+  }
+  const task = { tensorId, coord: tileContaining(tile, element) };
+  const settled =
+    sameNumbers(state.planTiles[tensorId] ?? [], tile) && sameTask(state.planTask, task);
+  if (settled) {
+    // Nothing moved. The operation highlight still follows the task, so that
+    // clicking a tile again after looking elsewhere brings its row back.
+    const selectedOp = operationForTensor(resolved, tensorId);
+    if (selectedOp !== state.selectedOp) set({ selectedOp });
+    return;
+  }
+  const tiles = withProducedInputs(state, { ...state.planTiles, [tensorId]: tile }, tensorId);
+  const next = derivePlan(resolved, tiles, task);
+  if (!next.planTask) return;
+  set({
+    workspaceHistory: appendWorkspaceHistory(state.workspaceHistory, {
+      selection: state.selection,
+      tensorOffsets: state.tensorOffsets,
+      plan: planEditOf(state),
+    }),
+    selectedOp: operationForTensor(resolved, tensorId),
+    ...next,
+  });
 }
 
 export const useStore = create<State>((set, get) => ({
@@ -1149,6 +1253,13 @@ export const useStore = create<State>((set, get) => ({
       preview: null,
       ...recompute(resolved, prev.selection, { selection, perBox, entangled }),
       ...derivePlan(resolved, prev.plan.tiles, prev.plan.task),
+      /* One history holds tile edits and plan edits alike, so a step back can
+         restore something the visible panel does not show. Undo then looks as
+         if it did nothing and the change is found later by accident, so the
+         view the restored edit belongs to is brought forward with it. */
+      ...(samePlanEdit(planEditOf(get()), prev.plan)
+        ? {}
+        : { inspectorTab: "plan" as InspectorTab }),
     });
   },
 
@@ -1334,38 +1445,31 @@ export const useStore = create<State>((set, get) => ({
     });
   },
 
-  planTaskAt: (tensorId, element, defaultTile) => {
+  planTaskAt: (tensorId, element) => {
     const state = get();
-    const { resolved } = state;
-    const tensor = resolved?.tensors[tensorId];
-    if (!resolved || !tensor?.producer) return;
-    let tile = state.planTiles[tensorId];
-    if (!tile) {
-      try {
-        tileFamily(tensorId, tensor.resolved!, defaultTile);
-      } catch {
-        return;
-      }
-      tile = [...defaultTile];
-    }
-    const task = { tensorId, coord: tileContaining(tile, element) };
-    const addsFamily = !(tensorId in state.planTiles);
-    if (!addsFamily && sameTask(state.planTask, task)) {
-      const selectedOp = operationForTensor(resolved, tensorId);
-      if (selectedOp !== state.selectedOp) set({ selectedOp });
-      return;
-    }
-    const next = derivePlan(resolved, { ...state.planTiles, [tensorId]: tile }, task);
-    if (!next.planTask) return;
-    set({
-      workspaceHistory: appendWorkspaceHistory(state.workspaceHistory, {
-        selection: state.selection,
-        tensorOffsets: state.tensorOffsets,
-        plan: planEditOf(state),
-      }),
-      selectedOp: operationForTensor(resolved, tensorId),
-      ...next,
-    });
+    const resolved = state.resolved;
+    if (!resolved?.tensors[tensorId]?.producer) return;
+    const tile =
+      state.planTiles[tensorId] ??
+      defaultPlanTile(resolved, tensorId, state.tileScale, state.graphPx);
+    inspectTask(state, set, tensorId, tile, element);
+  },
+
+  setPlanTileAt: (tensorId, tile, element) => {
+    const state = get();
+    const resolved = state.resolved;
+    if (!resolved?.tensors[tensorId]?.producer) return;
+    inspectTask(state, set, tensorId, tile, element);
+  },
+
+  tilePlanTensor: (tensorId) => {
+    const state = get();
+    const resolved = state.resolved;
+    if (!resolved?.tensors[tensorId]?.producer || state.planTiles[tensorId]) return;
+    get().setPlanTile(
+      tensorId,
+      defaultPlanTile(resolved, tensorId, state.tileScale, state.graphPx)
+    );
   },
 
   movePlanTask: (axis, delta, record = true) => {

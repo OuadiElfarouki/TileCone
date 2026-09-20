@@ -105,8 +105,12 @@ export type Layer = {
  * of an outlined tile is the part the task does not read.
  */
 export type PlanPaint = {
-  /** The plan's tile extents on the visible row and column axes, in elements. */
-  lattice: { rows: number; cols: number } | null;
+  /**
+   * The tile extents on the visible row and column axes, in elements.
+   * `proposed` draws them fainter: the tensor is not tiled yet and this is the
+   * cover a click would create, not part of the plan.
+   */
+  lattice: { rows: number; cols: number; proposed?: boolean } | null;
   /** Needed producer tiles; `definite` false draws the outline dashed. */
   tiles: { box: Box; definite: boolean }[];
 };
@@ -739,7 +743,9 @@ export function drawGrid(
     const strideC = latticeStride(lattice.cellW, lattice.count.cols, viewScale);
     const strideR = latticeStride(lattice.cellH, lattice.count.rows, viewScale);
     if (strideC < lattice.count.cols || strideR < lattice.count.rows) {
-      ctx.strokeStyle = dark ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.10)";
+      ctx.strokeStyle = plan?.lattice?.proposed
+        ? dark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)"
+        : dark ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.10)";
       ctx.lineWidth = 1 / viewScale;
       ctx.beginPath();
       for (let c = strideC; c < lattice.count.cols; c += strideC) {

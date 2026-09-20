@@ -28,6 +28,9 @@ export function GridControls(): React.ReactElement | null {
   const tileScale = useStore((s) => s.tileScale);
   const setTileScale = useStore((s) => s.setTileScale);
   const snapToGrid = useStore((s) => s.snapToGrid);
+  /* A plan tile is a quantity, so a plan drag always snaps. The toggle has
+     nothing to act on here and says so instead of appearing to work. */
+  const planView = useStore((s) => s.inspectorTab === "plan");
   const setSnapToGrid = useStore((s) => s.setSnapToGrid);
   const axisMode = useStore((s) => s.axisMode);
   const setAxisMode = useStore((s) => s.setAxisMode);
@@ -82,10 +85,15 @@ export function GridControls(): React.ReactElement | null {
         title={`tile detail, all tensors - ${detail.labels.join(" · ")}`}
       />
       <button
-        className={`mini toggle${snapToGrid ? " on" : ""}`}
-        aria-pressed={snapToGrid}
+        className={`mini toggle${snapToGrid && !planView ? " on" : ""}`}
+        aria-pressed={planView ? true : snapToGrid}
+        disabled={planView}
         onClick={() => setSnapToGrid(!snapToGrid)}
-        title="snap a drawn box out to whole tiles; off cuts an exact element range"
+        title={
+          planView
+            ? "the Plan view always snaps: a tile is a quantity, not a highlight"
+            : "snap a drawn box out to whole tiles; off cuts an exact element range"
+        }
       >
         snap
       </button>
