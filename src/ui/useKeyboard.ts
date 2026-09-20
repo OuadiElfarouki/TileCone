@@ -76,6 +76,13 @@ export function useKeyboard({
         }
         if (ownsArrowKeys(el)) return; // an open menu cancels itself
         if (s.dragging) return; // the card cancels its own rubber-band
+        if (s.inspectorTab === "plan" && s.planTask) {
+          // The innermost thing the Plan view is pointing at. The tilings stay:
+          // clearing those is the panel's explicit act, as clearing tiles is.
+          e.preventDefault();
+          s.selectPlanTask(null);
+          return;
+        }
         if (s.pinnedBox !== null || s.focusedBox !== null) {
           s.clearFocus();
           return;

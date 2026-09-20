@@ -22,10 +22,10 @@ import {
   type ProducerNeed,
 } from "../core/plan/interfaces";
 import type { TaskRef, TilePlan } from "../core/plan/plan";
+import type { Region } from "../core/region";
 import { tileBox, tileOrdinal, tiles, type TileFamily } from "../core/plan/tile-family";
 import { count, formatBoxIndices } from "../core/region";
 import { formatBytes, formatFigure } from "./format";
-import { tileOf } from "./grid";
 import { boxColor, rgbCss } from "./palette";
 import { useDark, useStore } from "./store";
 
@@ -51,14 +51,8 @@ export const formatTileExtents = (tile: readonly number[]): string =>
   tile.length ? tile.join(" × ") : "scalar";
 
 /** A task by tensor name and tile coordinate. The element slice goes beside it. */
-export const taskName = (name: string, coord: readonly number[]): string => `${name} (${coord.join(", ")})`;
-
-/** The displayed tile on a tensor's visible axes, one element on the others. */
-export function defaultPlanTile(shape: number[], rowAxis: number, colAxis: number, tile: number): number[] {
-  return shape.map((extent, axis) =>
-    axis === rowAxis || axis === colAxis ? Math.min(extent, tile) : 1
-  );
-}
+export const taskName = (name: string, coord: readonly number[]): string =>
+  coord.length ? `${name} (${coord.join(", ")})` : name;
 
 function TileExtentsInput({
   tensorId,
@@ -129,10 +123,15 @@ function TiledTensors({ plan }: { plan: TilePlan | null }): React.ReactElement {
       <div className="ins-title">Tiled tensors</div>
       {families.length === 0 ? (
         <p className="hint">
-          Nothing is tiled yet. Click a produced tensor on the canvas to tile it at the displayed
-          tile size and inspect the task under the pointer.
+          Draw a rectangle on a produced tensor to divide it, or click one to divide it at the size
+          the canvas is drawing. Graph inputs have no tasks and cannot be tiled.
         </p>
       ) : (
+        <>
+        <p className="hint">
+          Click a tile to inspect its task; the arrow keys step it. A tensor is divided once: clear
+          it here, or type new extents, to divide it differently.
+        </p>
         <ul className="plan-list">
           {families.map((family) => {
             const tensor = resolved.tensors[family.tensorId];
@@ -160,6 +159,7 @@ function TiledTensors({ plan }: { plan: TilePlan | null }): React.ReactElement {
             );
           })}
         </ul>
+        </>
       )}
     </div>
   );
@@ -202,58 +202,70 @@ function ProducerRow({
   );
 }
 
-function DemandRow({
-  demand,
+/** Producer tasks listed before the rest are folded behind a control. */
+export const PRODUCERS_SHOWN = 8;
+
+/**
+ * One tensor a task reads, with a line per operand slot that reads it.
+ *
+ * Grouped by tensor rather than by slot because the producers, the supplier and
+ * the action that tiles it are facts about the tensor. Listed per slot, an
+ * operation reading one tensor twice printed its whole producer list twice.
+ */
+function DemandGroup({
+  tensorId,
+  demands,
   node,
   plan,
   producers,
   onSelect,
 }: {
-  demand: Demand;
+  tensorId: string;
+  demands: Demand[];
   node: Node;
   plan: TilePlan;
   producers: ProducerNeed[];
   onSelect: (task: TaskRef) => void;
 }): React.ReactElement {
-  const resolved = plan.graph;
-  const tensor = resolved.tensors[demand.tensorId];
-  const tileScale = useStore((s) => s.tileScale);
-  const graphPx = useStore((s) => s.graphPx);
-  const setPlanTile = useStore((s) => s.setPlanTile);
-  const bytes = byteFigure(tensor, count(demand.region), demand.region);
-  const family = plan.families.get(demand.tensorId);
-  const mine = producers.filter((p) => p.task.tensorId === demand.tensorId);
-  const slot = node.inputs.length > 1 ? `arg${demand.slot} · ` : "";
+  const tensor = plan.graph.tensors[tensorId];
+  const tilePlanTensor = useStore((s) => s.tilePlanTensor);
+  const [all, setAll] = useState(false);
+  const family = plan.families.get(tensorId);
+  const mine = producers.filter((p) => p.task.tensorId === tensorId);
+  const shown = all ? mine : mine.slice(0, PRODUCERS_SHOWN);
+  const named = demands.length > 1 || node.inputs.length > 1;
+
+  // One element counts once however many slots read it, as the family figures
+  // count it, so the bytes here and under the family mean the same thing.
+  const union: Region = {
+    boxes: demands.flatMap((d) => d.region.boxes),
+    exact: demands.every((d) => d.region.exact),
+    reasons: [...new Set(demands.flatMap((d) => d.region.reasons))],
+  };
 
   return (
     <div className="plan-demand">
       <div className="plan-demand-head">
         <code>{tensor.name}</code>
         <span className="muted">
-          {slot}
-          {formatFigure(bytes, formatBytes)}
+          {named ? `${demands.map((d) => `arg${d.slot}`).join(", ")} · ` : ""}
+          {formatFigure(byteFigure(tensor, count(union), union), formatBytes)}
         </span>
-        {!demand.region.exact && (
-          <span className="badge approx" title={demand.region.reasons.join("; ")}>≈</span>
+        {!union.exact && (
+          <span className="badge approx" title={union.reasons.join("; ")}>≈</span>
         )}
       </div>
-      <pre className="plan-slice">{regionSliceExprs(tensor.name, demand.region).join("\n")}</pre>
-      {demand.supplier === "input" ? (
+      {demands.map((d) => (
+        <pre className="plan-slice" key={d.slot}>
+          {regionSliceExprs(tensor.name, d.region).join("\n")}
+        </pre>
+      ))}
+      {demands[0].supplier === "input" ? (
         <p className="hint">Graph input: read from memory, produced by no task.</p>
-      ) : demand.supplier === "unplanned" ? (
+      ) : demands[0].supplier === "unplanned" ? (
         <p className="hint">
           {tensor.name} is not tiled, so the tasks that produce it are not named.{" "}
-          <button
-            className="mini"
-            onClick={() => {
-              const shape = tensor.resolved!;
-              const rank = shape.length;
-              setPlanTile(
-                demand.tensorId,
-                defaultPlanTile(shape, rank - 2, rank - 1, tileOf(shape, tileScale, graphPx))
-              );
-            }}
-          >
+          <button className="mini" onClick={() => tilePlanTensor(tensorId)}>
             tile {tensor.name}
           </button>
         </p>
@@ -264,7 +276,7 @@ function DemandRow({
               needs {mine.length} of {family.count} {tensor.name} task{family.count === 1 ? "" : "s"}
             </p>
             <ul className="plan-list">
-              {mine.map((need) => (
+              {shown.map((need) => (
                 <ProducerRow
                   key={tileOrdinal(family, need.task.coord)}
                   need={need}
@@ -274,6 +286,11 @@ function DemandRow({
                 />
               ))}
             </ul>
+            {mine.length > PRODUCERS_SHOWN && (
+              <button className="mini" onClick={() => setAll(!all)}>
+                {all ? "show fewer" : `show all ${mine.length}`}
+              </button>
+            )}
           </>
         )
       )}
@@ -495,9 +512,8 @@ export function PlanPanel(): React.ReactElement {
   return (
     <div className="ins-tabpanel" role="region" id="ins-panel-plan" aria-labelledby="ins-tab-plan">
       <p className="tab-note">
-        A plan divides produced tensors into tiles, one task per tile, and each task computes its
-        tile completely. The figures are exact for the plan as given, or bounded with the reason
-        named. Click a tile on the canvas to inspect its task; arrow keys step it.
+        A plan divides produced tensors into tiles, one task per tile, each computing its tile
+        completely. Figures are exact for the plan as given, or bounded with the reason named.
       </p>
       <TiledTensors plan={plan} />
       {plan && task && family && tensor && node && supply ? (
@@ -517,10 +533,11 @@ export function PlanPanel(): React.ReactElement {
             {supply.demand.length === 0 ? (
               <p className="hint">This task reads nothing.</p>
             ) : (
-              supply.demand.map((d) => (
-                <DemandRow
-                  key={`${d.tensorId}:${d.slot}`}
-                  demand={d}
+              [...new Map(supply.demand.map((d) => [d.tensorId, d])).keys()].map((tensorId) => (
+                <DemandGroup
+                  key={tensorId}
+                  tensorId={tensorId}
+                  demands={supply.demand.filter((d) => d.tensorId === tensorId)}
                   node={node}
                   plan={plan}
                   producers={supply.producers}

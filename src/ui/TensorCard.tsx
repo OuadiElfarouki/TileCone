@@ -98,6 +98,43 @@ export function visibleApproximation(...regions: (Region | undefined)[]): {
   };
 }
 
+/**
+ * What a gesture in the Plan view does.
+ *
+ * A tensor is divided once. While it has no tiling, a drag draws the tile the
+ * whole tensor is covered by and a press without movement takes the proposed
+ * one. Once it has a tiling, every gesture inspects the task under the press:
+ * redrawing would move the lattice under the reader mid-study and change what
+ * the figures beside it are about. Dividing it differently is a deliberate act,
+ * by clearing the tiling or typing the extents.
+ *
+ * A drag always snaps to the drawn lattice, whatever the snap toggle says. An
+ * extent is a quantity here, not a highlight, and `73 x 128` from wherever a
+ * pointer stopped is not a tiling anyone chose.
+ */
+/** @internal Pure interaction seam exported for plan-view tests. */
+export function planGesture(
+  shape: number[],
+  cfg: ViewCfg,
+  geom: GridGeom,
+  drag: CellDrag,
+  tiled: boolean
+): { kind: "inspect"; element: number[] } | { kind: "divide"; tile: number[]; element: number[] } {
+  const moved = drag.r0 !== drag.r1 || drag.c0 !== drag.c1;
+  if (tiled || !moved)
+    return {
+      kind: "inspect",
+      element: planElementFromCell(shape, cfg, geom, { row: drag.r0, col: drag.c0 }),
+    };
+  const { rowAxis, colAxis } = viewAxes(shape);
+  const box = selectionBoxFromDrag(shape, cfg, geom, drag, true);
+  const extentOn = (axis: number) => (axis >= 0 ? box[axis].hi - box[axis].lo : 1);
+  const tile = shape.map(() => 1);
+  if (rowAxis >= 0) tile[rowAxis] = extentOn(rowAxis);
+  if (colAxis >= 0) tile[colAxis] = extentOn(colAxis);
+  return { kind: "divide", tile, element: box.map((interval) => interval.lo) };
+}
+
 const CONE_ALPHA = 0.72;
 const previewAlpha = (depth: number) =>
   (0.22 * CONE_ALPHA) / (1 + 0.35 * Math.max(0, depth - 1));
@@ -353,6 +390,8 @@ export function buildPlanPaint({
   dark,
   plan,
   supply,
+  proposed,
+  pointer,
 }: {
   tensorId: string;
   rowAxis: number;
@@ -360,6 +399,10 @@ export function buildPlanPaint({
   dark: boolean;
   plan: TilePlan | null;
   supply: Supply | null;
+  /** Extents a click would divide this tensor at, while the plan does not tile it. */
+  proposed?: number[] | null;
+  /** The tile under the pointer, or the band being dragged out. */
+  pointer?: Region | null;
 }): { layers: Layer[]; paint: PlanPaint } {
   const family = plan?.families.get(tensorId);
   const hue = boxColor(0, dark);
@@ -389,10 +432,16 @@ export function buildPlanPaint({
         .filter((p) => p.task.tensorId === tensorId)
         .map((p) => ({ box: tileBox(family, p.task.coord), definite: p.definite }))
     : [];
-  const lattice = family
+  // What the gesture would take, outlined in the task hue: it is about to
+  // become the inspected tile, not a producer of one.
+  if (pointer) layers.push({ region: pointer, color: hue, alpha: 0.2, hatch: false, outline: true });
+
+  const extents = family ? family.tile : proposed;
+  const lattice = extents
     ? {
-        rows: rowAxis >= 0 ? family.tile[rowAxis] : 1,
-        cols: colAxis >= 0 ? family.tile[colAxis] : 1,
+        rows: rowAxis >= 0 ? extents[rowAxis] : 1,
+        cols: colAxis >= 0 ? extents[colAxis] : 1,
+        ...(family ? {} : { proposed: true }),
       }
     : null;
   return { layers, paint: { lattice, tiles } };
@@ -445,11 +494,14 @@ export function TensorCard({
   const plan = useStore((s) => s.plan);
   const planSupply = useStore((s) => s.planSupply);
   const planTaskAt = useStore((s) => s.planTaskAt);
+  const setPlanTileAt = useStore((s) => s.setPlanTileAt);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const previewKeyRef = useRef<string | null>(null);
   const [drag, setDrag] = useState<{ r0: number; c0: number; r1: number; c1: number } | null>(null);
   const [hover, setHover] = useState<string | null>(null);
+  /** The element under the pointer: the Plan view outlines the tile a click takes. */
+  const [hoverCell, setHoverCell] = useState<{ row: number; col: number } | null>(null);
 
   const geom = useMemo(
     () => gridGeometry(shape, cfg, tileScale, graphPx),
@@ -475,6 +527,42 @@ export function TensorCard({
   const fwd = forwardRes?.tensors.get(tensor.id);
   const dark = useDark();
 
+  /** The extents a click would divide this tensor at while it is untiled. */
+  const planProposal = useMemo(
+    () =>
+      shape.map((extent, axis) =>
+        axis === rowAxis || axis === colAxis ? Math.min(extent, geom.tile) : 1
+      ),
+    [shape, rowAxis, colAxis, geom.tile]
+  );
+
+  const commitPlan = (d: CellDrag) => {
+    if (!tensor.producer) return;
+    const gesture = planGesture(shape, cfg, geom, d, !!plan?.families.has(tensor.id));
+    if (gesture.kind === "inspect") planTaskAt(tensor.id, gesture.element);
+    else setPlanTileAt(tensor.id, gesture.tile, gesture.element);
+  };
+
+  /** The tile the pointer is over, or the band being dragged, in the Plan view. */
+  const planPointer = useMemo(() => {
+    if (!planView || !tensor.producer) return null;
+    const tiled = !!plan?.families.get(tensor.id);
+    const moved = drag && (drag.r0 !== drag.r1 || drag.c0 !== drag.c1);
+    // The tile as it will commit. A tensor that already has a tiling cannot be
+    // redrawn, so a drag over one previews the task it will inspect, not a band.
+    if (drag && moved && !tiled) return fromBox(selectionBoxFromDrag(shape, cfg, geom, drag, true));
+    const cell = drag ? { row: drag.r0, col: drag.c0 } : hoverCell;
+    if (!cell) return null;
+    const extents = plan?.families.get(tensor.id)?.tile ?? planProposal;
+    const element = planElementFromCell(shape, cfg, geom, cell);
+    return fromBox(
+      element.map((index, axis) => {
+        const lo = Math.floor(index / extents[axis]) * extents[axis];
+        return iv(lo, Math.min(lo + extents[axis], shape[axis]));
+      })
+    );
+  }, [planView, tensor.producer, tensor.id, drag, hoverCell, plan, planProposal, shape, cfg, geom]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -486,6 +574,8 @@ export function TensorCard({
         dark,
         plan,
         supply: planSupply,
+        proposed: tensor.producer ? planProposal : null,
+        pointer: planPointer,
       });
       drawGrid(canvas, shape, cfg, geom, layers, dark, renderScale, drawScale, paint);
       return;
@@ -535,8 +625,11 @@ export function TensorCard({
     planView,
     plan,
     planSupply,
+    planPointer,
+    planProposal,
     rowAxis,
     colAxis,
+    tensor.producer,
   ]);
 
   useEffect(() => {
@@ -596,22 +689,11 @@ export function TensorCard({
    * on the visible axes and one element on the others: one task per hidden-axis
    * index, as a kernel grid usually assigns batch and head.
    */
-  const inspectTaskAt = (cell: { row: number; col: number }) => {
-    const element = planElementFromCell(shape, cfg, geom, cell);
-    const defaultTile = shape.map((extent, axis) =>
-      axis === rowAxis || axis === colAxis ? Math.min(extent, geom.tile) : 1
-    );
-    planTaskAt(tensor.id, element, defaultTile);
-  };
-
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const cell = elementFromEvent(e, canvasRef.current!, geom);
     if (!cell) return;
     e.preventDefault();
-    if (planView) {
-      inspectTaskAt(cell);
-      return;
-    }
+    if (planView && !tensor.producer) return; // a graph input has no tasks to divide
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     if (previewKeyRef.current !== null) requestPreview(null);
     previewKeyRef.current = null;
@@ -630,6 +712,7 @@ export function TensorCard({
       const box = dragToBox({ r0: cell.row, c0: cell.col, r1: cell.row, c1: cell.col });
       const key = formatBoxIndices(box);
       setHover(`(${key})`);
+      setHoverCell(cell);
       if (planView) return; // the Plan view has no cone preview
       if (!drag && previewKeyRef.current !== key) {
         previewKeyRef.current = key;
@@ -645,6 +728,7 @@ export function TensorCard({
   const onPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!drag) return;
     setDrag(null);
+    if (planView) return commitPlan(drag);
     commit(dragToBox(drag), e);
   };
 
@@ -656,6 +740,7 @@ export function TensorCard({
 
   const onLeave = () => {
     setHover(null);
+    setHoverCell(null);
     if (previewKeyRef.current !== null) requestPreview(null);
     previewKeyRef.current = null;
   };
