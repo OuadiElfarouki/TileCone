@@ -12,6 +12,23 @@ function clone(g: Graph): Graph {
   return JSON.parse(JSON.stringify({ nodes: g.nodes, tensors: g.tensors, params: g.params }));
 }
 
+/** Allocate generated identities hygienically while keeping the old readable
+ * spelling whenever it is available. `$` is legal in authored identifiers so
+ * a prefix alone is not a namespace. */
+function freshId(base: string, occupied: Set<string>): string {
+  if (!occupied.has(base)) {
+    occupied.add(base);
+    return base;
+  }
+  for (let suffix = 1; ; suffix++) {
+    const candidate = `${base}$${suffix}`;
+    if (!occupied.has(candidate)) {
+      occupied.add(candidate);
+      return candidate;
+    }
+  }
+}
+
 export function expandNode(g: Graph, nodeId: string): Graph {
   // Parsed operation outputs intentionally carry `shape: []` until resolution.
   // Expansion needs the actual rank even when its input is an intermediate, so
@@ -21,15 +38,17 @@ export function expandNode(g: Graph, nodeId: string): Graph {
   const idx = out.nodes.findIndex((n) => n.id === nodeId);
   if (idx < 0) throw new Error(`no node "${nodeId}"`);
   const node = out.nodes[idx];
+  const tensorIds = new Set(Object.keys(out.tensors));
+  const nodeIds = new Set(out.nodes.filter((_, i) => i !== idx).map((candidate) => candidate.id));
   const mk = (suffix: string, shape: (string | number)[], like: Tensor): Tensor => {
-    const id = `${nodeId}$${suffix}`;
+    const id = freshId(`${nodeId}$${suffix}`, tensorIds);
     const t: Tensor = { id, name: id, shape, dtype: like.dtype };
     out.tensors[id] = t;
     return t;
   };
   const nodes: Node[] = [];
   const op = (suffix: string, opName: string, inputs: string[], outputs: string[], attrs: Record<string, unknown>) =>
-    nodes.push({ id: `${nodeId}$${suffix}`, op: opName, inputs, outputs, attrs });
+    nodes.push({ id: freshId(`${nodeId}$${suffix}`, nodeIds), op: opName, inputs, outputs, attrs });
 
   const x = out.tensors[node.inputs[0]];
   const y = node.outputs[0];

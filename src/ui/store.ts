@@ -37,6 +37,11 @@ export type InspectorTab = "dependencies" | "execution" | "plan";
 /** Defensive share-state bound; far beyond any usable graph arrangement while
  * preventing finite-but-overflowing coordinates from poisoning scene bounds. */
 export const MAX_TENSOR_OFFSET = 1_000_000;
+
+/** User-authored tensor IDs are dictionary keys, so these records must not
+ * inherit magic names such as `__proto__` or `toString`. */
+const idRecord = <T>(source?: Record<string, T>): Record<string, T> =>
+  Object.assign(Object.create(null) as Record<string, T>, source);
 /**
  * One drawn tile. The tensor travels with the part rather than sitting above
  * the list, so tiles on different tensors coexist: comparing what two tensors
@@ -579,7 +584,7 @@ function recompute(
   const backs: PropResult[] = [];
   const fwds: PropResult[] = [];
   let perBox: BoxProp[] | null = null;
-  const byTensorRes: State["byTensorRes"] = {};
+  const byTensorRes = Object.create(null) as NonNullable<State["byTensorRes"]>;
 
   if (parts.length <= MAX_PER_BOX_PROPS) {
     // Geometry is the cache key rather than array position: deleting a part
@@ -783,7 +788,12 @@ export function startingTiles(
   });
 }
 
-const NO_PLAN = { planTiles: {}, planTask: null, plan: null, planSupply: null } as const;
+const NO_PLAN = {
+  planTiles: idRecord<number[]>(),
+  planTask: null,
+  plan: null,
+  planSupply: null,
+} as const;
 
 /**
  * The checked plan and the inspected task's supply for one graph.
@@ -799,7 +809,7 @@ function derivePlan(
   task: TaskRef | null
 ): Pick<State, "planTiles" | "planTask" | "plan" | "planSupply"> {
   if (!resolved) return NO_PLAN;
-  const valid: Record<string, number[]> = {};
+  const valid = Object.create(null) as Record<string, number[]>;
   for (const [tensorId, tile] of Object.entries(tiles)) {
     try {
       tilePlan(resolved, { [tensorId]: tile });
@@ -875,7 +885,7 @@ function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
   | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "tensorOffsets"
   | "planTiles" | "planTask" | "plan" | "planSupply"
 > {
-  const viewCfgs: Record<string, ViewCfg> = {};
+  const viewCfgs = Object.create(null) as Record<string, ViewCfg>;
   for (const t of Object.values(resolved.tensors)) viewCfgs[t.id] = defaultViewCfg(t.resolved!);
   return {
     graph,
@@ -887,7 +897,7 @@ function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
     // Undo entries refer to tensor IDs and coordinates in one resolved graph.
     // They must never survive a graph replacement or composite rewrite.
     workspaceHistory: [],
-    tensorOffsets: {},
+    tensorOffsets: idRecord<TensorOffset>(),
     backwardRes: null,
     byTensorRes: null,
     forwardRes: null,
@@ -932,8 +942,10 @@ function inspectTask(
     if (selectedOp !== state.selectedOp) set({ selectedOp });
     return;
   }
-  const tiles = withProducedInputs(state, { ...state.planTiles, [tensorId]: tile }, tensorId);
-  const next = derivePlan(resolved, tiles, task);
+  const tiles = idRecord(state.planTiles);
+  tiles[tensorId] = tile;
+  const completedTiles = withProducedInputs(state, tiles, tensorId);
+  const next = derivePlan(resolved, completedTiles, task);
   if (!next.planTask) return;
   set({
     workspaceHistory: appendWorkspaceHistory(state.workspaceHistory, {
@@ -972,7 +984,7 @@ export const useStore = create<State>((set, get) => ({
   analysisGroup: null,
   dragging: false,
   preview: null,
-  viewCfgs: {},
+  viewCfgs: idRecord<ViewCfg>(),
   graphPx: MAX_ELEM_PX,
   tileScale: 0,
   snapToGrid: true,
@@ -984,7 +996,7 @@ export const useStore = create<State>((set, get) => ({
   selectedOp: null,
   panelW: { left: 330, right: 300 },
   panelCollapsed: { left: false, right: false },
-  tensorOffsets: {},
+  tensorOffsets: idRecord<TensorOffset>(),
 
   loadExample: (i) => get().applyDSL(EXAMPLES[i].dsl),
 
@@ -1086,7 +1098,7 @@ export const useStore = create<State>((set, get) => ({
         return { tensorId: checked.tensorId, box: checked.region.boxes[0] };
       });
       const selection = checkedParts.length ? { parts: checkedParts } : null;
-      const checkedOffsets: TensorOffsets = {};
+      const checkedOffsets = Object.create(null) as TensorOffsets;
       for (const [tensorId, offset] of Object.entries(tensorOffsets ?? {})) {
         if (!program.resolved.tensors[tensorId] ||
             !Number.isFinite(offset.dx) || !Number.isFinite(offset.dy) ||
@@ -1377,7 +1389,10 @@ export const useStore = create<State>((set, get) => ({
     const next = { ...state.viewCfgs[tensorId], ...cfg };
     if (!shape || !viewCfgFits(shape, next)) return;
     set({
-      viewCfgs: { ...state.viewCfgs, [tensorId]: { ...next, sliders: next.sliders.slice() } },
+      viewCfgs: idRecord({
+        ...state.viewCfgs,
+        [tensorId]: { ...next, sliders: next.sliders.slice() },
+      }),
       preview: null,
     });
   },
@@ -1390,7 +1405,7 @@ export const useStore = create<State>((set, get) => ({
     const state = get();
     const { resolved, planTiles, planTask } = state;
     if (!resolved) return;
-    const tiles = { ...planTiles };
+    const tiles = idRecord(planTiles);
     if (tile) {
       try {
         tilePlan(resolved, { [tensorId]: tile });
@@ -1534,7 +1549,7 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setTensorOffset: (tensorId, offset) => {
-    const tensorOffsets = { ...get().tensorOffsets };
+    const tensorOffsets = idRecord(get().tensorOffsets);
     if (Math.abs(offset.dx) < 1e-6 && Math.abs(offset.dy) < 1e-6) delete tensorOffsets[tensorId];
     else tensorOffsets[tensorId] = offset;
     set({ tensorOffsets });
@@ -1544,7 +1559,7 @@ export const useStore = create<State>((set, get) => ({
     const { selection, tensorOffsets, workspaceHistory } = get();
     const after = tensorOffsets[tensorId] ?? { dx: 0, dy: 0 };
     if (Math.abs(after.dx - before.dx) < 1e-6 && Math.abs(after.dy - before.dy) < 1e-6) return;
-    const previousOffsets = { ...tensorOffsets };
+    const previousOffsets = idRecord(tensorOffsets);
     if (Math.abs(before.dx) < 1e-6 && Math.abs(before.dy) < 1e-6) delete previousOffsets[tensorId];
     else previousOffsets[tensorId] = before;
     set({
@@ -1560,7 +1575,7 @@ export const useStore = create<State>((set, get) => ({
     const { selection, tensorOffsets, workspaceHistory } = get();
     if (!Object.keys(tensorOffsets).length) return;
     set({
-      tensorOffsets: {},
+      tensorOffsets: idRecord<TensorOffset>(),
       workspaceHistory: appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets, plan: planEditOf(get()) }),
     });
   },

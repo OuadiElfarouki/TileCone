@@ -81,6 +81,37 @@ describe("the figure algebra", () => {
 });
 
 describe("cost figures over a real cone", () => {
+  it("marks unfused traffic as upper when the selected geometry is inexact", () => {
+    const { executor } = compileDSL("X = Tensor(8, dtype=fp16)\nY = relu(X)\n");
+    const metrics = executor.metrics("Y", {
+      boxes: [box([0, 4])],
+      exact: false,
+      reasons: ["caller bound"],
+    });
+    expect(metrics.unfusedBytes).toMatchObject({ value: 16, status: "upper" });
+    expect(metrics.unfusedBytes.reasons).toContain("caller bound");
+  });
+
+  it("marks unfused traffic as upper when a source dtype was widened", () => {
+    const resolved = resolveGraph(parseGraphJSON(JSON.stringify({
+      nodes: [{ id: "id", op: "identity", inputs: ["X"], outputs: ["Y"], attrs: {} }],
+      tensors: {
+        X: {
+          id: "X", name: "X", shape: [8], dtype: "i32",
+          dtypeWidening: { from: "uint16", note: "held wider than source" },
+        },
+        Y: { id: "Y", name: "Y", shape: [], dtype: "i32" },
+      },
+      params: {},
+    })));
+    const metrics = computeMetrics(
+      resolved,
+      propagateBackward(resolved, { tensorId: "Y", region: fromBox(box([0, 4])) })
+    );
+    expect(metrics.unfusedBytes).toMatchObject({ value: 32, status: "upper" });
+    expect(metrics.unfusedBytes.reasons).toContain("held wider than source");
+  });
+
   it("marks bytes held in a widened canonical dtype as an upper bound", () => {
     const resolved = resolveGraph(
       parseGraphJSON(

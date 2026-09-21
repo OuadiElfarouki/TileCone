@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Box, Interval, Region, boundingBox, canonicalize, iv } from "../region";
+import { Box, Region, boundingBox, canonicalize, iv } from "../region";
 import { resolveShape } from "../shapes";
 import { DependencyNoteDraft, NoteCtx, OpSpec, uniformDTypeOutputs } from "./types";
 import { DEFAULT_LIMITS, limitsOf } from "./limits";
@@ -135,7 +135,7 @@ export function reshapeMapBox(
 ): Region {
   const groups = groupAxes(fromShape, toShape);
   // Per group: a small Region over the group's `to` axes.
-  const perGroup: { boxes: Box[]; exact: boolean; reasons: string[] }[] = [];
+  const perGroup: { boxes: readonly Box[]; exact: boolean; reasons: readonly string[] }[] = [];
   let fi = 0;
   let budget = maxRuns;
   for (const g of groups) {
@@ -185,7 +185,7 @@ export function reshapeMapBox(
     reasons.add("reshape box product cap");
     product = perGroup.reduce((a, g) => a * g.boxes.length, 1);
   }
-  const interleaved: Interval[][][] = perGroup.map((g) => g.boxes as Interval[][]);
+  const interleaved = perGroup.map((g) => g.boxes);
   let combos: Box[] = [[]];
   for (const list of interleaved) {
     const next: Box[] = [];

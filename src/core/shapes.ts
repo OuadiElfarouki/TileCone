@@ -55,6 +55,12 @@ type DimNode =
   | { kind: "neg"; arg: DimNode }
   | { kind: "bin"; op: "+" | "-" | "*" | "/"; left: DimNode; right: DimNode };
 
+/** A diagnostic boundary, not a language feature: authored expressions beyond
+ * this depth are refused before recursive parsing or evaluation can exhaust the
+ * JavaScript stack. */
+export const MAX_DIM_EXPR_DEPTH = 128;
+export const MAX_DIM_EXPR_NODES = 512;
+
 /** The DSL's numeric literal, defined once so a scalar attribute and a
  * dimension cannot disagree about what a number looks like. */
 export const NUMBER_RE = /^-?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?/;
@@ -73,12 +79,16 @@ const skipWs = (src: string, from: number): number => {
  */
 export function readDimExpr(src: string, start = 0): { node: DimNode; end: number } | null {
   let pos = start;
+  let nodes = 0;
+  const admit = <T extends DimNode>(node: T): T | null =>
+    ++nodes > MAX_DIM_EXPR_NODES ? null : node;
 
-  function atom(): DimNode | null {
+  function atom(depth = 0): DimNode | null {
+    if (depth > MAX_DIM_EXPR_DEPTH) return null;
     pos = skipWs(src, pos);
     if (src[pos] === "(") {
       pos++;
-      const inner = expr();
+      const inner = expr(depth + 1);
       if (!inner) return null;
       pos = skipWs(src, pos);
       if (src[pos] !== ")") return null;
@@ -89,37 +99,44 @@ export function readDimExpr(src: string, start = 0): { node: DimNode; end: numbe
     // is still read as a single number rather than a subtraction.
     if (src[pos] === "-") {
       pos++;
-      const arg = atom();
-      return arg && { kind: "neg", arg };
+      const arg = atom(depth + 1);
+      return arg ? admit({ kind: "neg", arg }) : null;
     }
     const num = NUMBER_RE.exec(src.slice(pos));
     if (num) {
       pos += num[0].length;
-      return { kind: "num", value: Number(num[0]) };
+      return admit({ kind: "num", value: Number(num[0]) });
     }
     const ident = /^[A-Za-z_][A-Za-z0-9_.$]*/.exec(src.slice(pos));
     if (ident) {
       pos += ident[0].length;
-      return { kind: "sym", name: ident[0] };
+      return admit({ kind: "sym", name: ident[0] });
     }
     return null;
   }
 
   function binary(
-    next: () => DimNode | null,
+    next: (depth: number) => DimNode | null,
     ops: string[]
-  ): () => DimNode | null {
-    return () => {
-      let left = next();
+  ): (depth: number) => DimNode | null {
+    return (depth) => {
+      let left = next(depth);
       if (!left) return null;
       for (;;) {
         pos = skipWs(src, pos);
         const op = src[pos];
         if (!ops.includes(op)) return left;
         pos++;
-        const right = next();
+        const right = next(depth);
         if (!right) return null;
-        left = { kind: "bin", op: op as "+" | "-" | "*" | "/", left, right };
+        const combined: DimNode | null = admit<DimNode>({
+          kind: "bin" as const,
+          op: op as "+" | "-" | "*" | "/",
+          left,
+          right,
+        });
+        if (!combined) return null;
+        left = combined;
       }
     };
   }
@@ -127,7 +144,7 @@ export function readDimExpr(src: string, start = 0): { node: DimNode; end: numbe
   const term = binary(atom, ["*", "/"]);
   const expr = binary(term, ["+", "-"]);
 
-  const node = expr();
+  const node = expr(0);
   return node ? { node, end: pos } : null;
 }
 
@@ -141,9 +158,9 @@ function evalDimExpr(node: DimNode, params: Record<string, number>): number {
         );
       return node.value;
     case "sym": {
-      const bound = params[node.name];
-      if (bound === undefined)
+      if (!Object.prototype.hasOwnProperty.call(params, node.name))
         throw new GraphError(`unbound symbolic dim "${node.name}"`, "GRAPH_UNBOUND_SYMBOL");
+      const bound = params[node.name];
       if (!Number.isSafeInteger(bound) || bound <= 0)
         throw new GraphError(`bad binding ${node.name}=${bound}`, "GRAPH_SHAPE");
       return bound;

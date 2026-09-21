@@ -20,7 +20,7 @@ export type TensorReadout = {
    * and the sum of the listed boxes, so the slice expressions add up. */
   overlap: number;
   exact: boolean;
-  reasons: string[];
+  reasons: readonly string[];
   isInput: boolean;
   /** Copyable `name[i, lo:hi]` lines, plus a trailing `#` comment when the
    * region is an over-approximation. The syntax is index notation both NumPy
@@ -65,7 +65,7 @@ const STATUS_ORDER: Record<FigureStatus, number> = {
 const worst = (a: FigureStatus, b: FigureStatus): FigureStatus =>
   STATUS_ORDER[a] >= STATUS_ORDER[b] ? a : b;
 
-export function figure(value: number, status: FigureStatus, reasons: string[] = []): Figure {
+export function figure(value: number, status: FigureStatus, reasons: readonly string[] = []): Figure {
   const sorted = [...new Set(reasons)].sort();
   return status === "unknown"
     ? { value: null, status, reasons: sorted }
@@ -78,7 +78,10 @@ export function addFigures(a: Figure, b: Figure): Figure {
   const reasons = [...a.reasons, ...b.reasons];
   if (status === "unknown" || a.value === null || b.value === null)
     return figure(0, "unknown", reasons);
-  return figure(a.value + b.value, status, reasons);
+  const value = a.value + b.value;
+  if (Number.isInteger(a.value) && Number.isInteger(b.value) && !Number.isSafeInteger(value))
+    return figure(0, "unknown", [...reasons, "figure exceeds safe integer range"]);
+  return figure(value, status, reasons);
 }
 
 export const sumFigures = (figures: Figure[]): Figure =>
@@ -214,15 +217,21 @@ export function coneReadout(graph: ResolvedGraph, prop: PropResult): TensorReado
 
 export function computeMetrics(graph: ResolvedGraph, back: PropResult): AggregateReadout {
   let flops = 0;
+  let flopsOverflow = false;
   let flopsExact = true;
   const flopsReasons = new Set<string>();
   // Nodes in this cone whose arithmetic nobody described. One of them is enough
   // to make the FLOP total meaningless; they are collected rather than counted
   // so the reason can name them.
   const unknownWork = new Map<string, string>();
-  let unfusedBytes = 0;
-  let trafficExact = true;
-  const trafficReasons = new Set<string>();
+  let unfusedFigure = figure(0, "exact");
+  const addFlops = (value: number) => {
+    if (!Number.isSafeInteger(value) || flops > Number.MAX_SAFE_INTEGER - value) {
+      flopsOverflow = true;
+      return;
+    }
+    flops += value;
+  };
   for (const node of graph.topo) {
     const spec = getOp(node.op)!;
     const ctx: OpCtx = {
@@ -236,11 +245,13 @@ export function computeMetrics(graph: ResolvedGraph, back: PropResult): Aggregat
     node.outputs.forEach((tid, slot) => {
       const tr = back.tensors.get(tid);
       if (!tr) return;
-      unfusedBytes += count(tr.region) * DTYPE_BYTES[graph.tensors[tid].dtype];
+      const outputTensor = graph.tensors[tid];
+      unfusedFigure = addFigures(
+        unfusedFigure,
+        byteFigure(outputTensor, count(tr.region), tr.region)
+      );
       for (const b of tr.region.boxes) {
         spec.backward(slot, b, ctx).forEach((region, inputSlot) => {
-          trafficExact &&= region.exact;
-          if (!region.exact) region.reasons.forEach((reason) => trafficReasons.add(reason));
           const inputId = node.inputs[inputSlot];
           const prev = reads.get(inputId);
           reads.set(inputId, prev ? {
@@ -262,16 +273,19 @@ export function computeMetrics(graph: ResolvedGraph, back: PropResult): Aggregat
         flopsExact = false;
         tr.region.reasons.forEach((reason) => flopsReasons.add(reason));
       }
-      if (spec.flopsForRegion) flops += spec.flopsForRegion(slot, tr.region, ctx);
+      if (spec.flopsForRegion) addFlops(spec.flopsForRegion(slot, tr.region, ctx));
       else if (spec.flopsPerElement)
-        flops += count(tr.region) * spec.flopsPerElement(slot, ctx);
+        addFlops(count(tr.region) * spec.flopsPerElement(slot, ctx));
       // Per-box costs are summed, so they must be summed over a partition.
       // Tiles may overlap, and a shared element would otherwise be paid for
       // once per box that covers it.
-      else for (const b of disjointify(tr.region).boxes) flops += spec.flopsFor(slot, b, ctx);
+      else for (const b of disjointify(tr.region).boxes) addFlops(spec.flopsFor(slot, b, ctx));
     });
     for (const [tid, region] of reads)
-      unfusedBytes += count(region) * DTYPE_BYTES[graph.tensors[tid].dtype];
+      unfusedFigure = addFigures(
+        unfusedFigure,
+        byteFigure(graph.tensors[tid], count(region), region)
+      );
   }
 
   const tensors = coneReadout(graph, back);
@@ -292,15 +306,12 @@ export function computeMetrics(graph: ResolvedGraph, back: PropResult): Aggregat
   // Unknown beats every other claim: a total that skipped an operation's
   // arithmetic entirely is not an upper bound on the work, and a reader who
   // saw one number would have no way to tell.
-  const flopsFigure: Figure = unknownWork.size
-    ? figure(0, "unknown", [...unknownWork.values()].map((op) => `unknown work in ${op}`))
+  const flopsFigure: Figure = unknownWork.size || flopsOverflow
+    ? figure(0, "unknown", [
+        ...[...unknownWork.values()].map((op) => `unknown work in ${op}`),
+        ...(flopsOverflow ? ["FLOP count exceeds safe integer range"] : []),
+      ])
     : figure(flops, flopsExact ? "exact" : "upper", [...flopsReasons]);
-
-  const unfusedFigure = figure(
-    unfusedBytes,
-    trafficExact ? "exact" : "upper",
-    [...trafficReasons]
-  );
 
   // Traffic, not just what is read: the tile is written in both worlds.
   const fusedBytes = addFigures(inputBytes, outputBytes);

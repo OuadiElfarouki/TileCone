@@ -13,7 +13,7 @@ function cfg(ctx: OpCtx) {
 
 function toIntervals(vals: number[]): Interval[] {
   const sorted = [...new Set(vals)].sort((a, b) => a - b);
-  const list: Interval[] = [];
+  const list: { lo: number; hi: number }[] = [];
   for (const v of sorted) {
     const last = list[list.length - 1];
     if (last && last.hi === v) last.hi = v + 1;
@@ -23,7 +23,7 @@ function toIntervals(vals: number[]): Interval[] {
 }
 
 /**
- * index_select / embedding lookup. Inputs: data, indices (1-D i32).
+ * index_select / embedding lookup. Inputs: data, indices (1-D i32 or i64).
  * The data dependency is data-dependent: without concrete `indexValues` in attrs
  * it is `full()` with `exact: false`; with them the exact preimage is computed.
  */
@@ -50,8 +50,8 @@ export const gatherOp: OpSpec = {
   },
   inferDTypes: (inDTypes, _attrs, outShapes) => {
     const [data, indices] = inDTypes;
-    if (indices !== "i32")
-      throw new Error(`gather: indices must be i32, got ${indices}`);
+    if (indices !== "i32" && indices !== "i64")
+      throw new Error(`gather: indices must be i32 or i64, got ${indices}`);
     return outShapes.map(() => data);
   },
   inferShapes: (inShapes, attrs) => {

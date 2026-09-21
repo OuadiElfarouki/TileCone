@@ -16,6 +16,8 @@ import {
   promoteDType,
   promoteDTypes,
 } from "../core/dtypes";
+import { ELEMENTWISE_FNS } from "../core/ops/elementwise";
+import { compileDSL } from "../parse/compiler";
 
 const pairs: [DType, DType][] = DTYPES.flatMap((a) => DTYPES.map((b) => [a, b] as [DType, DType]));
 const inFamily = (family: string) => DTYPES.filter((d) => dtypeFamily(d) === family);
@@ -127,5 +129,17 @@ describe("promoteDTypes folds the list", () => {
 
   it("rejects an empty list rather than inventing a type", () => {
     expect(() => promoteDTypes([])).toThrow(/no dtypes/);
+  });
+});
+
+describe("elementwise dtype policy", () => {
+  it("covers every registered function from the same table that defines it", () => {
+    for (const [name, spec] of Object.entries(ELEMENTWISE_FNS)) {
+      const args = new Array(spec.minInputs).fill("X").join(", ");
+      const program = compileDSL(`X = Tensor(4, dtype=int32)\nY = ${name}(${args})\n`);
+      expect(program.resolved.tensors.Y.dtype, name).toBe(
+        spec.dtype === "real" ? "f32" : "i32"
+      );
+    }
   });
 });

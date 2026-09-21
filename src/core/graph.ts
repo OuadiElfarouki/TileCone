@@ -3,7 +3,7 @@
 import { ZodObject, ZodType, ZodIssue } from "zod";
 import { getOp } from "./ops/index";
 import { GraphError, GraphErrorSubject, resolveShape, Shape } from "./shapes";
-import { DTYPES, DType, type DTypeWidening } from "./dtypes";
+import { DTYPES, DTYPE_BYTES, DType, type DTypeWidening } from "./dtypes";
 import type { AxisNames, Cardinality } from "./ops/types";
 
 export type { Shape, Sym } from "./shapes";
@@ -96,7 +96,7 @@ function cloneGraph(source: Graph): Graph {
     return value;
   };
 
-  const tensors: Record<string, Tensor> = {};
+  const tensors = Object.create(null) as Record<string, Tensor>;
   for (const [id, tensor] of Object.entries(source.tensors)) {
     tensors[id] = {
       id: tensor.id,
@@ -111,6 +111,10 @@ function cloneGraph(source: Graph): Graph {
       ...(tensor.role ? { role: tensor.role } : {}),
     };
   }
+  const params = Object.assign(
+    Object.create(null) as Record<string, number>,
+    source.params
+  );
   return {
     nodes: source.nodes.map((node) => ({
       id: node.id,
@@ -121,7 +125,7 @@ function cloneGraph(source: Graph): Graph {
       ...(node.label !== undefined ? { label: node.label } : {}),
     })),
     tensors,
-    params: { ...source.params },
+    params,
   };
 }
 
@@ -167,6 +171,32 @@ function verifiedSymShape(
       return extent;
     }
   });
+}
+
+/** Every exact count exposed by the engine is a JavaScript number. Reject a
+ * tensor before execution when either its element count or canonical storage
+ * bytes cannot be represented exactly. */
+function validateTensorCardinality(shape: number[], dtype: DType, subject: GraphErrorSubject): void {
+  let elements = 1;
+  for (const extent of shape) {
+    if (extent === 0) {
+      elements = 0;
+      break;
+    }
+    if (elements > Number.MAX_SAFE_INTEGER / extent)
+      throw new GraphError(
+        `tensor "${subject.id}": element count is past the safe integer range`,
+        "GRAPH_SHAPE",
+        subject
+      );
+    elements *= extent;
+  }
+  if (elements > Number.MAX_SAFE_INTEGER / DTYPE_BYTES[dtype])
+    throw new GraphError(
+      `tensor "${subject.id}": canonical byte size is past the safe integer range`,
+      "GRAPH_SHAPE",
+      subject
+    );
 }
 
 /** Narrow an object attribute schema so unknown keys are rejected instead of
@@ -270,7 +300,7 @@ function pruneSubject(g: Graph, subject: GraphErrorSubject): Graph {
     }
   }
 
-  const tensors: Record<string, Tensor> = {};
+  const tensors = Object.create(null) as Record<string, Tensor>;
   for (const [id, t] of Object.entries(g.tensors)) if (!deadTensors.has(id)) tensors[id] = t;
   return {
     nodes: g.nodes.filter((n) => !deadNodes.has(n.id)),
@@ -403,6 +433,7 @@ export function resolveGraph(source: Graph): ResolvedGraph {
       // Produced names are derived metadata. Ignore any serialized copy and
       // recompute it from the operation, just like resolved shapes and dtypes.
       delete t.axisNames;
+      delete t.dtypeWidening;
     } else if (t.axisNames) {
       if (t.axisNames.length !== t.shape.length)
         throw new GraphError(
@@ -475,6 +506,7 @@ export function resolveGraph(source: Graph): ResolvedGraph {
     if (t.producer) continue;
     try {
       t.resolved = resolveShape(t.shape, g.params);
+      validateTensorCardinality(t.resolved, t.dtype, { kind: "tensor", id: t.id });
       t.symShape = verifiedSymShape(t.shape, t.resolved, g.params);
     } catch (e) {
       throw new GraphError(
@@ -642,6 +674,7 @@ export function resolveGraph(source: Graph): ResolvedGraph {
     for (let s = 0; s < n.outputs.length; s++) {
       const t = g.tensors[n.outputs[s]];
       const inferred = outShapes[s];
+      validateTensorCardinality(inferred, outDTypes[s], { kind: "tensor", id: t.id });
       if (t.shape.length) {
         // If a shape was declared, check consistency where resolvable.
         try {
@@ -668,7 +701,7 @@ export function resolveGraph(source: Graph): ResolvedGraph {
     }
   }
 
-  const consumers: Record<string, { nodeId: string; slot: number }[]> = {};
+  const consumers = Object.create(null) as Record<string, { nodeId: string; slot: number }[]>;
   for (const id of tensorIds) consumers[id] = [];
   for (const n of g.nodes)
     n.inputs.forEach((t, slot) => consumers[t].push({ nodeId: n.id, slot }));

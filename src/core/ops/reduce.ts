@@ -1,6 +1,7 @@
 import { z } from "zod";
-import { Box, coversAxisFully, fromBox, iv } from "../region";
-import { DependencyNoteDraft, OpCtx, OpSpec, uniformDTypeOutputs, NoteCtx } from "./types";
+import { coversAxisFully, fromBox, iv } from "../region";
+import { DependencyNoteDraft, OpCtx, OpSpec, NoteCtx } from "./types";
+import { dtypeFamily } from "../dtypes";
 import { axisWord } from "./axis-names";
 
 /** Normalize one Python-style axis and reject anything outside the tensor rank. */
@@ -80,7 +81,14 @@ export const reduceOp: OpSpec = {
     const names = inNames[0];
     return [keepdim ? names.slice() : names.filter((_, axis) => !axes.includes(axis))];
   },
-  inferDTypes: uniformDTypeOutputs("reduce"),
+  inferDTypes: (inDTypes, attrs, outShapes) => {
+    const dtype = inDTypes[0];
+    if (!dtype) throw new Error("reduce: expected one input dtype");
+    const fn = (attrs as RAttrs).fn;
+    if ((fn === "mean" || fn === "logsumexp") && dtypeFamily(dtype) !== "float")
+      throw new Error(`${fn}: expected a floating-point input, got ${dtype}`);
+    return outShapes.map(() => dtype);
+  },
   inferShapes: (inShapes, a) => {
     const sh = inShapes[0];
     const axes = normAxes((a as RAttrs).axes, sh.length);
@@ -96,7 +104,7 @@ export const reduceOp: OpSpec = {
   backward: (_s, outBox, ctx) => {
     const { axes, keepdim } = attrs(ctx);
     const inShape = ctx.inShapes[0];
-    const b: Box = [];
+    const b: { lo: number; hi: number }[] = [];
     let o = 0;
     for (let ax = 0; ax < inShape.length; ax++) {
       if (axes.includes(ax)) {
@@ -111,7 +119,7 @@ export const reduceOp: OpSpec = {
   },
   forward: (_s, inBox, ctx) => {
     const { axes, keepdim } = attrs(ctx);
-    const b: Box = [];
+    const b: { lo: number; hi: number }[] = [];
     for (let ax = 0; ax < inBox.length; ax++) {
       if (axes.includes(ax)) {
         if (keepdim) b.push(iv(0, 1));

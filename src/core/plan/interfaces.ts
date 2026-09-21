@@ -185,6 +185,8 @@ export function interfaceOf(
 ): InterfaceReport {
   const family = plan.families.get(tensorId);
   if (!family) throw new PlanError("PLAN_UNPLANNED", `the plan does not tile "${tensorId}"`);
+  if (!Number.isSafeInteger(budget) || budget < 1)
+    throw new PlanError("PLAN_SIZE", `task budget must be a positive safe integer, not ${String(budget)}`);
   if (family.count > budget) return { status: "over-budget", tensorId, tasks: family.count, budget };
 
   type Acc = {

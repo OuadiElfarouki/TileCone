@@ -66,19 +66,22 @@ function exprToAttr(e: Expr): unknown {
 
 function dtypeFromExpr(e: Expr): DType | null {
   if (e.kind !== "dim") return null;
-  return DTYPE_FROM_DSL[e.text as keyof typeof DTYPE_FROM_DSL] ?? null;
+  return Object.prototype.hasOwnProperty.call(DTYPE_FROM_DSL, e.text)
+    ? DTYPE_FROM_DSL[e.text as keyof typeof DTYPE_FROM_DSL]
+    : null;
 }
 
 export function lowerProgram(program: Program): LowerResult {
-  const params: Record<string, number> = {};
-  const tensors: Record<string, Tensor> = {};
+  const dictionary = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
+  const params = dictionary<number>();
+  const tensors = dictionary<Tensor>();
   const nodes: Node[] = [];
   const sourceMap: DSLSourceMap = {
     document: program.span,
-    params: {},
-    tensors: {},
-    nodes: {},
-    nodeArgs: {},
+    params: dictionary<SourceSpan>(),
+    tensors: dictionary<SourceSpan>(),
+    nodes: dictionary<SourceSpan>(),
+    nodeArgs: dictionary<DSLSourceMap["nodeArgs"][string]>(),
   };
   const errors: DSLError[] = [];
   /** Names bound by a statement that failed; reading one is not a new error. */
@@ -88,7 +91,9 @@ export function lowerProgram(program: Program): LowerResult {
     errors.push(new DSLError(detail, span, code));
   };
   const defined = (name: string) =>
-    Object.prototype.hasOwnProperty.call(params, name) || !!tensors[name] || poisoned.has(name);
+    Object.prototype.hasOwnProperty.call(params, name) ||
+    Object.prototype.hasOwnProperty.call(tensors, name) ||
+    poisoned.has(name);
 
   /** Report a redefinition, or claim the name. Returns false when taken. */
   const claim = (name: Spanned<string>, code: string): boolean => {
@@ -187,7 +192,7 @@ export function lowerProgram(program: Program): LowerResult {
       // was a trailing positional word. Read as a dimension it is a symbol that
       // happens to be spelled like a dtype, and the failure would surface much
       // later as an unbound symbol - naming a real mistake something it is not.
-      if (e.text in DTYPE_FROM_DSL) {
+      if (Object.prototype.hasOwnProperty.call(DTYPE_FROM_DSL, e.text)) {
         fail(`dtype is an attribute here: write dtype=${e.text}`, e.span, "DSL_SYNTAX");
         return null;
       }
@@ -199,7 +204,7 @@ export function lowerProgram(program: Program): LowerResult {
 
   function lowerCall(stmt: Stmt & { kind: "call" }): void {
     const callee = stmt.callee.value;
-    const attrs: Record<string, unknown> = {};
+    const attrs = dictionary<unknown>();
     const inputs: string[] = [];
     const inputSpans: SourceSpan[] = [];
     let bad = false;

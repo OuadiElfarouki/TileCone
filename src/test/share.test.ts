@@ -85,6 +85,10 @@ describe("workspace links round-trip", () => {
 });
 
 describe("a link that cannot be trusted is refused, not repaired", () => {
+  it("rejects oversized hashes before decoding them", () => {
+    expect(decodeWorkspace(`#s=${"A".repeat(MAX_HASH_LENGTH + 1)}`)).toBeNull();
+  });
+
   it("rejects junk rather than throwing", () => {
     for (const hash of ["", "#", "#s=", "#s=not-base64!!", "#x=abc", "#s=" + btoa("{")])
       expect(decodeWorkspace(hash)).toBeNull();

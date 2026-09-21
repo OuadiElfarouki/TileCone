@@ -4,6 +4,27 @@ import { DTYPES } from "../core/dtypes";
 
 const symSchema = z.union([z.string(), z.number().int().min(0)]);
 
+/** Zod's ordinary record reconstruction uses a prototype-bearing object, so
+ * an own `__proto__` key is lost. Graph identifiers are allowed to have that
+ * spelling; validate entries individually into a null-prototype dictionary. */
+function safeRecord<S extends z.ZodTypeAny>(valueSchema: S) {
+  return z.unknown().transform((value, ctx): Record<string, z.output<S>> => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Expected object" });
+      return z.NEVER;
+    }
+    const out = Object.create(null) as Record<string, z.output<S>>;
+    for (const [key, item] of Object.entries(value)) {
+      const parsed = valueSchema.safeParse(item);
+      if (parsed.success) out[key] = parsed.data;
+      else
+        for (const issue of parsed.error.issues)
+          ctx.addIssue({ ...issue, path: [key, ...issue.path] });
+    }
+    return out;
+  });
+}
+
 const dtypeWideningSchema = z
   .object({
     from: z.string().min(1),
@@ -31,14 +52,14 @@ const nodeSchema = z.object({
   op: z.string(),
   inputs: z.array(z.string()),
   outputs: z.array(z.string()),
-  attrs: z.record(z.unknown()).default({}),
+  attrs: safeRecord(z.unknown()).default(Object.create(null)),
   label: z.string().optional(),
 }).strict();
 
 const graphSchema = z.object({
   nodes: z.array(nodeSchema),
-  tensors: z.record(tensorSchema),
-  params: z.record(z.number().int().min(1)).default({}),
+  tensors: safeRecord(tensorSchema),
+  params: safeRecord(z.number().int().min(1)).default(Object.create(null)),
 }).strict();
 
 /**
@@ -78,7 +99,7 @@ export function parseGraphJSON(text: string): Graph {
 }
 
 export function graphToJSON(g: Graph): string {
-  const tensors: Record<string, unknown> = {};
+  const tensors = Object.create(null) as Record<string, unknown>;
   for (const [id, t] of Object.entries(g.tensors))
     tensors[id] = {
       id: t.id,

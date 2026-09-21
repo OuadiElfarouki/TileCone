@@ -20,6 +20,7 @@ import { lowerProgram, DTYPE_TO_DSL } from "./lower";
 import { parseProgram } from "./parser";
 import { sugarForNode } from "./sugar";
 import { DSLSourceMap } from "./source";
+import { isDSLBooleanLiteral } from "./lexical";
 
 export { DSLError } from "./parser";
 export { DSL_DTYPES } from "./lower";
@@ -46,9 +47,16 @@ function attrValueToDSL(v: unknown, name?: string): string {
   // holds canonical dtypes that have to come back out in the DSL's spellings,
   // and dropping the name on the way in printed `f16` where only `fp16` parses.
   if (Array.isArray(v)) return `[${v.map((item) => attrValueToDSL(item, name)).join(", ")}]`;
-  if ((name === "dtype" || name === "dtypes") && typeof v === "string" && v in DTYPE_TO_DSL)
+  if (
+    (name === "dtype" || name === "dtypes") &&
+    typeof v === "string" &&
+    Object.prototype.hasOwnProperty.call(DTYPE_TO_DSL, v)
+  )
     return DTYPE_TO_DSL[v as DType];
-  if (typeof v === "string") return /^[A-Za-z_][A-Za-z0-9_]*$/.test(v) ? v : JSON.stringify(v);
+  if (typeof v === "string")
+    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(v) && !isDSLBooleanLiteral(v)
+      ? v
+      : JSON.stringify(v);
   return String(v);
 }
 

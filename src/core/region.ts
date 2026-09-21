@@ -31,13 +31,39 @@
  * are elements genuinely read twice.
  */
 
-export type Interval = { lo: number; hi: number }; // half-open: lo <= i < hi
-export type Box = Interval[]; // length === tensor rank
-export type Region = {
-  boxes: Box[];
+export type Interval = Readonly<{ lo: number; hi: number }>; // half-open: lo <= i < hi
+export type Box = readonly Interval[]; // length === tensor rank
+export type Region = Readonly<{
+  boxes: readonly Box[];
   exact: boolean; // false => conservative over-approximation (strict superset allowed)
-  reasons: string[]; // why it became inexact; empty when exact
-};
+  reasons: readonly string[]; // why it became inexact; empty when exact
+}>;
+
+type MutableInterval = { lo: number; hi: number };
+type MutableBox = MutableInterval[];
+
+const immutableRegions = new WeakSet<Region>();
+
+/** Regions are cached by identity in a few hot paths. Make every region
+ * produced by this module deeply immutable so that identity remains a sound
+ * cache key; foreign mutable region objects are still accepted, but are never
+ * memoized. Cloning before freezing also avoids freezing a caller's box. */
+function immutableRegion(r: Region): Region {
+  const boxes = r.boxes.map((b) => {
+    const copy = b.map((interval) => Object.freeze({ ...interval }));
+    return Object.freeze(copy) as Box;
+  });
+  const reasons = Object.freeze(r.reasons.slice());
+  const out = Object.freeze({
+    boxes: Object.freeze(boxes),
+    exact: r.exact,
+    reasons,
+  }) as Region;
+  immutableRegions.add(out);
+  return out;
+}
+
+const isImmutableRegion = (r: Region): boolean => immutableRegions.has(r);
 
 export const MAX_BOXES = 256;
 
@@ -61,11 +87,11 @@ export function formatBoxIndices(b: Box): string {
 
 export function empty(rank: number): Region {
   void rank;
-  return { boxes: [], exact: true, reasons: [] };
+  return immutableRegion({ boxes: [], exact: true, reasons: [] });
 }
 
 export function full(shape: number[]): Region {
-  return { boxes: [shape.map((n) => iv(0, n))], exact: true, reasons: [] };
+  return canonicalize({ boxes: [shape.map((n) => iv(0, n))], exact: true, reasons: [] });
 }
 
 export function fromBox(b: Box): Region {
@@ -87,7 +113,7 @@ function boxVolume(b: Box): number {
 }
 
 function intersectBoxes(a: Box, b: Box): Box | null {
-  const out: Box = [];
+  const out: MutableBox = [];
   for (let i = 0; i < a.length; i++) {
     const lo = Math.max(a[i].lo, b[i].lo);
     const hi = Math.min(a[i].hi, b[i].hi);
@@ -174,7 +200,7 @@ function mergePass(boxes: Box[]): Box[] {
 
 /** The box covering both, which is what merging them costs you. */
 function hull(a: Box, b: Box): Box {
-  const out: Box = [];
+  const out: MutableBox = [];
   for (let ax = 0; ax < a.length; ax++)
     out.push(iv(Math.min(a[ax].lo, b[ax].lo), Math.max(a[ax].hi, b[ax].hi)));
   return out;
@@ -301,7 +327,7 @@ export function coarsen(boxes: Box[], maxBoxes: number): Box[] {
 export function boundingBox(r: Region): Box | null {
   if (r.boxes.length === 0) return null;
   const rank = r.boxes[0].length;
-  const out: Box = [];
+  const out: MutableBox = [];
   for (let ax = 0; ax < rank; ax++) {
     let lo = Infinity,
       hi = -Infinity;
@@ -314,7 +340,7 @@ export function boundingBox(r: Region): Box | null {
   return out;
 }
 
-function mergeReasons(a: string[], b: string[]): string[] {
+function mergeReasons(a: readonly string[], b: readonly string[]): string[] {
   const s = new Set([...a, ...b]);
   return [...s];
 }
@@ -348,7 +374,9 @@ function dropContained(boxes: Box[]): Box[] {
  * add one per contribution, so this form reaches the cap later, not sooner.
  */
 export function canonicalize(r: Region, maxBoxes: number = MAX_BOXES): Region {
-  let boxes = r.boxes.filter((b) => !isEmptyBox(b));
+  let boxes: Box[] = r.boxes
+    .filter((b) => !isEmptyBox(b))
+    .map((b) => b.map((interval) => ({ ...interval })));
   let exact = r.exact;
   let reasons = r.reasons.slice();
   let previous = -1;
@@ -364,7 +392,7 @@ export function canonicalize(r: Region, maxBoxes: number = MAX_BOXES): Region {
     exact = false;
     reasons = mergeReasons(reasons, ["box count cap"]);
   }
-  return { boxes, exact, reasons };
+  return immutableRegion({ boxes, exact, reasons });
 }
 
 /**
@@ -389,11 +417,11 @@ const disjointMemo = new WeakMap<Region, Region>();
  * not need those pieces and is computed by `count` directly.
  */
 export function disjointify(r: Region, maxBoxes: number = MAX_BOXES): Region {
-  if (maxBoxes !== MAX_BOXES) return splitOnOverlap(r, maxBoxes);
+  if (maxBoxes !== MAX_BOXES) return immutableRegion(splitOnOverlap(r, maxBoxes));
   const hit = disjointMemo.get(r);
   if (hit) return hit;
-  const out = splitOnOverlap(r, MAX_BOXES);
-  disjointMemo.set(r, out);
+  const out = immutableRegion(splitOnOverlap(r, MAX_BOXES));
+  if (isImmutableRegion(r)) disjointMemo.set(r, out);
   // The disjoint form is its own answer, so a consumer that re-asks the form it
   // was just handed does not split it a second time.
   if (!disjointMemo.has(out)) disjointMemo.set(out, out);
@@ -685,12 +713,13 @@ function unionVolume(boxes: Box[], axes: number[]): number {
 const countMemo = new WeakMap<Region, number>();
 
 export function count(r: Region): number {
-  const hit = countMemo.get(r);
+  const cacheable = isImmutableRegion(r);
+  const hit = cacheable ? countMemo.get(r) : undefined;
   if (hit !== undefined) return hit;
   const boxes = r.boxes.filter((b) => !isEmptyBox(b));
   const rank = boxes[0]?.length ?? 0;
   const result = unionVolume(boxes, Array.from({ length: rank }, (_, axis) => axis));
-  countMemo.set(r, result);
+  if (cacheable) countMemo.set(r, result);
   return result;
 }
 
@@ -716,7 +745,7 @@ export function* points(r: Region): Generator<number[]> {
 }
 
 export function markInexact(r: Region, ...reasons: string[]): Region {
-  return { boxes: r.boxes, exact: false, reasons: mergeReasons(r.reasons, reasons) };
+  return immutableRegion({ boxes: r.boxes, exact: false, reasons: mergeReasons(r.reasons, reasons) });
 }
 
 // ------------------------------------------------------ selections vs regions
@@ -827,5 +856,5 @@ export function sortRegion(r: Region): Region {
     }
     return 0;
   });
-  return { boxes, exact: r.exact, reasons: r.reasons.slice() };
+  return immutableRegion({ boxes, exact: r.exact, reasons: r.reasons.slice() });
 }

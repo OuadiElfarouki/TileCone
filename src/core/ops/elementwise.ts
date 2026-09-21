@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { Box, fromBox, iv } from "../region";
-import { OpCtx, OpSpec, promotingDTypeOutputs } from "./types";
+import { OpCtx, OpSpec } from "./types";
+import { DType, dtypeFamily, promoteDTypes } from "../dtypes";
 import { broadcastAxisNames } from "./axis-names";
 import { broadcastSymShape } from "./sym-shape";
 
@@ -26,30 +27,32 @@ export type ElementwiseFnSpec = {
   minInputs: number;
   maxInputs: number | null;
   unitCost: number;
+  /** `real` operations lift integer/bool operands to the DSL's canonical f32. */
+  dtype: "promote" | "real";
 };
 
 export const ELEMENTWISE_FNS: Record<string, ElementwiseFnSpec> = {
   // associative binary-or-more
-  add: { minInputs: 2, maxInputs: null, unitCost: 0 },
-  mul: { minInputs: 2, maxInputs: null, unitCost: 0 },
-  maximum: { minInputs: 2, maxInputs: null, unitCost: 0 },
-  minimum: { minInputs: 2, maxInputs: null, unitCost: 0 },
+  add: { minInputs: 2, maxInputs: null, unitCost: 0, dtype: "promote" },
+  mul: { minInputs: 2, maxInputs: null, unitCost: 0, dtype: "promote" },
+  maximum: { minInputs: 2, maxInputs: null, unitCost: 0, dtype: "promote" },
+  minimum: { minInputs: 2, maxInputs: null, unitCost: 0, dtype: "promote" },
   // strictly binary
-  sub: { minInputs: 2, maxInputs: 2, unitCost: 0 },
-  div: { minInputs: 2, maxInputs: 2, unitCost: 0 },
-  pow: { minInputs: 2, maxInputs: 2, unitCost: 4 },
+  sub: { minInputs: 2, maxInputs: 2, unitCost: 0, dtype: "promote" },
+  div: { minInputs: 2, maxInputs: 2, unitCost: 0, dtype: "real" },
+  pow: { minInputs: 2, maxInputs: 2, unitCost: 4, dtype: "real" },
   // unary
-  relu: { minInputs: 1, maxInputs: 1, unitCost: 0 },
-  neg: { minInputs: 1, maxInputs: 1, unitCost: 0 },
-  abs: { minInputs: 1, maxInputs: 1, unitCost: 0 },
-  exp: { minInputs: 1, maxInputs: 1, unitCost: 4 },
-  log: { minInputs: 1, maxInputs: 1, unitCost: 4 },
-  sqrt: { minInputs: 1, maxInputs: 1, unitCost: 4 },
-  rsqrt: { minInputs: 1, maxInputs: 1, unitCost: 4 },
-  sigmoid: { minInputs: 1, maxInputs: 1, unitCost: 4 },
-  tanh: { minInputs: 1, maxInputs: 1, unitCost: 4 },
-  gelu: { minInputs: 1, maxInputs: 1, unitCost: 4 },
-  silu: { minInputs: 1, maxInputs: 1, unitCost: 4 },
+  relu: { minInputs: 1, maxInputs: 1, unitCost: 0, dtype: "promote" },
+  neg: { minInputs: 1, maxInputs: 1, unitCost: 0, dtype: "promote" },
+  abs: { minInputs: 1, maxInputs: 1, unitCost: 0, dtype: "promote" },
+  exp: { minInputs: 1, maxInputs: 1, unitCost: 4, dtype: "real" },
+  log: { minInputs: 1, maxInputs: 1, unitCost: 4, dtype: "real" },
+  sqrt: { minInputs: 1, maxInputs: 1, unitCost: 4, dtype: "real" },
+  rsqrt: { minInputs: 1, maxInputs: 1, unitCost: 4, dtype: "real" },
+  sigmoid: { minInputs: 1, maxInputs: 1, unitCost: 4, dtype: "real" },
+  tanh: { minInputs: 1, maxInputs: 1, unitCost: 4, dtype: "real" },
+  gelu: { minInputs: 1, maxInputs: 1, unitCost: 4, dtype: "real" },
+  silu: { minInputs: 1, maxInputs: 1, unitCost: 4, dtype: "real" },
 };
 
 export const ELEMENTWISE_FN_NAMES = Object.keys(ELEMENTWISE_FNS) as [string, ...string[]];
@@ -124,7 +127,16 @@ export const elementwiseOp: OpSpec = {
         }, got ${inputCount}`
       );
   },
-  inferDTypes: promotingDTypeOutputs("elementwise"),
+  inferDTypes: (inDTypes, attrs, outShapes) => {
+    const fn = attrs.fn as string;
+    let dtype: DType = promoteDTypes(inDTypes);
+    // Real-valued elementwise functions share one policy: an all-integral
+    // input is lifted to f32. Keeping the rule on the function table prevents
+    // the accepted names and their dtype semantics from drifting apart.
+    if (ELEMENTWISE_FNS[fn]?.dtype === "real" && dtypeFamily(dtype) !== "float")
+      dtype = "f32";
+    return outShapes.map(() => dtype);
+  },
   inferShapes: (inShapes) => [broadcastShapes(inShapes)],
   backward: (_slot, outBox, ctx) =>
     ctx.inShapes.map((sh) => fromBox(broadcastBackwardBox(outBox, sh))),
