@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Box, Region, canonicalize, count, coversAxisFully, fromBox, iv } from "../region";
 import { normAxis } from "./reduce";
-import { DependencyNoteDraft, OpCtx, OpSpec, uniformDTypeOutputs, NoteCtx } from "./types";
+import { DependencyNoteDraft, OpCtx, OpSpec, floatingDTypeOutputs, NoteCtx } from "./types";
 import { axisWord, sameAxisNames } from "./axis-names";
 import { sameSymShape } from "./sym-shape";
 
@@ -59,7 +59,7 @@ export const softmaxOp: OpSpec = {
   arity: { inputs: 1, outputs: 1 },
   inferAxisNames: sameAxisNames,
   inferSymShapes: sameSymShape,
-  inferDTypes: uniformDTypeOutputs("softmax"),
+  inferDTypes: floatingDTypeOutputs("softmax"),
   inferShapes: (inShapes, attrs) => {
     normAxis(attrs.axis as number, inShapes[0].length);
     return [inShapes[0].slice()];

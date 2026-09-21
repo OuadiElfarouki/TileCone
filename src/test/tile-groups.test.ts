@@ -161,7 +161,7 @@ describe("tile groups", () => {
     // Same size band, different rows of A: C's tile needs rows 0:16, D's needs
     // 32:48. Merging them would claim a job that reads both, which is nobody's
     // kernel - and would charge the shared work through C only once.
-    const rowsOf = (region: { boxes: { lo: number; hi: number }[][] }) =>
+    const rowsOf = (region: { boxes: readonly (readonly { lo: number; hi: number }[])[] }) =>
       region.boxes.map((b) => `${b[0].lo}:${b[0].hi}`);
     expect(rowsOf(onC.tensors.get("A")!.region)).toEqual(["0:16"]);
     expect(rowsOf(onD.tensors.get("A")!.region)).toEqual(["32:48"]);

@@ -3,7 +3,7 @@ import { Graph, ResolvedGraph, resolveGraphCollecting } from "../core/graph";
 import { GraphError } from "../core/shapes";
 import { lowerProgram } from "./lower";
 import { DSLError, parseProgram } from "./parser";
-import { DSLSourceMap, SourceSpan } from "./source";
+import { documentSpan, DSLSourceMap, SourceSpan } from "./source";
 
 export type DiagnosticPhase = "parse" | "semantic";
 export type DiagnosticSeverity = "error";
@@ -118,7 +118,7 @@ function inSourceOrder(diagnostics: CompilerDiagnostic[]): CompilerDiagnostic[] 
  * "one pass per compile": a bad line and a shape mismatch three lines down are
  * independent facts, and the author wants both.
  */
-export function tryCompileDSL(source: string): CompilationResult {
+function tryCompileDSLUnchecked(source: string): CompilationResult {
   const { program: ast, errors: parseErrors } = parseProgram(source);
   const lowered = lowerProgram(ast);
   const diagnostics: CompilerDiagnostic[] = [
@@ -164,6 +164,26 @@ export function tryCompileDSL(source: string): CompilationResult {
     executor: new SymbolicExecutor(resolved),
   };
   return { ok: true, program, diagnostics: [] };
+}
+
+/** The editor feeds this boundary untrusted text on every apply. Parser and
+ * resolver defects must become a diagnostic, never tear down the workspace. */
+export function tryCompileDSL(source: string): CompilationResult {
+  try {
+    return tryCompileDSLUnchecked(source);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      diagnostics: [{
+        severity: "error",
+        phase: "semantic",
+        code: "SEM_INTERNAL",
+        message: `compiler could not safely process this input: ${detail}`,
+        span: documentSpan(source),
+      }],
+    };
+  }
 }
 
 /** Throwing convenience for callers that require a valid program. */

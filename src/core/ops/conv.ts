@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Box, Interval, Region, canonicalize, empty, fromBox, iv } from "../region";
 import { productBoxes } from "./shape-ops";
-import { DependencyNoteDraft, NoteCtx, OpCtx, OpSpec, promotingDTypeOutputs, uniformDTypeOutputs } from "./types";
+import { DependencyNoteDraft, floatingDTypeOutputs, NoteCtx, OpCtx, OpSpec, promotingDTypeOutputs, uniformDTypeOutputs } from "./types";
 import { limitsOf } from "./limits";
 import { sameAxisNames } from "./axis-names";
 
@@ -20,6 +20,8 @@ type ConvAttrs = {
   groups: number;
 };
 
+type MutableInterval = { lo: number; hi: number };
+
 function outSpatial(n: number, k: number, s: number, d: number, p: [number, number]): number {
   return Math.floor((n + p[0] + p[1] - (k - 1) * d - 1) / s) + 1;
 }
@@ -29,6 +31,19 @@ function validateSpatialActivationRank(op: "conv" | "pool", rank: number): void 
     throw new Error(
       `${op}: activation rank ${rank} is unsupported; expected 3, 4, or 5 (NCW, NCHW, or NCDHW)`
     );
+}
+
+function validateSpatialAttrs(
+  op: "conv" | "pool",
+  spatialRank: number,
+  attrs: Record<string, readonly unknown[] | undefined>
+): void {
+  for (const [name, values] of Object.entries(attrs)) {
+    if (values !== undefined && values.length !== spatialRank)
+      throw new Error(
+        `${op}: ${name} has length ${values.length}, expected spatial rank ${spatialRank}`
+      );
+  }
 }
 
 /**
@@ -60,7 +75,7 @@ function spatialBackward(
         if (i >= 0 && i < n) seen.add(i);
       }
     const sorted = [...seen].sort((a, b) => a - b);
-    const list: Interval[] = [];
+    const list: MutableInterval[] = [];
     for (const i of sorted) {
       const last = list[list.length - 1];
       if (last && last.hi === i) last.hi = i + 1;
@@ -90,7 +105,7 @@ function spatialForward(
   if (oHi <= oLo) return { list: [], exact: true };
   if (d === 1) return { list: [iv(oLo, oHi)], exact: true };
   if ((oHi - oLo) * K <= stridedEnum) {
-    const list: Interval[] = [];
+    const list: MutableInterval[] = [];
     for (let o = oLo; o < oHi; o++) {
       let touches = false;
       for (let k = 0; k < K; k++) {
@@ -198,7 +213,7 @@ function positionsForTaps(
         if (i >= 0 && i < n) seen.add(i);
       }
     const sorted = [...seen].sort((a, b) => a - b);
-    const list: Interval[] = [];
+    const list: MutableInterval[] = [];
     for (const i of sorted) {
       const last = list[list.length - 1];
       if (last && last.hi === i) last.hi = i + 1;
@@ -221,7 +236,7 @@ function tapsReaching(
   pLo: number,
   oN: number
 ): Interval[] {
-  const list: Interval[] = [];
+  const list: MutableInterval[] = [];
   for (let k = 0; k < K; k++) {
     // Some output position o must put tap k inside [lo, hi).
     const oLo = Math.max(0, Math.ceil((lo + pLo - k * d) / s));
@@ -379,6 +394,11 @@ export const convOp: OpSpec = {
     const a = attrs as ConvAttrs;
     const [xSh, wSh] = inShapes;
     validateSpatialActivationRank("conv", xSh.length);
+    validateSpatialAttrs("conv", xSh.length - 2, {
+      stride: a.stride,
+      pads: a.pads,
+      dilation: a.dilation,
+    });
     if (wSh.length !== xSh.length)
       throw new Error(
         `conv: weight rank ${wSh.length} must match activation rank ${xSh.length}`
@@ -503,6 +523,9 @@ type PoolAttrs = {
   dilation: number[];
 };
 
+const maxPoolDTypes = uniformDTypeOutputs("max pool");
+const avgPoolDTypes = floatingDTypeOutputs("average pool");
+
 export const poolOp: OpSpec = {
   name: "pool",
   attrSchema: z.object({
@@ -517,11 +540,18 @@ export const poolOp: OpSpec = {
   inferSymShapes: (inSyms, ctx) => [
     [inSyms[0][0], inSyms[0][1], ...ctx.outShapes[0].slice(2)],
   ],
-  inferDTypes: uniformDTypeOutputs("pool"),
+  inferDTypes: (inDTypes, attrs, outShapes) =>
+    (attrs.kind === "avg" ? avgPoolDTypes : maxPoolDTypes)(inDTypes, attrs, outShapes),
   inferShapes: (inShapes, attrs) => {
     const a = attrs as PoolAttrs;
     const sh = inShapes[0];
     validateSpatialActivationRank("pool", sh.length);
+    validateSpatialAttrs("pool", sh.length - 2, {
+      kernelShape: a.kernelShape,
+      stride: a.stride,
+      pads: a.pads,
+      dilation: a.dilation,
+    });
     const d = a.dilation ?? a.kernelShape.map(() => 1);
     const sp = sh.slice(2).map((n, i) => outSpatial(n, a.kernelShape[i], a.stride[i], d[i], a.pads[i]));
     if (sp.some((e) => e <= 0)) throw new Error("pool: non-positive output spatial extent");

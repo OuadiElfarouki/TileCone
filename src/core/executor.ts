@@ -39,6 +39,7 @@ export type ExecutionErrorCode =
   | "EXEC_DIRECTION"
   | "EXEC_REGION_RANK"
   | "EXEC_REGION_BOUNDS"
+  | "EXEC_REGION_PRECISION"
   | "EXEC_FRONTIER";
 
 export class ExecutionError extends Error {
@@ -58,6 +59,11 @@ export function validateSelection(graph: ResolvedGraph, selection: Selection): S
     throw new ExecutionError("EXEC_UNKNOWN_TENSOR", `unknown tensor "${selection.tensorId}"`);
 
   const shape = tensor.resolved!;
+  if (!selection.region.exact && selection.region.reasons.length === 0)
+    throw new ExecutionError(
+      "EXEC_REGION_PRECISION",
+      "an inexact selection must explain why it is an over-approximation"
+    );
   const boxes = selection.region.boxes.map((box, boxIndex) => {
     if (box.length !== shape.length)
       throw new ExecutionError(

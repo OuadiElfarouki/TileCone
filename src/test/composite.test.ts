@@ -58,6 +58,18 @@ function assertEquivalent(graph: ReturnType<typeof G>, nodeId: string, selTensor
 }
 
 describe("composite expansion equivalence", () => {
+  it("allocates generated tensor ids without capturing authored tensors", () => {
+    const graph = G({ A: [2, 3], "sm$max": [2, 1] }, [
+      ["sm", "softmax", ["A"], ["Y"], { axis: 1 }],
+      ["post", "elementwise", ["sm$max"], ["Z"], { fn: "relu", nary: 1 }],
+    ]);
+    const expanded = resolveGraph(expandNode(graph, "sm"));
+
+    expect(expanded.tensors["sm$max"].producer).toBeUndefined();
+    expect(expanded.topo.find((node) => node.id === "post")?.inputs).toEqual(["sm$max"]);
+    expect(Object.keys(expanded.tensors)).toContain("sm$max$1");
+  });
+
   it("softmax", () => {
     const graph = G({ X: [3, 5] }, [
       ["sm", "softmax", ["X"], ["Y"], { axis: -1 }],

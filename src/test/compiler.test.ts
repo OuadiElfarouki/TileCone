@@ -5,10 +5,94 @@ import {
   compileDSL,
   tryCompileDSL,
 } from "../parse/compiler";
-import { parseDSL } from "../parse/dsl";
+import { parseDSL, toDSL } from "../parse/dsl";
 import { resolveGraph } from "../core/graph";
 
 describe("DSL compiler facade", () => {
+  it("rejects concat operands with different ranks", () => {
+    const result = tryCompileDSL(`A = Tensor(2, 3, 4)
+B = Tensor(2, 3)
+C = concat(A, B, axis=1)
+`);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics[0]).toMatchObject({ phase: "semantic", code: "SEM_SHAPE" });
+    expect(result.diagnostics[0].message).toContain("input 1 has rank 2, expected rank 3");
+  });
+
+  it("rejects extra convolution and pooling spatial attributes", () => {
+    for (const source of [
+      `X = Tensor(1, 2, 8)\nW = Tensor(3, 2, 3)\nY = conv(X, W, stride=[1, 9], pads=[[0,0], [9,9]], dilation=[1, 9])\n`,
+      `X = Tensor(1, 2, 8)\nY = pool(X, kernelShape=[2, 9], stride=[2, 9], pads=[[0,0], [9,9]])\n`,
+    ]) {
+      const result = tryCompileDSL(source);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.diagnostics[0].message).toMatch(/length 2, expected spatial rank 1/);
+    }
+  });
+
+  it("rejects normalization over no axes", () => {
+    const result = tryCompileDSL(
+      "X = Tensor(2, 3)\nY = normalize(X, kind=layernorm, axes=[], hasWeight=false, hasBias=false)\n"
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.diagnostics[0]).toMatchObject({ code: "SEM_INVALID_ATTRIBUTES" });
+  });
+
+  it("keeps special identifier names and rejects __proto__ as an unknown attribute", () => {
+    const named = compileDSL("__proto__ = 4\ntoString = Tensor(__proto__)\n");
+    expect(named.resolved.tensors["toString"].resolved).toEqual([4]);
+
+    const inherited = tryCompileDSL("X = Tensor(constructor)\n");
+    expect(inherited.ok).toBe(false);
+    if (!inherited.ok) expect(inherited.diagnostics[0].message).toContain(
+      'unbound symbolic dim "constructor"'
+    );
+
+    const result = tryCompileDSL("X = Tensor(4)\nY = relu(X, __proto__=123)\n");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.diagnostics[0].message).toContain('unknown attribute "__proto__"');
+  });
+
+  it("round-trips string attributes that look like boolean literals", () => {
+    for (const value of ["true", "false"]) {
+      const first = compileDSL(`X = Tensor(4)\nY = opaque(X, op="${value}", shapes=[[4]])\n`);
+      const second = compileDSL(toDSL(first.graph));
+      expect(second.resolved.topo[0].attrs.op).toBe(value);
+    }
+  });
+
+  it("reports excessive expression nesting instead of overflowing the stack", () => {
+    const depth = 2_000;
+    expect(() => tryCompileDSL(`X = Tensor(${"(".repeat(depth)}1${")".repeat(depth)})\n`)).not.toThrow();
+    const result = tryCompileDSL(`X = Tensor(${"(".repeat(depth)}1${")".repeat(depth)})\n`);
+    expect(result.ok).toBe(false);
+  });
+
+  it("reports excessive expression length instead of overflowing during evaluation", () => {
+    const expression = new Array(2_000).fill("1").join("+");
+    expect(() => tryCompileDSL(`X = Tensor(${expression})\n`)).not.toThrow();
+    expect(tryCompileDSL(`X = Tensor(${expression})\n`).ok).toBe(false);
+  });
+
+  it("rejects tensors whose exact storage count is not safely representable", () => {
+    const result = tryCompileDSL(`X = Tensor(${Number.MAX_SAFE_INTEGER}, 3)\n`);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.diagnostics[0].message).toMatch(/safe integer range/);
+  });
+
+  it("applies operation-specific dtype rules", () => {
+    for (const source of [
+      "X = Tensor(4, dtype=int32)\nY = softmax(X, axis=0)\n",
+      "X = Tensor(4, dtype=int32)\nY = mean(X, axis=0)\n",
+      "X = Tensor(1, 1, 4, dtype=int32)\nY = pool(X, kind=avg, kernelShape=[2], stride=[1], pads=[[0,0]])\n",
+    ]) {
+      const result = tryCompileDSL(source);
+      expect(result.ok, source).toBe(false);
+      if (!result.ok) expect(result.diagnostics[0].code).toBe("SEM_DTYPE");
+    }
+  });
+
   it("produces source, unresolved IR, resolved IR, source map, and executor", () => {
     const source = `M = 2
 K = 3
@@ -261,12 +345,14 @@ Z = contiguous(Y)
     expect(program.resolved.tensors.Z.dtype).toBe("f16");
   });
 
-  it("infers gather output dtype from data and requires i32 indices", () => {
-    const valid = compileDSL(`D = Tensor(8, 4, dtype=fp16)
-I = Tensor(3, dtype=int32)
+  it("infers gather output dtype from data and accepts standard integer indices", () => {
+    for (const dtype of ["int32", "int64"]) {
+      const valid = compileDSL(`D = Tensor(8, 4, dtype=fp16)
+I = Tensor(3, dtype=${dtype})
 Y = gather(D, I, axis=0, indexValues=[1, 5, 2])
 `);
-    expect(valid.resolved.tensors.Y.dtype).toBe("f16");
+      expect(valid.resolved.tensors.Y.dtype).toBe("f16");
+    }
 
     const invalid = tryCompileDSL(`D = Tensor(8, 4, dtype=fp16)
 I = Tensor(3, dtype=fp32)
@@ -279,7 +365,7 @@ Y = gather(D, I, axis=0)
       code: "SEM_DTYPE",
       span: { start: { line: 3 } },
     });
-    expect(invalid.diagnostics[0].message).toMatch(/indices must be i32/);
+    expect(invalid.diagnostics[0].message).toMatch(/indices must be i32 or i64/);
   });
 
   /* Compute ops promote; data-movement ops do not. The split is deliberate:
@@ -386,8 +472,8 @@ Y = slice(X, starts=[0, 0], stops=[2], steps=[1, 1])
   });
 
   it("rejects non-representable inferred extents at the graph boundary", () => {
-    const extent = Number.MAX_SAFE_INTEGER;
-    const result = tryCompileDSL(`X = Tensor(${extent}, dtype=fp32)
+    const extent = Math.floor(Number.MAX_SAFE_INTEGER / 2) + 1;
+    const result = tryCompileDSL(`X = Tensor(${extent}, dtype=fp8)
 Y = concat(X, X, axis=0)
 `);
     expect(result.ok).toBe(false);

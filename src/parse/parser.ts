@@ -8,8 +8,14 @@
  * invented errors from a parser guessing its way forward.
  */
 
-import { NUMBER_RE, readDimExpr } from "../core/shapes";
-import { IDENT_RE, scanStringLiteral, stripComment } from "./lexical";
+import { MAX_DIM_EXPR_DEPTH, NUMBER_RE, readDimExpr } from "../core/shapes";
+import {
+  DSL_BOOLEAN_LITERALS,
+  IDENT_RE,
+  isDSLBooleanLiteral,
+  scanStringLiteral,
+  stripComment,
+} from "./lexical";
 import { Arg, Expr, Program, Spanned, Stmt } from "./ast";
 import { documentSpan, lineSpan, SourceSpan } from "./source";
 
@@ -111,7 +117,8 @@ class LineParser {
     }
   }
 
-  expr(): Expr {
+  expr(depth = 0): Expr {
+    if (depth > MAX_DIM_EXPR_DEPTH) this.error("expression nesting is too deep");
     this.ws();
     const from = this.pos;
     const s = this.string();
@@ -119,7 +126,7 @@ class LineParser {
     if (this.eat("[")) {
       const items: Expr[] = [];
       if (!this.eat("]")) {
-        do items.push(this.expr());
+        do items.push(this.expr(depth + 1));
         while (this.eat(","));
         this.expect("]");
       }
@@ -128,8 +135,8 @@ class LineParser {
     // Booleans are identifiers but are values, not one-symbol dimensions.
     const save = this.pos;
     const word = this.ident();
-    if (word === "true") return { kind: "bool", value: true, span: this.spanFrom(save) };
-    if (word === "false") return { kind: "bool", value: false, span: this.spanFrom(save) };
+    if (word !== null && isDSLBooleanLiteral(word))
+      return { kind: "bool", value: DSL_BOOLEAN_LITERALS[word], span: this.spanFrom(save) };
     this.pos = save;
     // Everything else is read as a dimension expression, so a shape attribute
     // can say `shape=[B, S, H, E/H]` in the same language a declaration uses.

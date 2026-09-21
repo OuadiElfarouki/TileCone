@@ -69,6 +69,10 @@ export function encodeWorkspace(state: WorkspaceLink): string {
 export function decodeWorkspace(hash: string): WorkspaceLink | null {
   const m = /^#?s=(.+)$/.exec(hash);
   if (!m) return null;
+  // The encoder never emits a URL payload beyond this boundary. Enforce the
+  // same limit before base64 decoding so an untrusted location hash cannot make
+  // startup allocate and parse an arbitrarily large document.
+  if (m[1].length > MAX_HASH_LENGTH) return null;
   try {
     const raw = JSON.parse(decodeURIComponent(escape(atob(m[1])))) as Partial<WorkspaceLink>;
     if (typeof raw.dsl !== "string" || !raw.dsl) return null;

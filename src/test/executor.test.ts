@@ -141,10 +141,26 @@ Z = cast(Y, dtype=fp16)
     }
   });
 
+  it("requires an explanation for an inexact selection", () => {
+    const { executor } = gemm();
+    expect(() =>
+      executor.upstream("C", {
+        boxes: [box([0, 1], [0, 1])],
+        exact: false,
+        reasons: [],
+      })
+    ).toThrowError(
+      expect.objectContaining<Partial<ExecutionError>>({ code: "EXEC_REGION_PRECISION" })
+    );
+  });
+
   it("defensively copies and canonicalizes the selection", () => {
     const { executor } = gemm();
     const region = {
-      boxes: [box([0, 2], [0, 1]), box([1, 3], [0, 1])],
+      boxes: [
+        [{ lo: 0, hi: 2 }, { lo: 0, hi: 1 }],
+        [{ lo: 1, hi: 3 }, { lo: 0, hi: 1 }],
+      ],
       exact: true,
       reasons: [] as string[],
     };

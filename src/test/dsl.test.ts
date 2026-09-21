@@ -109,6 +109,13 @@ m = mean(X, axes=[0])
     const g = parseGraphJSON(graphToJSON(parseDSL(exampleNamed("Plain GEMM").dsl)));
     expect(resolveGraph(g).tensors["C"].resolved).toEqual([256, 256]);
   });
+
+  it("round-trips identifiers that coincide with object prototype names", () => {
+    const text = graphToJSON(parseDSL("__proto__ = 4\ntoString = Tensor(__proto__)\n"));
+    const graph = parseGraphJSON(text);
+    expect(Object.prototype.hasOwnProperty.call(graph.params, "__proto__")).toBe(true);
+    expect(resolveGraph(graph).tensors["toString"].resolved).toEqual([4]);
+  });
 });
 
 describe("built-in examples", () => {

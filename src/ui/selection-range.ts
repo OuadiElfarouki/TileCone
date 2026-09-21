@@ -20,7 +20,7 @@ export function parseSelectionBox(text: string, shape: number[]): Box | null {
   const fields = body === "" ? [] : body.split(",").map((part) => part.trim());
   if (fields.length !== shape.length) return null;
 
-  const box: Box = [];
+  const box: { lo: number; hi: number }[] = [];
   for (let axis = 0; axis < fields.length; axis++) {
     const match = /^(-?\d+)(?:\s*:\s*(-?\d+))?$/.exec(fields[axis]);
     if (!match) return null;

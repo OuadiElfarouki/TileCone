@@ -29,7 +29,7 @@ export function productBoxes(perAxis: Interval[][]): Box[] {
 
 function mergeIntervalList(list: Interval[]): Interval[] {
   const s = list.filter((I) => I.hi > I.lo).sort((a, b) => a.lo - b.lo);
-  const out: Interval[] = [];
+  const out: { lo: number; hi: number }[] = [];
   for (const I of s) {
     const last = out[out.length - 1];
     if (last && I.lo <= last.hi) last.hi = Math.max(last.hi, I.hi);
@@ -60,7 +60,7 @@ export const transposeOp: OpSpec = {
   },
   backward: (_s, outBox, ctx) => {
     const perm = ctx.attrs.perm as number[];
-    const inBox: Box = new Array(perm.length);
+    const inBox: { lo: number; hi: number }[] = new Array(perm.length);
     perm.forEach((p, i) => (inBox[p] = { ...outBox[i] }));
     return [fromBox(inBox)];
   },
@@ -139,7 +139,7 @@ export const sliceOp: OpSpec = {
   forward: (_s, inBox, ctx) => {
     const { starts, stops, steps } = ctx.attrs as SliceAttrs;
     const outShape = ctx.outShapes[0];
-    const b: Box = [];
+    const b: { lo: number; hi: number }[] = [];
     for (let ax = 0; ax < inBox.length; ax++) {
       const start = starts[ax], step = steps[ax];
       const stop = Math.min(stops[ax], ctx.inShapes[0][ax]);
@@ -293,7 +293,14 @@ export const concatOp: OpSpec = {
   },
   inferDTypes: uniformDTypeOutputs("concat"),
   inferShapes: (inShapes, attrs) => {
-    const ax = normAxis(attrs.axis as number, inShapes[0].length);
+    const rank = inShapes[0].length;
+    const ax = normAxis(attrs.axis as number, rank);
+    inShapes.forEach((shape, slot) => {
+      if (shape.length !== rank)
+        throw new Error(
+          `concat: input ${slot} has rank ${shape.length}, expected rank ${rank}`
+        );
+    });
     const out = inShapes[0].slice();
     out[ax] = inShapes.reduce((a, s) => a + s[ax], 0);
     inShapes.forEach((s) => {

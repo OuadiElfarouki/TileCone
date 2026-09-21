@@ -30,6 +30,15 @@ export const IDENT_RE = new RegExp(`^[${IDENT_START_CLASS}][${IDENT_CONTINUE_CLA
 export const IDENT_START = new RegExp(`[${IDENT_START_CLASS}]`);
 export const IDENT_CONTINUE = new RegExp(`[${IDENT_CONTINUE_CLASS}]`);
 
+/** Bare words with literal meaning rather than identifier/string meaning. */
+export const DSL_BOOLEAN_LITERALS = Object.freeze({ true: true, false: false });
+
+export function isDSLBooleanLiteral(
+  word: string
+): word is keyof typeof DSL_BOOLEAN_LITERALS {
+  return Object.prototype.hasOwnProperty.call(DSL_BOOLEAN_LITERALS, word);
+}
+
 /**
  * Index just past the string literal starting at `start` (which must be `"`),
  * or the index at which it was found to be unterminated.

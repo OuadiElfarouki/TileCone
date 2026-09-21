@@ -47,6 +47,17 @@ function randBox(r: () => number, shape: number[]): Box {
 }
 
 describe("region algebra", () => {
+  it("freezes produced regions and never memoizes a foreign mutable region", () => {
+    const produced = fromBox(box([0, 2]));
+    expect(Object.isFrozen(produced)).toBe(true);
+    expect(Object.isFrozen(produced.boxes[0][0])).toBe(true);
+
+    const foreign = { boxes: [[{ lo: 0, hi: 2 }]], exact: true, reasons: [] };
+    expect(count(foreign)).toBe(2);
+    foreign.boxes[0][0].hi = 5;
+    expect(count(foreign)).toBe(5);
+  });
+
   it("basic constructors", () => {
     expect(empty(2).boxes).toHaveLength(0);
     expect(count(full([3, 4]))).toBe(12);

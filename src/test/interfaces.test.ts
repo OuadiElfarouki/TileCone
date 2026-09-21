@@ -32,6 +32,12 @@ const code = (fn: () => unknown) => {
 };
 
 describe("the two-matmul chain", () => {
+  it("rejects invalid task budgets instead of disabling the guard", () => {
+    const plan = tilePlan(chain(), { Y: [64, 64] });
+    for (const budget of [0, -1, NaN, Infinity])
+      expect(code(() => interfaceOf(plan, "Y", { budget }))).toBe("PLAN_SIZE");
+  });
+
   it("has sixteen C tasks and eight Y tasks at 64x64", () => {
     const plan = tilePlan(chain(), { C: [64, 64], Y: [64, 64] });
     expect(plan.families.get("C")!.count).toBe(16);

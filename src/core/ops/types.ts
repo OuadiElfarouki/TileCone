@@ -1,7 +1,7 @@
 import type { ZodType } from "zod";
 import type { Box, Region } from "../region";
 import type { Sym } from "../shapes";
-import { DType, promoteDTypes } from "../dtypes";
+import { DType, dtypeFamily, promoteDTypes } from "../dtypes";
 import { DEFAULT_LIMITS, type Limits } from "./limits";
 
 /**
@@ -279,6 +279,18 @@ export function uniformDTypeOutputs(op: string) {
 export function promotingDTypeOutputs(op: string) {
   return (inDTypes: DType[], _attrs: Attrs, outShapes: number[][]): DType[] => {
     if (!inDTypes.length) throw new Error(`${op}: expected at least one input dtype`);
+    const dtype = promoteDTypes(inDTypes);
+    return outShapes.map(() => dtype);
+  };
+}
+
+/** Require floating-point operands, then promote within the float family. */
+export function floatingDTypeOutputs(op: string) {
+  return (inDTypes: DType[], _attrs: Attrs, outShapes: number[][]): DType[] => {
+    if (!inDTypes.length) throw new Error(`${op}: expected at least one input dtype`);
+    const invalid = inDTypes.find((dtype) => dtypeFamily(dtype) !== "float");
+    if (invalid)
+      throw new Error(`${op}: expected floating-point inputs, got [${inDTypes.join(", ")}]`);
     const dtype = promoteDTypes(inDTypes);
     return outShapes.map(() => dtype);
   };

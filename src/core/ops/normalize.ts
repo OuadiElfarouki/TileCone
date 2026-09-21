@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Box, Region, canonicalize, count, coversAxisFully, fromBox, iv } from "../region";
 import { normAxes } from "./reduce";
-import { DependencyNoteDraft, OpCtx, OpSpec, promotingDTypeOutputs, NoteCtx } from "./types";
+import { DependencyNoteDraft, OpCtx, OpSpec, floatingDTypeOutputs, NoteCtx } from "./types";
 import { sameAxisNames } from "./axis-names";
 import { axisWord } from "./axis-names";
 import { sameSymShape } from "./sym-shape";
@@ -89,7 +89,7 @@ export const normalizeOp: OpSpec = {
   dependencyNote: normalizeDependencyNote,
   attrSchema: z.object({
     kind: z.enum(["layernorm", "rmsnorm"]),
-    axes: z.array(z.number().int()),
+    axes: z.array(z.number().int()).nonempty(),
     hasWeight: z.boolean().default(false),
     hasBias: z.boolean().default(false),
   }),
@@ -104,7 +104,7 @@ export const normalizeOp: OpSpec = {
         `flags require ${expected} input${expected === 1 ? "" : "s"}, got ${inputCount}`
       );
   },
-  inferDTypes: promotingDTypeOutputs("normalize"),
+  inferDTypes: floatingDTypeOutputs("normalize"),
   inferShapes: (inShapes, a) => {
     const attrs = a as NAttrs;
     const sh = inShapes[0];
