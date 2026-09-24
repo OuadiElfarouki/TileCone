@@ -28,11 +28,12 @@ import {
 } from "./grid";
 import { aggregateColors, boxColor } from "./palette";
 import { BoxProp, Direction, partsOn, useDark, useStore } from "./store";
-import { cardPx, planeExtents } from "./tiling";
 import { shapeLabel, shapeReadings } from "./shape-label";
 import { OVERVIEW_SCALE } from "./overview-labels";
 import { formatBytes } from "./format";
 import { viewAxes, type ViewCfg } from "./tensor-view";
+
+export { cardSize } from "./card-size";
 
 type CellDrag = { r0: number; c0: number; r1: number; c1: number };
 
@@ -877,34 +878,4 @@ export function TensorCard({
       </div>
     </div>
   );
-}
-
-/** Layout footprint of a card at the graph's scale `px`. Independent of the
- * tile: detail never relayouts. */
-export function cardSize(
-  shape: number[],
-  px: number,
-  name = "",
-  alternateShapeLabels: string[] = []
-): { w: number; h: number } {
-  const rank = shape.length;
-  const { rowAxis, colAxis } = viewAxes(shape);
-  const { rows, cols } = planeExtents(shape, rowAxis, colAxis);
-  const canvas = cardPx(rows, cols, px);
-  const hiddenAxes = Math.max(0, rank - (rowAxis >= 0 ? 1 : 0) - (colAxis >= 0 ? 1 : 0));
-  // Transparent label + optional higher-rank controls + canvas. There is no
-  // decorative outer-card padding: this is the solid collision footprint.
-  const h = 24 + (rank > 2 ? 24 : 0) + hiddenAxes * 20 + canvas.h;
-  const numericShapeLabel = `[${shape.join(" × ")}]`;
-  // Reserve the longest available reading once. Switching the workspace mode
-  // must not move cards, and semantic labels may be wider than their numbers.
-  const widestShapeLabel = [numericShapeLabel, ...alternateShapeLabels]
-    .reduce((longest, label) => label.length > longest.length ? label : longest);
-  // Reserve the longest possible clipped tile span too; changing lattice
-  // detail must re-rasterise in place rather than trigger a graph relayout.
-  const widestTileLabel = `⊞ ${rows}×${cols}`;
-  const labelW = name.length * 9 +
-    (widestShapeLabel.length + widestTileLabel.length) * 6.5 + 22;
-  const w = Math.max(canvas.w, labelW, 120);
-  return { w, h };
 }

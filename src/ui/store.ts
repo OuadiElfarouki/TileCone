@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { executeQuery, validateSelection } from "../core/executor";
 import { Entanglement, entangledWith } from "../core/entangle";
-import { Graph, graphOutputs, ResolvedGraph } from "../core/graph";
+import { Graph, graphOutputs, hydrateResolvedGraph, ResolvedGraph } from "../core/graph";
 import { expandNode } from "../core/expand";
 import { PropResult, mergeProps } from "../core/propagate";
 import { supplyOf, type Supply } from "../core/plan/interfaces";
@@ -25,6 +25,8 @@ import { tileOf } from "./grid";
 import type { AxisMode } from "./shape-label";
 import type { TensorOffset, TensorOffsets } from "./tensor-layout";
 import { defaultViewCfg, viewAxes, viewCfgFits, type ViewCfg } from "./tensor-view";
+import type { BaseGraphLayout } from "./graph-scene";
+import { analysisWorkerAvailable, compileInWorker } from "./analysis-worker-client";
 
 /** Which independently toggled views are active in the workspace. `none` is
  * the explicit figures-only state: analysis remains live while paint and rows hide. */
@@ -230,7 +232,15 @@ type WorkspaceSnapshot = {
    *
    * Absent on the ordinary entries, which change neither.
    */
-  source?: { dslText: string; draftText: string; graph: Graph; exampleIndex: number };
+  source?: {
+    dslText: string;
+    draftText: string;
+    graph: Graph;
+    resolved: ResolvedGraph;
+    baseLayout: BaseGraphLayout | null;
+    graphPx: number;
+    exampleIndex: number;
+  };
 };
 const WORKSPACE_HISTORY_LIMIT = 40;
 
@@ -298,6 +308,11 @@ type State = {
   exampleIndex: number;
   graph: Graph | null;
   resolved: ResolvedGraph | null;
+  /** Structural layout computed beside compilation in the analysis Worker. */
+  baseLayout: BaseGraphLayout | null;
+  /** Worker-side identity of `resolved`, used by later plan analysis requests. */
+  workerGraphId: number | null;
+  compiling: boolean;
   loadError: string | null;
   /**
    * Every diagnostic from the last failed compile, in source order.
@@ -441,12 +456,16 @@ type State = {
 
   /** Compile and install an example immediately: app boot and tests. */
   loadExample: (i: number) => void;
+  /** Browser entry point: compilation, inference, and layout run in a Worker. */
+  loadExampleAsync: (i: number) => Promise<boolean>;
   /** Put an example in the editor without replacing the built workspace. */
   stageExample: (i: number) => void;
   setDraftText: (text: string) => void;
   applyDSL: (text: string) => void;
+  applyDSLAsync: (text: string) => Promise<boolean>;
   /** Compile, validate, and install a shared workspace as one transaction. */
   restoreWorkspace: (workspace: WorkspaceRestore) => boolean;
+  restoreWorkspaceAsync: (workspace: WorkspaceRestore) => Promise<boolean>;
   setSelection: (tensorId: string, region: Region, compose?: Compose) => void;
   clearSelection: () => void;
   undoWorkspace: () => void;
@@ -534,6 +553,10 @@ export const MAX_PER_BOX_PROPS = 12;
  * for the same picture; `useFrameThrottle` is what removed that multiplier.
  */
 export const MAX_PREVIEW_NODES = 1000;
+
+/** Monotone request version. Workers cannot interrupt JavaScript already
+ * running, so completion is made cancellable by refusing stale results. */
+let compileEpoch = 0;
 
 function initialTheme(): Theme {
   if (typeof window === "undefined") return "light";
@@ -876,9 +899,13 @@ function withProducedInputs(
 const tileContaining = (tile: readonly number[], element: readonly number[]): number[] =>
   element.map((i, axis) => Math.floor(i / tile[axis]));
 
-function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
+function loadResolvedGraph(
+  graph: Graph,
+  resolved: ResolvedGraph,
+  worker?: { graphId: number | null; layout: BaseGraphLayout; graphPx: number }
+): Pick<
   State,
-  | "graph" | "resolved" | "loadError" | "diagnostics" | "selection" | "backwardRes" | "forwardRes"
+  | "graph" | "resolved" | "baseLayout" | "workerGraphId" | "loadError" | "diagnostics" | "selection" | "backwardRes" | "forwardRes"
   | "byTensorRes"
   | "entangled"
   | "perBox" | "focusedBox" | "pinnedBox" | "viewCfgs" | "preview" | "graphPx"
@@ -890,6 +917,8 @@ function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
   return {
     graph,
     resolved,
+    baseLayout: worker?.layout ?? null,
+    workerGraphId: worker?.graphId ?? null,
     loadError: null,
     diagnostics: [],
     entangled: null,
@@ -908,9 +937,102 @@ function loadResolvedGraph(graph: Graph, resolved: ResolvedGraph): Pick<
     analysisGroup: null,
     preview: null,
     viewCfgs,
-    graphPx: graphScale(planesOf(resolved)),
+    graphPx: worker?.graphPx ?? graphScale(planesOf(resolved)),
     // A plan names tensors and tile coordinates in one graph, as the selection does.
     ...NO_PLAN,
+  };
+}
+
+/** Install one successful DSL compilation. Shared by the synchronous fallback
+ * and the Worker path so they cannot drift in example/default-selection rules. */
+function installedDSLState(
+  text: string,
+  graph: Graph,
+  resolved: ResolvedGraph,
+  worker?: { graphId: number; layout: BaseGraphLayout; graphPx: number }
+): Partial<State> {
+  const base = loadResolvedGraph(graph, resolved, worker);
+  const exampleIndex = EXAMPLES.findIndex((example) => example.dsl === text);
+  const example = exampleIndex >= 0 ? EXAMPLES[exampleIndex] : null;
+  const state: Partial<State> = {
+    ...base,
+    dslText: text,
+    draftText: text,
+    exampleIndex,
+    focusNode: null,
+    compiling: false,
+  };
+  if (example?.defaultSelection) {
+    state.selection = {
+      parts: [{
+        tensorId: example.defaultSelection.tensor,
+        box: example.defaultSelection.box.map(([lo, hi]) => ({ lo, hi })),
+      }],
+    };
+    state.focusedBox = null;
+    state.pinnedBox = null;
+    Object.assign(state, recompute(resolved, state.selection));
+  }
+  state.loadError = null;
+  state.diagnostics = [];
+  return state;
+}
+
+const validWorkspaceFields = (workspace: WorkspaceRestore): boolean =>
+  ["none", "backward", "forward", "both"].includes(workspace.direction) &&
+  (workspace.showEntangled === undefined || typeof workspace.showEntangled === "boolean") &&
+  Number.isFinite(workspace.tileScale) &&
+  typeof workspace.snapToGrid === "boolean" &&
+  ["symbolic", "numeric"].includes(workspace.axisMode);
+
+/** Validate the graph-relative pieces of a shared workspace and install them
+ * over a freshly loaded graph. Compilation itself may happen in either realm. */
+function restoredWorkspaceState(
+  workspace: WorkspaceRestore,
+  graph: Graph,
+  resolved: ResolvedGraph,
+  worker?: { graphId: number | null; layout: BaseGraphLayout; graphPx: number }
+): Partial<State> {
+  const base = loadResolvedGraph(graph, resolved, worker);
+  for (const [id, cfg] of Object.entries(workspace.viewCfgs ?? {})) {
+    const shape = resolved.tensors[id]?.resolved;
+    if (!shape || !viewCfgFits(shape, cfg)) throw new Error(`invalid view for tensor "${id}"`);
+    base.viewCfgs[id] = { projection: cfg.projection, sliders: cfg.sliders.slice() };
+  }
+  const checkedParts = (workspace.parts ?? []).map((part) => {
+    const checked = validateSelection(resolved, {
+      tensorId: part.tensorId,
+      region: fromBox(part.box),
+    });
+    if (checked.region.boxes.length !== 1)
+      throw new Error(`selection on tensor "${part.tensorId}" is empty`);
+    return { tensorId: checked.tensorId, box: checked.region.boxes[0] };
+  });
+  const selection = checkedParts.length ? { parts: checkedParts } : null;
+  const checkedOffsets = Object.create(null) as TensorOffsets;
+  for (const [tensorId, offset] of Object.entries(workspace.tensorOffsets ?? {})) {
+    if (!resolved.tensors[tensorId] ||
+        !Number.isFinite(offset.dx) || !Number.isFinite(offset.dy) ||
+        Math.abs(offset.dx) > MAX_TENSOR_OFFSET || Math.abs(offset.dy) > MAX_TENSOR_OFFSET)
+      throw new Error(`invalid layout offset for tensor "${tensorId}"`);
+    if (Math.abs(offset.dx) >= 1e-6 || Math.abs(offset.dy) >= 1e-6)
+      checkedOffsets[tensorId] = { dx: offset.dx, dy: offset.dy };
+  }
+  return {
+    ...base,
+    dslText: workspace.dsl,
+    draftText: workspace.dsl,
+    exampleIndex: -1,
+    focusNode: null,
+    direction: workspace.direction,
+    showEntangled: workspace.showEntangled ?? false,
+    tileScale: Math.max(TILE_SCALE_MIN, Math.min(TILE_SCALE_MAX, Math.round(workspace.tileScale))),
+    snapToGrid: workspace.snapToGrid,
+    axisMode: workspace.axisMode,
+    tensorOffsets: checkedOffsets,
+    selection,
+    compiling: false,
+    ...recompute(resolved, selection),
   };
 }
 
@@ -964,6 +1086,9 @@ export const useStore = create<State>((set, get) => ({
   exampleIndex: 0,
   graph: null,
   resolved: null,
+  baseLayout: null,
+  workerGraphId: null,
+  compiling: false,
   loadError: null,
   diagnostics: [],
   showEntangled: false,
@@ -1000,17 +1125,27 @@ export const useStore = create<State>((set, get) => ({
 
   loadExample: (i) => get().applyDSL(EXAMPLES[i].dsl),
 
+  loadExampleAsync: (i) => get().applyDSLAsync(EXAMPLES[i].dsl),
+
   stageExample: (i) => {
+    if (get().compiling) compileEpoch++;
     set({
       draftText: EXAMPLES[i].dsl,
+      compiling: false,
       loadError: null,
       diagnostics: [],
     });
   },
 
-  setDraftText: (text) => set({ draftText: text }),
+  setDraftText: (text) => {
+    // A response for the previous draft must never overwrite text entered
+    // while that response was in flight.
+    if (get().compiling) compileEpoch++;
+    set({ draftText: text, compiling: false });
+  },
 
   applyDSL: (text) => {
+    compileEpoch++;
     // `tryCompileDSL` rather than the throwing form: a thrown CompilationError
     // flattens to its first diagnostic's message, and the editor wants all of
     // them. Everything the compiler found in one pass reaches the panel.
@@ -1018,6 +1153,7 @@ export const useStore = create<State>((set, get) => ({
     if (!result.ok) {
       set({
         draftText: text,
+        compiling: false,
         diagnostics: result.diagnostics,
         loadError: `line ${result.diagnostics[0].span.start.line}: ${result.diagnostics[0].message}`,
       });
@@ -1025,109 +1161,83 @@ export const useStore = create<State>((set, get) => ({
     }
     try {
       const program = result.program;
-      const base = loadResolvedGraph(program.graph, program.resolved);
-      // A source that is exactly a built-in example *is* that example, however
-      // it got here - picked from the menu, restored from a link, or typed.
-      // Deriving this from the text keeps the picker honest after an edit is
-      // undone back to the original, which a remembered index could not.
-      const exampleIndex = EXAMPLES.findIndex((ex) => ex.dsl === text);
-      const example = exampleIndex >= 0 ? EXAMPLES[exampleIndex] : null;
-      const st: Partial<State> = {
-        ...base,
-        dslText: text,
-        draftText: text,
-        exampleIndex,
-        focusNode: null,
-      };
-      if (example?.defaultSelection && base.resolved) {
-        st.selection = {
-          parts: [
-            {
-              tensorId: example.defaultSelection.tensor,
-              box: example.defaultSelection.box.map(([lo, hi]) => ({ lo, hi })),
-            },
-          ],
-        };
-        st.focusedBox = null;
-        st.pinnedBox = null;
-        Object.assign(st, recompute(base.resolved, st.selection!));
-      }
-      st.loadError = null;
-      st.diagnostics = [];
-      set(st as State);
+      set(installedDSLState(text, program.graph, program.resolved));
     } catch (e) {
       // Compilation succeeded; anything failing here is a workspace-build
       // problem with no source span to attach it to.
-      set({ draftText: text, loadError: (e as Error).message, diagnostics: [] });
+      set({ draftText: text, compiling: false, loadError: (e as Error).message, diagnostics: [] });
     }
   },
 
-  restoreWorkspace: ({
-    dsl,
-    direction,
-    showEntangled,
-    tileScale,
-    snapToGrid,
-    axisMode,
-    tensorOffsets,
-    viewCfgs,
-    parts,
-  }) => {
+  applyDSLAsync: async (text) => {
+    if (!analysisWorkerAvailable()) {
+      get().applyDSL(text);
+      return get().dslText === text && get().loadError === null;
+    }
+    const epoch = ++compileEpoch;
+    set({ compiling: true, draftText: text, loadError: null, diagnostics: [] });
     try {
-      if (
-        !["none", "backward", "forward", "both"].includes(direction) ||
-        (showEntangled !== undefined && typeof showEntangled !== "boolean") ||
-        !Number.isFinite(tileScale) ||
-        typeof snapToGrid !== "boolean" ||
-        !["symbolic", "numeric"].includes(axisMode)
-      ) return false;
-      const program = compileDSL(dsl);
-      const base = loadResolvedGraph(program.graph, program.resolved);
-      for (const [id, cfg] of Object.entries(viewCfgs ?? {})) {
-        const shape = program.resolved.tensors[id]?.resolved;
-        if (!shape || !viewCfgFits(shape, cfg)) throw new Error(`invalid view for tensor "${id}"`);
-        base.viewCfgs[id] = { projection: cfg.projection, sliders: cfg.sliders.slice() };
-      }
-      const checkedParts = (parts ?? []).map((part) => {
-        const checked = validateSelection(program.resolved, {
-          tensorId: part.tensorId,
-          region: fromBox(part.box),
+      const result = await compileInWorker(text);
+      if (epoch !== compileEpoch) return false;
+      if (!result.ok) {
+        set({
+          compiling: false,
+          diagnostics: result.diagnostics,
+          loadError: `line ${result.diagnostics[0].span.start.line}: ${result.diagnostics[0].message}`,
         });
-        if (checked.region.boxes.length !== 1)
-          throw new Error(`selection on tensor "${part.tensorId}" is empty`);
-        return { tensorId: checked.tensorId, box: checked.region.boxes[0] };
-      });
-      const selection = checkedParts.length ? { parts: checkedParts } : null;
-      const checkedOffsets = Object.create(null) as TensorOffsets;
-      for (const [tensorId, offset] of Object.entries(tensorOffsets ?? {})) {
-        if (!program.resolved.tensors[tensorId] ||
-            !Number.isFinite(offset.dx) || !Number.isFinite(offset.dy) ||
-            Math.abs(offset.dx) > MAX_TENSOR_OFFSET || Math.abs(offset.dy) > MAX_TENSOR_OFFSET)
-          throw new Error(`invalid layout offset for tensor "${tensorId}"`);
-        if (Math.abs(offset.dx) >= 1e-6 || Math.abs(offset.dy) >= 1e-6)
-          checkedOffsets[tensorId] = { dx: offset.dx, dy: offset.dy };
+        return false;
       }
-      const clampedTile = Math.max(
-        TILE_SCALE_MIN,
-        Math.min(TILE_SCALE_MAX, Math.round(tileScale))
-      );
+      const resolved = hydrateResolvedGraph(result.artifact.resolved);
+      set(installedDSLState(text, result.artifact.graph, resolved, {
+        graphId: result.graphId,
+        layout: result.artifact.layout,
+        graphPx: result.artifact.graphPx,
+      }));
+      return true;
+    } catch (error) {
+      if (epoch !== compileEpoch) return false;
       set({
-        ...base,
-        dslText: dsl,
-        draftText: dsl,
-        exampleIndex: -1,
-        focusNode: null,
-        direction,
-        showEntangled: showEntangled ?? false,
-        tileScale: clampedTile,
-        snapToGrid,
-        axisMode,
-        tensorOffsets: checkedOffsets,
-        selection,
-        ...recompute(program.resolved, selection),
+        compiling: false,
+        loadError: error instanceof Error ? error.message : String(error),
+        diagnostics: [],
       });
+      return false;
+    }
+  },
+
+  restoreWorkspace: (workspace) => {
+    compileEpoch++;
+    try {
+      if (!validWorkspaceFields(workspace)) return false;
+      const program = compileDSL(workspace.dsl);
+      set(restoredWorkspaceState(workspace, program.graph, program.resolved));
       return true;
     } catch {
+      return false;
+    }
+  },
+
+  restoreWorkspaceAsync: async (workspace) => {
+    if (!analysisWorkerAvailable()) return get().restoreWorkspace(workspace);
+    if (!validWorkspaceFields(workspace)) return false;
+    const epoch = ++compileEpoch;
+    set({ compiling: true });
+    try {
+      const result = await compileInWorker(workspace.dsl);
+      if (epoch !== compileEpoch) return false;
+      if (!result.ok) {
+        set({ compiling: false });
+        return false;
+      }
+      const resolved = hydrateResolvedGraph(result.artifact.resolved);
+      set(restoredWorkspaceState(workspace, result.artifact.graph, resolved, {
+        graphId: result.graphId,
+        layout: result.artifact.layout,
+        graphPx: result.artifact.graphPx,
+      }));
+      return true;
+    } catch {
+      if (epoch === compileEpoch) set({ compiling: false });
       return false;
     }
   },
@@ -1230,26 +1340,30 @@ export const useStore = create<State>((set, get) => ({
     if (!workspaceHistory.length) return;
     const prev = workspaceHistory[workspaceHistory.length - 1];
     if (prev.source) {
-      // Undoing a composite expansion: the graph itself goes back, so the
-      // selection has to be restored against *that* graph rather than the
-      // expanded one it was recorded beside.
-      try {
-        const program = compileDSL(prev.source.dslText);
-        set({
-          ...loadResolvedGraph(program.graph, program.resolved),
-          dslText: prev.source.dslText,
-          draftText: prev.source.draftText,
-          exampleIndex: prev.source.exampleIndex,
-          tensorOffsets: prev.tensorOffsets,
-          selection: prev.selection,
-          workspaceHistory: workspaceHistory.slice(0, -1),
-          focusNode: null,
-          ...recompute(program.resolved, prev.selection),
-          ...derivePlan(program.resolved, prev.plan.tiles, prev.plan.task),
-        });
-      } catch (e) {
-        set({ loadError: (e as Error).message });
-      }
+      // The complete pre-expansion graph is part of this one special history
+      // entry. Restoring it directly avoids recompiling and relaying out a
+      // potentially large graph on the UI thread during Undo.
+      compileEpoch++;
+      const source = prev.source;
+      set({
+        ...loadResolvedGraph(
+          source.graph,
+          source.resolved,
+          source.baseLayout
+            ? { graphId: null, layout: source.baseLayout, graphPx: source.graphPx }
+            : undefined
+        ),
+        dslText: source.dslText,
+        draftText: source.draftText,
+        exampleIndex: source.exampleIndex,
+        tensorOffsets: prev.tensorOffsets,
+        selection: prev.selection,
+        workspaceHistory: workspaceHistory.slice(0, -1),
+        focusNode: null,
+        compiling: false,
+        ...recompute(source.resolved, prev.selection),
+        ...derivePlan(source.resolved, prev.plan.tiles, prev.plan.task),
+      });
       return;
     }
     set({
@@ -1602,14 +1716,13 @@ export const useStore = create<State>((set, get) => ({
 
   expandNodeInPlace: (nodeId) => {
     const state = get();
-    const { graph } = state;
-    if (!graph) return;
+    const { graph, resolved } = state;
+    if (!graph || !resolved) return;
     try {
       const g2 = expandNode(graph, nodeId);
       // Source and graph remain one transaction: rerunning or sharing the text
       // must restore the same primitive graph currently shown in the workspace.
       const source = toDSL(g2);
-      const program = compileDSL(source);
       // `loadResolvedGraph` clears the history, and rightly: its entries name
       // tensors and coordinates in the graph being replaced. The one entry that
       // survives is the one it cannot invalidate, because it is what to go back
@@ -1622,19 +1735,59 @@ export const useStore = create<State>((set, get) => ({
           dslText: state.dslText,
           draftText: state.draftText,
           graph,
+          resolved,
+          baseLayout: state.baseLayout,
+          graphPx: state.graphPx,
           exampleIndex: state.exampleIndex,
         },
       };
-      set({
-        ...loadResolvedGraph(program.graph, program.resolved),
-        dslText: source,
-        draftText: source,
-        exampleIndex: -1,
-        focusNode: null,
-        workspaceHistory: [restore],
+      const install = (
+        nextGraph: Graph,
+        nextResolved: ResolvedGraph,
+        worker?: { graphId: number; layout: BaseGraphLayout; graphPx: number }
+      ) => set({
+          ...loadResolvedGraph(nextGraph, nextResolved, worker),
+          dslText: source,
+          draftText: source,
+          exampleIndex: -1,
+          focusNode: null,
+          compiling: false,
+          workspaceHistory: [restore],
+        });
+
+      if (!analysisWorkerAvailable()) {
+        compileEpoch++;
+        const program = compileDSL(source);
+        install(program.graph, program.resolved);
+        return;
+      }
+
+      const epoch = ++compileEpoch;
+      set({ compiling: true, loadError: null, diagnostics: [] });
+      void compileInWorker(source).then((result) => {
+        if (epoch !== compileEpoch) return;
+        if (!result.ok) {
+          set({
+            compiling: false,
+            diagnostics: result.diagnostics,
+            loadError: result.diagnostics[0]?.message ?? "expanded graph did not compile",
+          });
+          return;
+        }
+        install(result.artifact.graph, hydrateResolvedGraph(result.artifact.resolved), {
+          graphId: result.graphId,
+          layout: result.artifact.layout,
+          graphPx: result.artifact.graphPx,
+        });
+      }).catch((error) => {
+        if (epoch === compileEpoch) set({
+          compiling: false,
+          loadError: error instanceof Error ? error.message : String(error),
+          diagnostics: [],
+        });
       });
     } catch (e) {
-      set({ loadError: (e as Error).message });
+      set({ compiling: false, loadError: (e as Error).message });
     }
   },
 }));

@@ -28,6 +28,7 @@ import { count, formatBoxIndices } from "../core/region";
 import { formatBytes, formatFigure } from "./format";
 import { boxColor, rgbCss } from "./palette";
 import { useDark, useStore } from "./store";
+import { analysisWorkerAvailable, familyInWorker } from "./analysis-worker-client";
 
 /** Families up to this many tasks are evaluated as soon as they are shown; larger ones on request. */
 export const AUTO_FAMILY_TASKS = 256;
@@ -411,16 +412,69 @@ function BoundaryRow({
 
 function FamilySection({ plan, task }: { plan: TilePlan; task: TaskRef }): React.ReactElement {
   const selectPlanTask = useStore((s) => s.selectPlanTask);
+  const workerGraphId = useStore((s) => s.workerGraphId);
   const family = plan.families.get(task.tensorId)!;
   const name = plan.graph.tensors[task.tensorId].name;
   const auto = family.count <= AUTO_FAMILY_TASKS;
+  const workerEnabled = analysisWorkerAvailable();
+  const familyTiles = useMemo(
+    () => Object.fromEntries(
+      [...plan.families].map(([tensorId, tiled]) => [tensorId, [...tiled.tile]])
+    ),
+    [plan]
+  );
+  const analysisKey = useMemo(
+    () => JSON.stringify([
+      workerGraphId ?? plan.graph.nodes.map((node) => node.id),
+      task.tensorId,
+      familyTiles,
+    ]),
+    [familyTiles, plan.graph.nodes, task.tensorId, workerGraphId]
+  );
   const automatic = useMemo(
-    () => (auto ? interfaceOf(plan, task.tensorId) : null),
-    [auto, plan, task.tensorId]
+    () => (!workerEnabled && auto ? interfaceOf(plan, task.tensorId) : null),
+    [auto, plan, task.tensorId, workerEnabled]
   );
   const [run, setRun] = useState<{ plan: TilePlan; tensorId: string; report: InterfaceReport } | null>(null);
+  const [requestedKey, setRequestedKey] = useState<string | null>(null);
+  const [workerRun, setWorkerRun] = useState<{
+    key: string;
+    report: InterfaceReport | null;
+    error: string | null;
+  } | null>(null);
+  const shouldRunInWorker = workerEnabled && (auto || requestedKey === analysisKey);
+
+  useEffect(() => {
+    if (!shouldRunInWorker) return;
+    let live = true;
+    setWorkerRun({ key: analysisKey, report: null, error: null });
+    void familyInWorker({
+      graphId: workerGraphId,
+      graph: plan.graph,
+      tiles: familyTiles,
+      tensorId: task.tensorId,
+    }).then((report) => {
+      if (live) setWorkerRun({ key: analysisKey, report, error: null });
+    }).catch((error) => {
+      if (live) setWorkerRun({
+        key: analysisKey,
+        report: null,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    return () => { live = false; };
+  }, [analysisKey, shouldRunInWorker, workerGraphId]);
+
   const requested = run && run.plan === plan && run.tensorId === task.tensorId ? run.report : null;
-  const report = automatic ?? requested;
+  const currentWorkerRun = workerRun?.key === analysisKey ? workerRun : null;
+  const report = automatic ?? requested ?? currentWorkerRun?.report ?? null;
+  const evaluating = shouldRunInWorker &&
+    (!currentWorkerRun || (currentWorkerRun.report === null && !currentWorkerRun.error));
+
+  const evaluate = () => {
+    if (workerEnabled) setRequestedKey(analysisKey);
+    else setRun({ plan, tensorId: task.tensorId, report: interfaceOf(plan, task.tensorId) });
+  };
 
   const matrixFor = (row: BoundaryDemand) => {
     const producer = plan.families.get(row.tensorId);
@@ -439,14 +493,19 @@ function FamilySection({ plan, task }: { plan: TilePlan; task: TaskRef }): React
         {!auto && (
           <button
             className="mini"
-            onClick={() => setRun({ plan, tensorId: task.tensorId, report: interfaceOf(plan, task.tensorId) })}
+            onClick={evaluate}
+            disabled={evaluating}
             title="run one bounded query per task of this family"
           >
-            evaluate
+            {evaluating ? "evaluating…" : "evaluate"}
           </button>
         )}
       </div>
-      {!report ? (
+      {currentWorkerRun?.error ? (
+        <p className="hint overlap">Family analysis failed: {currentWorkerRun.error}</p>
+      ) : evaluating ? (
+        <p className="hint">Evaluating one bounded query per task…</p>
+      ) : !report ? (
         <p className="hint">One query per task · run on request above {AUTO_FAMILY_TASKS} tasks.</p>
       ) : report.status === "over-budget" ? (
         <p className="hint">

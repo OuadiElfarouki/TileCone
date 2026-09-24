@@ -7,7 +7,8 @@ import {
   GraphScene,
   PlacedGraphNode,
 } from "./graph-scene";
-import { cardSize, TensorCard } from "./TensorCard";
+import { TensorCard } from "./TensorCard";
+import { cardSize } from "./card-size";
 import { shapeLabel, symbolicExtentLabel } from "./shape-label";
 import { opLabel } from "../core/ops/index";
 import { involvedTensorIds, PANEL_RAIL, planesOf, useStore } from "./store";
@@ -158,6 +159,7 @@ export function visibleEntangledTensorIds(
 
 export function GraphView(): React.ReactElement {
   const resolved = useStore((s) => s.resolved);
+  const workerBaseLayout = useStore((s) => s.baseLayout);
   const graphPx = useStore((s) => s.graphPx);
   const tileScale = useStore((s) => s.tileScale);
   const backwardRes = useStore((s) => s.backwardRes);
@@ -220,9 +222,9 @@ export function GraphView(): React.ReactElement {
     [tf.k]
   );
   /** Dagre placement depends only on graph structure and tensor footprints. */
-  const baseLayout = useMemo(
+  const fallbackBaseLayout = useMemo(
     () =>
-      resolved
+      resolved && !workerBaseLayout
         ? buildBaseGraphLayout(resolved, (tensor) =>
             cardSize(tensor.resolved!, graphPx, tensor.name, [
               shapeLabel(tensor, "symbolic"),
@@ -230,8 +232,9 @@ export function GraphView(): React.ReactElement {
             ])
           )
         : null,
-    [resolved, graphPx]
+    [resolved, graphPx, workerBaseLayout]
   );
+  const baseLayout = workerBaseLayout ?? fallbackBaseLayout;
 
   /**
    * The tile every tensor settled on, or `null` when the fit rule coarsened
