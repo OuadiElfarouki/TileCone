@@ -5,6 +5,7 @@ import type { Supply } from "../core/plan/interfaces";
 import type { TilePlan } from "../core/plan/plan";
 import { tileBox } from "../core/plan/tile-family";
 import { useFrameThrottle } from "./useFrameThrottle";
+import { useDebounced } from "./useDebounced";
 import {
   Box,
   formatBoxIndices,
@@ -448,23 +449,47 @@ export function buildPlanPaint({
   return { layers, paint: { lattice, tiles } };
 }
 
-export function TensorCard({
+/**
+ * The card-moving gestures, as callbacks that do not change between renders.
+ *
+ * The tensor is an argument rather than a closure, so one object serves every
+ * card. Binding it per card produced a fresh handler object on each of the
+ * graph's renders, which is every pointer event of a pan, and a changing prop
+ * is what stops a card from being skipped by `React.memo`.
+ */
+export type CardGestures = {
+  onPointerDown: (e: React.PointerEvent<HTMLElement>, tensorId: string) => void;
+  onPointerMove: (e: React.PointerEvent<HTMLElement>) => void;
+  onPointerUp: () => void;
+  onPointerCancel: () => void;
+  onLostPointerCapture: () => void;
+};
+
+/**
+ * How long the view must hold still before a card re-rasterises, in ms.
+ *
+ * Long enough that a continuous wheel gesture rasterises once at its end
+ * rather than at each of the 32 paint buckets in an octave, short enough that
+ * the sharper raster arrives while the reader is still looking at what they
+ * zoomed to. Between the two the CSS transform scales the existing raster, so
+ * the picture is never absent, only briefly softer.
+ */
+export const ZOOM_SETTLE_MS = 140;
+
+function TensorCardView({
   tensor,
   renderScale = 1,
   viewScale = 1,
   overviewWidth,
   uniformTile = null,
-  moveHandlers,
+  gestures,
 }: {
   tensor: Tensor;
   renderScale?: number;
   viewScale?: number;
   overviewWidth?: number;
   uniformTile?: number | null;
-  moveHandlers?: Pick<
-    React.HTMLAttributes<HTMLDivElement>,
-    "onPointerDown" | "onPointerMove" | "onPointerUp" | "onPointerCancel" | "onLostPointerCapture"
-  >;
+  gestures?: CardGestures;
 }): React.ReactElement {
   const shape = tensor.resolved!;
   const rank = shape.length;
@@ -477,7 +502,26 @@ export function TensorCard({
   // subset of the graph; cards outside it retain `undefined` and do not render.
   const prev = useStore((s) => s.preview?.backward?.tensors.get(tensor.id));
   const prevForward = useStore((s) => s.preview?.forward?.tensors.get(tensor.id));
-  const drawScale = paintScale(viewScale);
+  /**
+   * The scale this card is rasterised for, which trails the scale it is shown
+   * at while the view is moving.
+   *
+   * Zoom changes both of the paint inputs - the backing-store multiplier and
+   * the fine paint bucket - and a wheel gesture crosses 32 buckets per octave,
+   * so following it live re-rasterised every card in the graph dozens of times
+   * for one gesture. The CSS transform scales what is already drawn in the
+   * meantime, so nothing disappears; the raster catches up once the view
+   * stops. The first value is taken as it arrives, so a card is never blank
+   * and a headless caller sees exactly what it always did.
+   */
+  const [paintAt, setPaintAt] = useState({ view: viewScale, render: renderScale });
+  const settlePaint = useDebounced(setPaintAt, ZOOM_SETTLE_MS);
+  useEffect(() => {
+    if (paintAt.view === viewScale && paintAt.render === renderScale) return;
+    settlePaint({ view: viewScale, render: renderScale });
+  }, [viewScale, renderScale, paintAt, settlePaint]);
+  const drawScale = paintScale(paintAt.view);
+  const paintRenderScale = paintAt.render;
   const setSelection = useStore((s) => s.setSelection);
   const setPreviewBox = useStore((s) => s.setPreviewBox);
   const perBox = useStore((s) => s.perBox);
@@ -578,7 +622,7 @@ export function TensorCard({
         proposed: tensor.producer ? planProposal : null,
         pointer: planPointer,
       });
-      drawGrid(canvas, shape, cfg, geom, layers, dark, renderScale, drawScale, paint);
+      drawGrid(canvas, shape, cfg, geom, layers, dark, paintRenderScale, drawScale, paint);
       return;
     }
     const layers = buildLayers({
@@ -599,7 +643,7 @@ export function TensorCard({
       entangled,
       showEntangled,
     });
-    drawGrid(canvas, shape, cfg, geom, layers, dark, renderScale, drawScale);
+    drawGrid(canvas, shape, cfg, geom, layers, dark, paintRenderScale, drawScale);
   }, [
     back,
     cfg,
@@ -618,7 +662,7 @@ export function TensorCard({
     drawScale,
     prev,
     prevForward,
-    renderScale,
+    paintRenderScale,
     selection?.parts.length,
     shape,
     snapToGrid,
@@ -703,9 +747,12 @@ export function TensorCard({
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const cell = elementFromEvent(e, canvasRef.current!, geom);
-    if (drag && cell) {
+    // Only a change of cell changes anything drawn. Pointer events outrun the
+    // cells they land in by an order of magnitude on a large card, and a fresh
+    // object for the same cell repainted the canvas for a picture identical to
+    // the one already on it.
+    if (drag && cell && (cell.row !== drag.r1 || cell.col !== drag.c1))
       setDrag({ ...drag, r1: cell.row, c1: cell.col });
-    }
     if (cell) {
       // A hover is the click that has not happened yet. Both the readout and the
       // preview cone are therefore built from the box that click would commit,
@@ -713,7 +760,9 @@ export function TensorCard({
       const box = dragToBox({ r0: cell.row, c0: cell.col, r1: cell.row, c1: cell.col });
       const key = formatBoxIndices(box);
       setHover(`(${key})`);
-      setHoverCell(cell);
+      setHoverCell((current) =>
+        current && current.row === cell.row && current.col === cell.col ? current : cell
+      );
       if (planView) return; // the Plan view has no cone preview
       if (!drag && previewKeyRef.current !== key) {
         previewKeyRef.current = key;
@@ -768,6 +817,21 @@ export function TensorCard({
    */
   const showTileSpan = tileSpanRows !== tileSpanCols || uniformTile !== tileSpanRows;
   const roleTag = tensor.producer ? null : tensor.role === "weight" ? "weight" : "input";
+  /** This card's own header handlers, bound once to its tensor. */
+  const moveHandlers = useMemo(
+    () =>
+      gestures
+        ? {
+            onPointerDown: (e: React.PointerEvent<HTMLElement>) =>
+              gestures.onPointerDown(e, tensor.id),
+            onPointerMove: gestures.onPointerMove,
+            onPointerUp: gestures.onPointerUp,
+            onPointerCancel: gestures.onPointerCancel,
+            onLostPointerCapture: gestures.onLostPointerCapture,
+          }
+        : undefined,
+    [gestures, tensor.id]
+  );
   // Exactness is carried by hatching on the canvas; this repeats it in the
   // header because an over-approximation must never be mistakable for ground
   // truth, and hatching is easy to miss on a small or sparsely covered card.
@@ -879,3 +943,17 @@ export function TensorCard({
     </div>
   );
 }
+
+/**
+ * Cards re-render only when their own props or store slices change.
+ *
+ * The graph re-renders on every pointer event of a pan and on every frame of a
+ * card drag, because the viewport transform and the moved card's position live
+ * there. Neither changes anything about the other cards, but every card was
+ * reconciled anyway - twenty subtrees, each with its own subscriptions, for a
+ * translate. The props below are primitives, or objects held stable by the
+ * graph for exactly this reason, so the comparison is sound: what a card draws
+ * comes from the store, which `useStore` re-subscribes to on its own.
+ */
+export const TensorCard = React.memo(TensorCardView);
+TensorCard.displayName = "TensorCard";
