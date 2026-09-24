@@ -7,7 +7,7 @@ import {
   GraphScene,
   PlacedGraphNode,
 } from "./graph-scene";
-import { TensorCard } from "./TensorCard";
+import { TensorCard, type CardGestures } from "./TensorCard";
 import { cardSize } from "./card-size";
 import { shapeLabel, symbolicExtentLabel } from "./shape-label";
 import { opLabel } from "../core/ops/index";
@@ -18,6 +18,7 @@ import { overviewLabels } from "./overview-labels";
 import { paintScale } from "./grid";
 import { FIT_GRAPH_EVENT } from "./useKeyboard";
 import { GridControls } from "./GridControls";
+import { useFrameThrottle } from "./useFrameThrottle";
 
 type CardDrag = {
   id: string;
@@ -507,55 +508,86 @@ export function GraphView(): React.ReactElement {
     setPanning(true);
     setDragging(true); // so the drag guard suppresses text selection
   };
-  const onPointerMove = (e: React.PointerEvent) => {
+  /* Pan, card drag and the hover preview all arrive at pointer rate and are
+     all read at frame rate. The position is kept in a ref and applied once per
+     frame: an intermediate transform is overwritten before it reaches a pixel,
+     so computing it only spends the frame the next one needs. The applied
+     position is absolute rather than incremental, which is what makes a
+     coalesced move identical to the moves it replaced. */
+  const panPointRef = useRef<{ x: number; y: number } | null>(null);
+  const applyPan = useCallback(() => {
     const p = panRef.current;
-    if (!p) return;
+    const point = panPointRef.current;
+    if (!p || !point) return;
+    setTf((t) => ({ ...t, x: p.tx + point.x - p.x0, y: p.ty + point.y - p.y0 }));
+  }, []);
+  const requestPan = useFrameThrottle(applyPan);
+
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (!panRef.current) return;
     movedRef.current = true;
-    setTf((t) => ({ ...t, x: p.tx + e.clientX - p.x0, y: p.ty + e.clientY - p.y0 }));
+    panPointRef.current = { x: e.clientX, y: e.clientY };
+    requestPan();
   };
   const endPan = () => {
     if (!panRef.current) return;
+    // Apply the last coalesced position before the gesture's state is cleared,
+    // or a pending frame would find nothing to apply and drop the final move.
+    applyPan();
     panRef.current = null;
+    panPointRef.current = null;
     setPanning(false);
     setDragging(false);
   };
 
-  const startCardDrag = (e: React.PointerEvent<HTMLElement>, placed: PlacedGraphNode) => {
+  /* Stable across renders, so one handler object serves every card and a card
+     is not reconciled because the graph re-rendered. Everything they read that
+     changes - the scene, the viewport scale, the stored offsets - is reached
+     through a ref or the store rather than captured. */
+  const startCardDrag = useCallback((e: React.PointerEvent<HTMLElement>, tensorId: string) => {
     if (!canStartCardDrag(e.target)) return;
+    const placed = sceneRef.current?.nodes.find(
+      (node) => node.kind === "tensor" && node.id === tensorId
+    );
+    if (!placed) return;
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
-    const before = tensorOffsets[placed.id] ?? { dx: 0, dy: 0 };
+    const before = useStore.getState().tensorOffsets[tensorId] ?? { dx: 0, dy: 0 };
     cardDragRef.current = {
-      id: placed.id,
+      id: tensorId,
       pointerId: e.pointerId,
       lastClient: { x: e.clientX, y: e.clientY },
       rect: { x: placed.x, y: placed.y, w: placed.w, h: placed.h },
       offset: before,
       before,
-      blockers: (scene?.nodes ?? [])
-        .filter((other) => !(other.kind === "tensor" && other.id === placed.id))
+      blockers: (sceneRef.current?.nodes ?? [])
+        .filter((other) => !(other.kind === "tensor" && other.id === tensorId))
         .map(({ x, y, w, h }) => ({ x, y, w, h })),
       moved: false,
       viewportMovedBefore: movedRef.current,
     };
-    setMovingTensor(placed.id);
+    setMovingTensor(tensorId);
     setBlockedTensor(null);
     setDragging(true);
-  };
+  }, [setDragging]);
 
-  const moveCard = (e: React.PointerEvent<HTMLElement>) => {
+  const cardPointRef = useRef<{ x: number; y: number } | null>(null);
+  const applyCardMove = useCallback(() => {
     const drag = cardDragRef.current;
-    if (!drag || drag.pointerId !== e.pointerId) return;
-    e.preventDefault();
-    e.stopPropagation();
+    const point = cardPointRef.current;
+    if (!drag || !point) return;
     const delta = {
-      x: (e.clientX - drag.lastClient.x) / tf.k,
-      y: (e.clientY - drag.lastClient.y) / tf.k,
+      x: (point.x - drag.lastClient.x) / tfRef.current.k,
+      y: (point.y - drag.lastClient.y) / tfRef.current.k,
     };
+    if (delta.x === 0 && delta.y === 0) return;
+    // Each axis is still swept over the whole requested distance, so coalescing
+    // moves cannot tunnel a card through a neighbour: a frame's worth of
+    // movement is one larger request, not a skipped one.
     const rect = constrainRectMotion(drag.rect, delta, drag.blockers);
     const accepted = { x: rect.x - drag.rect.x, y: rect.y - drag.rect.y };
-    drag.lastClient = { x: e.clientX, y: e.clientY };
+    drag.lastClient = { x: point.x, y: point.y };
     drag.rect = rect;
     if (accepted.x === 0 && accepted.y === 0) {
       if (Math.abs(delta.x) > 0.1 || Math.abs(delta.y) > 0.1) setBlockedTensor(drag.id);
@@ -566,9 +598,24 @@ export function GraphView(): React.ReactElement {
     movedRef.current = true;
     drag.offset = { dx: drag.offset.dx + accepted.x, dy: drag.offset.dy + accepted.y };
     setTensorOffset(drag.id, drag.offset);
-  };
+  }, [setTensorOffset]);
+  const requestCardMove = useFrameThrottle(applyCardMove);
+
+  const moveCard = useCallback((e: React.PointerEvent<HTMLElement>) => {
+    const drag = cardDragRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    cardPointRef.current = { x: e.clientX, y: e.clientY };
+    requestCardMove();
+  }, [requestCardMove]);
 
   const finishCardDrag = useCallback((commit: boolean) => {
+    // The last coalesced position is part of the gesture, so it is applied
+    // before the gesture is read: a drag released inside the same frame as its
+    // final move must commit where the pointer left it.
+    if (commit) applyCardMove();
+    cardPointRef.current = null;
     const drag = cardDragRef.current;
     if (!drag) return;
     cardDragRef.current = null;
@@ -580,7 +627,20 @@ export function GraphView(): React.ReactElement {
     setMovingTensor(null);
     setBlockedTensor(null);
     setDragging(false);
-  }, [commitTensorMove, setDragging, setTensorOffset]);
+  }, [applyCardMove, commitTensorMove, setDragging, setTensorOffset]);
+
+  /** One gesture object for every card, so a card's props do not change when
+   * the graph re-renders. Each handler takes the tensor it acts on. */
+  const cardGestures = useMemo<CardGestures>(
+    () => ({
+      onPointerDown: startCardDrag,
+      onPointerMove: moveCard,
+      onPointerUp: () => finishCardDrag(true),
+      onPointerCancel: () => finishCardDrag(false),
+      onLostPointerCapture: () => finishCardDrag(false),
+    }),
+    [startCardDrag, moveCard, finishCardDrag]
+  );
 
   useEffect(() => {
     const cancel = (e: KeyboardEvent) => {
@@ -696,13 +756,6 @@ export function GraphView(): React.ReactElement {
           // but deliberately does not enter `contributing`: doing that would
           // heat every unrelated edge that happens to carry the same tensor.
           const hot = !hasResult || contributing.has(p.id) || visibleEntangled.has(p.id);
-          const moveHandlers = {
-            onPointerDown: (e: React.PointerEvent<HTMLElement>) => startCardDrag(e, p),
-            onPointerMove: moveCard,
-            onPointerUp: () => finishCardDrag(true),
-            onPointerCancel: () => finishCardDrag(false),
-            onLostPointerCapture: () => finishCardDrag(false),
-          };
           return (
             <div
               key={`t:${p.id}`}
@@ -713,7 +766,11 @@ export function GraphView(): React.ReactElement {
                 className="tensor-grab"
                 aria-label={`move tensor ${t.name}`}
                 title={blockedTensor === p.id ? `${t.name} is blocked by a neighbouring node` : `drag to reposition ${t.name}`}
-                {...moveHandlers}
+                onPointerDown={(e) => cardGestures.onPointerDown(e, p.id)}
+                onPointerMove={cardGestures.onPointerMove}
+                onPointerUp={cardGestures.onPointerUp}
+                onPointerCancel={cardGestures.onPointerCancel}
+                onLostPointerCapture={cardGestures.onLostPointerCapture}
               />
               <TensorCard
                 uniformTile={uniformTile}
@@ -721,7 +778,7 @@ export function GraphView(): React.ReactElement {
                 renderScale={renderScale}
                 viewScale={tf.k}
                 overviewWidth={overview.tensors.get(t.id)}
-                moveHandlers={moveHandlers}
+                gestures={cardGestures}
               />
             </div>
           );

@@ -119,6 +119,41 @@ describe("planning from the canvas", () => {
     expect(S().planTask!.coord).toEqual([0, 0]);
   });
 
+  /**
+   * The Plan panel memoizes on the plan object: the family report, the
+   * producer/consumer matrix and a report requested by hand are all keyed by
+   * it. A new object for a tiling nobody changed threw those away and re-ran a
+   * family-wide analysis on every arrow press, so identity is a contract here
+   * rather than an implementation detail.
+   */
+  it("keeps one plan object while the tiling does not change", () => {
+    S().setPlanTileAt("Y", [4, 4], [0, 0]);
+    const plan = S().plan;
+    expect(plan).not.toBeNull();
+
+    S().movePlanTask(0, 1);
+    expect(S().plan).toBe(plan);
+    expect(S().planTask!.coord).toEqual([1, 0]); // and the task did move
+
+    S().selectPlanTask({ tensorId: "Y", coord: [2, 0] });
+    expect(S().plan).toBe(plan);
+
+    // A step that lands on the same tile changes nothing at all.
+    S().movePlanTask(0, 0);
+    expect(S().plan).toBe(plan);
+  });
+
+  it("builds a new plan when the tiling does change", () => {
+    S().setPlanTileAt("Y", [4, 4], [0, 0]);
+    const plan = S().plan;
+    S().setPlanTile("Y", [8, 8]);
+    expect(S().plan).not.toBe(plan);
+    // And the reused-plan path cannot outlive the graph it was checked against.
+    const retiled = S().plan;
+    S().applyDSL(CHAIN);
+    expect(S().plan).not.toBe(retiled);
+  });
+
   it("refuses a task the plan does not contain", () => {
     S().setPlanTileAt("Y", [4, 4], [0, 0]);
     S().setPlanTile("C", null); // C is tiled with Y; remove it to leave no tasks there

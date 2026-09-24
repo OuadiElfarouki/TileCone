@@ -248,15 +248,22 @@ function planEditOf(state: Pick<State, "planTiles" | "planTask">): PlanEdit {
   return { tiles: state.planTiles, task: state.planTask };
 }
 
-/** Whether two plan edits divide the same tensors the same way and inspect the same task. */
-function samePlanEdit(a: PlanEdit, b: PlanEdit): boolean {
-  const left = Object.keys(a.tiles).sort();
-  const right = Object.keys(b.tiles).sort();
+/** Whether two tilings divide the same tensors at the same extents. */
+function sameTiles(
+  a: Record<string, number[]>,
+  b: Record<string, number[]>
+): boolean {
+  const left = Object.keys(a).sort();
+  const right = Object.keys(b).sort();
   return (
     left.length === right.length &&
-    left.every((id, i) => id === right[i] && sameNumbers(a.tiles[id], b.tiles[id])) &&
-    sameTask(a.task, b.task)
+    left.every((id, i) => id === right[i] && sameNumbers(a[id], b[id]))
   );
+}
+
+/** Whether two plan edits divide the same tensors the same way and inspect the same task. */
+function samePlanEdit(a: PlanEdit, b: PlanEdit): boolean {
+  return sameTiles(a.tiles, b.tiles) && sameTask(a.task, b.task);
 }
 
 const sameNumbers = (a: readonly number[], b: readonly number[]): boolean =>
@@ -829,9 +836,34 @@ const NO_PLAN = {
 function derivePlan(
   resolved: ResolvedGraph | null,
   tiles: Record<string, number[]>,
-  task: TaskRef | null
+  task: TaskRef | null,
+  previous?: Pick<State, "plan" | "planTiles">
 ): Pick<State, "planTiles" | "planTask" | "plan" | "planSupply"> {
   if (!resolved) return NO_PLAN;
+  /* A plan that divides the same tensors of the same graph at the same extents
+   * is the same plan, and the panel holds it by identity: the family report,
+   * the producer/consumer matrix and a report someone asked for by hand are all
+   * memoized on it. Rebuilding it for an edit that did not change any tiling -
+   * stepping the inspected task, most of all - discarded every one of those and
+   * recomputed a family-wide analysis per arrow press.
+   *
+   * The comparison is against the stored tiling, which was validated when it
+   * was stored, so equal tilings on one graph validate identically and the
+   * checks below can be skipped with them. */
+  if (
+    previous?.plan &&
+    previous.plan.graph === resolved &&
+    sameTiles(previous.planTiles, tiles)
+  ) {
+    const family = task ? previous.plan.families.get(task.tensorId) : undefined;
+    const kept = task && family && isTile(family, task.coord) ? task : null;
+    return {
+      planTiles: previous.planTiles,
+      planTask: kept,
+      plan: previous.plan,
+      planSupply: kept ? supplyOf(previous.plan, kept) : null,
+    };
+  }
   const valid = Object.create(null) as Record<string, number[]>;
   for (const [tensorId, tile] of Object.entries(tiles)) {
     try {
@@ -1067,7 +1099,7 @@ function inspectTask(
   const tiles = idRecord(state.planTiles);
   tiles[tensorId] = tile;
   const completedTiles = withProducedInputs(state, tiles, tensorId);
-  const next = derivePlan(resolved, completedTiles, task);
+  const next = derivePlan(resolved, completedTiles, task, state);
   if (!next.planTask) return;
   set({
     workspaceHistory: appendWorkspaceHistory(state.workspaceHistory, {
@@ -1362,7 +1394,7 @@ export const useStore = create<State>((set, get) => ({
         focusNode: null,
         compiling: false,
         ...recompute(source.resolved, prev.selection),
-        ...derivePlan(source.resolved, prev.plan.tiles, prev.plan.task),
+        ...derivePlan(source.resolved, prev.plan.tiles, prev.plan.task, get()),
       });
       return;
     }
@@ -1378,7 +1410,7 @@ export const useStore = create<State>((set, get) => ({
       analysisGroup: null,
       preview: null,
       ...recompute(resolved, prev.selection, { selection, perBox, entangled }),
-      ...derivePlan(resolved, prev.plan.tiles, prev.plan.task),
+      ...derivePlan(resolved, prev.plan.tiles, prev.plan.task, get()),
       /* One history holds tile edits and plan edits alike, so a step back can
          restore something the visible panel does not show. Undo then looks as
          if it did nothing and the change is found later by accident, so the
@@ -1547,14 +1579,14 @@ export const useStore = create<State>((set, get) => ({
         tensorOffsets: state.tensorOffsets,
         plan: planEditOf(state),
       }),
-      ...derivePlan(resolved, tiles, task),
+      ...derivePlan(resolved, tiles, task, state),
     });
   },
 
   selectPlanTask: (task) => {
     const state = get();
     if (!state.resolved) return;
-    const next = derivePlan(state.resolved, state.planTiles, task);
+    const next = derivePlan(state.resolved, state.planTiles, task, state);
     if (task && !next.planTask) return; // not a task of this plan
     if (sameTask(state.planTask, next.planTask)) {
       const selectedOp = next.planTask
@@ -1618,7 +1650,7 @@ export const useStore = create<State>((set, get) => ({
             plan: planEditOf(state),
           })
         : state.workspaceHistory,
-      ...derivePlan(resolved, state.planTiles, { tensorId: planTask.tensorId, coord }),
+      ...derivePlan(resolved, state.planTiles, { tensorId: planTask.tensorId, coord }, state),
     });
   },
 
