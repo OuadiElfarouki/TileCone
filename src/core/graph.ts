@@ -53,6 +53,24 @@ export type ResolvedGraph = Graph & {
   shapesOf: (ids: string[]) => number[][];
 };
 
+/** Structured-cloneable form used at Worker boundaries. Operation behavior
+ * remains registry-owned, so the only non-data field a resolved graph loses in
+ * transit is the small `shapesOf` convenience function. */
+export type ResolvedGraphData = Omit<ResolvedGraph, "shapesOf">;
+
+export function resolvedGraphData(graph: ResolvedGraph): ResolvedGraphData {
+  const { shapesOf: _shapesOf, ...data } = graph;
+  return data;
+}
+
+/** Reattach the one executable field stripped by `resolvedGraphData`.
+ * Validation and inference have already happened in the originating realm. */
+export function hydrateResolvedGraph(data: ResolvedGraphData): ResolvedGraph {
+  const graph = data as ResolvedGraph;
+  graph.shapesOf = (ids: string[]) => ids.map((id) => graph.tensors[id].resolved!);
+  return graph;
+}
+
 function validateCardinality(
   node: Node,
   side: "input" | "output",

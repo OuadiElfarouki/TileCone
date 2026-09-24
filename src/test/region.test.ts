@@ -614,3 +614,141 @@ describe("disjointify degrades by coarsening, under a work budget", () => {
     expect(count(dj)).toBe(count(stored));
   });
 });
+
+/**
+ * Normalizing and combining stay bounded in the box count.
+ *
+ * Every operation here used to scan all pairs, and `canonicalize` restarted
+ * that scan after each merge. The counts that reach them are not exotic: a
+ * reshape decomposes one tile into up to `reshapeRuns` contiguous runs and a
+ * strided op enumerates up to `stridedEnum` positions, both before the box cap
+ * applies.
+ */
+describe("box-count growth is bounded", () => {
+  /** `n` evenly spaced stripes along `axis` of a 2-D plane; none of them merge. */
+  const stripes = (n: number, axis: 0 | 1, span: number): Box[] =>
+    Array.from({ length: n }, (_, i) =>
+      axis === 0 ? box([2 * i, 2 * i + 1], [0, span]) : box([0, span], [2 * i, 2 * i + 1])
+    );
+
+  it("normalizes thousands of boxes promptly", () => {
+    const many = stripes(16384, 0, 8);
+    const start = performance.now();
+    const r = canonicalize({ boxes: many, exact: true, reasons: [] });
+    const ms = performance.now() - start;
+    // ~34ms here; comparing every pair put this in the seconds. The bound is
+    // generous for slower machines and still an order below the old cost.
+    expect(ms).toBeLessThan(1000);
+    expect(r.boxes.length).toBeLessThanOrEqual(MAX_BOXES);
+  });
+
+  it("merges a long run of adjacent boxes without restarting the scan", () => {
+    // Shuffled, so the mergeable pairs are not already neighbours in the list.
+    const adjacent = Array.from({ length: 16384 }, (_, i) => box([i, i + 1], [0, 8]));
+    for (let i = adjacent.length - 1; i > 0; i--) {
+      const j = (i * 7919) % (i + 1);
+      [adjacent[i], adjacent[j]] = [adjacent[j], adjacent[i]];
+    }
+    const start = performance.now();
+    const r = canonicalize({ boxes: adjacent, exact: true, reasons: [] });
+    const ms = performance.now() - start;
+    // The worst case for the old form: every merge sent the scan back to the
+    // first box, so the merges themselves were what made it cubic.
+    expect(ms).toBeLessThan(1000);
+    // They are one run, so the answer is one box and it stays exact.
+    expect(r.boxes).toEqual([box([0, 16384], [0, 8])]);
+    expect(r.exact).toBe(true);
+  });
+
+  it("drops contained boxes whatever order they arrive in", () => {
+    const boxes = [
+      box([0, 20], [0, 20]),
+      box([2, 4], [2, 4]),
+      box([5, 9], [5, 9]),
+      box([0, 20], [0, 20]),
+      box([30, 34], [0, 4]),
+    ];
+    const expected = sortRegion(canonicalize({ boxes, exact: true, reasons: [] }));
+    for (const rotation of [1, 2, 3, 4]) {
+      const rotated = [...boxes.slice(rotation), ...boxes.slice(0, rotation)];
+      const got = sortRegion(canonicalize({ boxes: rotated, exact: true, reasons: [] }));
+      expect(got).toEqual(expected);
+    }
+    expect(expected.boxes).toEqual([box([0, 20], [0, 20]), box([30, 34], [0, 4])]);
+  });
+
+  /**
+   * The box cap is the only thing here allowed to lose precision, and it
+   * applies to the true set rather than in place of computing it. Neither
+   * combining operation may shorten its own work by handing back a bound.
+   */
+  it("intersects a fine crossing family exactly up to the cap", () => {
+    // 33 row bands crossed with 33 column bands meet in 1089 separate cells,
+    // none of which merge - more boxes than the answer can keep, so the cap
+    // coarsens the real 1089 cells rather than the operands that made them.
+    const rows = canonicalize({ boxes: stripes(33, 0, 66), exact: true, reasons: [] });
+    const cols = canonicalize({ boxes: stripes(33, 1, 66), exact: true, reasons: [] });
+    const met = intersect(rows, cols);
+
+    expect(met.reasons).toEqual(["box count cap"]);
+    // Superset: every cell the two families genuinely share is still in.
+    const covered = flatSet(met, [66, 66]);
+    for (let i = 0; i < 33; i++)
+      for (let j = 0; j < 33; j++) expect(covered.has(2 * i * 66 + 2 * j)).toBe(true);
+    // And close to it: coarsening 1089 cells stays far below the bounding box
+    // that contains them, which would be the whole 66 x 66 plane.
+    expect(count(met)).toBeLessThan(66 * 66);
+  });
+
+  it("intersects two large stripe families promptly", () => {
+    const rows = canonicalize({ boxes: stripes(256, 0, 512), exact: true, reasons: [] });
+    const cols = canonicalize({ boxes: stripes(256, 1, 512), exact: true, reasons: [] });
+    const start = performance.now();
+    const met = intersect(rows, cols);
+    const ms = performance.now() - start;
+    // These two meet in 65536 separate cells, and all of them are built. That
+    // took ~83 seconds when normalizing compared every pair.
+    expect(ms).toBeLessThan(3000);
+    expect(met.boxes.length).toBeLessThanOrEqual(MAX_BOXES);
+  });
+
+  it("intersects ordinary regions exactly", () => {
+    const a = canonicalize({ boxes: stripes(8, 0, 32), exact: true, reasons: [] });
+    const b = fromBox(box([0, 32], [4, 12]));
+    const met = intersect(a, b);
+    expect(met.exact).toBe(true);
+    expect(count(met)).toBe(8 * 8);
+  });
+
+  it("subtracts a crossing family exactly while the pieces fit", () => {
+    // Every column band cuts every row band, so one row leaves nine fragments.
+    // 72 boxes is under the cap, so the answer is a count and not a bound.
+    const rows = canonicalize({ boxes: stripes(8, 0, 32), exact: true, reasons: [] });
+    const cols = canonicalize({ boxes: stripes(8, 1, 32), exact: true, reasons: [] });
+    const left = subtract(rows, cols);
+
+    expect(left.exact).toBe(true);
+    expect(count(left)).toBe(count(rows) - 8 * 8);
+  });
+
+  it("subtracts a fine crossing family up to the cap, and no further", () => {
+    // The same shape at a size whose difference needs 4096 boxes. All of them
+    // are built; the cap is what coarsens the result afterwards.
+    const rows = canonicalize({ boxes: stripes(64, 0, 128), exact: true, reasons: [] });
+    const cols = canonicalize({ boxes: stripes(64, 1, 128), exact: true, reasons: [] });
+    const left = subtract(rows, cols);
+
+    // A superset of the true difference, and the cap is the only thing that
+    // qualifies it: the subtraction itself never shortens its own work.
+    expect(count(left)).toBeGreaterThanOrEqual(count(rows) - 64 * 64);
+    expect(left.reasons).toEqual(["box count cap"]);
+  });
+
+  it("subtracts ordinary regions exactly", () => {
+    const rows = canonicalize({ boxes: stripes(8, 0, 64), exact: true, reasons: [] });
+    const cut = fromBox(box([0, 64], [0, 32]));
+    const left = subtract(rows, cut);
+    expect(left.exact).toBe(true);
+    expect(count(left)).toBe(8 * 32);
+  });
+});

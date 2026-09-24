@@ -54,7 +54,8 @@ function SourceEditor(): React.ReactElement {
   const dslText = useStore((s) => s.dslText);
   const text = useStore((s) => s.draftText);
   const setText = useStore((s) => s.setDraftText);
-  const applyDSL = useStore((s) => s.applyDSL);
+  const applyDSLAsync = useStore((s) => s.applyDSLAsync);
+  const compiling = useStore((s) => s.compiling);
   const loadError = useStore((s) => s.loadError);
   const diagnostics = useStore((s) => s.diagnostics);
   const built = useStore((s) => s.resolved !== null);
@@ -68,8 +69,10 @@ function SourceEditor(): React.ReactElement {
   const dirty = text !== dslText;
   const unbuilt = dirty || !built;
   const run = () => {
-    applyDSL(text);
-    setRanAt(Date.now());
+    if (compiling) return;
+    void applyDSLAsync(text).then((installed) => {
+      if (installed) setRanAt(Date.now());
+    });
   };
 
   /* The overlay carries the ink for a caret it cannot see, so it has to hold
@@ -113,7 +116,7 @@ function SourceEditor(): React.ReactElement {
         />
       </div>
       <div className="source-actions">
-        <button className="run-btn" onClick={run} disabled={!unbuilt && !loadError}>
+        <button className="run-btn" onClick={run} disabled={compiling || (!unbuilt && !loadError)}>
           ▶ run
         </button>
         <ShareButton />
@@ -123,7 +126,9 @@ function SourceEditor(): React.ReactElement {
           role={loadError ? "alert" : "status"}
           aria-live={loadError ? "assertive" : "polite"}
         >
-          {diagnostics.length ? (
+          {compiling ? (
+            <span className="muted">building graph…</span>
+          ) : diagnostics.length ? (
             /* Every independent error, not just the first. The compiler finds
                them in one pass, and showing one at a time would put the author
                back on the fix-and-recompile loop that collecting exists to

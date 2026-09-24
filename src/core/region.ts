@@ -65,6 +65,11 @@ function immutableRegion(r: Region): Region {
 
 const isImmutableRegion = (r: Region): boolean => immutableRegions.has(r);
 
+/** Regions already in canonical form at the default cap, so `canonicalize` can
+ * recognise its own output and return it untouched. Membership is a fact about
+ * a region this module produced, never a claim about a foreign one. */
+const canonicalRegions = new WeakSet<Region>();
+
 export const MAX_BOXES = 256;
 
 export function iv(lo: number, hi: number): Interval {
@@ -123,6 +128,14 @@ function intersectBoxes(a: Box, b: Box): Box | null {
   return out;
 }
 
+/** Whether two boxes share any element. Cheaper than intersecting them, for
+ * callers that only need to know whether there is anything to do. */
+function boxesOverlap(a: Box, b: Box): boolean {
+  for (let i = 0; i < a.length; i++)
+    if (Math.min(a[i].hi, b[i].hi) <= Math.max(a[i].lo, b[i].lo)) return false;
+  return true;
+}
+
 /** a \ b as a list of disjoint boxes (possibly [a] when no overlap). */
 export function subtractBox(a: Box, b: Box): Box[] {
   const inter = intersectBoxes(a, b);
@@ -147,55 +160,94 @@ export function subtractBox(a: Box, b: Box): Box[] {
 }
 
 /**
- * Merge boxes identical on all axes but one and adjacent/overlapping there.
- * Repeats to fixpoint.
+ * A box keyed by every axis except `skip`.
  *
- * Union-preserving whether or not the input is disjoint: the two boxes agree on
- * every other axis, so their union really is the single box spanning the
- * differing interval. That is what lets `canonicalize` use it on overlapping
- * input as well as `disjointify` on split input.
+ * Two boxes can merge along an axis exactly when they agree on every other one,
+ * so this key is what puts the merge candidates together. Grouping on it turns
+ * the search for a mergeable pair from a scan over all pairs into a lookup.
  */
-function mergePass(boxes: Box[]): Box[] {
-  let bs = boxes.slice();
-  let changed = true;
-  while (changed) {
-    changed = false;
-    outer: for (let i = 0; i < bs.length; i++) {
-      for (let j = i + 1; j < bs.length; j++) {
-        const a = bs[i],
-          b = bs[j];
-        let diffAxis = -1;
-        let ok = true;
-        for (let ax = 0; ax < a.length; ax++) {
-          if (a[ax].lo === b[ax].lo && a[ax].hi === b[ax].hi) continue;
-          if (diffAxis !== -1) {
-            ok = false;
-            break;
-          }
-          diffAxis = ax;
-        }
-        if (!ok) continue;
-        if (diffAxis === -1) {
-          // identical boxes
-          bs.splice(j, 1);
-          changed = true;
-          break outer;
-        }
-        const ai = a[diffAxis],
-          bi = b[diffAxis];
-        if (ai.hi >= bi.lo && bi.hi >= ai.lo) {
-          const merged = a.map((x) => ({ ...x }));
-          merged[diffAxis] = iv(Math.min(ai.lo, bi.lo), Math.max(ai.hi, bi.hi));
-          bs.splice(j, 1);
-          bs.splice(i, 1);
-          bs.push(merged);
-          changed = true;
-          break outer;
-        }
-      }
-    }
+function axisGroupKey(b: Box, skip: number): string {
+  let key = "";
+  for (let ax = 0; ax < b.length; ax++) {
+    if (ax === skip) continue;
+    key += `${b[ax].lo}:${b[ax].hi};`;
   }
-  return bs;
+  return key;
+}
+
+/**
+ * Merge every run of boxes that agree on all axes but `axis` and touch or
+ * overlap along it.
+ *
+ * Union-preserving whether or not the input is disjoint: the boxes agree on
+ * every other axis, so their union really is the single box spanning the
+ * combined interval. That is what lets `canonicalize` use this on overlapping
+ * input as well as `disjointify` on split input.
+ *
+ * Group, sort, sweep - so one pass costs a sort rather than a scan over all
+ * pairs. The previous form compared every pair and restarted from the first box
+ * after each merge, which made a region of a few thousand boxes quadratic in
+ * the best case and cubic when the boxes did merge. Both are reachable: a
+ * reshape decomposes a tile into up to `reshapeRuns` contiguous runs, and a
+ * strided op enumerates up to `stridedEnum` positions, all before the box cap
+ * is applied.
+ *
+ * Nothing is mutated; a widened box is a fresh box, so a caller's boxes are
+ * safe to pass in.
+ */
+function mergeAlongAxis(boxes: Box[], axis: number): Box[] {
+  if (boxes.length < 2) return boxes;
+  const groups = new Map<string, Box[]>();
+  for (const b of boxes) {
+    const key = axisGroupKey(b, axis);
+    const group = groups.get(key);
+    if (group) group.push(b);
+    else groups.set(key, [b]);
+  }
+  const out: Box[] = [];
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      out.push(group[0]);
+      continue;
+    }
+    group.sort((x, y) => x[axis].lo - y[axis].lo || x[axis].hi - y[axis].hi);
+    let current = group[0];
+    for (let i = 1; i < group.length; i++) {
+      const next = group[i];
+      // Sorted by `lo`, so this is the whole adjacency test: anything that
+      // starts at or before the current end extends it, and anything that
+      // starts after it opens a new run. A box wholly inside the current one
+      // leaves it unchanged, which is how duplicates disappear.
+      if (next[axis].lo <= current[axis].hi) {
+        if (next[axis].hi > current[axis].hi) {
+          const widened = current.slice();
+          widened[axis] = iv(current[axis].lo, next[axis].hi);
+          current = widened;
+        }
+        continue;
+      }
+      out.push(current);
+      current = next;
+    }
+    out.push(current);
+  }
+  return out;
+}
+
+/** Merge along every axis until no axis has anything left to merge: a merge on
+ * one axis can line two boxes up on another. */
+function mergeBoxes(boxes: Box[]): Box[] {
+  if (boxes.length < 2) return boxes;
+  // Rank 0 is the scalar case: every box is the same single point, so one of
+  // them represents the union and there is no axis to sweep.
+  if (boxes[0].length === 0) return boxes.slice(0, 1);
+  let current = boxes;
+  for (;;) {
+    const before = current.length;
+    for (let axis = 0; axis < current[0].length; axis++)
+      current = mergeAlongAxis(current, axis);
+    if (current.length === before) return current;
+  }
 }
 
 /** The box covering both, which is what merging them costs you. */
@@ -345,21 +397,56 @@ function mergeReasons(a: readonly string[], b: readonly string[]): string[] {
   return [...s];
 }
 
-function sameBox(a: Box, b: Box): boolean {
-  return a.every((I, i) => I.lo === b[i].lo && I.hi === b[i].hi);
-}
-
 function boxContains(outer: Box, inner: Box): boolean {
   return inner.every((I, i) => I.lo >= outer[i].lo && I.hi <= outer[i].hi);
 }
 
-/** Drop exact duplicates, then any box wholly inside another. Both are
- * union-preserving: the dropped box contributes no element the survivor lacks.
- * Duplicates go first so two identical boxes cannot each eliminate the other. */
+/**
+ * Drop every box wholly inside another, exact duplicates included.
+ *
+ * Union-preserving: a dropped box contributes no element its container lacks.
+ *
+ * Sorting by lower corner ascending and upper corner descending puts a
+ * container strictly before anything it contains - on the first axis where the
+ * two differ, a container starts no later, and when they start together it ends
+ * no earlier - so testing each box against the boxes already kept is enough to
+ * find every containment. It also makes the result independent of the order the
+ * boxes arrived in, which is what keeps `canonicalize` idempotent now that the
+ * merge step above regroups them.
+ *
+ * Duplicates need no separate pass for the same reason: identical boxes are
+ * adjacent after the sort, and the second is contained in the first, so one
+ * survives rather than each eliminating the other.
+ */
 function dropContained(boxes: Box[]): Box[] {
-  const uniq: Box[] = [];
-  for (const b of boxes) if (!uniq.some((u) => sameBox(u, b))) uniq.push(b);
-  return uniq.filter((b, i) => !uniq.some((o, j) => j !== i && boxContains(o, b)));
+  if (boxes.length < 2) return boxes;
+  const rank = boxes[0].length;
+  if (rank === 0) return boxes.slice(0, 1);
+  const order = boxes.slice().sort((a, b) => {
+    for (let ax = 0; ax < rank; ax++) {
+      if (a[ax].lo !== b[ax].lo) return a[ax].lo - b[ax].lo;
+      if (a[ax].hi !== b[ax].hi) return b[ax].hi - a[ax].hi;
+    }
+    return 0;
+  });
+
+  const kept: Box[] = [];
+  // Boxes that may still contain something later. Sorted by `lo` on axis 0, a
+  // candidate ending at or before the current box's start cannot contain it or
+  // anything after it, so dropping it here is permanent and the scan stays
+  // near-linear on the disjoint families that reach the cap.
+  let candidates: Box[] = [];
+  for (const b of order) {
+    // Every test is made rather than budgeted. Stopping early would leave boxes
+    // that could have been dropped, which is harmless on its own - but it can
+    // carry a region past the box cap, and that cap is an approximation. A
+    // simplification must not be what decides whether the answer is exact.
+    candidates = candidates.filter((c) => c[0].hi > b[0].lo);
+    if (candidates.some((c) => boxContains(c, b))) continue;
+    kept.push(b);
+    candidates.push(b);
+  }
+  return kept;
 }
 
 /**
@@ -374,15 +461,22 @@ function dropContained(boxes: Box[]): Box[] {
  * add one per contribution, so this form reaches the cap later, not sooner.
  */
 export function canonicalize(r: Region, maxBoxes: number = MAX_BOXES): Region {
-  let boxes: Box[] = r.boxes
-    .filter((b) => !isEmptyBox(b))
-    .map((b) => b.map((interval) => ({ ...interval })));
+  // Already in this exact form: propagation canonicalizes a seed the executor
+  // has canonicalized, unions a region that is already normal, and so on, and
+  // at a few hundred boxes each of those passes is real work. A region is only
+  // in this set if it came out of here, so the form is known rather than
+  // assumed. A caller asking for a different cap is asking a different
+  // question and gets the full pass.
+  if (maxBoxes === MAX_BOXES && canonicalRegions.has(r)) return r;
+  // No defensive copy: nothing below mutates a box, and `immutableRegion`
+  // rebuilds every interval it freezes, so a caller's boxes are never touched.
+  let boxes: Box[] = r.boxes.filter((b) => !isEmptyBox(b));
   let exact = r.exact;
   let reasons = r.reasons.slice();
   let previous = -1;
   while (boxes.length !== previous) {
     previous = boxes.length;
-    boxes = mergePass(dropContained(boxes));
+    boxes = mergeBoxes(dropContained(boxes));
   }
   if (boxes.length > maxBoxes) {
     // Coarsen rather than collapse. Both are supersets, but one bounding box
@@ -392,7 +486,9 @@ export function canonicalize(r: Region, maxBoxes: number = MAX_BOXES): Region {
     exact = false;
     reasons = mergeReasons(reasons, ["box count cap"]);
   }
-  return immutableRegion({ boxes, exact, reasons });
+  const out = immutableRegion({ boxes, exact, reasons });
+  if (maxBoxes === MAX_BOXES) canonicalRegions.add(out);
+  return out;
 }
 
 /**
@@ -456,7 +552,7 @@ function trySplit(boxes: Box[], softCap: number): Box[] | null {
     disjoint.push(...frags);
     if (disjoint.length > softCap) return null;
   }
-  return mergePass(disjoint);
+  return mergeBoxes(disjoint);
 }
 
 function splitOnOverlap(r: Region, maxBoxes: number): Region {
@@ -492,6 +588,16 @@ export function union(a: Region, b: Region): Region {
   });
 }
 
+/**
+ * Every pairwise intersection, with no shortcut for a fine result.
+ *
+ * Two regions of N boxes can meet in N^2 pieces, and families of stripes
+ * genuinely do: 256 row bands crossed with 256 column bands is 65536 distinct
+ * cells. Building all of them is the only way to say exactly what the two
+ * regions share, so that is what happens - the box cap is the one place this
+ * module is allowed to lose precision, and it applies afterwards to the true
+ * set rather than in place of computing it.
+ */
 export function intersect(a: Region, b: Region): Region {
   const boxes: Box[] = [];
   for (const ba of a.boxes)
@@ -517,10 +623,20 @@ export function subtract(a: Region, b: Region): Region {
       exact: false,
       reasons: mergeReasons(mergeReasons(a.reasons, b.reasons), ["inexact subtraction"]),
     });
+  // Each subtrahend box can cut every fragment into up to `2 * rank` pieces, so
+  // the fragments multiply. They are carried anyway rather than bounded: a
+  // difference is what the contribution verdict is read off, and the only
+  // shortcut available here would keep elements the tile genuinely supplies.
   let frags: Box[] = a.boxes.slice();
   for (const bb of b.boxes) {
     const next: Box[] = [];
-    for (const f of frags) next.push(...subtractBox(f, bb));
+    for (const f of frags) {
+      // A fragment this box does not touch survives as itself. Worth testing
+      // first: the fragments narrow as they are cut, so most of these pairs
+      // miss, and `subtractBox` would allocate a result array to say so.
+      if (!boxesOverlap(f, bb)) next.push(f);
+      else next.push(...subtractBox(f, bb));
+    }
     frags = next;
   }
   return canonicalize({ boxes: frags, exact: a.exact && b.exact, reasons: a.reasons });

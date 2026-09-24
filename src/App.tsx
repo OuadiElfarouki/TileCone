@@ -11,8 +11,8 @@ import { decodeWorkspace } from "./ui/share";
 import { ShortcutsDialog } from "./ui/ShortcutsDialog";
 
 export default function App(): React.ReactElement {
-  const loadExample = useStore((s) => s.loadExample);
-  const restoreWorkspace = useStore((s) => s.restoreWorkspace);
+  const loadExampleAsync = useStore((s) => s.loadExampleAsync);
+  const restoreWorkspaceAsync = useStore((s) => s.restoreWorkspaceAsync);
   const resolved = useStore((s) => s.resolved);
   const theme = useStore((s) => s.theme);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -32,30 +32,33 @@ export default function App(): React.ReactElement {
   }, [theme]);
 
   useEffect(() => {
-    const link = decodeWorkspace(location.hash);
-    if (link) {
-      const restored = restoreWorkspace({
-        dsl: link.dsl,
-        direction: link.dir,
-        showEntangled: link.ent === true,
-        tileScale: link.tile,
-        snapToGrid: link.snap !== false,
-        axisMode: link.axes ?? "symbolic",
-        viewCfgs: link.views,
-        tensorOffsets: Object.fromEntries(
-          Object.entries(link.pos ?? {}).map(([id, [dx, dy]]) => [id, { dx, dy }])
-        ),
-        parts:
-          link.sel?.map((p) => ({
-            tensorId: p.t,
-            box: p.box.map(([lo, hi]) => ({ lo, hi })),
-          })) ?? null,
-      });
-      if (restored)
-        return;
-    }
-    loadExample(0);
-  }, [loadExample, restoreWorkspace]);
+    let live = true;
+    void (async () => {
+      const link = decodeWorkspace(location.hash);
+      if (link) {
+        const restored = await restoreWorkspaceAsync({
+          dsl: link.dsl,
+          direction: link.dir,
+          showEntangled: link.ent === true,
+          tileScale: link.tile,
+          snapToGrid: link.snap !== false,
+          axisMode: link.axes ?? "symbolic",
+          viewCfgs: link.views,
+          tensorOffsets: Object.fromEntries(
+            Object.entries(link.pos ?? {}).map(([id, [dx, dy]]) => [id, { dx, dy }])
+          ),
+          parts:
+            link.sel?.map((p) => ({
+              tensorId: p.t,
+              box: p.box.map(([lo, hi]) => ({ lo, hi })),
+            })) ?? null,
+        });
+        if (!live || restored) return;
+      }
+      await loadExampleAsync(0);
+    })();
+    return () => { live = false; };
+  }, [loadExampleAsync, restoreWorkspaceAsync]);
 
   return (
     <div className="app">
