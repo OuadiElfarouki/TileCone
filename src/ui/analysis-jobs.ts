@@ -6,6 +6,8 @@ import {
 } from "../core/graph";
 import { interfaceOf, type InterfaceReport } from "../core/plan/interfaces";
 import { tilePlan } from "../core/plan/plan";
+import { estimateInputReuseSweep, type ReuseSweep } from "../core/reuse";
+import { fromBox, type Box } from "../core/region";
 import { tryCompileDSL, type CompilerDiagnostic } from "../parse/compiler";
 import type { CompileArtifact } from "./analysis-protocol";
 import { cardSize } from "./card-size";
@@ -50,4 +52,13 @@ export function familyArtifact(
 ): InterfaceReport {
   const resolved = "shapesOf" in graph ? graph : hydrateResolvedGraph(graph);
   return interfaceOf(tilePlan(resolved, tiles), tensorId);
+}
+
+export function reuseArtifact(
+  graph: ResolvedGraph | ResolvedGraphData,
+  tensorId: string,
+  box: Box
+): ReuseSweep {
+  const resolved = "shapesOf" in graph ? graph : hydrateResolvedGraph(graph);
+  return estimateInputReuseSweep(resolved, { tensorId, region: fromBox(box) });
 }

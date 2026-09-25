@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { hydrateResolvedGraph } from "../core/graph";
-import { compileArtifact, familyArtifact } from "../ui/analysis-jobs";
+import { compileArtifact, familyArtifact, reuseArtifact } from "../ui/analysis-jobs";
+import { box } from "../core/region";
 
 const CHAIN = `A = Tensor(256, 256, dtype=fp16)
 B = Tensor(256, 256, dtype=fp16)
@@ -47,5 +48,19 @@ describe("analysis worker jobs", () => {
     if (report.status !== "evaluated") return;
     expect(report.tasks).toBe(8);
     expect(report.boundary.map((row) => row.tensorId)).toEqual(["C", "W"]);
+  });
+
+  it("returns a structured-cloneable reuse trace for canvas playback", () => {
+    const result = compileArtifact(CHAIN);
+    if (!result.ok) throw new Error(result.diagnostics[0].message);
+
+    const sweep = reuseArtifact(
+      structuredClone(result.artifact.resolved),
+      "Y",
+      box([0, 64], [0, 64])
+    );
+    expect(() => structuredClone(sweep)).not.toThrow();
+    expect(sweep.frames).toHaveLength(8);
+    expect(sweep.frames[0].box).toEqual(box([0, 64], [0, 64]));
   });
 });

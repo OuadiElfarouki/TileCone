@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { executeQuery } from "../core/executor";
-import { estimateInputReuse, inputSharing } from "../core/reuse";
+import { estimateInputReuseSweep, inputSharing } from "../core/reuse";
 import { box, fromBox } from "../core/region";
 import { compileDSL } from "../parse/compiler";
 
@@ -10,7 +10,33 @@ const GEMM = `M = 4\nN = 4\nK = 8\nA = Tensor(M, K, dtype=fp16)\nB = Tensor(K, N
 const coneOf = (graph: ReturnType<typeof compileDSL>["resolved"], tensorId: string, region: ReturnType<typeof fromBox>) =>
   executeQuery(graph, { tensorId, region, direction: "backward" }).backward!;
 
+/** These cases are about the aggregate rows; the probe trace has its own. */
+const estimateInputReuse = (...args: Parameters<typeof estimateInputReuseSweep>) =>
+  estimateInputReuseSweep(...args).estimates;
+
 describe("reuse estimation", () => {
+  it("retains the real probes and shared input regions for playback", () => {
+    const { resolved } = compileDSL(GEMM);
+    const sweep = estimateInputReuseSweep(resolved, {
+      tensorId: "C",
+      region: fromBox(box([0, 2], [0, 2])),
+    });
+
+    expect(sweep.frames.map((frame) => frame.box)).toEqual([
+      box([0, 2], [0, 2]),
+      box([0, 2], [2, 4]),
+      box([2, 4], [0, 2]),
+      box([2, 4], [2, 4]),
+    ]);
+    expect(sweep.frames.map((frame) => [frame.weight, Object.keys(frame.shared)])).toEqual([
+      [1, ["A", "B"]],
+      [1, ["A"]],
+      [1, ["B"]],
+      [1, []],
+    ]);
+    expect(sweep.frames[1].shared.A.boxes).toEqual([box([0, 2], [0, 8])]);
+  });
+
   it("is exact when every tile fits under the sample cap", () => {
     const { resolved } = compileDSL("X = Tensor(4, dtype=fp32)\nY = identity(X)\n");
     const result = estimateInputReuse(resolved, {

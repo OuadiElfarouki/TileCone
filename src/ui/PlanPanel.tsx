@@ -28,7 +28,11 @@ import { count, formatBoxIndices } from "../core/region";
 import { formatBytes, formatFigure } from "./format";
 import { boxColor, rgbCss } from "./palette";
 import { useDark, useStore } from "./store";
-import { analysisWorkerAvailable, familyInWorker } from "./analysis-worker-client";
+import {
+  analysisWorkerAvailable,
+  familyInWorker,
+  isAnalysisCancelled,
+} from "./analysis-worker-client";
 
 /** Families up to this many tasks are evaluated as soon as they are shown; larger ones on request. */
 export const AUTO_FAMILY_TASKS = 256;
@@ -443,6 +447,13 @@ function FamilySection({ plan, task }: { plan: TilePlan; task: TaskRef }): React
     error: string | null;
   } | null>(null);
   const shouldRunInWorker = workerEnabled && (auto || requestedKey === analysisKey);
+  /* A cancellation is the lane dropping this work, not an answer about it, and
+     the question is unchanged - so ask again rather than leaving `evaluating`
+     true with no dependency left that could retry it. This terminates: only
+     one query holds the lane at a time, and the reuse sweep that shares it
+     lives on a mutually exclusive inspector tab, so what cancels a family run
+     is a build finishing, once per build. */
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!shouldRunInWorker) return;
@@ -456,14 +467,16 @@ function FamilySection({ plan, task }: { plan: TilePlan; task: TaskRef }): React
     }).then((report) => {
       if (live) setWorkerRun({ key: analysisKey, report, error: null });
     }).catch((error) => {
-      if (live) setWorkerRun({
+      if (!live) return;
+      if (isAnalysisCancelled(error)) setAttempt((previous) => previous + 1);
+      else setWorkerRun({
         key: analysisKey,
         report: null,
         error: error instanceof Error ? error.message : String(error),
       });
     });
     return () => { live = false; };
-  }, [analysisKey, shouldRunInWorker, workerGraphId]);
+  }, [analysisKey, attempt, shouldRunInWorker, workerGraphId]);
 
   const requested = run && run.plan === plan && run.tensorId === task.tensorId ? run.report : null;
   const currentWorkerRun = workerRun?.key === analysisKey ? workerRun : null;

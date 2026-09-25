@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   cardSize,
+  buildExecutionPaint,
   DEFAULT_DOWNSTREAM_DENSITY,
   selectionBoxFromDrag,
   visibleApproximation,
@@ -8,6 +9,67 @@ import {
 import { box, fromBox } from "../core/region";
 import { gridGeometry, stripeAngleDeg } from "../ui/grid";
 import { graphScale } from "../ui/tiling";
+import type { ExecutionPlayback } from "../ui/store";
+
+describe("execution sweep paint", () => {
+  const playback = (phase: ExecutionPlayback["phase"] = "playing"): ExecutionPlayback => ({
+    tensorId: "Y",
+    anchorBox: box([0, 2], [0, 2]),
+    tile: [2, 2],
+    colorIndex: 0,
+    frames: [
+      { box: box([0, 2], [0, 2]), weight: 1, shared: { X: fromBox(box([0, 2], [0, 4])) } },
+      { box: box([0, 2], [2, 4]), weight: 1, shared: { X: fromBox(box([0, 2], [0, 4])) } },
+    ],
+    visited: 2,
+    phase,
+    exiting: false,
+    opacity: 1,
+  });
+
+  it("shows the visited probes, the last one active", () => {
+    const paint = buildExecutionPaint({ tensorId: "Y", dark: false, playback: playback() });
+    expect(paint.layers.map((layer) => layer.region.boxes[0])).toEqual([
+      box([0, 2], [0, 2]),
+      box([0, 2], [2, 4]),
+    ]);
+    expect(paint.layers[1].seed).toBe(true);
+  });
+
+  it("pulses the active shared input, then leaves a quieter union", () => {
+    const active = buildExecutionPaint({ tensorId: "X", dark: false, playback: playback() });
+    const settled = buildExecutionPaint({
+      tensorId: "X", dark: false, playback: playback("settled"),
+    });
+    expect(active.layers[0].alpha).toBe(0.62);
+    expect(active.layers[0].seed).toBe(true);
+    expect(settled.layers[0].alpha).toBe(0.22);
+    expect(settled.layers[0].seed).toBe(false);
+  });
+
+  /* The sweep's cover would read as a lattice, and a lattice line that no
+     gesture snaps to is the one thing §9 does not allow the grid to draw. */
+  it("leaves the card's own lattice alone, on the studied tensor and its inputs", () => {
+    const studied = buildExecutionPaint({ tensorId: "Y", dark: false, playback: playback() });
+    const input = buildExecutionPaint({ tensorId: "X", dark: false, playback: playback() });
+    expect(studied).not.toHaveProperty("lattice");
+    expect(input).not.toHaveProperty("lattice");
+  });
+
+  /* The settled summary is the union of every probe's share, and any widened
+     probe has to carry its hatch into that union. */
+  it("marks the settled union approximate when one probe was", () => {
+    const widened = playback("settled");
+    widened.frames[1].shared.X = {
+      ...widened.frames[1].shared.X,
+      exact: false,
+      reasons: ["strided fallback"],
+    };
+    const settled = buildExecutionPaint({ tensorId: "X", dark: false, playback: widened });
+    expect(settled.layers[0].hatch).toBe(true);
+    expect(settled.layers[0].region.reasons).toEqual(["strided fallback"]);
+  });
+});
 
 describe("frameless tensor footprint", () => {
   it("reserves collision width for the visible name and numeric shape", () => {

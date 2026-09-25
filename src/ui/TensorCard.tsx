@@ -2,12 +2,14 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Tensor } from "../core/graph";
 import { DTYPE_BYTES } from "../core/dtypes";
 import type { Supply } from "../core/plan/interfaces";
+import type { ReuseSweepFrame } from "../core/reuse";
 import type { TilePlan } from "../core/plan/plan";
 import { tileBox } from "../core/plan/tile-family";
 import { useFrameThrottle } from "./useFrameThrottle";
 import { useDebounced } from "./useDebounced";
 import {
   Box,
+  canonicalize,
   formatBoxIndices,
   fromBox,
   intersect,
@@ -28,7 +30,14 @@ import {
   stripeAngleDeg,
 } from "./grid";
 import { aggregateColors, boxColor } from "./palette";
-import { BoxProp, Direction, partsOn, useDark, useStore } from "./store";
+import {
+  BoxProp,
+  Direction,
+  partsOn,
+  useDark,
+  useStore,
+  type ExecutionPlayback,
+} from "./store";
 import { shapeLabel, shapeReadings } from "./shape-label";
 import { OVERVIEW_SCALE } from "./overview-labels";
 import { formatBytes } from "./format";
@@ -450,6 +459,110 @@ export function buildPlanPaint({
 }
 
 /**
+ * The settled summary of one tensor's shared footprint, computed once per
+ * sweep rather than once per repaint.
+ *
+ * `union` canonicalizes to a fixpoint on every call, so folding forty-eight
+ * probes pairwise is forty-seven of them for one answer - inside the paint
+ * effect, redone on every dependency that repaints the card, on every input
+ * the sweep touches. One canonicalize over the concatenated boxes
+ * represents the same set, with the same exactness and reasons: `union` is
+ * that same call over two box lists, and is union-preserving either way. The
+ * decomposition may differ, which nothing here reads - the fill is
+ * disjointified before painting and a settled summary carries no perimeter.
+ *
+ * Keyed on the frames array, which a playback only replaces with a new sweep,
+ * so ticking `visited`, settling, and fading all reuse the entry. A `WeakMap`
+ * keeps it bounded without anyone having to retire it.
+ */
+const settledShare = new WeakMap<ReuseSweepFrame[], Map<string, Region | null>>();
+
+function sharedAcrossFrames(
+  frames: ReuseSweepFrame[],
+  all: ReuseSweepFrame[],
+  tensorId: string
+): Region | null {
+  const complete = frames.length === all.length;
+  const cached = complete ? settledShare.get(all)?.get(tensorId) : undefined;
+  if (cached !== undefined) return cached;
+
+  const parts = frames.flatMap((frame) => frame.shared[tensorId] ?? []);
+  const shared = parts.length === 0 ? null : canonicalize({
+    boxes: parts.flatMap((region) => region.boxes),
+    exact: parts.every((region) => region.exact),
+    reasons: [...new Set(parts.flatMap((region) => region.reasons))],
+  });
+  if (complete) {
+    const byTensor = settledShare.get(all) ?? new Map<string, Region | null>();
+    byTensor.set(tensorId, shared);
+    settledShare.set(all, byTensor);
+  }
+  return shared;
+}
+
+/**
+ * Paint the probes the reuse estimator actually performed. This is an overlay:
+ * it never substitutes sampled boxes for the user's selection.
+ *
+ * It paints the probes and leaves the lattice alone. The sweep's own cover -
+ * tiles of the anchor's extents laid over the tensor - would read naturally as
+ * a lattice, but drawing one here breaks the rule that every drawn line is a
+ * snapping boundary (§9): the card still takes ordinary selection drags under
+ * Execution, and those snap to the square display tile, which the anchor's
+ * extents are generally not. The Plan view can draw its own lattice because a
+ * gesture on a tiled card inspects rather than draws; here it still draws. The
+ * probe rectangles carry the cover anyway, and carry it more honestly - a
+ * sampled sweep walks at most `sampleCap` of the tiles a full lattice would
+ * have drawn, and only the walked ones stand behind a figure.
+ */
+export function buildExecutionPaint({
+  tensorId,
+  dark,
+  playback,
+}: {
+  tensorId: string;
+  dark: boolean;
+  playback: ExecutionPlayback;
+}): { layers: Layer[] } {
+  const color = boxColor(playback.colorIndex, dark);
+  const frames = playback.frames.slice(0, playback.visited);
+  const active = playback.phase === "playing" ? frames[frames.length - 1] : null;
+  const layers: Layer[] = [];
+
+  if (tensorId === playback.tensorId) {
+    for (const frame of active ? frames.slice(0, -1) : frames)
+      layers.push({
+        region: fromBox(frame.box),
+        color,
+        alpha: 0.1 * playback.opacity,
+        hatch: false,
+      });
+    if (active)
+      layers.push({
+        region: fromBox(active.box),
+        color,
+        alpha: 0.68 * playback.opacity,
+        hatch: false,
+        seed: true,
+      });
+  } else {
+    const shared = active
+      ? active.shared[tensorId] ?? null
+      : sharedAcrossFrames(frames, playback.frames, tensorId);
+    if (shared)
+      layers.push({
+        region: shared,
+        color,
+        alpha: (active ? 0.62 : 0.22) * playback.opacity,
+        hatch: !shared.exact,
+        seed: !!active,
+      });
+  }
+
+  return { layers };
+}
+
+/**
  * The card-moving gestures, as callbacks that do not change between renders.
  *
  * The tensor is an argument rather than a closure, so one object serves every
@@ -535,7 +648,18 @@ function TensorCardView({
   const setDragging = useStore((s) => s.setDragging);
   const showEntangled = useStore((s) => s.showEntangled);
   const entangledAll = useStore((s) => s.entangled);
-  const planView = useStore((s) => s.inspectorTab === "plan");
+  const inspectorTab = useStore((s) => s.inspectorTab);
+  const planView = inspectorTab === "plan";
+  // Only the studied tensor and inputs that share something in at least one
+  // probe repaint on each playback frame. Unrelated cards keep selecting null
+  // and React.memo can leave their canvases alone.
+  const executionPlayback = useStore((s) => {
+    const playback = s.executionPlayback;
+    return playback && (
+      playback.tensorId === tensor.id ||
+      playback.frames.some((frame) => !!frame.shared[tensor.id])
+    ) ? playback : null;
+  });
   const plan = useStore((s) => s.plan);
   const planSupply = useStore((s) => s.planSupply);
   const planTaskAt = useStore((s) => s.planTaskAt);
@@ -611,8 +735,10 @@ function TensorCardView({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    let layers: Layer[];
+    let paint: PlanPaint | undefined;
     if (planView) {
-      const { layers, paint } = buildPlanPaint({
+      const planned = buildPlanPaint({
         tensorId: tensor.id,
         rowAxis,
         colAxis,
@@ -622,28 +748,36 @@ function TensorCardView({
         proposed: tensor.producer ? planProposal : null,
         pointer: planPointer,
       });
-      drawGrid(canvas, shape, cfg, geom, layers, dark, paintRenderScale, drawScale, paint);
-      return;
+      layers = planned.layers;
+      paint = planned.paint;
+    } else {
+      layers = buildLayers({
+        tensorId: tensor.id,
+        dark,
+        direction,
+        isSelected,
+        parts,
+        partCount: selection?.parts.length ?? 0,
+        perBox,
+        hiddenBoxes,
+        focusedBox,
+        back,
+        fwd,
+        prev,
+        prevForward,
+        dragRegion: drag ? fromBox(dragToBox(drag)) : null,
+        entangled,
+        showEntangled,
+      });
     }
-    const layers = buildLayers({
-      tensorId: tensor.id,
-      dark,
-      direction,
-      isSelected,
-      parts,
-      partCount: selection?.parts.length ?? 0,
-      perBox,
-      hiddenBoxes,
-      focusedBox,
-      back,
-      fwd,
-      prev,
-      prevForward,
-      dragRegion: drag ? fromBox(dragToBox(drag)) : null,
-      entangled,
-      showEntangled,
-    });
-    drawGrid(canvas, shape, cfg, geom, layers, dark, paintRenderScale, drawScale);
+
+    if (executionPlayback)
+      layers.push(...buildExecutionPaint({
+        tensorId: tensor.id,
+        dark,
+        playback: executionPlayback,
+      }).layers);
+    drawGrid(canvas, shape, cfg, geom, layers, dark, paintRenderScale, drawScale, paint);
   }, [
     back,
     cfg,
@@ -657,6 +791,7 @@ function TensorCardView({
     geom,
     hiddenBoxes,
     isSelected,
+    executionPlayback,
     parts,
     perBox,
     drawScale,
@@ -671,9 +806,9 @@ function TensorCardView({
     plan,
     planSupply,
     planPointer,
-    planProposal,
     rowAxis,
     colAxis,
+    planProposal,
     tensor.producer,
   ]);
 

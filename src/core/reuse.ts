@@ -1,7 +1,7 @@
 import { executeQuery } from "./executor";
 import { ResolvedGraph } from "./graph";
 import { PropResult, Selection } from "./propagate";
-import { count, fromBox, intersect, isEmpty } from "./region";
+import { Box, Region, count, fromBox, intersect, isEmpty } from "./region";
 import { DTYPE_BYTES } from "./dtypes";
 
 export type ReuseEstimate = {
@@ -73,6 +73,19 @@ export function inputSharing(graph: ResolvedGraph, cones: PropResult[]): InputSh
 
 export type ReuseOptions = { sampleCap?: number; seed?: number };
 
+/** One real probe performed by the reuse estimator. `shared` is the part of
+ * each graph-input footprint that this probe has in common with the anchor. */
+export type ReuseSweepFrame = {
+  box: Box;
+  weight: number;
+  shared: Record<string, Region>;
+};
+
+export type ReuseSweep = {
+  estimates: ReuseEstimate[];
+  frames: ReuseSweepFrame[];
+};
+
 function mulberry32(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
@@ -103,13 +116,13 @@ function sampledTileIndices(total: number, cap: number, seed: number): number[] 
  * anchored selection. Sampling is seeded and checked through the public
  * executor, so repeated estimates of the same workspace are reproducible.
  */
-export function estimateInputReuse(
+export function estimateInputReuseSweep(
   graph: ResolvedGraph,
   root: Selection,
   { sampleCap = 48, seed = 0x5eedc0de }: ReuseOptions = {}
-): ReuseEstimate[] {
+): ReuseSweep {
   const tensor = graph.tensors[root.tensorId];
-  if (!tensor) return [];
+  if (!tensor) return { estimates: [], frames: [] };
   const checkedRoot = executeQuery(graph, { ...root, direction: "backward" });
   const current = checkedRoot.backward!;
   if (checkedRoot.selection.region.boxes.length !== 1)
@@ -128,16 +141,18 @@ export function estimateInputReuse(
   const exact = new Map(inputs.map((input) => [input.id, current.tensors.get(input.id)!.region.exact]));
   const reasons = new Map(inputs.map((input) => [input.id, new Set(current.tensors.get(input.id)!.region.reasons)]));
   const neighbors = new Map(inputs.map((input) => [input.id, [] as ReuseEstimate["neighbors"]]));
+  const frames: ReuseSweepFrame[] = [];
   const overlap = (
     inputId: string,
     probe: PropResult
-  ): { fraction: number; exact: boolean; reasons: string[] } => {
+  ): { region: Region | null; fraction: number; exact: boolean; reasons: string[] } => {
     const anchor = current.tensors.get(inputId)!.region;
     const other = probe.tensors.get(inputId)?.region;
-    if (!other) return { fraction: 0, exact: true, reasons: [] };
+    if (!other) return { region: null, fraction: 0, exact: true, reasons: [] };
     const shared = intersect(anchor, other);
     const size = count(anchor);
     return {
+      region: isEmpty(shared) ? null : shared,
       fraction: size ? Math.min(1, count(shared) / size) : 0,
       exact: anchor.exact && other.exact && shared.exact,
       reasons: [...other.reasons, ...shared.reasons],
@@ -164,9 +179,11 @@ export function estimateInputReuse(
       region: fromBox(probeBox),
       direction: "backward",
     }).backward!;
+    const shared: Record<string, Region> = {};
     for (const input of inputs) {
       const probed = overlap(input.id, probe);
       if (probed.fraction <= 0) continue; // see NOTE below: a reported miss is a true miss
+      if (probed.region) shared[input.id] = probed.region;
       estimated.set(input.id, estimated.get(input.id)! + weight);
       overlapTotals.set(input.id, overlapTotals.get(input.id)! + probed.fraction * weight);
       if (!probed.exact) {
@@ -174,6 +191,7 @@ export function estimateInputReuse(
         for (const reason of probed.reasons) reasons.get(input.id)!.add(reason);
       }
     }
+    frames.push({ box: probeBox, weight, shared });
   }
 
   /* NOTE: only a probe that reported a touch can have reported it falsely.
@@ -207,15 +225,18 @@ export function estimateInputReuse(
     }
   });
 
-  return inputs.map((input) => ({
-    tensorId: input.id,
-    probes: flatIndices.length,
-    totalTiles,
-    estimatedTiles: estimated.get(input.id)!,
-    exhaustive: flatIndices.length === totalTiles,
-    meanSharedFraction: estimated.get(input.id)! > 0 ? overlapTotals.get(input.id)! / estimated.get(input.id)! : null,
-    geometryExact: exact.get(input.id)!,
-    reasons: [...reasons.get(input.id)!],
-    neighbors: neighbors.get(input.id)!,
-  }));
+  return {
+    estimates: inputs.map((input) => ({
+      tensorId: input.id,
+      probes: flatIndices.length,
+      totalTiles,
+      estimatedTiles: estimated.get(input.id)!,
+      exhaustive: flatIndices.length === totalTiles,
+      meanSharedFraction: estimated.get(input.id)! > 0 ? overlapTotals.get(input.id)! / estimated.get(input.id)! : null,
+      geometryExact: exact.get(input.id)!,
+      reasons: [...reasons.get(input.id)!],
+      neighbors: neighbors.get(input.id)!,
+    })),
+    frames,
+  };
 }

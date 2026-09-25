@@ -85,6 +85,35 @@ describe("planning from the canvas", () => {
     expect(S().planTask).toBeNull();
   });
 
+  it("reveals the original selection or a zero-coordinate task after execution playback", () => {
+    const selected = box([4, 8], [0, 4]);
+    S().setSelection("Y", fromBox(selected), "replace");
+    const original = S().selection;
+    S().setInspectorTab("execution");
+    S().setExecutionPlayback({
+      tensorId: "Y",
+      anchorBox: selected,
+      tile: [4, 4],
+      colorIndex: 0,
+      frames: [{ box: selected, weight: 1, shared: {} }],
+      visited: 1,
+      phase: "settled",
+      exiting: false,
+      opacity: 0.72,
+    });
+
+    S().setInspectorTab("dependencies");
+    expect(S().selection).toBe(original); // playback never replaced the drawn tile
+
+    S().setInspectorTab("execution");
+    S().setInspectorTab("plan");
+    expect(S().planTiles.Y).toEqual([4, 4]);
+    expect(S().planTask).toEqual({ tensorId: "Y", coord: [0, 0] });
+
+    S().setExecutionPlayback(null);
+    S().setInspectorTab("dependencies");
+  });
+
   it("names producer tasks once both sides are tiled", () => {
     S().setPlanTileAt("Y", [4, 4], [4, 0]);
     S().setPlanTile("C", [4, 4]);

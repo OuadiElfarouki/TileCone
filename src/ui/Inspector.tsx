@@ -1,10 +1,10 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Contribution, MAX_CONTRIBUTION_PROBES } from "../core/contribution";
 import type { ResolvedGraph } from "../core/graph";
 import { ratioFigure, sumFigures } from "../core/metrics";
 import { TensorReadout } from "../core/metrics";
 import type { ConeFindings } from "../core/notes";
-import { estimateInputReuse, ReuseEstimate } from "../core/reuse";
+import { estimateInputReuseSweep, ReuseEstimate, type ReuseSweep } from "../core/reuse";
 import {
   Box,
   Region,
@@ -34,6 +34,11 @@ import { formatSelectionBox, parseSelectionBox } from "./selection-range";
 import { SHORTCUTS } from "./shortcuts";
 import { CopyButton } from "./CopyButton";
 import { viewAxes } from "./tensor-view";
+import {
+  analysisWorkerAvailable,
+  isAnalysisCancelled,
+  reuseInWorker,
+} from "./analysis-worker-client";
 
 function fmt(n: number): string {
   if (n === 0) return "0";
@@ -311,11 +316,12 @@ export function reuseQualifiers(
   };
 }
 
-type ReuseProbe = { tensorId: string; box: Box };
+type ReuseProbe = { tensorId: string; box: Box; colorIndex?: number };
 type ReuseRun = {
   graph: ResolvedGraph;
   probe: ReuseProbe;
   rows: ReuseEstimate[];
+  sweep?: ReuseSweep;
 };
 
 const sameBox = (left: Box, right: Box) =>
@@ -945,9 +951,132 @@ export function Inspector(): React.ReactElement {
       ? focusedBox
       : fallback;
     const probe = probeIndex === undefined ? null : selection.parts[probeIndex];
-    return probe ? { tensorId: probe.tensorId, box: probe.box } : null;
+    return probe ? { tensorId: probe.tensorId, box: probe.box, colorIndex: probeIndex! } : null;
   }, [selection, activeTensorId, hiddenBoxes, focusedBox]);
   const [reuseRun, setReuseRun] = useState<ReuseRun | null>(null);
+  const [reusePending, setReusePending] = useState(false);
+  const [reuseError, setReuseError] = useState<string | null>(null);
+  const executionPlayback = useStore((s) => s.executionPlayback);
+  const setExecutionPlayback = useStore((s) => s.setExecutionPlayback);
+  const updateExecutionPlayback = useStore((s) => s.updateExecutionPlayback);
+  const playbackTimer = useRef<number | null>(null);
+  const fadeTimer = useRef<number | null>(null);
+  const reuseRequest = useRef(0);
+  const reuseProbeRef = useRef(reuseProbe);
+  reuseProbeRef.current = reuseProbe;
+
+  const stopPlaybackTimers = useCallback(() => {
+    if (playbackTimer.current !== null) window.clearInterval(playbackTimer.current);
+    if (fadeTimer.current !== null) window.clearInterval(fadeTimer.current);
+    playbackTimer.current = null;
+    fadeTimer.current = null;
+  }, []);
+
+  const startPlayback = useCallback((sweep: ReuseSweep, probe: ReuseProbe) => {
+    stopPlaybackTimers();
+    const tile = probe.box.map((interval) => interval.hi - interval.lo);
+    const reduced = typeof matchMedia === "function" &&
+      matchMedia("(prefers-reduced-motion: reduce)").matches;
+    setExecutionPlayback({
+      tensorId: probe.tensorId,
+      anchorBox: probe.box,
+      tile,
+      colorIndex: probe.colorIndex ?? 0,
+      frames: sweep.frames,
+      visited: reduced ? sweep.frames.length : Math.min(1, sweep.frames.length),
+      phase: reduced ? "settled" : "playing",
+      exiting: false,
+      opacity: reduced ? 0.72 : 1,
+    });
+    if (reduced || sweep.frames.length <= 1) {
+      updateExecutionPlayback({
+        visited: sweep.frames.length,
+        phase: "settled",
+        opacity: 0.72,
+      });
+      return;
+    }
+    let visited = 1;
+    const delay = Math.max(42, Math.min(110, Math.round(2100 / sweep.frames.length)));
+    playbackTimer.current = window.setInterval(() => {
+      visited++;
+      if (visited > sweep.frames.length) {
+        window.clearInterval(playbackTimer.current!);
+        playbackTimer.current = null;
+        updateExecutionPlayback({
+          visited: sweep.frames.length,
+          phase: "settled",
+          opacity: 0.72,
+        });
+      } else {
+        updateExecutionPlayback({ visited });
+      }
+    }, delay);
+  }, [setExecutionPlayback, stopPlaybackTimers, updateExecutionPlayback]);
+
+  const fadePlayback = useCallback(() => {
+    const current = useStore.getState().executionPlayback;
+    if (!current || current.exiting) return;
+    stopPlaybackTimers();
+    const initial = current.opacity;
+    const started = performance.now();
+    updateExecutionPlayback({ exiting: true });
+    fadeTimer.current = window.setInterval(() => {
+      const progress = Math.min(1, (performance.now() - started) / 240);
+      updateExecutionPlayback({ opacity: initial * (1 - progress) });
+      if (progress >= 1) {
+        window.clearInterval(fadeTimer.current!);
+        fadeTimer.current = null;
+        setExecutionPlayback(null);
+      }
+    }, 30);
+  }, [setExecutionPlayback, stopPlaybackTimers, updateExecutionPlayback]);
+
+  /** Coming back interrupts a departure. Settle rather than resume from where
+   *  the fade froze it: the animation explains the estimate once, and picking
+   *  a half-watched sweep back up mid-stride explains nothing. `replay` runs
+   *  the whole thing again for a reader who wants it. */
+  const cancelFade = useCallback(() => {
+    const current = useStore.getState().executionPlayback;
+    if (!current?.exiting) return;
+    stopPlaybackTimers();
+    updateExecutionPlayback({
+      exiting: false,
+      phase: "settled",
+      visited: current.frames.length,
+      opacity: 0.72,
+    });
+  }, [stopPlaybackTimers, updateExecutionPlayback]);
+
+  useEffect(() => {
+    if (tab === "execution") cancelFade();
+    else fadePlayback();
+  }, [cancelFade, fadePlayback, tab]);
+
+  useEffect(() => {
+    if (!executionPlayback) return;
+    if (
+      !reuseProbe ||
+      executionPlayback.tensorId !== reuseProbe.tensorId ||
+      !sameBox(executionPlayback.anchorBox, reuseProbe.box)
+    ) fadePlayback();
+  }, [executionPlayback, fadePlayback, reuseProbe]);
+
+  useEffect(() => {
+    reuseRequest.current++;
+    setReusePending(false);
+    setReuseError(null);
+  }, [reuseProbe]);
+
+  /* The timers that advance and retire a playback live here, so an unmounted
+     panel - collapse-to-rail unmounts it - would leave the overlay frozen on
+     every card with nothing left able to clear it. The state goes with them,
+     and goes at once rather than fading: a fade explains a departure, and
+     there is no longer a panel on screen to have departed from. */
+  useEffect(() => () => {
+    stopPlaybackTimers();
+    setExecutionPlayback(null);
+  }, [setExecutionPlayback, stopPlaybackTimers]);
 
   const {
     metrics,
@@ -971,6 +1100,11 @@ export function Inspector(): React.ReactElement {
 
   if (!resolved) return <aside className="inspector" aria-label="Tile inspector" />;
   const reuse = currentReuseRows(reuseRun, resolved, reuseProbe);
+  const visiblePlayback = tab === "execution" && executionPlayback && reuseProbe &&
+    executionPlayback.tensorId === reuseProbe.tensorId &&
+    sameBox(executionPlayback.anchorBox, reuseProbe.box)
+      ? executionPlayback
+      : null;
 
   /**
    * Everything below the tiles list is counted over the active group, not over
@@ -1092,16 +1226,61 @@ export function Inspector(): React.ReactElement {
    * tensor; count how many touch the current footprint on each input. The sweep
    * is defined by one tile on one tensor, so it follows the anchor part (the
    * focused one) else the last drawn rather than mixing tensors. */
+  const runReuse = (probe: ReuseProbe, graph: ResolvedGraph, request: number, retried: boolean) => {
+    /** Whether the answer would still be about the tile and the graph it was
+     *  asked about. Read fresh: the sweep outlives the click that started it. */
+    const stale = () => {
+      const current = reuseProbeRef.current;
+      return request !== reuseRequest.current ||
+        useStore.getState().resolved !== graph ||
+        !current ||
+        current.tensorId !== probe.tensorId ||
+        !sameBox(current.box, probe.box);
+    };
+    const work = analysisWorkerAvailable()
+      ? reuseInWorker({
+          graphId: useStore.getState().workerGraphId,
+          graph,
+          tensorId: probe.tensorId,
+          box: probe.box,
+        })
+      : Promise.resolve(estimateInputReuseSweep(graph, {
+          tensorId: probe.tensorId,
+          region: fromBox(probe.box),
+        }));
+    void work.then((sweep) => {
+      if (stale()) return;
+      setReusePending(false);
+      setReuseRun({ graph, probe, rows: sweep.estimates, sweep });
+      if (useStore.getState().inspectorTab === "execution") startPlayback(sweep, probe);
+    }).catch((error) => {
+      if (request !== reuseRequest.current) return;
+      /* A cancellation discarded the work, not the question, so re-ask it
+         while the tile and the graph are still the ones it was about. Once:
+         a second cancellation is something contending for the lane rather
+         than the one build that takes it, and a silent button beats a loop. */
+      if (isAnalysisCancelled(error)) {
+        if (!retried && !stale()) return runReuse(probe, graph, request, true);
+        setReusePending(false);
+        return;
+      }
+      setReusePending(false);
+      setReuseError(error instanceof Error ? error.message : String(error));
+    });
+  };
+
   const computeReuse = () => {
     if (!reuseProbe) return;
-    setReuseRun({
-      graph: resolved,
-      probe: reuseProbe,
-      rows: estimateInputReuse(resolved, {
-        tensorId: reuseProbe.tensorId,
-        region: fromBox(reuseProbe.box),
-      }),
-    });
+    const cached = reuseRun && currentReuseRows(reuseRun, resolved, reuseProbe)
+      ? reuseRun.sweep
+      : null;
+    if (cached) {
+      startPlayback(cached, reuseProbe);
+      return;
+    }
+    setReusePending(true);
+    setReuseError(null);
+    runReuse(reuseProbe, resolved, ++reuseRequest.current, false);
   };
 
   return (
@@ -1383,17 +1562,26 @@ export function Inspector(): React.ReactElement {
                     <button
                       className="mini"
                       onClick={computeReuse}
-                      disabled={!reuseProbe}
+                      disabled={!reuseProbe || reusePending}
                       title="sample tiles of the selection's size across the anchor tensor and estimate how many demand part of each graph-input footprint"
                     >
-                      estimate
+                      {reusePending ? "estimating…" : reuse ? "replay" : "estimate"}
                     </button>
                   </div>
                   <p className="hint">
                     Tiles of this tile's size, laid over the whole tensor: how many of them demand
                     part of the same graph-input footprint.
                   </p>
-                  {!reuse ? (
+                  {visiblePlayback?.phase === "playing" && (
+                    <p className="hint">
+                      Probe {visiblePlayback.visited} of {visiblePlayback.frames.length}
+                    </p>
+                  )}
+                  {reuseError ? (
+                    <p className="hint overlap">Reuse estimate failed: {reuseError}</p>
+                  ) : reusePending ? (
+                    <p className="hint">Evaluating sampled tiles off the UI thread…</p>
+                  ) : !reuse ? (
                     <p className="hint">sampled sweep · run on demand</p>
                   ) : reuse.length === 0 ? (
                     <p className="hint">This tile has no graph-input demand.</p>

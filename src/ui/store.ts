@@ -5,6 +5,7 @@ import { Graph, graphOutputs, hydrateResolvedGraph, ResolvedGraph } from "../cor
 import { expandNode } from "../core/expand";
 import { PropResult, mergeProps } from "../core/propagate";
 import { supplyOf, type Supply } from "../core/plan/interfaces";
+import type { ReuseSweepFrame } from "../core/reuse";
 import { tilePlan, type TaskRef, type TilePlan } from "../core/plan/plan";
 import { isTile } from "../core/plan/tile-family";
 import {
@@ -36,6 +37,27 @@ export type PanelSide = "left" | "right";
 export type Theme = "light" | "dark";
 /** The two classes of question the inspector answers; see `inspectorTab`. */
 export type InspectorTab = "dependencies" | "execution" | "plan";
+export type ExecutionPlayback = {
+  tensorId: string;
+  anchorBox: Box;
+  tile: number[];
+  colorIndex: number;
+  frames: ReuseSweepFrame[];
+  /** Number of frames already visited; the active one is `visited - 1`. */
+  visited: number;
+  phase: "playing" | "settled";
+  /**
+   * The overlay is on its way out and `opacity` is being driven to zero.
+   *
+   * Beside `phase` rather than a third value of it, because a departure has to
+   * leave the sweep reading as whatever it was: folded into `phase`, a fade
+   * that began mid-sweep dropped the probe being walked and jumped the input
+   * cards from that one pulse to the union of every probe so far - a change of
+   * subject on the way out, in the frames the reader was still watching.
+   */
+  exiting: boolean;
+  opacity: number;
+};
 /** Defensive share-state bound; far beyond any usable graph arrangement while
  * preventing finite-but-overflowing coordinates from poisoning scene bounds. */
 export const MAX_TENSOR_OFFSET = 1_000_000;
@@ -403,6 +425,9 @@ type State = {
    * bounded and would be read as facts if they shared a panel with them.
    */
   inspectorTab: InspectorTab;
+  /** A visual replay of the deterministic probes behind the reuse estimate.
+   * It never changes `selection` or `plan`; those remain underneath it. */
+  executionPlayback: ExecutionPlayback | null;
 
   viewCfgs: Record<string, ViewCfg>;
   /** Px per element for every card in this graph. A property of the resolved
@@ -504,6 +529,8 @@ type State = {
   setSnapToGrid: (v: boolean) => void;
   setAxisMode: (v: AxisMode) => void;
   setInspectorTab: (tab: InspectorTab) => void;
+  setExecutionPlayback: (playback: ExecutionPlayback | null) => void;
+  updateExecutionPlayback: (patch: Partial<ExecutionPlayback>) => void;
   /** Tile a produced tensor with these extents, or stop tiling it with `null`. Undoable. */
   setPlanTile: (tensorId: string, tile: number[] | null) => void;
   /** Inspect one task, or none. Undoable. */
@@ -942,7 +969,7 @@ function loadResolvedGraph(
   | "entangled"
   | "perBox" | "focusedBox" | "pinnedBox" | "viewCfgs" | "preview" | "graphPx"
   | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "tensorOffsets"
-  | "planTiles" | "planTask" | "plan" | "planSupply"
+  | "planTiles" | "planTask" | "plan" | "planSupply" | "executionPlayback"
 > {
   const viewCfgs = Object.create(null) as Record<string, ViewCfg>;
   for (const t of Object.values(resolved.tensors)) viewCfgs[t.id] = defaultViewCfg(t.resolved!);
@@ -967,6 +994,7 @@ function loadResolvedGraph(
     pinnedBox: null,
     hiddenBoxes: new Set<number>(),
     analysisGroup: null,
+    executionPlayback: null,
     preview: null,
     viewCfgs,
     graphPx: worker?.graphPx ?? graphScale(planesOf(resolved)),
@@ -1125,6 +1153,7 @@ export const useStore = create<State>((set, get) => ({
   diagnostics: [],
   showEntangled: false,
   inspectorTab: "dependencies",
+  executionPlayback: null,
   ...NO_PLAN,
   entangled: null,
   selection: null,
@@ -1545,7 +1574,35 @@ export const useStore = create<State>((set, get) => ({
 
   setSnapToGrid: (v) => set({ snapToGrid: v }),
   setAxisMode: (v) => set({ axisMode: v }),
-  setInspectorTab: (tab) => set({ inspectorTab: tab }),
+  setInspectorTab: (tab) => {
+    const state = get();
+    /* Leaving a reuse playback for Plan reveals a real task underneath it. An
+       existing inspected task wins; otherwise the studied produced tensor is
+       opened at coordinate zero using the sweep's tile extents. This is a
+       plan edit, not animation state, so it goes through the ordinary checked
+       action and remains undoable. Dependencies need no corresponding work:
+       the playback never replaced their original selection. */
+    if (
+      tab === "plan" &&
+      state.inspectorTab === "execution" &&
+      !state.planTask &&
+      state.executionPlayback &&
+      state.resolved?.tensors[state.executionPlayback.tensorId]?.producer
+    ) {
+      const tensorId = state.executionPlayback.tensorId;
+      const tile = state.plan?.families.get(tensorId)?.tile ?? state.executionPlayback.tile;
+      inspectTask(state, set, tensorId, [...tile], new Array(tile.length).fill(0));
+    }
+    set({ inspectorTab: tab });
+  },
+
+  setExecutionPlayback: (executionPlayback) => set({ executionPlayback }),
+
+  updateExecutionPlayback: (patch) => set((state) => ({
+    executionPlayback: state.executionPlayback
+      ? { ...state.executionPlayback, ...patch }
+      : null,
+  })),
 
   setPlanTile: (tensorId, tile) => {
     const state = get();
