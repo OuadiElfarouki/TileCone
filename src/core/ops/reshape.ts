@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Box, Region, boundingBox, canonicalize, iv } from "../region";
 import { resolveShape } from "../shapes";
-import { DependencyNoteDraft, NoteCtx, OpSpec, uniformDTypeOutputs } from "./types";
+import { DependencyNoteDraft, isRowMajor, NoteCtx, OpSpec, rowMajor, uniformDTypeOutputs } from "./types";
 import { DEFAULT_LIMITS, limitsOf } from "./limits";
 import { AxisNames } from "./types";
 import { Sym } from "../shapes";
@@ -316,10 +316,13 @@ export const reshapeOp: OpSpec = {
     });
     return [[idx]];
   },
-  // Row-major order is unchanged by a reshape, so a contiguous input needs no
-  // data movement. A strided one generally does: merging axes that a transpose
-  // permuted has no single stride.
-  layout: (_ctx, input) => (input === "contiguous" ? "contiguous" : "copy"),
+  // Row-major order is unchanged by a reshape, so a row-major input needs no
+  // data movement. Anything else is charged as a copy: merging axes that a
+  // transpose permuted has no single stride. Some splits of a permuted tensor
+  // could still be views; charging them is the conservative reading of an
+  // idealised scenario, not a bound.
+  layout: (ctx, input) =>
+    isRowMajor(input, ctx.inShapes[0]) ? rowMajor(ctx.outShapes[0].length) : "copy",
   flopsFor: () => 0,
   flopsPerElement: () => 0,
 };

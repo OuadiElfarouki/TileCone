@@ -1,7 +1,7 @@
 import { ResolvedGraph, Tensor } from "./graph";
 import { DTYPE_BYTES } from "./dtypes";
 import { getOp, opLabel } from "./ops/index";
-import { Layout, OpCtx } from "./ops/types";
+import { Layout, OpCtx, rowMajor } from "./ops/types";
 import { PropResult } from "./propagate";
 import { Region, count, disjointify, formatBoxIndices, regionOverlap } from "./region";
 
@@ -221,10 +221,10 @@ export function coneReadout(graph: ResolvedGraph, prop: PropResult): TensorReado
 /**
  * Which nodes the unfused scenario treats as views, and each tensor's layout.
  *
- * Graph inputs and computed tensors are contiguous. A node whose operation
+ * Graph inputs and computed tensors are row-major. A node whose operation
  * declares `layout` is a view when that returns a layout for its input's, and
- * a copy when it returns `"copy"`. Only single-input, single-output operations
- * declare it, so one input decides.
+ * a copy when it returns `"copy"`; a copy is written row-major. Only
+ * single-input, single-output operations declare it, so one input decides.
  */
 export function viewLayouts(graph: ResolvedGraph): {
   views: Set<string>;
@@ -234,16 +234,14 @@ export function viewLayouts(graph: ResolvedGraph): {
   const views = new Set<string>();
   for (const node of graph.topo) {
     const spec = getOp(node.op)!;
-    const input = layouts.get(node.inputs[0]) ?? "contiguous";
+    const inShapes = graph.shapesOf(node.inputs);
+    const input = layouts.get(node.inputs[0]) ?? rowMajor(inShapes[0]?.length ?? 0);
     const result = spec.layout && node.inputs.length === 1 && node.outputs.length === 1
-      ? spec.layout({
-          inShapes: graph.shapesOf(node.inputs),
-          outShapes: graph.shapesOf(node.outputs),
-          attrs: node.attrs,
-        }, input)
+      ? spec.layout({ inShapes, outShapes: graph.shapesOf(node.outputs), attrs: node.attrs }, input)
       : "copy";
     if (result !== "copy") views.add(node.id);
-    for (const out of node.outputs) layouts.set(out, result === "copy" ? "contiguous" : result);
+    for (const out of node.outputs)
+      layouts.set(out, result === "copy" ? rowMajor(graph.tensors[out].resolved!.length) : result);
   }
   return { views, layouts };
 }

@@ -427,8 +427,11 @@ Metrics are derived from the backward dependency result in `src/core/metrics.ts`
   inputs and selected output once. Unfused sums each tile's per-operation distinct input reads and
   output writes, without cross-operation cache reuse. An operation that can be a view of its input
   moves nothing (`OpSpec.layout`): transpose, slice and expand always, and reshape when its input
-  is contiguous. A reshape of a strided tensor - merging axes a transpose permuted - is charged as
-  a copy. `viewLayouts` derives which nodes are views in topological order. Consumer
+  is row-major. A layout records the order a dense buffer's axes are stored in, so a transpose
+  composes with the one before it and a transpose followed by its inverse is row-major again;
+  slice and expand produce a `strided` layout whose order is not tracked. A reshape of anything
+  that is not row-major is charged as a copy, conservatively, since some splits of a permuted
+  tensor could still be views. `viewLayouts` derives layouts and views in topological order. Consumer
   branches pay separately, while repeated operand slots within an operation share their reads.
   These are not guaranteed hardware bounds. Approximate ratios use `~`, not `≤`.
 

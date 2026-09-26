@@ -38,9 +38,32 @@ export type AxisNames = (string | undefined)[];
 export type Attrs = Record<string, unknown>;
 export type Cardinality = number | { min: number; max?: number };
 
-/** A tensor's storage as the unfused traffic model sees it. `contiguous` is
- * row-major over its own shape; `strided` is a view whose element order is not. */
-export type Layout = "contiguous" | "strided";
+/**
+ * A tensor's storage as the unfused traffic model sees it.
+ *
+ * `{ order }` is a dense buffer whose axes are stored in that order, outermost
+ * first, named by this tensor's own axis indices: row-major is `[0, 1, ...]`,
+ * and a transposed matrix over a row-major buffer is `[1, 0]`. Keeping the
+ * order rather than a contiguous/strided flag is what lets two transposes that
+ * undo each other come back to row-major. `strided` is a view that is no dense
+ * permutation - an offset, a step or a zero stride - whose order is not tracked.
+ */
+export type Layout = { order: readonly number[] } | "strided";
+
+/** Row-major storage for a tensor of this rank. */
+export const rowMajor = (rank: number): Layout => ({
+  order: Array.from({ length: rank }, (_, axis) => axis),
+});
+
+/**
+ * Whether `layout` stores `shape` in row-major element order. Axes of extent
+ * one hold a single index, so where they sit in the order changes no address.
+ */
+export function isRowMajor(layout: Layout, shape: readonly number[]): boolean {
+  if (layout === "strided") return false;
+  const wide = layout.order.filter((axis) => shape[axis] > 1);
+  return wide.every((axis, i) => i === 0 || wide[i - 1] < axis);
+}
 
 export type OpCtx = {
   inShapes: number[][];
@@ -218,9 +241,9 @@ export interface OpSpec {
    * express it as new strides over the same buffer, and the consumer then reads
    * the original elements. Returning a `Layout` says the output can be such a
    * view, and which layout it has. `"copy"` says it cannot be one given the
-   * input's layout - a reshape that merges axes a transpose permuted is the
-   * usual case - so the output is written like any other. Omitted means the
-   * operation computes its output, which is always written.
+   * input's layout - a reshape of data a transpose left out of row-major order
+   * is the usual case - so the output is written, row-major, like any other.
+   * Omitted means the operation computes its output, which is always written.
    *
    * This is the idealized unfused scenario's assumption, not a claim about any
    * particular runtime, which may still choose to copy.

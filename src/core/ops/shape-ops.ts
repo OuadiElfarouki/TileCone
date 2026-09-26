@@ -74,12 +74,15 @@ export const transposeOp: OpSpec = {
     perm.forEach((p, i) => (inIdx[p] = outIndex[i]));
     return [[inIdx]];
   },
-  // New strides over the same buffer. Only a permutation that keeps the order
-  // of the axes wider than one element leaves the storage row-major.
+  // New strides over the same buffer: the storage order is unchanged, and
+  // only the names of its axes move. Output axis `i` is input axis `perm[i]`,
+  // so each stored input axis is renamed to the output axis that reads it.
+  // Composing orders rather than flagging "strided" is what brings a transpose
+  // followed by its inverse back to row-major.
   layout: (ctx, input) => {
+    if (input === "strided") return "strided";
     const perm = ctx.attrs.perm as number[];
-    const wide = perm.filter((axis) => ctx.inShapes[0][axis] > 1);
-    return wide.every((axis, i) => i === 0 || wide[i - 1] < axis) ? input : "strided";
+    return { order: input.order.map((axis) => perm.indexOf(axis)) };
   },
   flopsFor: zero,
   flopsPerElement: zero,

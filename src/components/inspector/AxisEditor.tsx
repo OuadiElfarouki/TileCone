@@ -44,9 +44,9 @@ export function AxisEditor({ index }: { index: number }): React.ReactElement | n
   const matchesTile = box.every((interval, axis) =>
     tilePosition(interval, tile[axis], shape[axis]).aligned
   );
-  // What "plan with it" divides at: the tile itself when this is one, since a
-  // shortened boundary tile's extents are not the tiling's.
-  const planExtents = matchesTile ? tile : extents;
+  // What "use as tile" and "plan with it" take: the tile itself when this is
+  // one, since a shortened boundary tile's extents are not the tiling's.
+  const tileExtents = matchesTile ? tile : extents;
   const planeRemapped = remapped(shape, cfg);
   /** Draw `axis` as the card's rows or columns. Taking the other role's axis
    *  swaps the two, so the card always draws two distinct axes. */
@@ -67,11 +67,16 @@ export function AxisEditor({ index }: { index: number }): React.ReactElement | n
       <div className="ins-title with-action">
         Axes
         <span className="axis-actions">
-          {!matchesTile && (
+          {/* Offered whenever the tensor has no tile of its own, even when this
+              tile already matches the canvas lattice: owning it is still a
+              change, because a detail change would otherwise resize it. */}
+          {(!own || !matchesTile) && (
             <button
               className="mini"
-              title="make this tile's extents the tensor's tile, so later gestures and steps use them"
-              onClick={() => setTensorTile(part.tensorId, extents, index)}
+              title={matchesTile
+                ? "keep this tile as the tensor's own, so later detail changes no longer resize it"
+                : "make this tile's extents the tensor's tile, so later gestures and steps use them"}
+              onClick={() => setTensorTile(part.tensorId, tileExtents, index)}
             >
               use as tile
             </button>
@@ -101,7 +106,7 @@ export function AxisEditor({ index }: { index: number }): React.ReactElement | n
               ? "divide this tensor into tasks of these extents and inspect the task holding this tile"
               : "a graph input has no tasks: nothing computes it"}
             onClick={() => {
-              setPlanTileAt(part.tensorId, planExtents, box.map((interval) => interval.lo));
+              setPlanTileAt(part.tensorId, tileExtents, box.map((interval) => interval.lo));
               setInspectorTab("plan");
             }}
           >
@@ -232,14 +237,17 @@ function ExtentInput({
     setDraft(String(value));
     setInvalid(false);
   }, [value]);
-  const commit = () => {
+  /** Enter is a deliberate act, so on a tensor without a tile of its own it
+   *  commits even an unchanged value, which makes the canvas tile its own.
+   *  Blur is not: tabbing through the fields must not change anything. */
+  const commit = (explicit: boolean) => {
     const parsed = Number(draft.trim());
     if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > max) {
       setInvalid(true);
       return;
     }
     setInvalid(false);
-    if (parsed !== value) onCommit(parsed);
+    if (parsed !== value || (explicit && !own)) onCommit(parsed);
   };
   return (
     <input
@@ -248,16 +256,18 @@ function ExtentInput({
       value={draft}
       aria-label={label}
       aria-invalid={invalid}
-      title={invalid ? `a whole number from 1 to ${max}` : "Enter or blur applies"}
+      title={invalid
+        ? `a whole number from 1 to ${max}`
+        : own ? "Enter or blur applies" : "Enter or blur applies; Enter keeps the canvas tile as this tensor's own"}
       spellCheck={false}
       onChange={(event) => {
         setDraft(event.target.value);
         setInvalid(false);
       }}
-      onBlur={commit}
+      onBlur={() => commit(false)}
       onKeyDown={(event) => {
         event.stopPropagation();
-        if (event.key === "Enter") commit();
+        if (event.key === "Enter") commit(true);
         if (event.key === "Escape") {
           setDraft(String(value));
           setInvalid(false);
