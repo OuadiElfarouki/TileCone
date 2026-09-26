@@ -159,4 +159,23 @@ Z = cumsum(Y, axis=0, reverse=false)
 `,
     defaultSelection: { tensor: "Z", box: [[20, 24]] },
   },
+  {
+    name: "Batched matmul",
+    dsl: `B = 2
+H = 4
+M = 200
+K = 64
+N = 128
+
+# Four-dimensional operands: the card draws the last two axes, and batch and
+# head are hidden. The Axes table in the inspector names every axis of the
+# tile; M = 200 does not divide by 64, so the last row tile is 8 rows.
+
+A = Tensor(batch=B, head=H, m=M, k=K, dtype=fp16)
+W = Tensor(batch=B, head=H, k=K, n=N, dtype=fp16)
+
+C = matmul(A, W)
+`,
+    defaultSelection: { tensor: "C", box: [[0, 1], [0, 2], [64, 128], [0, 64]] },
+  },
 ];

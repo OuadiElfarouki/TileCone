@@ -206,7 +206,7 @@ describe("planning from the canvas", () => {
     const shape = [16, 16];
     const cfg = defaultViewCfg(shape);
     const geom = gridGeometry(shape, cfg, 1, 8);
-    expect(geom.tile).toBeGreaterThan(1);
+    expect(geom.rowTile).toBeGreaterThan(1);
 
     // The exact element is required here: a finer plan may put it in a
     // different task than the display tile's snapped lower edge.
@@ -372,7 +372,7 @@ describe("what a gesture in the plan view does", () => {
     const gesture = planGesture(shape, cfg, geom, drag, false);
     if (gesture.kind !== "divide") throw new Error(gesture.kind);
     // Whole cells of the drawn lattice, never the raw pointer extents.
-    expect(gesture.tile.every((extent) => extent % geom.tile === 0)).toBe(true);
+    expect(gesture.tile.every((extent) => extent % geom.rowTile === 0)).toBe(true);
     expect(gesture.element).toEqual([0, 0]);
   });
 

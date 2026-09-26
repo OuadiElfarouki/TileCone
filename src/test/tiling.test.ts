@@ -119,7 +119,7 @@ describe("the global detail scale", () => {
     const finest = tileFor(256, 256, TILE_SCALE_MIN, pxFor(256, 256));
     expect(finest).toBe(1);
     const geom = gridGeometry([256, 256], cfg, TILE_SCALE_MIN, pxFor(256, 256));
-    expect(geom.tile).toBe(1);
+    expect([geom.rowTile, geom.colTile]).toEqual([1, 1]);
     expect(geom.tileRows).toBe(256);
     expect(geom.tileCols).toBe(256);
     expect(Math.min(geom.cellW, geom.cellH)).toBeLessThan(MIN_CELL_PX);
@@ -321,7 +321,7 @@ describe("regions are drawn at element precision, not tile precision", () => {
     // 8-element cell, nor half-light one.
     const shape = [64, 64];
     const geom = gridGeometry(shape, cfg, 2, pxOf(shape));
-    expect(geom.tile).toBeGreaterThan(1); // cells aggregate several elements
+    expect(geom.rowTile).toBeGreaterThan(1); // cells aggregate several elements
     const [rect] = regionRects(fromBox(box([3, 6], [0, 64])), shape, cfg, geom);
     expect(rect.y).toBeCloseTo(geom.canvasH * (3 / 64), 5);
     expect(rect.h).toBeCloseTo(geom.canvasH * (3 / 64), 5);

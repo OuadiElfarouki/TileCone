@@ -179,8 +179,8 @@ describe("the box a single-cell gesture commits", () => {
     const geom = gridGeometry(shape, cfg, 0, 8);
     const selected = selectionBoxFromDrag(shape, cfg, geom, hover(6, 9), true);
 
-    expect(selected[2].hi - selected[2].lo).toBe(geom.tile);
-    expect(selected[3].hi - selected[3].lo).toBe(geom.tile);
+    expect(selected[2].hi - selected[2].lo).toBe(geom.rowTile);
+    expect(selected[3].hi - selected[3].lo).toBe(geom.colTile);
     expect(selected[0]).toEqual({ lo: 1, hi: 2 });
   });
 });

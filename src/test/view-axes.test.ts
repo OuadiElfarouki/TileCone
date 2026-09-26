@@ -1,0 +1,78 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import { box } from "../core/region";
+import { cardScaleFor, cardSize } from "../ui/card-size";
+import { gridGeometry } from "../ui/grid";
+import { decodeWorkspace, encodeWorkspace } from "../ui/share";
+import { useStore } from "../ui/store";
+import { selectionBoxFromDrag } from "../ui/TensorCard";
+import { remapped, viewAxes, viewCfgFits } from "../ui/tensor-view";
+import { MAX_GRAPH_H, MAX_GRAPH_W } from "../ui/tiling";
+
+const S = () => useStore.getState();
+
+/* [B, S, H, D] after the head split: the default plane is H x D, and the one
+   worth studying is S x D. */
+const DSL = "B = 1\nL = 128\nH = 4\nD = 32\nX = Tensor(B, L, H, D, dtype=fp16)\nY = relu(X)\n";
+const SHAPE = [1, 128, 4, 32];
+
+describe("choosing the axes a card draws", () => {
+  it("draws the chosen pair, and the default pair when none is chosen or the choice is invalid", () => {
+    expect(viewAxes(SHAPE)).toEqual({ rowAxis: 2, colAxis: 3 });
+    expect(viewAxes(SHAPE, { axes: [1, 3] })).toEqual({ rowAxis: 1, colAxis: 3 });
+    expect(viewAxes(SHAPE, { axes: [3, 1] })).toEqual({ rowAxis: 3, colAxis: 1 });
+    expect(viewAxes(SHAPE, { axes: [1, 1] })).toEqual({ rowAxis: 2, colAxis: 3 });
+    expect(remapped(SHAPE, { axes: [2, 3] })).toBe(false);
+    expect(viewCfgFits(SHAPE, { projection: true, sliders: [0, 0, 0, 0], axes: [1, 4] })).toBe(false);
+  });
+
+  it("keeps the graph's scale when it fits and shrinks to the budget when it does not", () => {
+    expect(cardScaleFor(SHAPE, undefined, 5)).toBe(5);
+    expect(cardScaleFor(SHAPE, { axes: [1, 3] }, 2)).toBe(2);
+    const shrunk = cardScaleFor(SHAPE, { axes: [1, 3] }, 10);
+    expect(shrunk).toBeCloseTo(Math.min(MAX_GRAPH_H / 128, MAX_GRAPH_W / 32));
+    const size = cardSize(SHAPE, 10, "X", [], { axes: [1, 3] });
+    expect(size.h).toBeLessThanOrEqual(24 + 24 + 2 * 20 + MAX_GRAPH_H + 1);
+  });
+
+  it("selects on the chosen axes and takes the hidden positions on the others", () => {
+    const cfg = { projection: false, sliders: [0, 0, 3, 0], axes: [1, 3] as [number, number] };
+    const geom = gridGeometry(SHAPE, cfg, 0, 2);
+    expect([geom.rows, geom.cols]).toEqual([128, 32]);
+    const picked = selectionBoxFromDrag(SHAPE, cfg, geom, { r0: 64, c0: 0, r1: 127, c1: 31 }, false);
+    expect(picked).toEqual(box([0, 1], [64, 128], [3, 4], [0, 32]));
+  });
+});
+
+describe("axes in the workspace", () => {
+  beforeEach(() => {
+    S().applyDSL(DSL);
+    S().setViewCfg("X", { projection: false });
+    S().setSelection("X", { boxes: [box([0, 1], [64, 128], [2, 3], [0, 32])], exact: true, reasons: [] }, "replace");
+  });
+
+  it("keeps the studied tile on screen when its axes become hidden", () => {
+    S().setViewAxes("X", [1, 3], 0);
+    expect(S().viewCfgs.X.axes).toEqual([1, 3]);
+    // H is hidden now; the slice moves onto the tile's head.
+    expect(S().viewCfgs.X.sliders[2]).toBe(2);
+    // The selection itself is untouched: this is presentation.
+    expect(S().selection!.parts[0].box).toEqual(box([0, 1], [64, 128], [2, 3], [0, 32]));
+  });
+
+  it("stores the default pair as absent", () => {
+    S().setViewAxes("X", [1, 3], 0);
+    S().setViewAxes("X", [2, 3], 0);
+    expect(S().viewCfgs.X.axes).toBeUndefined();
+  });
+
+  it("round trips through a share link", () => {
+    S().setViewAxes("X", [1, 3], 0);
+    const views = { X: S().viewCfgs.X };
+    const decoded = decodeWorkspace(`#s=${encodeWorkspace({ dsl: DSL, dir: "both", tile: 0, sel: null, views })}`)!;
+    expect(S().restoreWorkspace({
+      dsl: DSL, direction: "both", tileScale: 0, snapToGrid: true, axisMode: "symbolic",
+      parts: null, viewCfgs: decoded.views,
+    })).toBe(true);
+    expect(S().viewCfgs.X.axes).toEqual([1, 3]);
+  });
+});

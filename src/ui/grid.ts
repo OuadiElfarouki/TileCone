@@ -12,11 +12,16 @@ import { Box, Interval, Region, disjointify } from "../core/region";
 import { CARD_SURFACE } from "./palette";
 import { cardPx, planeExtents, tileFor } from "./tiling";
 import { viewAxes, type ViewCfg } from "./tensor-view";
+import { gestureTile } from "./tile-spec";
+import { cardScaleFor } from "./card-size";
 
 export type GridGeom = {
   rows: number; // element extent
   cols: number;
-  tile: number; // elements per cell, both axes
+  /** Elements per cell on the row and column axes. Equal unless the tensor has
+   * a tile of its own (`ViewCfg.tile`), which need not be square. */
+  rowTile: number;
+  colTile: number;
   tileRows: number; // drawn cells
   tileCols: number;
   cellW: number; // CSS px per drawn cell (may be fractional; drawing snaps to px)
@@ -29,22 +34,28 @@ export type GridGeom = {
 
 export function gridGeometry(
   shape: number[],
-  _cfg: ViewCfg,
+  cfg: ViewCfg | undefined,
   tileScale: number,
   px: number
 ): GridGeom {
-  const { rowAxis, colAxis } = viewAxes(shape);
+  const { rowAxis, colAxis } = viewAxes(shape, cfg);
   const { rows, cols } = planeExtents(shape, rowAxis, colAxis);
   // The card is sized by the shape and the graph's scale; the tile only sets the
-  // lattice inside it.
-  const { w: canvasW, h: canvasH } = cardPx(rows, cols, px);
-  const tile = tileFor(rows, cols, tileScale, px);
-  const tileRows = Math.ceil(rows / tile);
-  const tileCols = Math.ceil(cols / tile);
+  // lattice inside it. A chosen pair of axes may take a smaller scale of its own.
+  const scale = cardScaleFor(shape, cfg, px);
+  const { w: canvasW, h: canvasH } = cardPx(rows, cols, scale);
+  // A tile of the tensor's own is a quantity and is drawn as given, however
+  // dense; `latticeStride` keeps the drawn boundaries apart on screen.
+  const tile = gestureTile(shape, cfg, tileFor(rows, cols, tileScale, scale));
+  const rowTile = rowAxis >= 0 ? tile[rowAxis] : 1;
+  const colTile = colAxis >= 0 ? tile[colAxis] : 1;
+  const tileRows = Math.ceil(rows / rowTile);
+  const tileCols = Math.ceil(cols / colTile);
   return {
     rows,
     cols,
-    tile,
+    rowTile,
+    colTile,
     tileRows,
     tileCols,
     cellW: canvasW / tileCols,
@@ -808,27 +819,35 @@ export function drawGrid(
   }
 }
 
-/** The tile size a tensor renders at, without building full geometry. */
-export function tileOf(shape: number[], tileScale: number, px: number): number {
-  const { rowAxis, colAxis } = viewAxes(shape);
-  const { rows, cols } = planeExtents(shape, rowAxis, colAxis);
-  return tileFor(rows, cols, tileScale, px);
-}
-
-/**
- * How far one arrow-key nudge moves the selection.
- *
- * It is whatever unit the pointer works in: a whole tile while snapping, a
- * single element when not. Stepping by a tile with snapping off would let the
- * keyboard place a box at offsets a drag cannot reach.
- */
-export function nudgeUnit(
+/** The square display tile a tensor renders at without a tile of its own. */
+export function tileOf(
   shape: number[],
   tileScale: number,
   px: number,
-  snapToGrid: boolean
+  cfg?: Pick<ViewCfg, "axes">
 ): number {
-  return snapToGrid ? tileOf(shape, tileScale, px) : 1;
+  const { rowAxis, colAxis } = viewAxes(shape, cfg);
+  const { rows, cols } = planeExtents(shape, rowAxis, colAxis);
+  return tileFor(rows, cols, tileScale, cardScaleFor(shape, cfg, px));
+}
+
+/**
+ * How far one arrow-key nudge moves the selection along `axis`.
+ *
+ * It is whatever unit the pointer works in: the tensor's tile on that axis
+ * while snapping, a single element when not. Stepping by a tile with snapping
+ * off would let the keyboard place a box at offsets a drag cannot reach.
+ */
+export function nudgeUnit(
+  shape: number[],
+  cfg: ViewCfg | undefined,
+  tileScale: number,
+  px: number,
+  snapToGrid: boolean,
+  axis: number
+): number {
+  if (!snapToGrid) return 1;
+  return gestureTile(shape, cfg, tileOf(shape, tileScale, px, cfg))[axis] ?? 1;
 }
 
 /** Delta for one arrow press. An off-lattice selection first lands an edge on

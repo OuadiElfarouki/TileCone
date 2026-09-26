@@ -22,10 +22,11 @@ import type { CompilerDiagnostic } from "../parse/compiler";
 import { compileDSL, tryCompileDSL } from "../parse/compiler";
 import { toDSL } from "../parse/dsl";
 import { graphScale, MAX_ELEM_PX, planeExtents, TILE_SCALE_MAX, TILE_SCALE_MIN } from "./tiling";
-import { tileOf } from "./grid";
+import { nudgeDelta, tileOf } from "./grid";
 import type { AxisMode } from "./shape-label";
 import type { TensorOffset, TensorOffsets } from "./tensor-layout";
-import { defaultViewCfg, viewAxes, viewCfgFits, type ViewCfg } from "./tensor-view";
+import { defaultViewCfg, remapped, viewAxes, viewCfgFits, type ViewCfg } from "./tensor-view";
+import { gestureTile, seedTile, tileFits, tilePosition, tileSpanAt } from "./tile-spec";
 import type { BaseGraphLayout } from "./graph-scene";
 import { analysisWorkerAvailable, compileInWorker } from "./analysis-worker-client";
 
@@ -567,6 +568,28 @@ type State = {
   toggleDirection: (d: ConeDirection) => void;
   setTheme: (theme: Theme) => void;
   setViewCfg: (tensorId: string, cfg: Partial<ViewCfg>) => void;
+  /**
+   * Give a tensor a tile of its own, one extent per axis, or return it to the
+   * canvas default with `null`. A gesture setting like snap and detail: it
+   * changes future gestures and is not an undo step. With `refit`, the part at
+   * that index is replaced by the tile of the new extents that contains its
+   * lower corner, as one undoable selection edit.
+   */
+  setTensorTile: (tensorId: string, tile: number[] | null, refit?: number) => void;
+  /**
+   * Step one part `steps` tiles along `axis`, where a tile is the extent its
+   * tensor's tile has on that axis. An off-lattice part first lands its lower
+   * edge on the lattice, as an arrow nudge does. Works on hidden axes too, and
+   * the view follows the part there.
+   */
+  stepTile: (index: number, axis: number, steps: number) => void;
+  /**
+   * Draw `axes` as the tensor card's rows and columns, or the default pair with
+   * `null`. Presentation only. With `keep`, the hidden-axis positions move onto
+   * that part, so the tile being studied stays on screen when the axes it was
+   * seen through become hidden.
+   */
+  setViewAxes: (tensorId: string, axes: [number, number] | null, keep?: number) => void;
   setTileScale: (v: number) => void;
   setSnapToGrid: (v: boolean) => void;
   setAxisMode: (v: AxisMode) => void;
@@ -795,6 +818,33 @@ function recompute(
  * `keepFocus` holds the focused part across edits that preserve indices (a move);
  * edits that reorder or remove parts drop it so a stale index can never be used.
  */
+/**
+ * Keep a box on screen after it moved along a hidden axis.
+ *
+ * In slice mode the card shows one index per hidden axis, and in projection a
+ * tensor with a tile of its own reads the same position as "the tile a gesture
+ * takes". Either way a position outside the box would leave the reader looking
+ * at, or about to draw on, a different tile from the one just placed. A
+ * position already inside the box is left alone.
+ */
+function revealHidden(get: () => State, tensorId: string, box: Box): void {
+  const state = get();
+  const shape = state.resolved?.tensors[tensorId]?.resolved;
+  const cfg = state.viewCfgs[tensorId];
+  if (!shape || !cfg) return;
+  const { rowAxis, colAxis } = viewAxes(shape, cfg);
+  let changed = false;
+  const sliders = cfg.sliders.slice();
+  box.forEach((interval, axis) => {
+    if (axis === rowAxis || axis === colAxis) return;
+    const at = sliders[axis] ?? 0;
+    if (at >= interval.lo && at < interval.hi) return;
+    sliders[axis] = interval.lo;
+    changed = true;
+  });
+  if (changed) state.setViewCfg(tensorId, { sliders });
+}
+
 function editSelection(
   get: () => State,
   set: (partial: Partial<State>) => void,
@@ -863,7 +913,8 @@ export function planesOf(resolved: ResolvedGraph): { rows: number; cols: number 
 export function startingTiles(
   resolved: ResolvedGraph,
   tileScale: number,
-  graphPx: number
+  graphPx: number,
+  viewCfgs: Record<string, ViewCfg> = {}
 ): { label: string; tensorId: string; box: Box }[] {
   const output = graphOutputs(resolved)[0];
   if (!output) return [];
@@ -876,15 +927,11 @@ export function startingTiles(
     ...(previous ? [{ tensor: previous, label: "one step back" }] : []),
   ].map(({ tensor, label }) => {
     const shape = tensor.resolved!;
-    const tile = tileOf(shape, tileScale, graphPx);
-    const { rowAxis, colAxis } = viewAxes(shape);
+    const tile = seedTile(shape, viewCfgs[tensor.id], tileOf(shape, tileScale, graphPx, viewCfgs[tensor.id]));
     return {
       label,
       tensorId: tensor.id,
-      box: shape.map((extent, axis) => ({
-        lo: 0,
-        hi: axis === rowAxis || axis === colAxis ? Math.min(tile, extent) : 1,
-      })),
+      box: shape.map((extent, axis) => ({ lo: 0, hi: Math.min(tile[axis], extent) })),
     };
   });
 }
@@ -952,26 +999,23 @@ function derivePlan(
 }
 
 /**
- * The extents a tensor is first divided at: the tile the canvas is drawing on
- * its visible axes, and one element on the others, which is how a kernel grid
- * usually assigns batch and head.
+ * The extents a tensor is first divided at: the tensor's own tile when it has
+ * one, else the tile the canvas is drawing on its visible axes and one element
+ * on the others, which is how a kernel grid usually assigns batch and head.
  *
- * The canvas grid seeds a plan and never steers it again. Retiling on a detail
- * change would make a plan a function of the view, so a plan written down at
- * one zoom would mean something else at another.
+ * The tile seeds a plan and never steers it again. Retiling on a detail change
+ * would make a plan a function of the view, so a plan written down at one zoom
+ * would mean something else at another.
  */
 export function defaultPlanTile(
   resolved: ResolvedGraph,
   tensorId: string,
   tileScale: number,
-  graphPx: number
+  graphPx: number,
+  viewCfgs: Record<string, ViewCfg> = {}
 ): number[] {
   const shape = resolved.tensors[tensorId].resolved!;
-  const { rowAxis, colAxis } = viewAxes(shape);
-  const tile = tileOf(shape, tileScale, graphPx);
-  return shape.map((extent, axis) =>
-    axis === rowAxis || axis === colAxis ? Math.min(extent, tile) : 1
-  );
+  return seedTile(shape, viewCfgs[tensorId], tileOf(shape, tileScale, graphPx, viewCfgs[tensorId]));
 }
 
 /**
@@ -983,7 +1027,7 @@ export function defaultPlanTile(
  * changed or removed.
  */
 function withProducedInputs(
-  state: Pick<State, "resolved" | "tileScale" | "graphPx">,
+  state: Pick<State, "resolved" | "tileScale" | "graphPx" | "viewCfgs">,
   tiles: Record<string, number[]>,
   tensorId: string
 ): Record<string, number[]> {
@@ -994,7 +1038,7 @@ function withProducedInputs(
   const next = { ...tiles };
   for (const input of node.inputs)
     if (resolved.tensors[input]?.producer && !next[input])
-      next[input] = defaultPlanTile(resolved, input, state.tileScale, state.graphPx);
+      next[input] = defaultPlanTile(resolved, input, state.tileScale, state.graphPx, state.viewCfgs);
   return next;
 }
 
@@ -1103,7 +1147,12 @@ function restoredWorkspaceState(
   for (const [id, cfg] of Object.entries(workspace.viewCfgs ?? {})) {
     const shape = resolved.tensors[id]?.resolved;
     if (!shape || !viewCfgFits(shape, cfg)) throw new Error(`invalid view for tensor "${id}"`);
-    base.viewCfgs[id] = { projection: cfg.projection, sliders: cfg.sliders.slice() };
+    base.viewCfgs[id] = {
+      projection: cfg.projection,
+      sliders: cfg.sliders.slice(),
+      ...(cfg.tile ? { tile: cfg.tile.slice() } : {}),
+      ...(cfg.axes && remapped(shape, cfg) ? { axes: [cfg.axes[0], cfg.axes[1]] as [number, number] } : {}),
+    };
   }
   const checkedParts = (workspace.parts ?? []).map((part) => {
     const checked = validateSelection(resolved, {
@@ -1629,6 +1678,12 @@ export const useStore = create<State>((commit, get) => {
       true,
       record
     );
+    // A move along a hidden axis would otherwise carry the tile out of the
+    // slice on screen; the view follows the tile the reader is studying.
+    const moved = target.tensorId && get().selection?.parts[target.index];
+    if (!moved) return;
+    const { rowAxis, colAxis } = viewAxes(moved.box.map((interval) => interval.hi), get().viewCfgs[moved.tensorId]);
+    if (axis !== rowAxis && axis !== colAxis) revealHidden(get, moved.tensorId, moved.box);
   },
 
   replaceBox: (index, box) =>
@@ -1702,13 +1757,77 @@ export const useStore = create<State>((commit, get) => {
     const shape = state.resolved?.tensors[tensorId]?.resolved;
     const next = { ...state.viewCfgs[tensorId], ...cfg };
     if (!shape || !viewCfgFits(shape, next)) return;
+    const stored: ViewCfg = { ...next, sliders: next.sliders.slice() };
+    if (next.tile) stored.tile = next.tile.slice();
+    else delete stored.tile;
+    if (next.axes && remapped(shape, next)) stored.axes = [next.axes[0], next.axes[1]];
+    else delete stored.axes;
     set({
-      viewCfgs: idRecord({
-        ...state.viewCfgs,
-        [tensorId]: { ...next, sliders: next.sliders.slice() },
-      }),
+      viewCfgs: idRecord({ ...state.viewCfgs, [tensorId]: stored }),
       preview: null,
     });
+  },
+
+  stepTile: (index, axis, steps) => {
+    const state = get();
+    const part = state.selection?.parts[index];
+    const shape = part && state.resolved?.tensors[part.tensorId]?.resolved;
+    if (!part || !shape || axis < 0 || axis >= shape.length || steps === 0) return;
+    const cfg = state.viewCfgs[part.tensorId];
+    const unit = gestureTile(shape, cfg, tileOf(shape, state.tileScale, state.graphPx, cfg))[axis];
+    const at = tilePosition(part.box[axis], unit, shape[axis]);
+    let moved: Box;
+    if (at.aligned) {
+      // A tile moves to another tile, so the shortened last one is reachable
+      // and a step back from it lands on the full tile before it.
+      const coord = Math.max(0, Math.min(at.count - 1, at.coord + steps));
+      if (coord === at.coord) return;
+      moved = part.box.map((interval, ax) =>
+        ax === axis ? tileSpanAt(coord * unit, unit, shape[axis]) : interval);
+    } else {
+      // Anything else keeps its extent and first lands an edge on the lattice.
+      const delta = nudgeDelta(part.box[axis], steps > 0 ? 1 : -1, unit, true, Math.abs(steps));
+      [moved] = translatePart([part.box], 0, axis, delta, shape);
+      if (moved === part.box) return;
+    }
+    editSelection(
+      get,
+      set,
+      (parts) => parts.map((p, i) => (i === index ? { ...p, box: moved } : p)),
+      true
+    );
+    revealHidden(get, part.tensorId, moved);
+  },
+
+  setViewAxes: (tensorId, axes, keep) => {
+    const state = get();
+    const shape = state.resolved?.tensors[tensorId]?.resolved;
+    if (!shape) return;
+    const cfg = state.viewCfgs[tensorId];
+    // The default pair is stored as absent, so "is this card remapped" has one
+    // answer however the pair was reached.
+    const chosen = axes && remapped(shape, { axes }) ? axes : undefined;
+    const next: ViewCfg = { ...cfg, sliders: cfg.sliders.slice() };
+    if (chosen) next.axes = [chosen[0], chosen[1]];
+    else delete next.axes;
+    if (!viewCfgFits(shape, next)) return;
+    set({ viewCfgs: idRecord({ ...state.viewCfgs, [tensorId]: next }), preview: null });
+    const part = keep === undefined ? undefined : get().selection?.parts[keep];
+    if (part?.tensorId === tensorId) revealHidden(get, tensorId, part.box);
+  },
+
+  setTensorTile: (tensorId, tile, refit) => {
+    const state = get();
+    const shape = state.resolved?.tensors[tensorId]?.resolved;
+    if (!shape || (tile && !tileFits(shape, tile))) return;
+    state.setViewCfg(tensorId, { tile: tile ?? undefined });
+    const part = refit === undefined ? undefined : get().selection?.parts[refit];
+    if (!tile || !part || part.tensorId !== tensorId) return;
+    const box = part.box.map((interval, axis) => tileSpanAt(interval.lo, tile[axis], shape[axis]));
+    if (box.every((interval, axis) =>
+      interval.lo === part.box[axis].lo && interval.hi === part.box[axis].hi)) return;
+    get().replaceBox(refit!, box);
+    revealHidden(get, tensorId, box);
   },
 
   setSnapToGrid: (v) => set({ snapToGrid: v }),
@@ -1808,7 +1927,7 @@ export const useStore = create<State>((commit, get) => {
     if (!resolved?.tensors[tensorId]?.producer) return;
     const tile =
       state.planTiles[tensorId] ??
-      defaultPlanTile(resolved, tensorId, state.tileScale, state.graphPx);
+      defaultPlanTile(resolved, tensorId, state.tileScale, state.graphPx, state.viewCfgs);
     inspectTask(state, set, tensorId, tile, element);
   },
 
@@ -1825,7 +1944,7 @@ export const useStore = create<State>((commit, get) => {
     if (!resolved?.tensors[tensorId]?.producer || state.planTiles[tensorId]) return;
     get().setPlanTile(
       tensorId,
-      defaultPlanTile(resolved, tensorId, state.tileScale, state.graphPx)
+      defaultPlanTile(resolved, tensorId, state.tileScale, state.graphPx, state.viewCfgs)
     );
   },
 

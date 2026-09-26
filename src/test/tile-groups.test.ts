@@ -485,14 +485,14 @@ D = matmul(CC, W)
     expect(dependencies).toContain("Shared graph-input demand");
     expect(dependencies).not.toContain("Arithmetic intensity");
     expect(dependencies).not.toContain("Reuse sweep");
-    expect(dependencies).not.toContain("materialized views, and no cross-op cache reuse");
+    expect(dependencies).not.toContain("views that move nothing where the layout allows");
 
     S().setInspectorTab("execution");
     const execution = render();
     expect(execution).toContain("Arithmetic intensity");
     expect(execution).toContain("Reuse sweep");
     // The assumptions each scenario rests on stay on the figure itself.
-    expect(execution).toContain("materialized views, and no cross-op cache reuse");
+    expect(execution).toContain("views that move nothing where the layout allows");
     expect(execution).toContain("models, not bounds");
     expect(execution).not.toContain("Cost to compute");
     expect(execution).not.toContain("Backward Cone");

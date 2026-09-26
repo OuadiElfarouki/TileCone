@@ -29,6 +29,7 @@ import {
   PlanPaint,
   snapSpan,
   stripeAngleDeg,
+  tileOf,
 } from "./grid";
 import { aggregateColors, boxColor } from "./palette";
 import {
@@ -42,9 +43,15 @@ import {
 import { shapeLabel, shapeReadings } from "./shape-label";
 import { OVERVIEW_SCALE } from "./overview-labels";
 import { formatBytes } from "./format";
-import { viewAxes, type ViewCfg } from "./tensor-view";
+import { remapped, viewAxes, type ViewCfg } from "./tensor-view";
+import { cardScaleFor } from "./card-size";
+import { gestureTile, seedTile, tileSpanAt } from "./tile-spec";
 
 export { cardSize } from "./card-size";
+
+/** `4`, `2.5`: a scale ratio as short as it can be stated without lying. */
+const formatRatio = (ratio: number): string =>
+  Number.isInteger(Math.round(ratio * 10) / 10) ? String(Math.round(ratio)) : ratio.toFixed(1);
 
 type CellDrag = { r0: number; c0: number; r1: number; c1: number };
 
@@ -72,8 +79,14 @@ export function planElementFromCell(
 }
 
 /** Convert a visible-plane drag to the tensor region it visually promises.
- * Projection represents the union across hidden axes, so a projection gesture
- * must select their full extent; slice mode remains pinned to its sliders. */
+ *
+ * A gesture only names the two visible axes. On the others it takes the
+ * tensor's tile at the hidden-axis position (`cfg.sliders`). Without a tile of
+ * the tensor's own that is the view's reading: projection represents the union
+ * across hidden axes, so a projection gesture selects their full extent, and
+ * slice mode stays pinned to its sliders. A tile such as `H = 2` instead takes
+ * the two heads containing the slider, in either mode, because the tile states
+ * that extent explicitly. */
 /** @internal Pure interaction seam exported for tensor-card tests. */
 export function selectionBoxFromDrag(
   shape: number[],
@@ -83,17 +96,19 @@ export function selectionBoxFromDrag(
   snapToGrid: boolean
 ): Box {
   const [rLo, rHi] = snapToGrid
-    ? snapSpan(drag.r0, drag.r1, geom.tile, geom.rows)
+    ? snapSpan(drag.r0, drag.r1, geom.rowTile, geom.rows)
     : [Math.min(drag.r0, drag.r1), Math.max(drag.r0, drag.r1) + 1];
   const [cLo, cHi] = snapToGrid
-    ? snapSpan(drag.c0, drag.c1, geom.tile, geom.cols)
+    ? snapSpan(drag.c0, drag.c1, geom.colTile, geom.cols)
     : [Math.min(drag.c0, drag.c1), Math.max(drag.c0, drag.c1) + 1];
+  // The display tile only matters on the visible axes, which were settled
+  // above, so any value serves as the fallback here.
+  const tile = gestureTile(shape, cfg, 1);
   return shape.map((extent, ax) => {
     if (ax === geom.rowAxis) return iv(rLo, rHi);
     if (ax === geom.colAxis) return iv(cLo, cHi);
-    if (cfg.projection) return iv(0, extent);
-    const slider = cfg.sliders[ax] ?? 0;
-    return iv(slider, slider + 1);
+    const at = tileSpanAt(cfg.sliders[ax] ?? 0, tile[ax], extent);
+    return iv(at.lo, at.hi);
   });
 }
 
@@ -138,10 +153,12 @@ export function planGesture(
       kind: "inspect",
       element: planElementFromCell(shape, cfg, geom, { row: drag.r0, col: drag.c0 }),
     };
-  const { rowAxis, colAxis } = viewAxes(shape);
+  const { rowAxis, colAxis } = viewAxes(shape, cfg);
   const box = selectionBoxFromDrag(shape, cfg, geom, drag, true);
   const extentOn = (axis: number) => (axis >= 0 ? box[axis].hi - box[axis].lo : 1);
-  const tile = shape.map(() => 1);
+  // The drawn extents on the visible axes; the tensor's own tile, else one
+  // element, on the others.
+  const tile = seedTile(shape, cfg, 1);
   if (rowAxis >= 0) tile[rowAxis] = extentOn(rowAxis);
   if (colAxis >= 0) tile[colAxis] = extentOn(colAxis);
   return { kind: "divide", tile, element: box.map((interval) => interval.lo) };
@@ -731,7 +748,7 @@ function TensorCardView({
     () => gridGeometry(shape, cfg, tileScale, graphPx),
     [shape, cfg, tileScale, graphPx]
   );
-  const { rowAxis, colAxis } = viewAxes(shape);
+  const { rowAxis, colAxis } = viewAxes(shape, cfg);
 
   const parts = useMemo(() => partsOn(selection, tensor.id), [selection, tensor.id]);
   /* One entry per (part, meeting operation) that lands on this card. A part can
@@ -753,11 +770,8 @@ function TensorCardView({
 
   /** The extents a click would divide this tensor at while it is untiled. */
   const planProposal = useMemo(
-    () =>
-      shape.map((extent, axis) =>
-        axis === rowAxis || axis === colAxis ? Math.min(extent, geom.tile) : 1
-      ),
-    [shape, rowAxis, colAxis, geom.tile]
+    () => seedTile(shape, cfg, tileOf(shape, tileScale, graphPx, cfg)),
+    [shape, cfg, tileScale, graphPx]
   );
 
   const commitPlan = (d: CellDrag) => {
@@ -986,14 +1000,19 @@ function TensorCardView({
   };
 
   const totalBytes = shape.reduce((a, b) => a * b, 1) * DTYPE_BYTES[tensor.dtype];
+  const planeRemapped = remapped(shape, cfg);
+  /** How much smaller than the graph's scale this card draws; 1 for every card
+   *  on the default plane. */
+  const scaleRatio = graphPx / cardScaleFor(shape, cfg, graphPx);
   const axisName = (ax: number) => tensor.axisNames?.[ax] ?? `ax${ax}`;
   // Keep the compact header to one reading. The details popover preserves the
   // separate axis-label, symbolic-extent, and numeric-extent facts.
   const symbolicShape = shapeLabel(tensor, "symbolic");
   const numericShape = shapeLabel(tensor, "numeric");
   const shownShape = axisMode === "numeric" ? numericShape : symbolicShape;
-  const tileSpanRows = Math.min(geom.rows, geom.tile);
-  const tileSpanCols = Math.min(geom.cols, geom.tile);
+  const tileSpanRows = Math.min(geom.rows, geom.rowTile);
+  const tileSpanCols = Math.min(geom.cols, geom.colTile);
+  const ownTile = cfg.tile;
   /**
    * The span is only worth a slot in the header when it says something the
    * setup strip does not. Two cases do: a tensor short enough to clip the
@@ -1005,7 +1024,7 @@ function TensorCardView({
    * `cardSize` still reserves this label's width whether or not it is drawn, so
    * detail changes re-rasterise in place (C4).
    */
-  const showTileSpan = tileSpanRows !== tileSpanCols || uniformTile !== tileSpanRows;
+  const showTileSpan = !!ownTile || tileSpanRows !== tileSpanCols || uniformTile !== tileSpanRows;
   const roleTag = tensor.producer ? null : tensor.role === "weight" ? "weight" : "input";
   /** This card's own header handlers, bound once to its tensor. */
   const moveHandlers = useMemo(
@@ -1068,7 +1087,12 @@ function TensorCardView({
           )
         ) : (
           showTileSpan && (
-            <span className="tc-tile" title="current visible-plane tile size">
+            <span
+              className={`tc-tile${ownTile ? " own" : ""}`}
+              title={ownTile
+                ? `this tensor's tile: [${ownTile.join(", ")}]`
+                : "current visible-plane tile size"}
+            >
               ⊞ {tileSpanRows}×{tileSpanCols}
             </span>
           )
@@ -1084,28 +1108,51 @@ function TensorCardView({
           </span>
         )}
       </div>
-      {rank > 2 && (
+      {(rank > 2 || planeRemapped) && (
         <div className="tc-axes">
-          <button
-            className={`mini ${cfg.projection ? "on" : ""}`}
-            title="this tensor only - projection unions hidden axes; slice uses the slider index"
-            onClick={() => setViewCfg(tensor.id, { projection: !cfg.projection })}
-          >
-            {cfg.projection ? "proj" : "slice"}
-          </button>
+          {rank > 2 && (
+            <button
+              className={`mini ${cfg.projection ? "on" : ""}`}
+              title="this tensor only - projection unions hidden axes; slice uses the slider index"
+              onClick={() => setViewCfg(tensor.id, { projection: !cfg.projection })}
+            >
+              {cfg.projection ? "proj" : "slice"}
+            </button>
+          )}
+          {/* A chosen pair is stated on the card itself, so the canvas cannot be
+              read as the default plane or as a transposed tensor. */}
+          {planeRemapped && (
+            <span
+              className="tc-plane"
+              title={`display only: the card draws ${axisName(rowAxis)} down and ${axisName(colAxis)} across; the graph is unchanged${
+                scaleRatio > 1 ? `. Drawn at 1/${formatRatio(scaleRatio)} of the graph's scale to fit, so its lengths are not comparable with other cards` : ""}`}
+            >
+              rows {axisName(rowAxis)} · cols {axisName(colAxis)}
+              {scaleRatio > 1 && <b> · scale ÷{formatRatio(scaleRatio)}</b>}
+            </span>
+          )}
         </div>
       )}
-      {shape.map((e, ax) =>
-        ax === rowAxis || ax === colAxis ? null : (
+      {shape.map((e, ax) => {
+        if (ax === rowAxis || ax === colAxis) return null;
+        // With a tile of its own that is narrower than the axis, the position
+        // says which tile a gesture takes, so it matters in projection too.
+        const positioned = !cfg.projection || (!!ownTile && ownTile[ax] < e);
+        return (
           <div className="tc-slider" key={ax}>
             <span>{axisName(ax)}</span>
             <input
               type="range"
-              disabled={cfg.projection}
-              aria-label={`${axisName(ax)} slice index`}
-              title={cfg.projection ? "Switch to slice mode to choose an index" : "Displayed slice index"}
+              disabled={!positioned}
+              aria-label={`${axisName(ax)} ${cfg.projection ? "tile position" : "slice index"}`}
+              title={!positioned
+                ? "Switch to slice mode to choose an index"
+                : cfg.projection
+                  ? "Which tile a gesture takes on this axis"
+                  : "Displayed slice index"}
               min={0}
               max={e - 1}
+              step={1}
               value={cfg.sliders[ax] ?? 0}
               onChange={(ev) => {
                 const sliders = cfg.sliders.slice();
@@ -1115,8 +1162,8 @@ function TensorCardView({
             />
             <span className="tc-slider-val">{cfg.sliders[ax] ?? 0}</span>
           </div>
-        )
-      )}
+        );
+      })}
       <div className="tc-canvas-wrap">
         <canvas
           ref={canvasRef}

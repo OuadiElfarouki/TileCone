@@ -74,6 +74,13 @@ export const transposeOp: OpSpec = {
     perm.forEach((p, i) => (inIdx[p] = outIndex[i]));
     return [[inIdx]];
   },
+  // New strides over the same buffer. Only a permutation that keeps the order
+  // of the axes wider than one element leaves the storage row-major.
+  layout: (ctx, input) => {
+    const perm = ctx.attrs.perm as number[];
+    const wide = perm.filter((axis) => ctx.inShapes[0][axis] > 1);
+    return wide.every((axis, i) => i === 0 || wide[i - 1] < axis) ? input : "strided";
+  },
   flopsFor: zero,
   flopsPerElement: zero,
 };
@@ -157,6 +164,8 @@ export const sliceOp: OpSpec = {
     const { starts, steps } = ctx.attrs as SliceAttrs;
     return [[outIndex.map((o, ax) => starts[ax] + o * steps[ax])]];
   },
+  // An offset and new strides over the input's buffer.
+  layout: () => "strided",
   flopsFor: zero,
   flopsPerElement: zero,
 };
@@ -460,6 +469,8 @@ export const expandOp: OpSpec = {
     fromBox(broadcastForwardBox(inBox, ctx.inShapes[0], ctx.outShapes[0])),
   ],
   oracleDeps: (_s, outIndex, ctx) => [[broadcastOracleIndex(outIndex, ctx.inShapes[0])]],
+  // A broadcast is a zero stride on each expanded axis.
+  layout: () => "strided",
   flopsFor: zero,
   flopsPerElement: zero,
 };

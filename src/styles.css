@@ -544,6 +544,12 @@ textarea.source.error-state { border-color: var(--err); }
   color: var(--muted); font: var(--t-micro)/1 var(--mono);
   font-variant-numeric: tabular-nums;
 }
+/* The tensor has a tile of its own, set in the axis table. */
+.tc-tile.own { color: var(--ink); }
+/* A chosen pair of axes, stated on the card; the scale note is ink because it
+   changes how every length on the card reads. */
+.tc-plane { color: var(--muted); font: var(--t-micro)/1 var(--mono); white-space: nowrap; }
+.tc-plane b { color: var(--ink); font-weight: 600; }
 
 /* Compact details belong to the name, not the whole tensor plate. */
 .tc-info {
@@ -787,6 +793,48 @@ textarea.source.error-state { border-color: var(--err); }
   background: var(--bg); font: var(--t-small)/1.5 var(--mono);
 }
 .box-range.invalid { border-color: var(--err); outline-color: var(--err); }
+
+/* ---------------- axis table ---------------- */
+/* One row per axis of the inspected tile. The card draws two of them; this
+   names every one, so the tile's extent on a hidden axis is written down
+   rather than implied by a slider position. */
+.axis-editor .ins-title.with-action { flex-wrap: wrap; row-gap: 4px; }
+.axis-actions { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.axis-actions .mini { white-space: nowrap; }
+.axis-table {
+  width: 100%; border-collapse: collapse; margin: 2px 0 4px;
+  font: var(--t-small)/1.5 var(--mono); font-variant-numeric: tabular-nums;
+}
+.axis-table th, .axis-table td { padding: 2px 3px; text-align: left; vertical-align: middle; }
+.axis-table thead th { color: var(--muted); font-weight: 400; border-bottom: 1px solid var(--line); }
+.axis-table .num { text-align: right; }
+.axis-table tbody th { font-weight: 600; white-space: nowrap; }
+.axis-draw { display: flex; align-items: center; gap: 2px; margin-top: 1px; }
+.axis-table .axis-draw small { display: inline; margin-left: 3px; }
+.axis-role {
+  padding: 0 3px; border-radius: var(--r); color: var(--muted);
+  font: var(--t-micro)/1.3 var(--mono); background: transparent;
+}
+/* Accent: the pressed role is the active choice for this card. */
+.axis-role.on { color: var(--accent); border-color: var(--accent); cursor: default; }
+.axis-table tbody th small { display: block; color: var(--muted); font-weight: 400; font-size: var(--t-micro); line-height: 1.2; }
+.axis-table tr.hidden-axis td, .axis-table tr.hidden-axis th { background: var(--bg); }
+.axis-table code { white-space: nowrap; }
+.axis-table .boundary { display: block; color: var(--muted); font-size: var(--t-micro); line-height: 1.2; }
+/* Warn ink rather than accent: the inspected tile is the short one, which is a
+   fact about its extent, not an active control. */
+.axis-table .boundary.on { color: var(--warn-ink); }
+.axis-step { white-space: nowrap; }
+.axis-step .mini { padding: 0 3px; }
+.axis-step span { display: inline-block; min-width: 2.6em; text-align: center; }
+.axis-extent {
+  width: 3.8em; padding: 1px 3px; border-radius: var(--r); text-align: right;
+  background: var(--bg); color: var(--muted); font: inherit;
+}
+/* A tile the tensor owns reads as ink; the canvas default reads as muted. */
+.axis-extent.own { color: var(--ink); }
+.axis-extent.invalid { border-color: var(--err); outline-color: var(--err); }
+.axis-selection { margin: 2px 0 0; font: var(--t-small)/1.5 var(--mono); overflow-x: auto; white-space: nowrap; }
 
 .error { color: var(--err); font-size: var(--t-body); white-space: pre-wrap; }
 

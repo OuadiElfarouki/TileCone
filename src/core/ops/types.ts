@@ -38,6 +38,10 @@ export type AxisNames = (string | undefined)[];
 export type Attrs = Record<string, unknown>;
 export type Cardinality = number | { min: number; max?: number };
 
+/** A tensor's storage as the unfused traffic model sees it. `contiguous` is
+ * row-major over its own shape; `strided` is a view whose element order is not. */
+export type Layout = "contiguous" | "strided";
+
 export type OpCtx = {
   inShapes: number[][];
   outShapes: number[][];
@@ -206,6 +210,22 @@ export interface OpSpec {
    * like every other layer.
    */
   unknownWork?: boolean;
+
+  /**
+   * How the output's storage relates to the input's, for traffic estimates.
+   *
+   * A logical reshape or transpose does not by itself move data: a runtime can
+   * express it as new strides over the same buffer, and the consumer then reads
+   * the original elements. Returning a `Layout` says the output can be such a
+   * view, and which layout it has. `"copy"` says it cannot be one given the
+   * input's layout - a reshape that merges axes a transpose permuted is the
+   * usual case - so the output is written like any other. Omitted means the
+   * operation computes its output, which is always written.
+   *
+   * This is the idealized unfused scenario's assumption, not a claim about any
+   * particular runtime, which may still choose to copy.
+   */
+  layout?(ctx: OpCtx, input: Layout): Layout | "copy";
 
   /** Approximate FLOPs to compute the given output box. Data movement ops return 0. */
   flopsFor(outSlot: number, outBox: Box, ctx: OpCtx): number;

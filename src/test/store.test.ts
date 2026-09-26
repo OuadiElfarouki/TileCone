@@ -435,14 +435,14 @@ describe("snapping is a gesture setting, not an analysis one", () => {
     const shape = S().resolved!.tensors.C.resolved!;
     const tile = tileOf(shape, S().tileScale, S().graphPx);
     expect(tile).toBeGreaterThan(1); // otherwise the two cases are the same
-    expect(nudgeUnit(shape, S().tileScale, S().graphPx, false)).toBe(1);
-    expect(nudgeUnit(shape, S().tileScale, S().graphPx, true)).toBe(tile);
+    expect(nudgeUnit(shape, undefined, S().tileScale, S().graphPx, false, 0)).toBe(1);
+    expect(nudgeUnit(shape, undefined, S().tileScale, S().graphPx, true, 0)).toBe(tile);
   });
 
   it("applies that step verbatim, so an odd offset survives", () => {
     S().setSnapToGrid(false);
     S().setSelection("C", fromBox(box([64, 128], [0, 64])), "replace");
-    S().moveSelection(0, nudgeUnit(S().resolved!.tensors.C.resolved!, S().tileScale, S().graphPx, false));
+    S().moveSelection(0, nudgeUnit(S().resolved!.tensors.C.resolved!, undefined, S().tileScale, S().graphPx, false, 0));
     expect(selBoxes()[0][0]).toEqual({ lo: 65, hi: 129 });
   });
 
@@ -488,7 +488,7 @@ describe("snapping is a gesture setting, not an analysis one", () => {
     S().setTileScale(2);
     S().setSnapToGrid(true);
     const shape = S().resolved!.tensors.C.resolved!;
-    const step = nudgeUnit(shape, S().tileScale, S().graphPx, S().snapToGrid);
+    const step = nudgeUnit(shape, undefined, S().tileScale, S().graphPx, S().snapToGrid, 0);
     expect(step).toBeGreaterThan(1);
 
     const delta = nudgeDelta(typed[0], 1, step, true);
@@ -510,11 +510,11 @@ describe("snapping is a gesture setting, not an analysis one", () => {
     const shape = S().resolved!.tensors.C.resolved!;
 
     S().setTileScale(TILE_SCALE_NONE);
-    expect(nudgeUnit(shape, S().tileScale, S().graphPx, true)).toBe(1);
+    expect(nudgeUnit(shape, undefined, S().tileScale, S().graphPx, true, 0)).toBe(1);
     expect(selBoxes()).toEqual([typed]);
 
     S().setTileScale(1);
-    const coarse = nudgeUnit(shape, S().tileScale, S().graphPx, true);
+    const coarse = nudgeUnit(shape, undefined, S().tileScale, S().graphPx, true, 0);
     expect(coarse).toBeGreaterThan(1);
     expect(selBoxes()).toEqual([typed]);
     const delta = nudgeDelta(typed[0], 1, coarse, true);
@@ -528,7 +528,7 @@ describe("snapping is a gesture setting, not an analysis one", () => {
     S().setTileScale(3);
     S().setSnapToGrid(true);
     const shape = S().resolved!.tensors.C.resolved!;
-    const coarse = nudgeUnit(shape, S().tileScale, S().graphPx, true);
+    const coarse = nudgeUnit(shape, undefined, S().tileScale, S().graphPx, true, 0);
     S().moveSelection(0, coarse);
     expect(selBoxes()[0][0]).toEqual({ lo: 192, hi: 256 });
   });
@@ -538,7 +538,7 @@ describe("snapping is a gesture setting, not an analysis one", () => {
     S().setSnapToGrid(false);
     for (const scale of [3, TILE_SCALE_NONE, 0]) {
       S().setTileScale(scale);
-      expect(nudgeUnit(shape, S().tileScale, S().graphPx, S().snapToGrid)).toBe(1);
+      expect(nudgeUnit(shape, undefined, S().tileScale, S().graphPx, S().snapToGrid, 0)).toBe(1);
     }
   });
 
@@ -548,7 +548,7 @@ describe("snapping is a gesture setting, not an analysis one", () => {
     S().setSnapToGrid(true);
     const tile = tileOf(shape, S().tileScale, S().graphPx);
     expect(tile).toBe(1);
-    expect(nudgeUnit(shape, S().tileScale, S().graphPx, true)).toBe(1);
+    expect(nudgeUnit(shape, undefined, S().tileScale, S().graphPx, true, 0)).toBe(1);
     expect(snapSpan(7, 7, tile, shape[0])).toEqual([7, 8]);
   });
 

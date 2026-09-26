@@ -7,7 +7,7 @@ import { CopyButton } from "./CopyButton";
 import { opLabel } from "../core/ops/index";
 import { involvedTensorIds, useStore } from "./store";
 import { matchesShortcut, SHORTCUTS } from "./shortcuts";
-import { viewAxes } from "./tensor-view";
+import { seedTile } from "./tile-spec";
 import { overlayTokens } from "./dsl-highlight";
 
 /**
@@ -29,7 +29,7 @@ function ShareButton(): React.ReactElement {
       axes: s.axisMode,
       views: Object.fromEntries(
         Object.entries(s.viewCfgs).filter(
-          ([, cfg]) => !cfg.projection || cfg.sliders.some((v) => v !== 0)
+          ([, cfg]) => !cfg.projection || !!cfg.tile || !!cfg.axes || cfg.sliders.some((v) => v !== 0)
         )
       ),
       pos: Object.fromEntries(
@@ -195,16 +195,11 @@ function Operations(): React.ReactElement {
     // and the click should still show which row was pressed.
     setSelectedOp(nodeId);
     if (shape.some((extent) => extent <= 0)) return;
-    const { rowAxis, colAxis } = viewAxes(shape);
-    const tile = tileOf(shape, tileScale, graphPx);
+    const cfg = useStore.getState().viewCfgs[tensorId];
+    const tile = seedTile(shape, cfg, tileOf(shape, tileScale, graphPx, cfg));
     setSelection(
       tensorId,
-      fromBox(
-        shape.map((extent, axis) => ({
-          lo: 0,
-          hi: axis === rowAxis || axis === colAxis ? Math.min(tile, extent) : Math.min(1, extent),
-        }))
-      ),
+      fromBox(shape.map((extent, axis) => ({ lo: 0, hi: Math.min(tile[axis], extent) }))),
       "replace"
     );
   };

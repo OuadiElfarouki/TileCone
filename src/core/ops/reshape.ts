@@ -316,6 +316,10 @@ export const reshapeOp: OpSpec = {
     });
     return [[idx]];
   },
+  // Row-major order is unchanged by a reshape, so a contiguous input needs no
+  // data movement. A strided one generally does: merging axes that a transpose
+  // permuted has no single stride.
+  layout: (_ctx, input) => (input === "contiguous" ? "contiguous" : "copy"),
   flopsFor: () => 0,
   flopsPerElement: () => 0,
 };

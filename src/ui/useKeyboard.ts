@@ -141,7 +141,7 @@ export function useKeyboard({
         const task = s.planTask;
         const taskShape = task ? s.resolved?.tensors[task.tensorId].resolved : null;
         if (task && taskShape) {
-          const axes = viewAxes(taskShape);
+          const axes = viewAxes(taskShape, s.viewCfgs[task.tensorId]);
           const steps: Record<string, [number, number]> = {
             ArrowLeft: [axes.colAxis, -1],
             ArrowRight: [axes.colAxis, 1],
@@ -160,9 +160,8 @@ export function useKeyboard({
 
       if (!anchor || !cfg || !shape) return;
 
-      const { rowAxis: rowAx, colAxis: colAx } = viewAxes(shape);
+      const { rowAxis: rowAx, colAxis: colAx } = viewAxes(shape, cfg);
       const visible = [rowAx, colAx].filter((a) => a >= 0);
-      const unit = nudgeUnit(shape, s.tileScale, s.graphPx, s.snapToGrid);
 
       const arrows: Record<string, [number, number]> = {
         ArrowLeft: [colAx, -1],
@@ -189,7 +188,7 @@ export function useKeyboard({
         const delta = nudgeDelta(
           interval,
           sign as -1 | 1,
-          unit,
+          nudgeUnit(shape, cfg, s.tileScale, s.graphPx, s.snapToGrid, axis),
           s.snapToGrid,
           matchesShortcut(e, SHORTCUTS.moveFast) ? 8 : 1
         );
@@ -226,7 +225,8 @@ export function useKeyboard({
         if (!hidden.length) return;
         const ax = hidden[0];
         const sliders = cfg.sliders.slice();
-        const delta = e.key === "]" ? 1 : -1;
+        // A tensor with a tile of its own steps a whole tile on this axis.
+        const delta = (e.key === "]" ? 1 : -1) * (cfg.tile?.[ax] ?? 1);
         sliders[ax] = Math.max(0, Math.min(shape[ax] - 1, (sliders[ax] ?? 0) + delta));
         s.setViewCfg(anchor, { sliders });
       }

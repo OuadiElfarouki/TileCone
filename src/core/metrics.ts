@@ -1,7 +1,7 @@
 import { ResolvedGraph, Tensor } from "./graph";
 import { DTYPE_BYTES } from "./dtypes";
 import { getOp, opLabel } from "./ops/index";
-import { OpCtx } from "./ops/types";
+import { Layout, OpCtx } from "./ops/types";
 import { PropResult } from "./propagate";
 import { Region, count, disjointify, formatBoxIndices, regionOverlap } from "./region";
 
@@ -120,7 +120,9 @@ export type AggregateReadout = {
   intermediateBytes: Figure;
   outputBytes: Figure;
   /** Ideal op-by-op traffic: distinct reads per operation plus its writes.
-   * No cross-operation cache reuse; views are modeled as materialized ops. */
+   * No cross-operation cache reuse. An operation that can be a view of its
+   * input (`OpSpec.layout`) moves nothing; its consumer reads the input's
+   * elements through it, and is charged for them there. */
   unfusedBytes: Figure;
   /**
    * FLOPs per byte of memory traffic, under the two fusion assumptions a
@@ -129,7 +131,8 @@ export type AggregateReadout = {
    * `fused` charges the cone's graph inputs and its output: one kernel, with
    * every intermediate held in registers or shared memory and never written
    * out. `unfused` sums distinct input reads and output writes per operation,
-   * with no cross-operation cache reuse. Views are assumed materialized.
+   * with no cross-operation cache reuse. Reshape, transpose, slice and expand
+   * are views where the input's layout allows one, and cost no traffic.
    * These are idealized scenarios, not bounds on measured hardware traffic.
    *
    * Both denominators include `outputBytes`. The tile has to be written
@@ -215,6 +218,36 @@ export function coneReadout(graph: ResolvedGraph, prop: PropResult): TensorReado
   return tensors;
 }
 
+/**
+ * Which nodes the unfused scenario treats as views, and each tensor's layout.
+ *
+ * Graph inputs and computed tensors are contiguous. A node whose operation
+ * declares `layout` is a view when that returns a layout for its input's, and
+ * a copy when it returns `"copy"`. Only single-input, single-output operations
+ * declare it, so one input decides.
+ */
+export function viewLayouts(graph: ResolvedGraph): {
+  views: Set<string>;
+  layouts: Map<string, Layout>;
+} {
+  const layouts = new Map<string, Layout>();
+  const views = new Set<string>();
+  for (const node of graph.topo) {
+    const spec = getOp(node.op)!;
+    const input = layouts.get(node.inputs[0]) ?? "contiguous";
+    const result = spec.layout && node.inputs.length === 1 && node.outputs.length === 1
+      ? spec.layout({
+          inShapes: graph.shapesOf(node.inputs),
+          outShapes: graph.shapesOf(node.outputs),
+          attrs: node.attrs,
+        }, input)
+      : "copy";
+    if (result !== "copy") views.add(node.id);
+    for (const out of node.outputs) layouts.set(out, result === "copy" ? "contiguous" : result);
+  }
+  return { views, layouts };
+}
+
 export function computeMetrics(graph: ResolvedGraph, back: PropResult): AggregateReadout {
   let flops = 0;
   let flopsOverflow = false;
@@ -232,8 +265,12 @@ export function computeMetrics(graph: ResolvedGraph, back: PropResult): Aggregat
     }
     flops += value;
   };
+  const layouts = viewLayouts(graph);
   for (const node of graph.topo) {
     const spec = getOp(node.op)!;
+    // A view writes nothing and reads nothing: the consumer reads the viewed
+    // elements, and its own reads below are what charge for them.
+    if (layouts.views.has(node.id)) continue;
     const ctx: OpCtx = {
       inShapes: graph.shapesOf(node.inputs),
       outShapes: graph.shapesOf(node.outputs),

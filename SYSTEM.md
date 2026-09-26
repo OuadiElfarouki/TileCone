@@ -95,6 +95,8 @@ src/
 │   ├── graph-geometry.ts collision constraints and connector routing
 │   ├── graph-scene.ts    structural layout and live routed-scene projection
 │   ├── tiling.ts         tile-size policy and slider stops
+│   ├── tile-spec.ts      a tensor's own per-axis tile and what a gesture selects
+│   ├── AxisEditor.tsx    inspector table: every axis of the inspected tile
 │   ├── tensor-view.ts    visible-axis and hidden-axis view configuration
 │   ├── tensor-layout.ts  shared tensor-card offset contracts
 │   ├── format.ts         presentation-only numeric formatting
@@ -379,7 +381,10 @@ Metrics are derived from the backward dependency result in `src/core/metrics.ts`
 - **Output bytes:** bytes in the selected producer output.
 - **Arithmetic intensity:** two idealized execution scenarios. Fused counts the merged cone's leaf
   inputs and selected output once. Unfused sums each tile's per-operation distinct input reads and
-  output writes, without cross-operation cache reuse; views are assumed materialized. Consumer
+  output writes, without cross-operation cache reuse. An operation that can be a view of its input
+  moves nothing (`OpSpec.layout`): transpose, slice and expand always, and reshape when its input
+  is contiguous. A reshape of a strided tensor - merging axes a transpose permuted - is charged as
+  a copy. `viewLayouts` derives which nodes are views in topological order. Consumer
   branches pay separately, while repeated operand slots within an operation share their reads.
   These are not guaranteed hardware bounds. Approximate ratios use `~`, not `≤`.
 
@@ -562,18 +567,22 @@ The same pass places operation labels, with one difference: a node box is sized 
 
 ### Tensor rendering and tiling
 
-Tensor cards use a fixed row-major projection:
+Tensor cards use a row-major projection by default:
 
 - the last tensor axis is horizontal;
 - the second-last axis is vertical;
 - higher axes are controlled by slice or projection settings;
 - rank-zero and rank-one tensors use corresponding reduced layouts.
 
+A card may draw another pair of axes (`ViewCfg.axes`, chosen with the ↕/↔ controls in the inspector's axis table). This is presentation, not a graph edit: a transpose that changes the program is still a `transpose` node. The card then prints the pair it draws (`rows seq · cols dim`), so the canvas cannot be read as the default plane or as a transposed tensor, and the default pair is stored as absent. The axes the card stops drawing become hidden axes with sliders, and the positions move onto the inspected tile so it stays on screen. Stored selections are element-space boxes and are unaffected. A card's footprint follows the plane it draws, so choosing axes re-runs structural placement; the main realm does this synchronously while any card is remapped, and uses the Worker's layout otherwise. Every card draws at `graphPx` except a remapped one whose plane would exceed the size budget: it takes the smaller scale that fits (`cardScaleFor`), its grid is correspondingly denser, and the card states the ratio (`scale ÷11.2`), because its lengths are then not comparable with the other cards'.
+
 One canvas cell represents one **tile**, not necessarily one element. `src/ui/tiling.ts` chooses a shape-aware base tile and applies the global detail scale. Card dimensions remain stable while detail changes.
 
 The detail control is global but its ordinary scale values may settle differently per tensor. `effectiveTileScaleStops` removes adjacent scale values that produce the same graph-wide lattice, because power-of-two fitting inside bounded cards otherwise leaves much of the raw range inert. Its accessible value and tooltip report those settled lattices rather than the serialized power-of-two shift. The leftmost **None** stop is a semantic exception: `tileFor` returns 1 unconditionally, so it means one logical tile per element for snapping, hover, starter tiles, and keyboard movement even when a large card cannot display every boundary. Boundaries too dense to tell apart are strided by the renderer, not omitted; the underlying grid is never coarsened. None and Auto remain separate stops when Auto also happens to yield 1×1, and `effectiveTileScaleIndex` preserves the exact stored intent before considering equivalent legacy plateaus.
 
-Tiles remain square in element space: one `tile` value governs both visible axes because kernel tiling and the snap/nudge contract need one unit. An extent shorter than that value clips the tile rather than pretending the tensor has elements it does not. Each card therefore prints its effective visible-plane span (for example `4×128`, not `128×128` on a four-row tensor), while the canvas grid control summarizes the graph-wide square lattice.
+Without a tile of its own, a tensor's tile is square in element space: one `tile` value governs both visible axes. An extent shorter than that value clips the tile rather than pretending the tensor has elements it does not. Each card therefore prints its effective visible-plane span (for example `4×128`, not `128×128` on a four-row tensor), while the canvas grid control summarizes the graph-wide square lattice.
+
+A tensor can instead be given a tile of its own, one extent per axis, stored as `ViewCfg.tile` and so carried by share links (`ui/tile-spec.ts`). It is typed in the inspector's axis table (`AxisEditor.tsx`), or taken from a drawn tile with "use as tile". When present it replaces every derived notion on that tensor: the lattice on the visible axes (which may then be rectangular), the extent a snapped drag selects on every axis, the arrow-key step, the starter tile, and the extents a plan is first divided at. On a hidden axis a gesture takes the tile containing the slider position in both view modes, because the tile states that extent; the slider therefore stays enabled in projection mode when the tile is narrower than the axis. Without one, a hidden axis follows the view mode as described below. Like snap and detail, the tile is a gesture setting: setting it is not an undo step and never changes a stored box, except that the axis table refits the inspected tile to the new extents as one ordinary selection edit. The axis table also steps that tile along any axis, hidden ones included, moving to whole tiles so a shortened last tile is reachable, and the card's slider follows it. Each row names the axis, its extent, the tile, the range, the tile coordinate, and the last tile's extent when the axis does not divide; below it the whole selection is written out as `B[0:1] H[2:4] S[128:192] D[0:128]`. "Plan with it" divides the tensor at those extents and opens the task holding the tile.
 
 Higher-rank projection aggregates hidden-axis coverage across the projected rectangles before
 compositing each layer. Disjoint batch/head slices may overlap in the visible plane, so their

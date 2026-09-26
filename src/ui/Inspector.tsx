@@ -40,6 +40,7 @@ import { formatSelectionBox, parseSelectionBox } from "./selection-range";
 import { SHORTCUTS } from "./shortcuts";
 import { CopyButton } from "./CopyButton";
 import { viewAxes } from "./tensor-view";
+import { AxisEditor } from "./AxisEditor";
 import {
   analysisWorkerAvailable,
   isAnalysisCancelled,
@@ -616,6 +617,7 @@ function TileIdentity({
   const selection = useStore((s) => s.selection);
   const hiddenBoxes = useStore((s) => s.hiddenBoxes);
   const perBox = useStore((s) => s.perBox);
+  const viewCfg = useStore((s) => (activeTensorId ? s.viewCfgs[activeTensorId] : undefined));
   const dark = useDark();
 
   if (!selection) return null;
@@ -638,7 +640,7 @@ function TileIdentity({
   const merged = group.length > 1 && focusedBox === null;
   const tensor = resolved.tensors[anchorId];
   const shape = tensor.resolved!;
-  const { rowAxis, colAxis } = viewAxes(shape);
+  const { rowAxis, colAxis } = viewAxes(shape, viewCfg);
   const axisLabel = (axis: number) => tensor.axisNames?.[axis] ?? `ax${axis}`;
   const measured = measuredParts(selection.parts, anchorId, hiddenBoxes, focusedBox, !!perBox);
   const elements = measuredElements(measured);
@@ -851,11 +853,12 @@ function RegionEditor({ activeTensorId, onSelectGroup }: {
 function EmptyPanel(): React.ReactElement {
   const resolved = useStore((s) => s.resolved)!;
   const tileScale = useStore((s) => s.tileScale);
+  const viewCfgs = useStore((s) => s.viewCfgs);
   const graphPx = useStore((s) => s.graphPx);
   const setSelection = useStore((s) => s.setSelection);
   const starts = useMemo(
-    () => startingTiles(resolved, tileScale, graphPx),
-    [resolved, tileScale, graphPx]
+    () => startingTiles(resolved, tileScale, graphPx, viewCfgs),
+    [resolved, tileScale, graphPx, viewCfgs]
   );
 
   return (
@@ -952,6 +955,11 @@ export function Inspector(): React.ReactElement {
    *  one, so a hover outside the group cannot reach any of it. */
   const focusedBox = groupFocus(parts, rawFocus, activeTensorId);
   const selectGroup = useStore((s) => s.selectAnalysisGroup);
+  /** The tile the axis table describes: the focused one, else the last drawn in
+   *  the group, which is also the one the arrow keys move. */
+  const axisIndex = focusedBox ?? (activeTensorId
+    ? parts.reduce<number | null>((last, part, i) => part.tensorId === activeTensorId ? i : last, null)
+    : null);
 
   /** The one enabled tile that defines a sweep. Keeping this derivation beside
    *  the cache key prevents its button and its displayed result from choosing
@@ -1354,6 +1362,7 @@ export function Inspector(): React.ReactElement {
             {/* The tiles list is the selector for everything below it: it picks
                 which cone the two sections describe, so it sits above them. */}
             <RegionEditor activeTensorId={activeTensorId} onSelectGroup={selectGroup} />
+            {axisIndex !== null && <AxisEditor index={axisIndex} />}
 
             <ConeSection
               direction="backward"
@@ -1567,7 +1576,7 @@ export function Inspector(): React.ReactElement {
                     <span>{intensityOf(bounds?.fused)}</span>
                     <span title={
                       bounds?.unfused
-                        ? `every op of every tile as its own job: separate input reads and output writes, materialized views, and no cross-op cache reuse - ${formatFigure(bounds.unfused.flops, fmt)} FLOP / ${formatFigure(bounds.unfused.bytes, formatBytes)}`
+                        ? `every op of every tile as its own job: separate input reads and output writes, and no cross-op cache reuse; reshape, transpose, slice and expand are views that move nothing where the layout allows - ${formatFigure(bounds.unfused.flops, fmt)} FLOP / ${formatFigure(bounds.unfused.bytes, formatBytes)}`
                         : `per-tile cones are not traced past ${MAX_PER_BOX_PROPS} tiles, and the merged result cannot be taken apart again`
                     }>
                       unfused

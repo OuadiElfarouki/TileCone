@@ -9,6 +9,7 @@ import {
 } from "./graph-scene";
 import { TensorCard, type CardGestures } from "./TensorCard";
 import { cardSize } from "./card-size";
+import { remapped } from "./tensor-view";
 import { shapeLabel, symbolicExtentLabel } from "./shape-label";
 import { opLabel } from "../core/ops/index";
 import { involvedTensorIds, PANEL_RAIL, planesOf, useStore } from "./store";
@@ -222,20 +223,41 @@ export function GraphView(): React.ReactElement {
     () => Math.min(4, Math.max(1, 2 ** Math.ceil(Math.log2(Math.max(1, tf.k))))),
     [tf.k]
   );
-  /** Dagre placement depends only on graph structure and tensor footprints. */
+  /**
+   * The cards drawing a chosen pair of axes, as a stable key. Only these change
+   * a footprint; a slider or a tile edit does not, so they must not re-run
+   * placement.
+   */
+  const remapKey = useStore((s) => {
+    if (!s.resolved) return "";
+    return Object.entries(s.viewCfgs)
+      .filter(([id, cfg]) => s.resolved!.tensors[id] && remapped(s.resolved!.tensors[id].resolved!, cfg))
+      .map(([id, cfg]) => `${id}:${cfg.axes!.join(",")}`)
+      .sort()
+      .join("|");
+  });
+  /**
+   * Dagre placement depends only on graph structure and tensor footprints.
+   *
+   * The Worker lays out the default footprints. A card drawing a chosen pair
+   * has another footprint, so the graph is placed again here, synchronously:
+   * choosing axes is an occasional deliberate act, and a card overlapping its
+   * neighbours until a round trip completed would be worse than the wait.
+   */
   const fallbackBaseLayout = useMemo(
-    () =>
-      resolved && !workerBaseLayout
-        ? buildBaseGraphLayout(resolved, (tensor) =>
-            cardSize(tensor.resolved!, graphPx, tensor.name, [
-              shapeLabel(tensor, "symbolic"),
-              symbolicExtentLabel(tensor),
-            ])
-          )
-        : null,
-    [resolved, graphPx, workerBaseLayout]
+    () => {
+      if (!resolved || (workerBaseLayout && !remapKey)) return null;
+      const viewCfgs = useStore.getState().viewCfgs;
+      return buildBaseGraphLayout(resolved, (tensor) =>
+        cardSize(tensor.resolved!, graphPx, tensor.name, [
+          shapeLabel(tensor, "symbolic"),
+          symbolicExtentLabel(tensor),
+        ], viewCfgs[tensor.id], tensor.axisNames)
+      );
+    },
+    [resolved, graphPx, workerBaseLayout, remapKey]
   );
-  const baseLayout = workerBaseLayout ?? fallbackBaseLayout;
+  const baseLayout = fallbackBaseLayout ?? workerBaseLayout;
 
   /**
    * The tile every tensor settled on, or `null` when the fit rule coarsened
