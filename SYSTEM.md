@@ -74,45 +74,70 @@ src/
 │   ├── compiler.ts       three-phase facade and collected diagnostics
 │   ├── source.ts         source spans, source maps, per-argument spans
 │   └── json.ts           JSON graph import/export
-├── ui/
-│   ├── store.ts          application state and analysis orchestration
-│   ├── analysis.worker.ts  off-thread compiler, layout, family, and reuse host
-│   ├── analysis-jobs.ts   pure jobs shared by the Worker and headless tests
-│   ├── analysis-protocol.ts  structured-cloneable Worker messages and artifacts
-│   ├── analysis-worker-client.ts  two-lane request correlation, cancellation, and Worker lifecycle
-│   ├── GraphView.tsx     graph rendering, gestures, highlighting, and viewport
-│   ├── TensorCard.tsx    interactive tensor canvas
-│   ├── card-size.ts      pure tensor-card measurement usable in either realm
-│   ├── Inspector.tsx     selection parts, footprint, cost, notes
-│   ├── inspector-analysis.ts  memoized inspector derivation and costly-probe gating
-│   ├── GridControls.tsx  canvas HUD: tile lattice, snap, axis reading
-│   ├── CopyButton.tsx    copy action with its own copied/failed feedback
-│   ├── PlanPanel.tsx     the Plan view: tiled tensors, one task's supply, family demand
-│   ├── SidePanel.tsx     source, sharing, examples, and operations
-│   ├── PanelFrame.tsx    side-panel width, drag strip, collapse-to-rail
-│   ├── WorkspaceHeader.tsx  product identity and theme control
-│   ├── grid.ts           pure grid geometry and drawing
-│   ├── graph-geometry.ts collision constraints and connector routing
-│   ├── graph-scene.ts    structural layout and live routed-scene projection
-│   ├── tiling.ts         tile-size policy and slider stops
-│   ├── tile-spec.ts      a tensor's own per-axis tile and what a gesture selects
-│   ├── AxisEditor.tsx    inspector table: every axis of the inspected tile
-│   ├── tensor-view.ts    visible-axis and hidden-axis view configuration
-│   ├── tensor-layout.ts  shared tensor-card offset contracts
-│   ├── format.ts         presentation-only numeric formatting
+├── view/               presentation model: pure functions and data, no React, no store
+│   ├── tensor/
+│   │   ├── tensor-view.ts    visible-axis and hidden-axis view configuration
+│   │   ├── tiling.ts         tile-size policy and slider stops
+│   │   ├── tile-spec.ts      a tensor's own per-axis tile and what a gesture selects
+│   │   ├── card-size.ts      tensor-card measurement and per-card scale, usable in either realm
+│   │   ├── grid.ts           grid geometry: cells, region rects, snapping, nudging, paint types
+│   │   ├── shape-label.ts    axis-name, symbolic, and numeric shape readings
+│   │   └── execution-paint.ts  reuse-sweep playback paint
+│   ├── graph/
+│   │   ├── graph-scene.ts    structural layout and live routed-scene projection
+│   │   ├── graph-geometry.ts collision constraints and connector routing
+│   │   ├── overview-labels.ts  low-zoom label placement
+│   │   └── tensor-layout.ts  tensor-card offset contracts
 │   ├── palette.ts        validated categorical hues and canvas surfaces
-│   ├── share.ts          workspace link encoding and decoding
+│   ├── format.ts         presentation-only numeric formatting
 │   ├── selection-range.ts  range syntax for editable selection parts
-│   ├── ShortcutsDialog.tsx  grouped inventory of global bindings
-│   ├── clipboard.ts      copy helper with success/failure feedback
-│   ├── useKeyboard.ts    global key bindings
-│   ├── useFrameThrottle.ts  coalesces pointer-rate work to one call per frame
-│   └── useDragGuard.ts   text-selection suppression during drags
+│   ├── shortcuts.ts      the single manifest of key bindings and help copy
+│   └── dsl-highlight.ts  source-editor syntax tokens
+├── worker/             the off-thread realm: imports core, parse, and view only
+│   ├── analysis.worker.ts  compiler, layout, family, and reuse host
+│   ├── analysis-jobs.ts   pure jobs shared by the Worker and headless tests
+│   └── analysis-protocol.ts  structured-cloneable Worker messages and artifacts
+├── state/
+│   ├── store.ts          application state and analysis orchestration
+│   ├── share.ts          workspace link encoding and decoding
+│   └── analysis-worker-client.ts  two-lane request correlation, cancellation, and Worker lifecycle
+├── components/         React
+│   ├── graph/GraphView.tsx  graph rendering, gestures, highlighting, and viewport
+│   ├── card/
+│   │   ├── TensorCard.tsx    interactive tensor canvas and its layer builders
+│   │   └── draw-grid.ts      canvas drawing: fills, rulings, stipples, hatches, lattice, marks
+│   ├── inspector/
+│   │   ├── Inspector.tsx     selection parts, footprint, cost, notes
+│   │   ├── inspector-analysis.ts  memoized inspector derivation and costly-probe gating
+│   │   ├── AxisEditor.tsx    every axis of the inspected tile
+│   │   └── PlanPanel.tsx     the Plan view: tiled tensors, one task's supply, family demand
+│   ├── chrome/           SidePanel, PanelFrame, WorkspaceHeader, GridControls,
+│   │                     ShortcutsDialog, CopyButton, clipboard
+│   └── hooks/            useKeyboard, useFrameThrottle, useDebounced, useDragGuard
 ├── examples/             built-in DSL examples
-├── test/                 unit, property-style, and integration tests
 ├── App.tsx               UI composition and URL-state bootstrap
 └── main.tsx              entry point; applies the stored theme before paint
 ```
+
+The folders are layers, and imports only point down:
+
+```text
+core, parse  <-  examples  <-  view  <-  worker, state  <-  components  <-  App, main
+```
+
+`view` is what both realms share: the Worker measures cards and lays out the graph with it, the
+store derives tiles and snapping from it, and the components draw with it. It therefore imports
+neither React nor the store. `tests/corpus/layers.test.ts` walks every import in `src/` and fails
+on one that points up or sideways, or on a package a layer is not allowed to use (React outside
+`components`, zustand outside `state`).
+
+Tests live outside `src/`, in `tests/`, which mirrors the source tree: `tests/core/` holds the
+engine's tests, `tests/view/tensor/` the tensor view model's, and so on. Many suites are about a
+topic that spans several files - `figures`, `intensity` and `view-traffic` all exercise
+`metrics.ts` - so the mirror is by folder, not file by file. `tests/corpus/` holds what exercises
+the whole engine or the whole tree rather than one module: the brute-force oracle, the op
+fixtures, the harness, the registry laws, the fallback, frontier and shared-operand suites, and
+the layering check.
 
 ## 3. Core intermediate representation
 
@@ -270,7 +295,7 @@ The source map connects compiler errors back to declarations or operation calls.
 
 `listOps()` exposes the registry, and two suite-wide properties are driven off it rather than off a hand-kept list:
 
-- **Coverage.** `src/test/op-fixtures.ts` holds one representative instance of every op; `registry.test.ts` asserts the table covers `listOps()`, so registering an operation without a fixture fails the suite instead of shipping untested. Each fixture is also run against the brute-force oracle, so "registered" implies "oracle-checked".
+- **Coverage.** `tests/corpus/op-fixtures.ts` holds one representative instance of every op; `registry.test.ts` asserts the table covers `listOps()`, so registering an operation without a fixture fails the suite instead of shipping untested. Each fixture is also run against the brute-force oracle, so "registered" implies "oracle-checked".
 - **Adjointness.** `forward` and `backward` are two implementations of one relation, and for exact regions they must agree about whether it is empty: `forward(inBox) ∩ outBox ≠ ∅` iff `backward(outBox) ∩ inBox ≠ ∅`. This needs no oracle, so it runs on every op at every fixture size, covering the ops the random-graph corpus does not compose.
 
 ### Barriers
@@ -480,7 +505,7 @@ Reuse is a separate derived analysis in `src/core/reuse.ts`, rather than part of
 
 `src/core/plan/` divides a computation into tasks and reports what each task reads from the others.
 
-A **tile family** (`tile-family.ts`) covers a tensor with boxes of one extent per axis. On an axis the extent does not divide, the last tile is shorter, and every element lies in exactly one tile. A family is separate from the canvas lattice in `ui/tiling.ts`, which is square and follows zoom and display detail; a family changes only when the plan does. Coordinates are enumerated lazily in row-major order, which is a listing order and not an execution order. The tiles a box meets are a range of coordinates on each axis, so a lookup costs the number of tiles met.
+A **tile family** (`tile-family.ts`) covers a tensor with boxes of one extent per axis. On an axis the extent does not divide, the last tile is shorter, and every element lies in exactly one tile. A family is separate from the canvas lattice in `view/tensor/tiling.ts`, which is square and follows zoom and display detail; a family changes only when the plan does. Coordinates are enumerated lazily in row-major order, which is a listing order and not an execution order. The tiles a box meets are a range of coordinates on each axis, so a lookup costs the number of tiles met.
 
 A **plan** (`plan.ts`) maps produced tensors to tile extents and is checked against a resolved graph, which it keeps; every query on the plan runs against that graph. A graph input cannot be planned because no task computes it. A **task** computes one complete tile of one planned tensor, including its whole reduction. Its demand is the bounded cone from the tile with the frontier set to the inputs of the operation that produces it, and the cone's `crossings` give that demand per operand slot.
 
@@ -511,14 +536,14 @@ The React layer is a projection over the headless compiler and executor.
 
 ### Application state
 
-`src/ui/store.ts` is the single Zustand store. Its state is divided conceptually into:
+`src/state/store.ts` is the single Zustand store. Its state is divided conceptually into:
 
 - **Source:** DSL text, selected example, unresolved/resolved graph, and load errors.
 - **Selection:** ordered parts, each naming its own tensor, and the independently enabled **Backward Cone** / **Forward Cone** views. Their controls live on the matching inspector section heads; both may collapse into the explicitly labelled figures-only state without disabling analysis. Direct canvas gestures add by default and Alt subtracts; both compose against the drawn tensor's parts only, so a gesture on one tensor can never edit or discard a part on another. Replacement is reserved for controlled internal transitions. Composition retains object identity for untouched parts, allowing their index-based UI metadata to be remapped safely if another tensor loses parts.
 - **Attribution:** which part is focused (emphasised, one at a time) and which parts are enabled in the merged analysis (any number, sticky). Disabled parts retain a faint selection rectangle and an inspector row so they can be included again, but their cached propagation is excluded from directional rows, metrics, notes, contribution verdicts, segmented footprints, and graph dependency highlights. Disabling the focused part clears its focus. Metadata is cleared for edited parts and follows untouched parts by identity when their indices shift. Alongside these sits `analysisGroup`, the tensor whose tiles the readout describes; it is set by a draw, a pin, or a group header and never by hovering (§8). `executionScope` holds the attribution the Execution view set aside while it narrows to the tile its sweep is about.
 - **Analysis:** aggregate backward/forward results, bounded per-box results, focus/pin state, and hover previews. **Both directions are always computed.** `direction` is a view filter over the analysis, not a gate on producing it: the inspector answers "what does this tile need" and "what does it feed" from one result, and a view choice must not decide whether a number exists. The filter is applied where highlights and directional rows are drawn, so switching it changes the picture without discarding the underlying analysis. `none` is the named figures-only combination: both section heads remain available to reopen either view while rows and graph highlights are hidden.
 - **Plan:** `planTiles` holds the tile extents of each planned tensor and `planTask` the task being inspected. `plan` and `planSupply` are derived from them against the resolved graph and held in the store beside the cone results, so the cards and the panel read one answer. A plan names tensors and tile coordinates in one graph, so a graph replacement clears it exactly as it clears the selection. A plan edit appends a workspace history entry as a tile edit does, and every snapshot carries the plan, so one undo stack covers both.
-- **View:** per-tensor projection settings, tile scale, gesture snapping, the shape reading, the graph's px-per-element scale, metric options, graph focus, panel layout, tensor offsets, and the transient execution playback. `axisMode` chooses whether a compact card states semantic labels or numeric extents. `ui/shape-label.ts` owns the label fallback - axis name, then verified symbolic extent, then number - while the tensor details keep all three readings separate (`emb`, `H*D`, and `512`), dropping any that a less symbolic reading below it already states, so the surviving row is named after what it actually is. A new workspace opens on labels; a shared link restores the reading and tensor offsets it was written against rather than being reinterpreted by a later default. Cards reserve the widest reading during base layout, so changing the mode cannot create overlap or move the graph. Selection edits, committed tensor moves, and resetting every tensor to generated placement share one chronological workspace history. Execution playback is deliberately not an edit: it overlays the stored selection or plan, then fades to reveal that state unchanged.
+- **View:** per-tensor projection settings, tile scale, gesture snapping, the shape reading, the graph's px-per-element scale, metric options, graph focus, panel layout, tensor offsets, and the transient execution playback. `axisMode` chooses whether a compact card states semantic labels or numeric extents. `view/tensor/shape-label.ts` owns the label fallback - axis name, then verified symbolic extent, then number - while the tensor details keep all three readings separate (`emb`, `H*D`, and `512`), dropping any that a less symbolic reading below it already states, so the surviving row is named after what it actually is. A new workspace opens on labels; a shared link restores the reading and tensor offsets it was written against rather than being reinterpreted by a later default. Cards reserve the widest reading during base layout, so changing the mode cannot create overlap or move the graph. Selection edits, committed tensor moves, and resetting every tensor to generated placement share one chronological workspace history. Execution playback is deliberately not an edit: it overlays the stored selection or plan, then fades to reveal that state unchanged.
 
 Applying DSL recompiles the entire source into a new resolved graph. In a browser, parsing, lowering, resolution, graph-scale measurement, and immutable Dagre placement are one compile-Worker job. The result is structured-cloneable graph data plus its base layout; the main realm reattaches only the small `shapesOf` convenience function and commits the artifact atomically. Compilation and family/reuse analysis occupy separate latest-wins Worker lanes: a long query cannot queue in front of a build, and starting replacement work terminates the superseded Worker rather than merely ignoring its eventual answer. A successful build registers its graph in a fresh query Worker before subsequent analyses are posted. Requests carry monotonically increasing identities, and the store also keeps a compile epoch, so an older response cannot replace a newer edit. The synchronous action remains as a headless/test fallback when `Worker` is unavailable. Changing a selection runs one bidirectional query per part, which serves both the per-part attribution and, merged, the aggregate the panels read. Past the per-part cap attribution is dropped and the queries are grouped by tensor instead, bounding the cost by the number of tensors drawn on rather than the number of tiles; the grouped result can only be equal or coarser, never tighter and never an under-approximation.
 
@@ -576,13 +601,13 @@ Tensor cards use a row-major projection by default:
 
 A card may draw another pair of axes (`ViewCfg.axes`, chosen with the ↕/↔ controls in the inspector's axis table). This is presentation, not a graph edit: a transpose that changes the program is still a `transpose` node. The card then prints the pair it draws (`rows seq · cols dim`), so the canvas cannot be read as the default plane or as a transposed tensor, and the default pair is stored as absent. The axes the card stops drawing become hidden axes with sliders, and the positions move onto the inspected tile so it stays on screen. Stored selections are element-space boxes and are unaffected. A card's footprint follows the plane it draws, so choosing axes re-runs structural placement; the main realm does this synchronously while any card is remapped, and uses the Worker's layout otherwise. Every card draws at `graphPx` except a remapped one whose plane would exceed the size budget: it takes the smaller scale that fits (`cardScaleFor`), its grid is correspondingly denser, and the card states the ratio (`scale ÷11.2`), because its lengths are then not comparable with the other cards'.
 
-One canvas cell represents one **tile**, not necessarily one element. `src/ui/tiling.ts` chooses a shape-aware base tile and applies the global detail scale. Card dimensions remain stable while detail changes.
+One canvas cell represents one **tile**, not necessarily one element. `src/view/tensor/tiling.ts` chooses a shape-aware base tile and applies the global detail scale. Card dimensions remain stable while detail changes.
 
 The detail control is global but its ordinary scale values may settle differently per tensor. `effectiveTileScaleStops` removes adjacent scale values that produce the same graph-wide lattice, because power-of-two fitting inside bounded cards otherwise leaves much of the raw range inert. Its accessible value and tooltip report those settled lattices rather than the serialized power-of-two shift. The leftmost **None** stop is a semantic exception: `tileFor` returns 1 unconditionally, so it means one logical tile per element for snapping, hover, starter tiles, and keyboard movement even when a large card cannot display every boundary. Boundaries too dense to tell apart are strided by the renderer, not omitted; the underlying grid is never coarsened. None and Auto remain separate stops when Auto also happens to yield 1×1, and `effectiveTileScaleIndex` preserves the exact stored intent before considering equivalent legacy plateaus.
 
 Without a tile of its own, a tensor's tile is square in element space: one `tile` value governs both visible axes. An extent shorter than that value clips the tile rather than pretending the tensor has elements it does not. Each card therefore prints its effective visible-plane span (for example `4×128`, not `128×128` on a four-row tensor), while the canvas grid control summarizes the graph-wide square lattice.
 
-A tensor can instead be given a tile of its own, one extent per axis, stored as `ViewCfg.tile` and so carried by share links (`ui/tile-spec.ts`). It is typed in the inspector's axis table (`AxisEditor.tsx`), or taken from a drawn tile with "use as tile". When present it replaces every derived notion on that tensor: the lattice on the visible axes (which may then be rectangular), the extent a snapped drag selects on every axis, the arrow-key step, the starter tile, and the extents a plan is first divided at. On a hidden axis a gesture takes the tile containing the slider position in both view modes, because the tile states that extent; the slider therefore stays enabled in projection mode when the tile is narrower than the axis. Without one, a hidden axis follows the view mode as described below. Like snap and detail, the tile is a gesture setting: setting it is not an undo step and never changes a stored box, except that the axis table refits the inspected tile to the new extents as one ordinary selection edit. The axis table also steps that tile along any axis, hidden ones included, moving to whole tiles so a shortened last tile is reachable, and the card's slider follows it. Each row names the axis, its extent, the tile, the range, the tile coordinate, and the last tile's extent when the axis does not divide; below it the whole selection is written out as `B[0:1] H[2:4] S[128:192] D[0:128]`. "Plan with it" divides the tensor at those extents and opens the task holding the tile.
+A tensor can instead be given a tile of its own, one extent per axis, stored as `ViewCfg.tile` and so carried by share links (`view/tensor/tile-spec.ts`). It is typed in the inspector's axis table (`AxisEditor.tsx`), or taken from a drawn tile with "use as tile". When present it replaces every derived notion on that tensor: the lattice on the visible axes (which may then be rectangular), the extent a snapped drag selects on every axis, the arrow-key step, the starter tile, and the extents a plan is first divided at. On a hidden axis a gesture takes the tile containing the slider position in both view modes, because the tile states that extent; the slider therefore stays enabled in projection mode when the tile is narrower than the axis. Without one, a hidden axis follows the view mode as described below. Like snap and detail, the tile is a gesture setting: setting it is not an undo step and never changes a stored box, except that the axis table refits the inspected tile to the new extents as one ordinary selection edit. The axis table also steps that tile along any axis, hidden ones included, moving to whole tiles so a shortened last tile is reachable, and the card's slider follows it. Each row names the axis, its extent, the tile, the range, the tile coordinate, and the last tile's extent when the axis does not divide; below it the whole selection is written out as `B[0:1] H[2:4] S[128:192] D[0:128]`. "Plan with it" divides the tensor at those extents and opens the task holding the tile.
 
 Higher-rank projection aggregates hidden-axis coverage across the projected rectangles before
 compositing each layer. Disjoint batch/head slices may overlap in the visible plane, so their
@@ -606,7 +631,7 @@ Text edits are normal selection transactions: they repropagate immediately and a
 
 Card *size* is set by a single px-per-element figure for the whole graph. `graphScale` derives it from every tensor's drawn plane - the largest tensor sets the budget, the smallest non-degenerate side raises the scale if that budget would make it invisible - and the store holds the result as `graphPx`, computed once per resolved graph in `loadResolvedGraph`. This is what makes a shared dimension render at one length everywhere it appears, so a matmul's contraction axis is visually comparable across its operands. `graphPx` is deliberately not recomputed for view state. Degenerate axes (extent 1) are excluded from the scale and drawn at a fixed width, because they have no length to preserve and would otherwise pin the whole graph at the per-element cap.
 
-`src/ui/grid.ts` is a pure geometry and drawing layer. Regions are painted at **element** precision: `regionRects` maps each box straight to canvas pixels, so a region that ends mid-tile draws a crisp edge rather than a partially shaded cell. The tile lattice is drawn over the top as a reading aid and does not quantise the marks. A thin region is widened to a one-screen-pixel minimum (limited by the whole canvas), expanding inward at the far edge to retain the floor, which over-states extent rather than letting it disappear - the same conservative direction the region algebra takes. Perimeter emphasis is suppressed when its stroke would be wider than the mark, so a one-element point or line never grows false area. Stroke widths are measured in screen pixels, and so is the lattice threshold: `grid.MIN_LATTICE_PX` is a screen-space stride threshold, distinct from `tiling.MIN_CELL_PX`, which is the canvas-space budget that chooses the tile. Those were one constant compared in two coordinate systems, so below 100% zoom the lattice was not drawn at all while snapping still bound to it. `latticeStride` now draws every 2^m-th boundary, with `m` the smallest power of two clearing the threshold, so every drawn line is a snapping boundary and the lattice coarsens instead of disappearing. The converse does not hold: a snapped edge can still land between two drawn lines, and closing that would mean deriving the snap unit from the viewport, which would make the same drag select a different range at a different zoom. Canvas backing resolution follows DPR and coarse zoom buckets, and unchanged backing stores are reused; CSS uses ordinary interpolation rather than re-pixelating that supersampled result.
+`src/view/tensor/grid.ts` is the pure geometry and `src/components/card/draw-grid.ts` the canvas drawing that consumes it. Regions are painted at **element** precision: `regionRects` maps each box straight to canvas pixels, so a region that ends mid-tile draws a crisp edge rather than a partially shaded cell. The tile lattice is drawn over the top as a reading aid and does not quantise the marks. A thin region is widened to a one-screen-pixel minimum (limited by the whole canvas), expanding inward at the far edge to retain the floor, which over-states extent rather than letting it disappear - the same conservative direction the region algebra takes. Perimeter emphasis is suppressed when its stroke would be wider than the mark, so a one-element point or line never grows false area. Stroke widths are measured in screen pixels, and so is the lattice threshold: `grid.MIN_LATTICE_PX` is a screen-space stride threshold, distinct from `tiling.MIN_CELL_PX`, which is the canvas-space budget that chooses the tile. Those were one constant compared in two coordinate systems, so below 100% zoom the lattice was not drawn at all while snapping still bound to it. `latticeStride` now draws every 2^m-th boundary, with `m` the smallest power of two clearing the threshold, so every drawn line is a snapping boundary and the lattice coarsens instead of disappearing. The converse does not hold: a snapped edge can still land between two drawn lines, and closing that would mean deriving the snap unit from the viewport, which would make the same drag select a different range at a different zoom. Canvas backing resolution follows DPR and coarse zoom buckets, and unchanged backing stores are reused; CSS uses ordinary interpolation rather than re-pixelating that supersampled result.
 
 Committed selection parts additionally carry short corner marks outside their filled rectangles, drawn after cone paint and the lattice. Their gap, length and stroke weight use screen pixels; a surface-coloured under-stroke keeps them distinct from nearby ink. These marks identify the seed without enlarging its fill, retain the part’s hue and focus/hidden alpha, and are clipped at the canvas boundary. A seed occupying the whole canvas therefore relies on the existing selected-card outline where external corners cannot fit.
 
@@ -699,7 +724,7 @@ npx tsc --noEmit
 4. Implement conservative backward and forward region mappings.
 5. Add a pointwise oracle where practical and define FLOP semantics.
 6. Register the spec in `src/core/ops/index.ts`.
-7. Add an entry to `src/test/op-fixtures.ts`. This is not optional: `registry.test.ts` checks the
+7. Add an entry to `tests/corpus/op-fixtures.ts`. This is not optional: `registry.test.ts` checks the
    table against `listOps()`, so a registered operation without a fixture fails the suite. The
    fixture is then run against the oracle and against the adjointness law automatically.
 8. Add exact cases, edge cases, and malformed-input cases of its own beyond the fixture.

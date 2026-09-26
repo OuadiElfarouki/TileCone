@@ -5,7 +5,7 @@
  * axis the extent does not divide, the last tile is shorter. Every element
  * lies in exactly one tile.
  *
- * This is separate from the canvas lattice in `ui/tiling.ts`, which is square,
+ * This is separate from the canvas lattice in `view/tensor/tiling.ts`, which is square,
  * follows zoom and display detail, and exists for drawing. A family belongs to
  * a plan and changes only when the plan does.
  *

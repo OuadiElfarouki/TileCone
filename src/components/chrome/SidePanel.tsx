@@ -1,0 +1,415 @@
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { fromBox } from "../../core/region";
+import { EXAMPLES } from "../../examples";
+import { tileOf } from "../../view/tensor/grid";
+import { selectionToLink, shareTarget } from "../../state/share";
+import { CopyButton } from "./CopyButton";
+import { opLabel } from "../../core/ops/index";
+import { involvedTensorIds, useStore } from "../../state/store";
+import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
+import { seedTile } from "../../view/tensor/tile-spec";
+import { overlayTokens } from "../../view/dsl-highlight";
+
+/**
+ * Copies a link that restores this workspace - source, selection, analysis views
+ * and tile detail. It sits with the source actions rather than in the header
+ * because the source is most of what it encodes.
+ */
+function ShareButton(): React.ReactElement {
+  // Read at click time rather than subscribing: the link is built from nine
+  // pieces of state and none of them change how this button looks.
+  const link = () => {
+    const s = useStore.getState();
+    return shareTarget(location.origin, location.pathname, {
+      dsl: s.dslText,
+      dir: s.direction,
+      ent: s.showEntangled,
+      tile: s.tileScale,
+      snap: s.snapToGrid,
+      axes: s.axisMode,
+      views: Object.fromEntries(
+        Object.entries(s.viewCfgs).filter(
+          ([, cfg]) => !cfg.projection || !!cfg.tile || !!cfg.axes || cfg.sliders.some((v) => v !== 0)
+        )
+      ),
+      pos: Object.fromEntries(
+        Object.entries(s.tensorOffsets).map(([id, { dx, dy }]) => [id, [dx, dy]])
+      ),
+      sel: selectionToLink(s.selection),
+    });
+  };
+
+  return (
+    <CopyButton
+      className="mini share-btn"
+      title="copy a link that restores this source, selection, graph layout, and analysis views"
+      label="share"
+      text={link}
+    />
+  );
+}
+
+/** The graph source, editable in place. Ctrl/Cmd+Enter runs it. */
+function SourceEditor(): React.ReactElement {
+  const dslText = useStore((s) => s.dslText);
+  const text = useStore((s) => s.draftText);
+  const setText = useStore((s) => s.setDraftText);
+  const applyDSLAsync = useStore((s) => s.applyDSLAsync);
+  const compiling = useStore((s) => s.compiling);
+  const loadError = useStore((s) => s.loadError);
+  const diagnostics = useStore((s) => s.diagnostics);
+  const built = useStore((s) => s.resolved !== null);
+  const [ranAt, setRanAt] = useState(0);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const highlightRef = useRef<HTMLPreElement>(null);
+  const highlighted = useMemo(() => overlayTokens(text), [text]);
+
+  // Two ways to owe a run: the text has moved away from what was built, or the
+  // app has not installed its initial graph yet.
+  const dirty = text !== dslText;
+  const unbuilt = dirty || !built;
+  const run = () => {
+    if (compiling) return;
+    void applyDSLAsync(text).then((installed) => {
+      if (installed) setRanAt(Date.now());
+    });
+  };
+
+  /* The overlay carries the ink for a caret it cannot see, so it has to hold
+     the textarea's scroll offset exactly. The scroll event covers the usual
+     case; this covers the one it does not, where new text shortens the box and
+     the browser clamps the offset, which it reports only after the commit. */
+  const syncScroll = () => {
+    const ta = taRef.current;
+    const highlight = highlightRef.current;
+    if (!ta || !highlight) return;
+    highlight.scrollTop = ta.scrollTop;
+    highlight.scrollLeft = ta.scrollLeft;
+  };
+  useLayoutEffect(syncScroll, [text]);
+
+  return (
+    <>
+      <div className="source-editor">
+        <pre className="source-highlight" ref={highlightRef} aria-hidden="true">
+          {highlighted.map((token, index) => (
+            <span key={index} className={`syntax-${token.kind}`}>{token.text}</span>
+          ))}
+        </pre>
+        <textarea
+          ref={taRef}
+          className={loadError ? "source error-state" : "source"}
+          value={text}
+          aria-label="graph source"
+          aria-invalid={!!loadError}
+          aria-describedby="source-status"
+          aria-errormessage={loadError ? "source-status" : undefined}
+          spellCheck={false}
+          onChange={(e) => setText(e.target.value)}
+          onScroll={syncScroll}
+          onKeyDown={(e) => {
+            if (matchesShortcut(e.nativeEvent, SHORTCUTS.run)) {
+              e.preventDefault();
+              run();
+            }
+          }}
+        />
+      </div>
+      <div className="source-actions">
+        <button className="run-btn" onClick={run} disabled={compiling || (!unbuilt && !loadError)}>
+          ▶ run
+        </button>
+        <ShareButton />
+        <span
+          className="source-status"
+          id="source-status"
+          role={loadError ? "alert" : "status"}
+          aria-live={loadError ? "assertive" : "polite"}
+        >
+          {compiling ? (
+            <span className="muted">building graph…</span>
+          ) : diagnostics.length ? (
+            /* Every independent error, not just the first. The compiler finds
+               them in one pass, and showing one at a time would put the author
+               back on the fix-and-recompile loop that collecting exists to
+               end. */
+            <span className="error">
+              {diagnostics.length > 1 && (
+                <b>{diagnostics.length} errors · </b>
+              )}
+              {diagnostics.map((d, i) => (
+                <span key={i} className="diag">
+                  <b>line {d.span.start.line}: </b>
+                  {d.message}
+                </span>
+              ))}
+            </span>
+          ) : loadError ? (
+            <span className="error">{loadError}</span>
+          ) : dirty ? (
+            <span className="muted">unrun changes · ⌘/ctrl+↵</span>
+          ) : !built ? (
+            <span className="muted">not built yet · ⌘/ctrl+↵</span>
+          ) : ranAt ? (
+            <span className="ok">✓ graph built</span>
+          ) : (
+            <span className="muted">⌘/ctrl+↵ to run</span>
+          )}
+        </span>
+      </div>
+    </>
+  );
+}
+
+/** Prototype-style operation list. Clicking a row probes its first output. */
+function Operations(): React.ReactElement {
+  const resolved = useStore((s) => s.resolved);
+  const setFocusNode = useStore((s) => s.setFocusNode);
+  const setSelectedOp = useStore((s) => s.setSelectedOp);
+  const selectedOp = useStore((s) => s.selectedOp);
+  const backwardRes = useStore((s) => s.backwardRes);
+  const forwardRes = useStore((s) => s.forwardRes);
+  const direction = useStore((s) => s.direction);
+  const selection = useStore((s) => s.selection);
+  const perBox = useStore((s) => s.perBox);
+  const hiddenBoxes = useStore((s) => s.hiddenBoxes);
+  const setSelection = useStore((s) => s.setSelection);
+  const tileScale = useStore((s) => s.tileScale);
+  const graphPx = useStore((s) => s.graphPx);
+
+  if (!resolved) return <p className="hint">no graph</p>;
+
+  /* The same set the canvas lights, so hiding a cone dims its operations here
+     too rather than leaving the list on the union of both directions. */
+  const involved = involvedTensorIds(selection, backwardRes, forwardRes, perBox, hiddenBoxes, direction);
+
+  // The row names an operation, so the viewport goes to the operator. The
+  // starter tile still lands on its first output, which is where a cone has to
+  // begin - the two were the same request while only tensors could be focused.
+  const probe = (nodeId: string, tensorId: string) => {
+    const shape = resolved.tensors[tensorId].resolved!;
+    setFocusNode({ kind: "op", id: nodeId });
+    // `setSelection` below lights the row for whatever produced the tensor it
+    // lands on, which for an operation's own output is this row - but only when
+    // the tile is actually placed. A degenerate output takes the early return,
+    // and the click should still show which row was pressed.
+    setSelectedOp(nodeId);
+    if (shape.some((extent) => extent <= 0)) return;
+    const cfg = useStore.getState().viewCfgs[tensorId];
+    const tile = seedTile(shape, cfg, tileOf(shape, tileScale, graphPx, cfg));
+    setSelection(
+      tensorId,
+      fromBox(shape.map((extent, axis) => ({ lo: 0, hi: Math.min(tile[axis], extent) }))),
+      "replace"
+    );
+  };
+
+  return (
+    <div className="operation-list">
+      {resolved.topo.map((node) => {
+        const outputs = node.outputs.map((id) => resolved.tensors[id]);
+        const hot = [...node.inputs, ...node.outputs].some((id) => involved.has(id));
+        const signature = `${outputs.map((t) => t.name).join(", ")} = ${opLabel(node)}(${node.inputs
+          .map((id) => resolved.tensors[id].name)
+          .join(", ")})`;
+        const meta = outputs
+          .map((t) => `[${t.resolved!.join(" × ")}] ${t.dtype}`)
+          .join(" · ");
+        return (
+          <button
+            key={node.id}
+            className={`operation-row${involved.size ? (hot ? " hot" : " dim") : ""}${
+              node.id === selectedOp ? " selected" : ""
+            }`}
+            aria-current={node.id === selectedOp || undefined}
+            title={`select a starter tile on ${outputs[0].name}\n${JSON.stringify(node.attrs)}`}
+            onClick={() => probe(node.id, outputs[0].id)}
+          >
+            <i />
+            <span>
+              <code>{signature}</code>
+              <small>{meta}</small>
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * The example picker is a menu rather than a row of chips. Eight names wrapped
+ * to three lines above the operation list and read as a control surface with
+ * more weight than it has: the examples are a way in, not part of the answer.
+ * It is drawn from the same parts as everything else here - a bordered trigger
+ * that goes accent when open, a floating surface at the popover radius - so it
+ * is a smaller version of the panel, not a native widget dropped into it.
+ */
+function ExamplePicker(): React.ReactElement {
+  const exampleIndex = useStore((s) => s.exampleIndex);
+  const draftText = useStore((s) => s.draftText);
+  const stageExample = useStore((s) => s.stageExample);
+  const [open, setOpen] = useState(false);
+  // Which row the keyboard is on. It follows the current example when the menu
+  // opens, so ↓ from a loaded example moves to the next one rather than to the
+  // top of the list.
+  const [active, setActive] = useState(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+
+  // Two different questions, and the picker answers both at once. What is *in
+  // the editor* names the trigger; what is actually *built* takes the accent.
+  // Between picking and running they disagree, and that gap is the point: the
+  // menu proposes a source, the run button commits it.
+  const staged = EXAMPLES.findIndex((ex) => ex.dsl === draftText);
+  const current = staged >= 0 ? EXAMPLES[staged] : null;
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
+
+  useEffect(() => {
+    if (open) listRef.current?.focus();
+  }, [open]);
+
+  // The menu shows three and a half rows, so the keyboard can walk the
+  // highlight out of view. Follow it. `nearest` keeps a pointer-driven change
+  // from jumping the list under the cursor.
+  useEffect(() => {
+    if (!open) return;
+    listRef.current?.children[active]?.scrollIntoView({ block: "nearest" });
+  }, [open, active]);
+
+  const show = () => {
+    setActive(staged >= 0 ? staged : 0);
+    setOpen(true);
+  };
+
+  const choose = (index: number) => {
+    if (index !== staged) stageExample(index);
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
+  const onListKeyDown = (e: React.KeyboardEvent) => {
+    const step = (delta: number) => {
+      e.preventDefault();
+      setActive((i) => (i + delta + EXAMPLES.length) % EXAMPLES.length);
+    };
+    if (e.key === "ArrowDown") step(1);
+    else if (e.key === "ArrowUp") step(-1);
+    else if (e.key === "Home") { e.preventDefault(); setActive(0); }
+    else if (e.key === "End") { e.preventDefault(); setActive(EXAMPLES.length - 1); }
+    else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose(active); }
+    else if (e.key === "Escape") {
+      e.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus();
+    } else if (e.key === "Tab") setOpen(false);
+  };
+
+  return (
+    <div className="example-picker" ref={rootRef}>
+      <span className="side-kicker" id="example-picker-label">try an example</span>
+      <div className="example-menu">
+        <button
+          ref={triggerRef}
+          className={`example-trigger${open ? " on" : ""}`}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          aria-controls={open ? "example-options" : undefined}
+          aria-labelledby="example-picker-label example-picker-value"
+          title={
+            current
+              ? exampleIndex === staged
+                ? `${current.name} · running`
+                : `${current.name} · loaded, not run yet`
+              : "load one of the built-in graphs"
+          }
+          onClick={() => (open ? setOpen(false) : show())}
+          onKeyDown={(e) => {
+            if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+              e.preventDefault();
+              show();
+            }
+          }}
+        >
+          <span
+            id="example-picker-value"
+            className={`example-current${current ? "" : " none"}${
+              current && exampleIndex === staged ? " built" : ""
+            }`}
+          >
+            {current ? current.name : "custom source"}
+          </span>
+          <i aria-hidden="true">▾</i>
+        </button>
+        {open && (
+          <ul
+            id="example-options"
+            className="example-options"
+            role="listbox"
+            tabIndex={-1}
+            ref={listRef}
+            aria-labelledby="example-picker-label"
+            aria-activedescendant={`example-option-${active}`}
+            onKeyDown={onListKeyDown}
+          >
+            {EXAMPLES.map((example, index) => (
+              <li
+                key={example.name}
+                id={`example-option-${index}`}
+                role="option"
+                // The widget's value is what it would run, not what is running.
+                aria-selected={staged === index}
+                className={`example-option${index === active ? " active" : ""}${
+                  exampleIndex === index ? " on" : ""
+                }${staged === index && exampleIndex !== index ? " staged" : ""}`}
+                onPointerEnter={() => setActive(index)}
+                onClick={() => choose(index)}
+              >
+                <span>{example.name}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function SidePanel(): React.ReactElement {
+  const sourcePending = useStore((s) => s.draftText !== s.dslText);
+  return (
+    <aside className="side-panel" aria-label="Graph source and operations">
+      <div className="side-panel-scroll">
+        <header className="source-heading">
+          <h2 className="panel-title">Graph source</h2>
+        </header>
+        <div className="source-workspace">
+          <SourceEditor />
+        </div>
+
+        <ExamplePicker />
+
+        <div className="side-divider" />
+        <section
+          className={`operations-section${sourcePending ? " pending" : ""}`}
+          title={sourcePending ? "Operations from the currently built graph" : undefined}
+        >
+          <div className="operations-heading">
+            <h3 className="panel-title">Operations</h3>
+            {sourcePending && <span className="operations-pending">built graph</span>}
+          </div>
+          <Operations />
+        </section>
+      </div>
+    </aside>
+  );
+}

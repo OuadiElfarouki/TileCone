@@ -84,7 +84,7 @@ export function box(...pairs: [number, number][]): Box {
  * one element, `lo:hi` otherwise. Delimiters belong to the caller - the
  * inspector field wraps it in `[]`, a slice expression prefixes the tensor name,
  * the hover readout uses `()` - but the terms are spelled once, because
- * `ui/selection-range.ts` parses this syntax back and a second speller would
+ * `view/selection-range.ts` parses this syntax back and a second speller would
  * drift from the parser rather than merely from another printer. */
 export function formatBoxIndices(b: Box): string {
   return b.map((i) => (i.hi - i.lo === 1 ? `${i.lo}` : `${i.lo}:${i.hi}`)).join(", ");

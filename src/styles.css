@@ -68,7 +68,7 @@
        the same color. Amber is normal ΔE 22.8 from the orange, and as
        foreground it reads 7.15:1 on the panel and 7.77:1 on the page. */
     --accent: #e39c3d;
-    --card: #1c1f24; /* == CARD_SURFACE.dark in ui/palette.ts */
+    --card: #1c1f24; /* == CARD_SURFACE.dark in view/palette.ts */
     --card-line: #303540;
     --hot: #e39c3d;
     --warn-ink: #f6c073;

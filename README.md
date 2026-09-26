@@ -145,7 +145,7 @@ CLI run without a DOM.
 ## Testing
 
 The failure mode of this app is plausible-looking wrong highlights, so correctness is checked
-against a **brute-force oracle** (`src/test/oracle.ts`) rather than against the analytic rules
+against a **brute-force oracle** (`tests/corpus/oracle.ts`) rather than against the analytic rules
 themselves. Every element of every tensor gets a unique id; id-sets propagate forward using each
 op's *pointwise semantics* (`oracleDeps`), never its box-level backward rule. The analytic region
 must then **equal** the oracle set when `exact`, and **contain** it when not.

@@ -1,14 +1,14 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { PanelFrame } from "./ui/PanelFrame";
-import { SidePanel } from "./ui/SidePanel";
-import { GraphView } from "./ui/GraphView";
-import { Inspector } from "./ui/Inspector";
-import { WorkspaceHeader } from "./ui/WorkspaceHeader";
-import { useStore } from "./ui/store";
-import { useDragGuard } from "./ui/useDragGuard";
-import { useKeyboard } from "./ui/useKeyboard";
-import { decodeWorkspace } from "./ui/share";
-import { ShortcutsDialog } from "./ui/ShortcutsDialog";
+import { PanelFrame } from "./components/chrome/PanelFrame";
+import { SidePanel } from "./components/chrome/SidePanel";
+import { GraphView } from "./components/graph/GraphView";
+import { Inspector } from "./components/inspector/Inspector";
+import { WorkspaceHeader } from "./components/chrome/WorkspaceHeader";
+import { useStore } from "./state/store";
+import { useDragGuard } from "./components/hooks/useDragGuard";
+import { useKeyboard } from "./components/hooks/useKeyboard";
+import { decodeWorkspace } from "./state/share";
+import { ShortcutsDialog } from "./components/chrome/ShortcutsDialog";
 
 export default function App(): React.ReactElement {
   const loadExampleAsync = useStore((s) => s.loadExampleAsync);

@@ -1,7 +1,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
-import { useStore } from "./ui/store";
+import { useStore } from "./state/store";
 import "./styles.css";
 
 // Apply the persisted/system theme before React paints so CSS and canvas colors
