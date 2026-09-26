@@ -113,6 +113,17 @@ export type ReuseSweepFrame = {
   surfaces: Partial<Record<ReuseSurface, Record<string, ReuseReach>>>;
 };
 
+/** Worker cloning restores ordinary object prototypes, so reads must check
+ * ownership even though the producing dictionaries have null prototypes. */
+export function reuseReachAt(
+  byTensor: Record<string, ReuseReach> | undefined,
+  tensorId: string
+): ReuseReach | undefined {
+  return byTensor && Object.prototype.hasOwnProperty.call(byTensor, tensorId)
+    ? byTensor[tensorId]
+    : undefined;
+}
+
 export type ReuseSweep = {
   estimates: ReuseEstimate[];
   frames: ReuseSweepFrame[];
@@ -233,7 +244,7 @@ export function estimateInputReuseSweep(
     probeSide: Map<string, Region>,
     anchorSide: Map<string, Region> | null
   ): Record<string, ReuseReach> => {
-    const out: Record<string, ReuseReach> = {};
+    const out: Record<string, ReuseReach> = Object.create(null);
     for (const [tensorId, region] of probeSide) {
       const mine = anchorSide?.get(tensorId);
       const meeting = mine ? intersect(region, mine) : null;

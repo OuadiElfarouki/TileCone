@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Tensor } from "../core/graph";
 import { DTYPE_BYTES } from "../core/dtypes";
 import type { Supply } from "../core/plan/interfaces";
-import type { ReuseSurface, ReuseSweepFrame } from "../core/reuse";
+import { reuseReachAt, type ReuseSurface, type ReuseSweepFrame } from "../core/reuse";
 import type { TilePlan } from "../core/plan/plan";
 import { tileBox } from "../core/plan/tile-family";
 import { useFrameThrottle } from "./useFrameThrottle";
@@ -578,17 +578,17 @@ export function buildExecutionPaint({
 
   for (const surface of REUSE_SURFACES) {
     const reached = active
-      ? active.surfaces[surface]?.[tensorId] ?? null
+      ? reuseReachAt(active.surfaces[surface], tensorId) ?? null
       : null;
     const region = active
       ? reached?.region ?? null
       : unionAcrossFrames(frames, playback.frames, `${surface}|${tensorId}|reach`,
-          (frame) => frame.surfaces[surface]?.[tensorId]?.region);
+          (frame) => reuseReachAt(frame.surfaces[surface], tensorId)?.region);
     if (!region) continue;
     const shared = active
       ? reached?.shared ?? null
       : unionAcrossFrames(frames, playback.frames, `${surface}|${tensorId}|shared`,
-          (frame) => frame.surfaces[surface]?.[tensorId]?.shared);
+          (frame) => reuseReachAt(frame.surfaces[surface], tensorId)?.shared);
     const pattern = surfacePattern(surface, playback.colorIndex);
     /* Cache the display difference across fade ticks. Its splitting budget
        keeps fragmented geometry bounded; on exhaustion the full reach remains
@@ -712,7 +712,7 @@ function TensorCardView({
     return playback && (
       playback.tensorId === tensor.id ||
       playback.frames.some((frame) =>
-        Object.values(frame.surfaces).some((byTensor) => !!byTensor?.[tensor.id]))
+        Object.values(frame.surfaces).some((byTensor) => !!reuseReachAt(byTensor, tensor.id)))
     ) ? playback : null;
   });
   const plan = useStore((s) => s.plan);

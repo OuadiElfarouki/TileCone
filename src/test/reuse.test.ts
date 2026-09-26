@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { executeQuery } from "../core/executor";
-import { estimateInputReuseSweep, inputSharing } from "../core/reuse";
+import { estimateInputReuseSweep, inputSharing, reuseReachAt } from "../core/reuse";
 import { box, fromBox } from "../core/region";
 import { compileDSL } from "../parse/compiler";
 
@@ -19,6 +19,30 @@ const estimateInputReuse = (...args: Parameters<typeof estimateInputReuseSweep>)
   estimateInputReuseSweep(...args).estimates;
 
 describe("reuse estimation", () => {
+  it.each(["__proto__", "constructor", "toString"])(
+    "preserves the tensor named %s across the worker boundary", (tensorId) => {
+      const { resolved } = compileDSL(`${tensorId} = Tensor(4)\nY = relu(${tensorId})\n`);
+      const sweep = estimateInputReuseSweep(resolved, {
+        tensorId: "Y", region: fromBox(box([0, 2])),
+      });
+      const original = sweep.frames[0].surfaces.backward!;
+      expect(Object.getPrototypeOf(original)).toBeNull();
+      const transferred = structuredClone(sweep).frames[0].surfaces.backward!;
+      expect(Object.keys(transferred)).toContain(tensorId);
+      expect(reuseReachAt(transferred, tensorId)?.region.boxes).toEqual([box([0, 2])]);
+      expect(reuseReachAt(transferred, tensorId)?.shared?.boxes).toEqual([box([0, 2])]);
+    }
+  );
+
+  it("does not mistake inherited names for reached tensors after cloning", () => {
+    const { resolved } = compileDSL(GEMM);
+    const sweep = structuredClone(estimateInputReuseSweep(resolved, {
+      tensorId: "C", region: fromBox(box([0, 2], [0, 2])),
+    }));
+    for (const tensorId of ["__proto__", "constructor", "toString"])
+      expect(reuseReachAt(sweep.frames[0].surfaces.backward, tensorId)).toBeUndefined();
+  });
+
   it("retains the real probes and shared input regions for playback", () => {
     const { resolved } = compileDSL(GEMM);
     const sweep = estimateInputReuseSweep(resolved, {

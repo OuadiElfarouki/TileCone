@@ -1094,6 +1094,9 @@ export function Inspector(): React.ReactElement {
      and goes at once rather than fading: a fade explains a departure, and
      there is no longer a panel on screen to have departed from. */
   useEffect(() => () => {
+    // Invalidate work still in flight before retiring its timers. Otherwise a
+    // late result can start playback again after this owner has unmounted.
+    reuseRequest.current++;
     stopPlaybackTimers();
     setExecutionPlayback(null);
   }, [setExecutionPlayback, stopPlaybackTimers]);
