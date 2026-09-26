@@ -1,16 +1,8 @@
 import { describe, expect, it } from "vitest";
-import {
-  cardSize,
-  buildExecutionPaint,
-  DEFAULT_DOWNSTREAM_DENSITY,
-  selectionBoxFromDrag,
-  visibleApproximation,
-} from "../../../src/components/card/TensorCard";
+import { cardSize } from "../../../src/components/card/TensorCard";
 import { box, fromBox, type Box } from "../../../src/core/region";
 import { gridGeometry } from "../../../src/view/tensor/grid";
-import { stripeAngleDeg } from "../../../src/components/card/draw-grid";
 import { graphScale } from "../../../src/view/tensor/tiling";
-import type { ExecutionPlayback } from "../../../src/state/store";
 
 describe("execution sweep paint", () => {
   /* Two probes on Y. Each reads a band of X wider than the part the anchor
@@ -188,8 +180,10 @@ describe("the box a single-cell gesture commits", () => {
 
 /* ---------------- what the canvas paints ---------------- */
 
-import { buildLayers, LayerInputs } from "../../../src/components/card/TensorCard";
-import { MAX_PER_BOX_PROPS, type BoxProp } from "../../../src/state/store";
+import { ExecutionPlayback, MAX_PER_BOX_PROPS, BoxProp } from "../../../src/view/workspace";
+import { buildExecutionPaint } from "../../../src/view/tensor/execution-paint";
+import { DEFAULT_DOWNSTREAM_DENSITY, stripeAngleDeg, buildLayers, LayerInputs } from "../../../src/view/tensor/layers";
+import { selectionBoxFromDrag, visibleApproximation } from "../../../src/view/tensor/gesture";
 
 const region = (...pairs: [number, number][]) => fromBox(box(...pairs));
 

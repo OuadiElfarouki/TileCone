@@ -1,4 +1,4 @@
-import type { Figure, FigureStatus } from "../core/metrics";
+import { type Figure, type FigureStatus } from "../core/metrics";
 
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -33,4 +33,13 @@ export const FIGURE_MARK: Record<FigureStatus, string> = {
  */
 export function formatFigure(f: Figure, format: (value: number) => string): string {
   return f.value === null ? "unknown" : `${FIGURE_MARK[f.status]}${format(f.value)}`;
+}
+
+export function fmt(n: number): string {
+  if (n === 0) return "0";
+  if (n >= 1e12) return `${(n / 1e12).toFixed(2)}T`;
+  if (n >= 1e9) return `${(n / 1e9).toFixed(2)}G`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return n.toFixed(n < 10 && !Number.isInteger(n) ? 2 : 0);
 }

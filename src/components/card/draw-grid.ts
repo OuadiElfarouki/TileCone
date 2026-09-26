@@ -6,15 +6,15 @@
 
 import { CARD_SURFACE } from "../../view/palette";
 import {
-  latticeStride,
-  regionFillRects,
-  regionRects,
   type GridGeom,
+  latticeStride,
   type Layer,
   type PlanPaint,
+  regionFillRects,
   type RegionRect,
+  regionRects,
 } from "../../view/tensor/grid";
-import type { ViewCfg } from "../../view/tensor/tensor-view";
+import { type ViewCfg } from "../../view/tensor/tensor-view";
 
 /** Width of a needed producer tile's outline, in screen px. */
 const PLAN_TILE_LINE_PX = 1.5;
@@ -120,31 +120,6 @@ export function patternFitsRect(
   // destroy direction. Only the region's resulting screen extent may force a
   // fallback: density degrades before direction does.
   return Math.min(rect.w, rect.h) * viewScale >= patternFloorFor(pattern);
-}
-
-/**
- * Ruling angle per selection box, in degrees counter-clockwise from horizontal.
- *
- * Two boxes whose downstream cones overlap used to draw the same ruling at the
- * same phase, so the later one landed exactly on the earlier and the shared
- * area read as a single region. Hue cannot resolve that : the two hues are
- * painted over each other : so the angle has to. Given its own slope, an
- * overlap crosses itself and says "both of these reach here", which is a fact
- * the panel otherwise only states as two separate rows.
- *
- * The twelve slots match the per-box attribution cap. Every angle stays clear
- * of 0/90 and the 45-degree approximation hatch. The order maximises separation
- * for the common first few boxes; later neutral boxes use the remaining safe
- * slopes, so no two attributable boxes can erase each other exactly.
- */
-const STRIPE_ANGLES_DEG = [
-  135, 165, 15, 75, 105, 111, 117, 123, 129, 147, 153, 159,
-];
-
-/** @internal Pure encoding rule for renderer tests. */
-export function stripeAngleDeg(boxIndex: number): number {
-  const n = STRIPE_ANGLES_DEG.length;
-  return STRIPE_ANGLES_DEG[((Math.trunc(boxIndex) % n) + n) % n];
 }
 
 /** The slope reserved for over-approximation, kept out of the box rotation. */

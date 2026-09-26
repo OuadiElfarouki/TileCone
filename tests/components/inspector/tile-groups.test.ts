@@ -1,22 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { currentReuseRows, Inspector, neighbourShares, reuseQualifiers } from "../../../src/components/inspector/Inspector";
+import { Inspector } from "../../../src/components/inspector/Inspector";
 import { compileDSL } from "../../../src/parse/compiler";
-import {
-  groupPropResult,
-  analysisTarget,
-  MAX_PER_BOX_PROPS,
-  partsOn,
-  useStore,
-  type BoxProp,
-  type SelPart,
-} from "../../../src/state/store";
+import { useStore } from "../../../src/state/store";
 import { executeQuery } from "../../../src/core/executor";
 import { removalTarget } from "../../../src/components/hooks/useKeyboard";
 import { box, count, fromBox } from "../../../src/core/region";
 import type { ResolvedGraph } from "../../../src/core/graph";
 import { analysisTensorId, groupAttribution, groupFocus, measuredParts, measuredElements } from "../../../src/components/inspector/inspector-analysis";
+import { groupPropResult, analysisTarget, MAX_PER_BOX_PROPS, partsOn, BoxProp, SelPart } from "../../../src/view/workspace";
+import { currentReuseRows, neighbourShares, reuseQualifiers } from "../../../src/view/reuse-rows";
 
 // Static-render tests read the live test store rather than Zustand's initial
 // server snapshot. Actions and all derivation logic remain the real implementation.

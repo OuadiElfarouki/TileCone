@@ -4,9 +4,9 @@ import { cardScaleFor, cardSize } from "../../../src/view/tensor/card-size";
 import { gridGeometry } from "../../../src/view/tensor/grid";
 import { decodeWorkspace, encodeWorkspace } from "../../../src/state/share";
 import { useStore } from "../../../src/state/store";
-import { selectionBoxFromDrag } from "../../../src/components/card/TensorCard";
 import { remapped, viewAxes, viewCfgFits } from "../../../src/view/tensor/tensor-view";
 import { MAX_GRAPH_H, MAX_GRAPH_W } from "../../../src/view/tensor/tiling";
+import { selectionBoxFromDrag } from "../../../src/view/tensor/gesture";
 
 const S = () => useStore.getState();
 

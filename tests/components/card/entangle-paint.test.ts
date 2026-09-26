@@ -8,9 +8,9 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { buildLayers } from "../../../src/components/card/TensorCard";
 import { box, count, fromBox } from "../../../src/core/region";
 import { compileDSL } from "../../../src/parse/compiler";
+import { buildLayers } from "../../../src/view/tensor/layers";
 
 const base = {
   tensorId: "B", dark: false, direction: "backward" as const, isSelected: false,

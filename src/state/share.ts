@@ -1,7 +1,7 @@
 import { Box } from "../core/region";
-import { Direction, MAX_TENSOR_OFFSET } from "./store";
 import { AxisMode } from "../view/tensor/shape-label";
 import { isViewCfg, type ViewCfg } from "../view/tensor/tensor-view";
+import { Direction, MAX_TENSOR_OFFSET } from "../view/workspace";
 
 /**
  * Shareable workspace state.

@@ -7,12 +7,12 @@ import {
   GraphScene,
   PlacedGraphNode,
 } from "../../view/graph/graph-scene";
-import { TensorCard, type CardGestures } from "../card/TensorCard";
+import { TensorCard, CardGestures } from "../card/TensorCard";
 import { cardSize } from "../../view/tensor/card-size";
 import { remapped } from "../../view/tensor/tensor-view";
 import { shapeLabel, symbolicExtentLabel } from "../../view/tensor/shape-label";
 import { opLabel } from "../../core/ops/index";
-import { involvedTensorIds, PANEL_RAIL, planesOf, useStore } from "../../state/store";
+import { useStore } from "../../state/store";
 import type { TensorOffset } from "../../view/graph/tensor-layout";
 import { MIN_SIDE_PX, settledTiles } from "../../view/tensor/tiling";
 import { overviewLabels } from "../../view/graph/overview-labels";
@@ -20,6 +20,8 @@ import { paintScale } from "../../view/tensor/grid";
 import { FIT_GRAPH_EVENT } from "../hooks/useKeyboard";
 import { GridControls } from "../chrome/GridControls";
 import { useFrameThrottle } from "../hooks/useFrameThrottle";
+import { involvedTensorIds, PANEL_RAIL } from "../../view/workspace";
+import { planesOf } from "../../view/tensor/seeds";
 
 type CardDrag = {
   id: string;

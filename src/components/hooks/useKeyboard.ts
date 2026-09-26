@@ -1,8 +1,9 @@
 import { useEffect } from "react";
-import { analysisTarget, useStore, type InspectorTab } from "../../state/store";
+import { useStore } from "../../state/store";
 import { nudgeDelta, nudgeUnit } from "../../view/tensor/grid";
 import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
 import { viewAxes } from "../../view/tensor/tensor-view";
+import { analysisTarget, InspectorTab } from "../../view/workspace";
 
 const isTyping = (el: EventTarget | null) => {
   const t = el as HTMLElement | null;

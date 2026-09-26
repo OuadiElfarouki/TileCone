@@ -82,12 +82,17 @@ src/
 │   │   ├── card-size.ts      tensor-card measurement and per-card scale, usable in either realm
 │   │   ├── grid.ts           grid geometry: cells, region rects, snapping, nudging, paint types
 │   │   ├── shape-label.ts    axis-name, symbolic, and numeric shape readings
+│   │   ├── seeds.ts          default extents: drawn planes, starter tiles, first plan divisions
+│   │   ├── gesture.ts        what a drag selects, and what a Plan-view gesture does
+│   │   ├── layers.ts         the card's paint stack as data: cones, stipples, seeds, plan paint
 │   │   └── execution-paint.ts  reuse-sweep playback paint
 │   ├── graph/
 │   │   ├── graph-scene.ts    structural layout and live routed-scene projection
 │   │   ├── graph-geometry.ts collision constraints and connector routing
 │   │   ├── overview-labels.ts  low-zoom label placement
 │   │   └── tensor-layout.ts  tensor-card offset contracts
+│   ├── workspace.ts      shared vocabulary: selection parts, directions, views, and their pure helpers
+│   ├── reuse-rows.ts     reading a reuse sweep: the current run and its qualifiers
 │   ├── palette.ts        validated categorical hues and canvas surfaces
 │   ├── format.ts         presentation-only numeric formatting
 │   ├── selection-range.ts  range syntax for editable selection parts
@@ -98,7 +103,16 @@ src/
 │   ├── analysis-jobs.ts   pure jobs shared by the Worker and headless tests
 │   └── analysis-protocol.ts  structured-cloneable Worker messages and artifacts
 ├── state/
-│   ├── store.ts          application state and analysis orchestration
+│   ├── store.ts          the Zustand store: initial state, execution scoping, and the action slices
+│   ├── types.ts          the State type and the store's setter and getter types
+│   ├── actions/          action slices: workspace, selection, view, plan, layout
+│   ├── analysis.ts       per-part propagation merged into the aggregate
+│   ├── selection-edit.ts selection transactions and keeping a moved tile on screen
+│   ├── plan.ts           plan derivation and task inspection
+│   ├── load.ts           installing a compiled graph, an example, or a shared workspace
+│   ├── history.ts        workspace undo snapshots
+│   ├── execution-scope.ts  narrowing to the swept tile on entering Execution
+│   ├── compile-epoch.ts  the request version that makes a build cancellable
 │   ├── share.ts          workspace link encoding and decoding
 │   └── analysis-worker-client.ts  two-lane request correlation, cancellation, and Worker lifecycle
 ├── components/         React
@@ -107,7 +121,12 @@ src/
 │   │   ├── TensorCard.tsx    interactive tensor canvas and its layer builders
 │   │   └── draw-grid.ts      canvas drawing: fills, rulings, stipples, hatches, lattice, marks
 │   ├── inspector/
-│   │   ├── Inspector.tsx     selection parts, footprint, cost, notes
+│   │   ├── Inspector.tsx     the panel: tabs, and which sections each view shows
+│   │   ├── tiles.tsx         the tile header, the tiles list, and range editing
+│   │   ├── cones.tsx         the Backward and Forward Cone sections
+│   │   ├── notes.tsx         dependency notes
+│   │   ├── tabs.tsx          the view switch and the empty panel
+│   │   ├── useReuseSweep.ts  the reuse sweep: request, cache, and playback timers
 │   │   ├── inspector-analysis.ts  memoized inspector derivation and costly-probe gating
 │   │   ├── AxisEditor.tsx    every axis of the inspected tile
 │   │   └── PlanPanel.tsx     the Plan view: tiled tensors, one task's supply, family demand
@@ -536,7 +555,7 @@ The React layer is a projection over the headless compiler and executor.
 
 ### Application state
 
-`src/state/store.ts` is the single Zustand store. Its state is divided conceptually into:
+`src/state/store.ts` is the single Zustand store. It holds construction only - the initial state, the setter that keeps Execution scoping transactional, and one spread per action slice in `state/actions/`; the pure derivations those actions share live beside it in `state/`. Its state is divided conceptually into:
 
 - **Source:** DSL text, selected example, unresolved/resolved graph, and load errors.
 - **Selection:** ordered parts, each naming its own tensor, and the independently enabled **Backward Cone** / **Forward Cone** views. Their controls live on the matching inspector section heads; both may collapse into the explicitly labelled figures-only state without disabling analysis. Direct canvas gestures add by default and Alt subtracts; both compose against the drawn tensor's parts only, so a gesture on one tensor can never edit or discard a part on another. Replacement is reserved for controlled internal transitions. Composition retains object identity for untouched parts, allowing their index-based UI metadata to be remapped safely if another tensor loses parts.

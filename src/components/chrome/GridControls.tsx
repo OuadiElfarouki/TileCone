@@ -1,12 +1,13 @@
 import React, { useMemo } from "react";
 import { hasSymbolicShape } from "../../view/tensor/shape-label";
-import { planesOf, useStore } from "../../state/store";
+import { useStore } from "../../state/store";
 import {
   effectiveTileScaleIndex,
   effectiveTileScaleStops,
   settledTiles,
   TILE_SCALE_NONE,
 } from "../../view/tensor/tiling";
+import { planesOf } from "../../view/tensor/seeds";
 
 /** What the graph actually settled on, which the request only asks for. */
 function settledLabel(min: number, max: number): string {

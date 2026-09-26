@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { tileFamily } from "../../../src/core/plan/tile-family";
 import { box, fromBox } from "../../../src/core/region";
-import { defaultPlanTile, useStore } from "../../../src/state/store";
-import { buildPlanPaint, planElementFromCell, planGesture } from "../../../src/components/card/TensorCard";
+import { useStore } from "../../../src/state/store";
 import { formatTileExtents, parseTileExtents } from "../../../src/components/inspector/PlanPanel";
 import { gridGeometry } from "../../../src/view/tensor/grid";
 import { TILE_SCALE_NONE } from "../../../src/view/tensor/tiling";
 import { defaultViewCfg } from "../../../src/view/tensor/tensor-view";
+import { defaultPlanTile } from "../../../src/view/tensor/seeds";
+import { buildPlanPaint } from "../../../src/view/tensor/layers";
+import { planElementFromCell, planGesture } from "../../../src/view/tensor/gesture";
 
 const S = () => useStore.getState();
 

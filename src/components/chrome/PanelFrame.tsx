@@ -1,12 +1,6 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
-import {
-  PANEL_COLLAPSE_AT,
-  PANEL_MAX,
-  PANEL_MIN,
-  PANEL_RAIL,
-  PanelSide,
-  useStore,
-} from "../../state/store";
+import { useStore } from "../../state/store";
+import { PANEL_COLLAPSE_AT, PANEL_MAX, PANEL_MIN, PANEL_RAIL, PanelSide } from "../../view/workspace";
 
 /**
  * Width, collapse-to-rail, and the drag strip shared by both side panels.

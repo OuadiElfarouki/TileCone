@@ -2,8 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { box } from "../../../src/core/region";
 import { gridGeometry, nudgeUnit } from "../../../src/view/tensor/grid";
 import { decodeWorkspace, encodeWorkspace, type WorkspaceLink } from "../../../src/state/share";
-import { defaultPlanTile, startingTiles, useStore } from "../../../src/state/store";
-import { planGesture, selectionBoxFromDrag } from "../../../src/components/card/TensorCard";
+import { useStore } from "../../../src/state/store";
 import { selectionReading } from "../../../src/components/inspector/AxisEditor";
 import {
   gestureTile,
@@ -13,6 +12,8 @@ import {
   tilePosition,
   tileSpanAt,
 } from "../../../src/view/tensor/tile-spec";
+import { defaultPlanTile, startingTiles } from "../../../src/view/tensor/seeds";
+import { planGesture, selectionBoxFromDrag } from "../../../src/view/tensor/gesture";
 
 const S = () => useStore.getState();
 

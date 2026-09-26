@@ -6,8 +6,7 @@ import { inputSharing } from "../../core/reuse";
 import type { PropResult } from "../../core/propagate";
 import { count, fromBox, Region, union } from "../../core/region";
 import type { ResolvedGraph } from "../../core/graph";
-import { analysisTarget, groupPropResult } from "../../state/store";
-import type { BoxProp, Direction, SelPart } from "../../state/store";
+import { analysisTarget, groupPropResult, BoxProp, Direction, SelPart } from "../../view/workspace";
 
 /**
  * One scenario's cost, as figures rather than numbers.

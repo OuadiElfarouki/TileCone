@@ -5,10 +5,11 @@ import { tileOf } from "../../view/tensor/grid";
 import { selectionToLink, shareTarget } from "../../state/share";
 import { CopyButton } from "./CopyButton";
 import { opLabel } from "../../core/ops/index";
-import { involvedTensorIds, useStore } from "../../state/store";
+import { useStore } from "../../state/store";
 import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
 import { seedTile } from "../../view/tensor/tile-spec";
 import { overlayTokens } from "../../view/dsl-highlight";
+import { involvedTensorIds } from "../../view/workspace";
 
 /**
  * Copies a link that restores this workspace - source, selection, analysis views

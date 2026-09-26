@@ -2,17 +2,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { canonicalize, count, fromBox, box } from "../../src/core/region";
 import { computeMetrics } from "../../src/core/metrics";
 import { EXAMPLES } from "../../src/examples";
-import {
-  operationForTensor,
-  enabledPropResult,
-  involvedTensorIds,
-  type Direction,
-  MAX_PER_BOX_PROPS, PANEL_COLLAPSE_AT, PANEL_MAX, PANEL_MIN,
-  planesOf, startingTiles, useStore,
-} from "../../src/state/store";
+import { useStore } from "../../src/state/store";
 import { cardPx, graphScale, MAX_ELEM_PX, planeExtents, TILE_SCALE_NONE } from "../../src/view/tensor/tiling";
 import { nudgeDelta, nudgeUnit, snapSpan, tileOf } from "../../src/view/tensor/grid";
 import { viewAxes } from "../../src/view/tensor/tensor-view";
+import { operationForTensor, enabledPropResult, involvedTensorIds, Direction, MAX_PER_BOX_PROPS, PANEL_COLLAPSE_AT, PANEL_MAX, PANEL_MIN } from "../../src/view/workspace";
+import { planesOf, startingTiles } from "../../src/view/tensor/seeds";
 
 const S = () => useStore.getState();
 const sel = () => S().selection;
