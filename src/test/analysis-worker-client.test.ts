@@ -113,7 +113,9 @@ describe("analysis worker client", () => {
     }).catch((error: unknown) => error);
     const first = FakeWorker.instances[0];
     const region = box([0, 64], [0, 64]);
-    const reuse = client.reuseInWorker({ graphId: null, graph, tensorId: "Y", box: region });
+    const reuse = client.reuseInWorker({
+      graphId: null, graph, tensorId: "Y", box: region, surfaces: ["backward"],
+    });
     const second = FakeWorker.instances[1];
 
     expect(first.terminated).toBe(true);

@@ -4,7 +4,12 @@ import type { ResolvedGraph } from "../core/graph";
 import { ratioFigure, sumFigures } from "../core/metrics";
 import { TensorReadout } from "../core/metrics";
 import type { ConeFindings } from "../core/notes";
-import { estimateInputReuseSweep, ReuseEstimate, type ReuseSweep } from "../core/reuse";
+import {
+  estimateInputReuseSweep,
+  ReuseEstimate,
+  type ReuseSurface,
+  type ReuseSweep,
+} from "../core/reuse";
 import {
   Box,
   Region,
@@ -27,6 +32,7 @@ import {
   partsOn,
   selectedTensorIds,
   startingTiles,
+  sweepAnchorIndex,
   useDark,
   useStore,
 } from "./store";
@@ -316,13 +322,24 @@ export function reuseQualifiers(
   };
 }
 
-type ReuseProbe = { tensorId: string; box: Box; colorIndex?: number };
+/** The tile a sweep is anchored on. `colorIndex` is its index in the whole
+ *  selection, which is what owns its hue, so the playback paints in the tile's
+ *  own colour rather than the first one. */
+type ReuseProbe = { tensorId: string; box: Box; colorIndex: number };
 type ReuseRun = {
   graph: ResolvedGraph;
   probe: ReuseProbe;
   rows: ReuseEstimate[];
+  /** The relations this sweep was asked to trace. The rows do not depend on
+   *  them - the estimate is backward demand either way - but the playback
+   *  does, so a replay after a view toggle has to re-ask rather than repaint
+   *  a surface the sweep never walked. */
+  surfaces: ReuseSurface[];
   sweep?: ReuseSweep;
 };
+
+const sameSurfaces = (left: readonly ReuseSurface[], right: readonly ReuseSurface[]) =>
+  left.length === right.length && left.every((surface, i) => surface === right[i]);
 
 const sameBox = (left: Box, right: Box) =>
   left.length === right.length && left.every(
@@ -940,19 +957,22 @@ export function Inspector(): React.ReactElement {
    *  the cache key prevents its button and its displayed result from choosing
    *  subtly different fallbacks. */
   const reuseProbe = useMemo<ReuseProbe | null>(() => {
-    if (!selection || !activeTensorId) return null;
-    const fallback = selection.parts
-      .map((_, index) => index)
-      .filter((index) =>
-        selection.parts[index].tensorId === activeTensorId && !hiddenBoxes.has(index)
-      )
-      .pop();
-    const probeIndex = focusedBox !== null && !hiddenBoxes.has(focusedBox)
-      ? focusedBox
-      : fallback;
-    const probe = probeIndex === undefined ? null : selection.parts[probeIndex];
-    return probe ? { tensorId: probe.tensorId, box: probe.box, colorIndex: probeIndex! } : null;
-  }, [selection, activeTensorId, hiddenBoxes, focusedBox]);
+    if (!selection) return null;
+    const index = sweepAnchorIndex(selection.parts, selectedGroup, rawFocus, hiddenBoxes);
+    if (index === null) return null;
+    const probe = selection.parts[index];
+    return probe ? { tensorId: probe.tensorId, box: probe.box, colorIndex: index } : null;
+  }, [selection, selectedGroup, rawFocus, hiddenBoxes]);
+  /** The relations the sweep should trace: whichever the Dependencies view has
+   *  switched on. A probe is painted in each one's own mark, so a relation the
+   *  reader has hidden there must not reappear here. */
+  const reuseSurfaces = useMemo<ReuseSurface[]>(() => {
+    const list: ReuseSurface[] = [];
+    if (direction === "backward" || direction === "both") list.push("backward");
+    if (direction === "forward" || direction === "both") list.push("forward");
+    if (showEntangled) list.push("entangled");
+    return list;
+  }, [direction, showEntangled]);
   const [reuseRun, setReuseRun] = useState<ReuseRun | null>(null);
   const [reusePending, setReusePending] = useState(false);
   const [reuseError, setReuseError] = useState<string | null>(null);
@@ -981,7 +1001,7 @@ export function Inspector(): React.ReactElement {
       tensorId: probe.tensorId,
       anchorBox: probe.box,
       tile,
-      colorIndex: probe.colorIndex ?? 0,
+      colorIndex: probe.colorIndex,
       frames: sweep.frames,
       visited: reduced ? sweep.frames.length : Math.min(1, sweep.frames.length),
       phase: reduced ? "settled" : "playing",
@@ -1226,7 +1246,13 @@ export function Inspector(): React.ReactElement {
    * tensor; count how many touch the current footprint on each input. The sweep
    * is defined by one tile on one tensor, so it follows the anchor part (the
    * focused one) else the last drawn rather than mixing tensors. */
-  const runReuse = (probe: ReuseProbe, graph: ResolvedGraph, request: number, retried: boolean) => {
+  const runReuse = (
+    probe: ReuseProbe,
+    graph: ResolvedGraph,
+    surfaces: ReuseSurface[],
+    request: number,
+    retried: boolean
+  ) => {
     /** Whether the answer would still be about the tile and the graph it was
      *  asked about. Read fresh: the sweep outlives the click that started it. */
     const stale = () => {
@@ -1243,15 +1269,17 @@ export function Inspector(): React.ReactElement {
           graph,
           tensorId: probe.tensorId,
           box: probe.box,
+          surfaces,
         })
-      : Promise.resolve(estimateInputReuseSweep(graph, {
-          tensorId: probe.tensorId,
-          region: fromBox(probe.box),
-        }));
+      : Promise.resolve(estimateInputReuseSweep(
+          graph,
+          { tensorId: probe.tensorId, region: fromBox(probe.box) },
+          { surfaces }
+        ));
     void work.then((sweep) => {
       if (stale()) return;
       setReusePending(false);
-      setReuseRun({ graph, probe, rows: sweep.estimates, sweep });
+      setReuseRun({ graph, probe, surfaces, rows: sweep.estimates, sweep });
       if (useStore.getState().inspectorTab === "execution") startPlayback(sweep, probe);
     }).catch((error) => {
       if (request !== reuseRequest.current) return;
@@ -1260,7 +1288,7 @@ export function Inspector(): React.ReactElement {
          a second cancellation is something contending for the lane rather
          than the one build that takes it, and a silent button beats a loop. */
       if (isAnalysisCancelled(error)) {
-        if (!retried && !stale()) return runReuse(probe, graph, request, true);
+        if (!retried && !stale()) return runReuse(probe, graph, surfaces, request, true);
         setReusePending(false);
         return;
       }
@@ -1271,7 +1299,8 @@ export function Inspector(): React.ReactElement {
 
   const computeReuse = () => {
     if (!reuseProbe) return;
-    const cached = reuseRun && currentReuseRows(reuseRun, resolved, reuseProbe)
+    const cached = reuseRun && currentReuseRows(reuseRun, resolved, reuseProbe) &&
+      sameSurfaces(reuseRun.surfaces, reuseSurfaces)
       ? reuseRun.sweep
       : null;
     if (cached) {
@@ -1280,7 +1309,7 @@ export function Inspector(): React.ReactElement {
     }
     setReusePending(true);
     setReuseError(null);
-    runReuse(reuseProbe, resolved, ++reuseRequest.current, false);
+    runReuse(reuseProbe, resolved, reuseSurfaces, ++reuseRequest.current, false);
   };
 
   return (

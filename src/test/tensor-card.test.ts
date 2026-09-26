@@ -6,20 +6,34 @@ import {
   selectionBoxFromDrag,
   visibleApproximation,
 } from "../ui/TensorCard";
-import { box, fromBox } from "../core/region";
+import { box, fromBox, type Box } from "../core/region";
 import { gridGeometry, stripeAngleDeg } from "../ui/grid";
 import { graphScale } from "../ui/tiling";
 import type { ExecutionPlayback } from "../ui/store";
 
 describe("execution sweep paint", () => {
+  /* Two probes on Y. Each reads a band of X wider than the part the anchor
+     also reads, so `region` and `shared` are genuinely different sets. */
+  const reach = (region: Box, shared: Box | null) => ({
+    region: fromBox(region),
+    shared: shared ? fromBox(shared) : null,
+  });
   const playback = (phase: ExecutionPlayback["phase"] = "playing"): ExecutionPlayback => ({
     tensorId: "Y",
     anchorBox: box([0, 2], [0, 2]),
     tile: [2, 2],
     colorIndex: 0,
     frames: [
-      { box: box([0, 2], [0, 2]), weight: 1, shared: { X: fromBox(box([0, 2], [0, 4])) } },
-      { box: box([0, 2], [2, 4]), weight: 1, shared: { X: fromBox(box([0, 2], [0, 4])) } },
+      {
+        box: box([0, 2], [0, 2]),
+        weight: 1,
+        surfaces: { backward: { X: reach(box([0, 4], [0, 4]), box([0, 2], [0, 4])) } },
+      },
+      {
+        box: box([0, 2], [2, 4]),
+        weight: 1,
+        surfaces: { backward: { X: reach(box([0, 4], [0, 4]), box([0, 2], [0, 4])) } },
+      },
     ],
     visited: 2,
     phase,
@@ -36,15 +50,40 @@ describe("execution sweep paint", () => {
     expect(paint.layers[1].seed).toBe(true);
   });
 
-  it("pulses the active shared input, then leaves a quieter union", () => {
+  /* A probe paints where it lands as well as where it meets the anchor: a
+     sweep whose probes mostly share nothing would otherwise paint nothing. */
+  it("paints a probe's whole reach, with the part the anchor meets on top", () => {
     const active = buildExecutionPaint({ tensorId: "X", dark: false, playback: playback() });
+    const [rest, shared] = active.layers;
+    expect(rest.region.boxes).toEqual([box([2, 4], [0, 4])]); // reach minus the meeting
+    expect(rest.alpha).toBe(0.26);
+    expect(rest.seed).toBeUndefined();
+    expect(shared.region.boxes).toEqual([box([0, 2], [0, 4])]);
+    expect(shared.alpha).toBe(0.62);
+    expect(shared.seed).toBe(true);
+  });
+
+  it("settles both readings into a quieter union", () => {
     const settled = buildExecutionPaint({
       tensorId: "X", dark: false, playback: playback("settled"),
     });
-    expect(active.layers[0].alpha).toBe(0.62);
-    expect(active.layers[0].seed).toBe(true);
-    expect(settled.layers[0].alpha).toBe(0.22);
-    expect(settled.layers[0].seed).toBe(false);
+    expect(settled.layers.map((layer) => layer.alpha)).toEqual([0.09, 0.22]);
+    expect(settled.layers.every((layer) => !layer.seed)).toBe(true);
+  });
+
+  /* Each relation keeps the mark it owns on the canvas, so a probe's upstream
+     reach cannot be read as its downstream reach. */
+  it("paints each relation in its own mark", () => {
+    const base = playback();
+    const frame = base.frames[1];
+    frame.surfaces.forward = { Z: reach(box([0, 4], [0, 4]), null) };
+    frame.surfaces.entangled = { W: reach(box([0, 4], [0, 4]), null) };
+    const feeds = buildExecutionPaint({ tensorId: "Z", dark: false, playback: base });
+    const met = buildExecutionPaint({ tensorId: "W", dark: false, playback: base });
+    const needs = buildExecutionPaint({ tensorId: "X", dark: false, playback: base });
+    expect(needs.layers[0].pattern).toBeUndefined();
+    expect(feeds.layers[0].pattern?.kind).toBe("stripe");
+    expect(met.layers[0].pattern?.kind).toBe("stipple");
   });
 
   /* The sweep's cover would read as a lattice, and a lattice line that no
@@ -60,14 +99,12 @@ describe("execution sweep paint", () => {
      probe has to carry its hatch into that union. */
   it("marks the settled union approximate when one probe was", () => {
     const widened = playback("settled");
-    widened.frames[1].shared.X = {
-      ...widened.frames[1].shared.X,
-      exact: false,
-      reasons: ["strided fallback"],
-    };
+    const reached = widened.frames[1].surfaces.backward!.X;
+    reached.shared = { ...reached.shared!, exact: false, reasons: ["strided fallback"] };
     const settled = buildExecutionPaint({ tensorId: "X", dark: false, playback: widened });
-    expect(settled.layers[0].hatch).toBe(true);
-    expect(settled.layers[0].region.reasons).toEqual(["strided fallback"]);
+    const shared = settled.layers[1];
+    expect(shared.hatch).toBe(true);
+    expect(shared.region.reasons).toEqual(["strided fallback"]);
   });
 });
 

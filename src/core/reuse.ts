@@ -1,7 +1,8 @@
-import { executeQuery } from "./executor";
+import { entangledWith } from "./entangle";
+import { executeQuery, validateSelection } from "./executor";
 import { ResolvedGraph } from "./graph";
 import { PropResult, Selection } from "./propagate";
-import { Box, Region, count, fromBox, intersect, isEmpty } from "./region";
+import { Box, Region, canonicalize, count, fromBox, intersect, isEmpty } from "./region";
 import { DTYPE_BYTES } from "./dtypes";
 
 export type ReuseEstimate = {
@@ -71,20 +72,75 @@ export function inputSharing(graph: ResolvedGraph, cones: PropResult[]): InputSh
   });
 }
 
-export type ReuseOptions = { sampleCap?: number; seed?: number };
+/**
+ * A relation a probe can be reported on, named after the three the canvas
+ * already paints: a solid fill, a ruling, and a stipple.
+ *
+ * Asked for rather than assumed. The backward walk happens either way because
+ * the estimate is a statement about backward demand, but reporting it per
+ * tensor is paint; `forward` and `entangled` cost a query per probe on top.
+ */
+export type ReuseSurface = "backward" | "forward" | "entangled";
 
-/** One real probe performed by the reuse estimator. `shared` is the part of
- * each graph-input footprint that this probe has in common with the anchor. */
+/** Where one probe lands on one tensor through one relation. */
+export type ReuseReach = {
+  /** What the probe reaches there. */
+  region: Region;
+  /** The part of it the anchor reaches too, or null where they do not meet. */
+  shared: Region | null;
+};
+
+export type ReuseOptions = {
+  sampleCap?: number;
+  seed?: number;
+  /** Relations to report per probe. `backward` is always reported on the graph
+   *  inputs whether or not it is listed, because the estimate is made of it. */
+  surfaces?: readonly ReuseSurface[];
+};
+
+/**
+ * One real probe performed by the reuse estimator.
+ *
+ * `surfaces` carries a relation only when it was asked for, so an unpainted
+ * relation is absent rather than empty - on a card those read differently.
+ * All of it is paint: the estimate is computed from the same walk but is not
+ * read back out of here. Keeping both in one record is what makes the playback
+ * the work the estimator did rather than a second derivation of it.
+ */
 export type ReuseSweepFrame = {
   box: Box;
   weight: number;
-  shared: Record<string, Region>;
+  surfaces: Partial<Record<ReuseSurface, Record<string, ReuseReach>>>;
 };
 
 export type ReuseSweep = {
   estimates: ReuseEstimate[];
   frames: ReuseSweepFrame[];
+  /** The relations the frames carry, so a consumer can tell an unpainted
+   *  relation from one that is painted and happens to be empty. */
+  surfaces: ReuseSurface[];
 };
+
+/** A propagation result reduced to the one region it holds per tensor. */
+const regionsOf = (tensors: Map<string, { region: Region }>): Map<string, Region> =>
+  new Map([...tensors].map(([tensorId, reached]) => [tensorId, reached.region]));
+
+/** Every tensor an entanglement query reached, as one region each. A tensor
+ *  read through two slots has two entries, and their union is what it meets. */
+function entangledByTensor(graph: ResolvedGraph, tensorId: string, region: Region): Map<string, Region> {
+  const byTensor = new Map<string, Region>();
+  for (const entry of entangledWith(graph, tensorId, validateSelection(graph, { tensorId, region }).region)) {
+    const found = byTensor.get(entry.tensorId);
+    byTensor.set(entry.tensorId, found
+      ? canonicalize({
+          boxes: [...found.boxes, ...entry.region.boxes],
+          exact: found.exact && entry.region.exact,
+          reasons: [...new Set([...found.reasons, ...entry.region.reasons])],
+        })
+      : entry.region);
+  }
+  return byTensor;
+}
 
 function mulberry32(seed: number): () => number {
   let state = seed >>> 0;
@@ -119,15 +175,28 @@ function sampledTileIndices(total: number, cap: number, seed: number): number[] 
 export function estimateInputReuseSweep(
   graph: ResolvedGraph,
   root: Selection,
-  { sampleCap = 48, seed = 0x5eedc0de }: ReuseOptions = {}
+  { sampleCap = 48, seed = 0x5eedc0de, surfaces = ["backward"] }: ReuseOptions = {}
 ): ReuseSweep {
+  const painted = new Set<ReuseSurface>(surfaces);
+  const reported = [...painted];
   const tensor = graph.tensors[root.tensorId];
-  if (!tensor) return { estimates: [], frames: [] };
-  const checkedRoot = executeQuery(graph, { ...root, direction: "backward" });
+  if (!tensor) return { estimates: [], frames: [], surfaces: reported };
+  const checkedRoot = executeQuery(graph, {
+    ...root,
+    direction: painted.has("forward") ? "both" : "backward",
+  });
   const current = checkedRoot.backward!;
   if (checkedRoot.selection.region.boxes.length !== 1)
     throw new Error("reuse estimation requires exactly one selection box");
   const rootBox = checkedRoot.selection.region.boxes[0];
+  /* The anchor's own side of each painted relation, computed once. A probe's
+     `shared` is measured against these, so the emphasis the canvas draws is
+     the same overlap the estimate counts rather than a second reading of it. */
+  const anchorBackward = regionsOf(current.tensors);
+  const anchorForward = checkedRoot.forward ? regionsOf(checkedRoot.forward.tensors) : null;
+  const anchorEntangled = painted.has("entangled")
+    ? entangledByTensor(graph, root.tensorId, checkedRoot.selection.region)
+    : null;
 
   const shape = tensor.resolved!;
   const tileExtents = rootBox.map((interval) => interval.hi - interval.lo);
@@ -159,6 +228,20 @@ export function estimateInputReuseSweep(
     };
   };
 
+  /** Pair every tensor a probe reached with the part the anchor reached too. */
+  const reachOf = (
+    probeSide: Map<string, Region>,
+    anchorSide: Map<string, Region> | null
+  ): Record<string, ReuseReach> => {
+    const out: Record<string, ReuseReach> = {};
+    for (const [tensorId, region] of probeSide) {
+      const mine = anchorSide?.get(tensorId);
+      const meeting = mine ? intersect(region, mine) : null;
+      out[tensorId] = { region, shared: meeting && !isEmpty(meeting) ? meeting : null };
+    }
+    return out;
+  };
+
   for (const [sample, flat] of flatIndices.entries()) {
     // Strata can differ in size. Each sample represents its stratum, not an
     // equal fraction of the grid; otherwise a 5-tile/2-probe sweep is biased.
@@ -174,24 +257,44 @@ export function estimateInputReuseSweep(
       lo: tileIndex[axis] * tileExtents[axis],
       hi: Math.min((tileIndex[axis] + 1) * tileExtents[axis], extent),
     }));
-    const probe = executeQuery(graph, {
+    const probeRegion = fromBox(probeBox);
+    const probed = executeQuery(graph, {
       tensorId: root.tensorId,
-      region: fromBox(probeBox),
-      direction: "backward",
-    }).backward!;
-    const shared: Record<string, Region> = {};
+      region: probeRegion,
+      direction: painted.has("forward") ? "both" : "backward",
+    });
+    const probe = probed.backward!;
+
     for (const input of inputs) {
-      const probed = overlap(input.id, probe);
-      if (probed.fraction <= 0) continue; // see NOTE below: a reported miss is a true miss
-      if (probed.region) shared[input.id] = probed.region;
+      const result = overlap(input.id, probe);
+      if (result.fraction <= 0) continue; // see NOTE below: a reported miss is a true miss
       estimated.set(input.id, estimated.get(input.id)! + weight);
-      overlapTotals.set(input.id, overlapTotals.get(input.id)! + probed.fraction * weight);
-      if (!probed.exact) {
+      overlapTotals.set(input.id, overlapTotals.get(input.id)! + result.fraction * weight);
+      if (!result.exact) {
         exact.set(input.id, false);
-        for (const reason of probed.reasons) reasons.get(input.id)!.add(reason);
+        for (const reason of result.reasons) reasons.get(input.id)!.add(reason);
       }
     }
-    frames.push({ box: probeBox, weight, shared });
+    frames.push({
+      box: probeBox,
+      weight,
+      surfaces: {
+        ...(painted.has("backward")
+          ? { backward: reachOf(regionsOf(probe.tensors), anchorBackward) }
+          : {}),
+        ...(anchorForward
+          ? { forward: reachOf(regionsOf(probed.forward!.tensors), anchorForward) }
+          : {}),
+        ...(anchorEntangled
+          ? {
+              entangled: reachOf(
+                entangledByTensor(graph, root.tensorId, probeRegion),
+                anchorEntangled
+              ),
+            }
+          : {}),
+      },
+    });
   }
 
   /* NOTE: only a probe that reported a touch can have reported it falsely.
@@ -238,5 +341,6 @@ export function estimateInputReuseSweep(
       neighbors: neighbors.get(input.id)!,
     })),
     frames,
+    surfaces: reported,
   };
 }

@@ -1,6 +1,6 @@
 import type { Graph, ResolvedGraphData } from "../core/graph";
 import type { InterfaceReport } from "../core/plan/interfaces";
-import type { ReuseSweep } from "../core/reuse";
+import type { ReuseSurface, ReuseSweep } from "../core/reuse";
 import type { Box } from "../core/region";
 import type { CompilerDiagnostic } from "../parse/compiler";
 import type { BaseGraphLayout } from "./graph-scene";
@@ -34,6 +34,8 @@ export type AnalysisRequest =
       graph?: ResolvedGraphData;
       tensorId: string;
       box: Box;
+      /** The relations to report per probe; see `ReuseSurface`. */
+      surfaces: ReuseSurface[];
     };
 
 export type AnalysisResponse =

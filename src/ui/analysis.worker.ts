@@ -52,7 +52,7 @@ host.onmessage = ({ data }) => {
       host.postMessage({
         id: data.id,
         kind: "reuse",
-        result: reuseArtifact(graph, data.tensorId, data.box),
+        result: reuseArtifact(graph, data.tensorId, data.box, data.surfaces),
       });
     }
   } catch (error) {

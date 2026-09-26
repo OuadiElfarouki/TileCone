@@ -37,6 +37,11 @@ export type PanelSide = "left" | "right";
 export type Theme = "light" | "dark";
 /** The two classes of question the inspector answers; see `inspectorTab`. */
 export type InspectorTab = "dependencies" | "execution" | "plan";
+export type ExecutionScope = {
+  hidden: SelPart[];
+  focused: SelPart | null;
+  pinned: SelPart | null;
+};
 export type ExecutionPlayback = {
   tensorId: string;
   anchorBox: Box;
@@ -212,6 +217,31 @@ export function analysisTarget(parts: SelPart[], group: string | null, focus: nu
   const index = focusedBox ?? parts.reduce((last, part, i) => part.tensorId === tensorId ? i : last, -1);
   return { tensorId, focusedBox, index };
 }
+/**
+ * The tile a reuse sweep is about: the focused one when it is in the analysis
+ * group and still enabled, else the last enabled tile drawn there.
+ *
+ * Lives here rather than in the inspector because entering Execution has to
+ * know which tile it is scoping to before the inspector renders, and the two
+ * choosing differently would scope the panel to one tile and sweep another.
+ */
+export function sweepAnchorIndex(
+  parts: SelPart[],
+  group: string | null,
+  focus: number | null,
+  hidden: Set<number>
+): number | null {
+  const { tensorId } = analysisTarget(parts, group, null);
+  if (!tensorId) return null;
+  const enabled = (index: number) =>
+    parts[index]?.tensorId === tensorId && !hidden.has(index);
+  if (focus !== null && enabled(focus)) return focus;
+  return parts.reduce<number | null>(
+    (last, _part, index) => (enabled(index) ? index : last),
+    null
+  );
+}
+
 /**
  * The operation a tile on this tensor is "at", for the operations list.
  *
@@ -428,6 +458,18 @@ type State = {
   /** A visual replay of the deterministic probes behind the reuse estimate.
    * It never changes `selection` or `plan`; those remain underneath it. */
   executionPlayback: ExecutionPlayback | null;
+  /**
+   * The attribution Execution set aside while it scopes the panel to the one
+   * tile its sweep is about.
+   *
+   * A sweep is defined by a single tile, and the figures beside it are about
+   * that tile, so the view disables every other one on the way in and puts
+   * them back on the way out - whatever happened in between. Parts are held by
+   * identity rather than index, the same way `setSelection` remaps them, so an
+   * edit that renumbers the tiles cannot restore the wrong ones; a part that no
+   * longer exists simply drops out.
+   */
+  executionScope: ExecutionScope | null;
 
   viewCfgs: Record<string, ViewCfg>;
   /** Px per element for every card in this graph. A property of the resolved
@@ -653,6 +695,8 @@ function recompute(
     if (previous?.selection && previous.perBox &&
         previous.selection.parts.length === previous.perBox.length) {
       previous.selection.parts.forEach((part, index) => {
+        // Execution above the attribution cap only populates its anchor.
+        if (!previous.perBox![index].backward && !previous.perBox![index].forward) return;
         const key = keyOf(part);
         const entries = cached.get(key);
         if (entries) entries.push(previous.perBox![index]);
@@ -969,7 +1013,8 @@ function loadResolvedGraph(
   | "entangled"
   | "perBox" | "focusedBox" | "pinnedBox" | "viewCfgs" | "preview" | "graphPx"
   | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "tensorOffsets"
-  | "planTiles" | "planTask" | "plan" | "planSupply" | "executionPlayback"
+  | "planTiles" | "planTask" | "plan" | "planSupply"
+  | "executionPlayback" | "executionScope"
 > {
   const viewCfgs = Object.create(null) as Record<string, ViewCfg>;
   for (const t of Object.values(resolved.tensors)) viewCfgs[t.id] = defaultViewCfg(t.resolved!);
@@ -995,6 +1040,7 @@ function loadResolvedGraph(
     hiddenBoxes: new Set<number>(),
     analysisGroup: null,
     executionPlayback: null,
+    executionScope: null,
     preview: null,
     viewCfgs,
     graphPx: worker?.graphPx ?? graphScale(planesOf(resolved)),
@@ -1140,7 +1186,99 @@ function inspectTask(
   });
 }
 
-export const useStore = create<State>((set, get) => ({
+/**
+ * Narrow the attribution to the swept tile on the way into Execution, and put
+ * the reader's own back on the way out.
+ *
+ * Execution answers one question about one tile - how many tiles of this size
+ * share its demand - so the other tiles are not peers of it here the way they
+ * are under Dependencies, and leaving them enabled would put their cones on the
+ * cards beside a sweep that is not about them. Disabling is the existing
+ * control rather than a second kind of invisibility: each tile keeps its faint
+ * rectangle, so the reader can see they are still there.
+ *
+ * What is restored is what was set aside, not what Execution ended up with, so
+ * the Dependencies view comes back as it was left however the sweep was driven.
+ */
+function executionScoping(
+  state: State,
+  tab: InspectorTab
+): Partial<Pick<State, "hiddenBoxes" | "focusedBox" | "pinnedBox" | "executionScope">> {
+  const parts = state.selection?.parts ?? [];
+  if (tab === "execution") {
+    const anchor = sweepAnchorIndex(
+      parts,
+      state.analysisGroup,
+      // Above the attribution cap there is no per-tile propagation, so a focus
+      // narrows nothing and must not choose the anchor either.
+      state.perBox ? state.focusedBox : null,
+      state.hiddenBoxes
+    );
+    if (anchor === null) return {};
+    return {
+      executionScope: state.executionScope ?? {
+        hidden: [...state.hiddenBoxes].flatMap((index) => parts[index] ?? []),
+        focused: state.focusedBox === null ? null : parts[state.focusedBox] ?? null,
+        pinned: state.pinnedBox === null ? null : parts[state.pinnedBox] ?? null,
+      },
+      hiddenBoxes: new Set(parts.map((_part, index) => index).filter((index) => index !== anchor)),
+      // Pinned as well as focused: with the tiles list gone there is nothing to
+      // hover, but a pointer over the canvas can still move an unpinned focus.
+      focusedBox: anchor,
+      pinnedBox: anchor,
+    };
+  }
+  const scope = state.executionScope;
+  if (!scope) return {};
+  const indexOf = new Map(parts.map((part, index) => [part, index]));
+  const at = (part: SelPart | null) => (part === null ? null : indexOf.get(part) ?? null);
+  return {
+    executionScope: null,
+    hiddenBoxes: new Set(scope.hidden.flatMap((part) => {
+      const index = indexOf.get(part);
+      return index === undefined ? [] : [index];
+    })),
+    focusedBox: at(scope.focused),
+    pinnedBox: at(scope.pinned),
+  };
+}
+
+export const useStore = create<State>((commit, get) => {
+  // Keep scope transactional with edits, including undo and the first draw in
+  // an empty Execution view. Playback ticks must never trigger propagation.
+  const set: typeof commit = (update, replace) => commit((previous) => {
+    const patch = typeof update === "function" ? update(previous) : update;
+    let next = { ...previous, ...patch };
+    const changed = next.selection !== previous.selection ||
+      next.resolved !== previous.resolved || next.inspectorTab !== previous.inspectorTab;
+    if (!changed) return patch;
+    if (next.inspectorTab === "execution") {
+      next = { ...next, ...executionScoping(next, "execution") };
+      const anchor = next.focusedBox;
+      if (next.selection && next.resolved && anchor !== null &&
+          next.selection.parts.length > MAX_PER_BOX_PROPS) {
+        // One extra query, regardless of selection size. Empty entries preserve
+        // global tile indices/colors without computing every tile's cone.
+        const part = next.selection.parts[anchor];
+        const one = recompute(next.resolved, { parts: [part] });
+        next = {
+          ...next,
+          ...one,
+          perBox: next.selection.parts.map((_, index) => index === anchor
+            ? one.perBox![0] : { backward: null, forward: null }),
+          entangled: null,
+        };
+      }
+    } else {
+      next = { ...next, ...executionScoping(next, next.inspectorTab) };
+      if (previous.inspectorTab === "execution" &&
+          previous.selection && previous.selection.parts.length > MAX_PER_BOX_PROPS) {
+        Object.assign(next, recompute(next.resolved, next.selection));
+      }
+    }
+    return next;
+  }, replace);
+  return ({
   dslText: EXAMPLES[0].dsl,
   draftText: EXAMPLES[0].dsl,
   exampleIndex: 0,
@@ -1154,6 +1292,7 @@ export const useStore = create<State>((set, get) => ({
   showEntangled: false,
   inspectorTab: "dependencies",
   executionPlayback: null,
+  executionScope: null,
   ...NO_PLAN,
   entangled: null,
   selection: null,
@@ -1593,7 +1732,7 @@ export const useStore = create<State>((set, get) => ({
       const tile = state.plan?.families.get(tensorId)?.tile ?? state.executionPlayback.tile;
       inspectTask(state, set, tensorId, [...tile], new Array(tile.length).fill(0));
     }
-    set({ inspectorTab: tab });
+    set({ inspectorTab: tab, ...executionScoping(get(), tab) });
   },
 
   setExecutionPlayback: (executionPlayback) => set({ executionPlayback }),
@@ -1879,7 +2018,8 @@ export const useStore = create<State>((set, get) => ({
       set({ compiling: false, loadError: (e as Error).message });
     }
   },
-}));
+  });
+});
 
 /** Four components derive the same boolean from the theme to mix tile hues. */
 export const useDark = (): boolean => useStore((s) => s.theme === "dark");

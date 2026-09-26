@@ -7,6 +7,10 @@ import { compileDSL } from "../parse/compiler";
 /** One output tile of a GEMM reads a full band of A and a full band of B. */
 const GEMM = `M = 4\nN = 4\nK = 8\nA = Tensor(M, K, dtype=fp16)\nB = Tensor(K, N, dtype=fp16)\nC = matmul(A, B)\n`;
 
+/** A GEMM whose output is itself an operand, so a tile on it has all three
+ *  relations: what it reads, what it feeds, and what it is combined with. */
+const CHAIN = `${GEMM}W = Tensor(N, N, dtype=fp16)\nE = matmul(C, W)\n`;
+
 const coneOf = (graph: ReturnType<typeof compileDSL>["resolved"], tensorId: string, region: ReturnType<typeof fromBox>) =>
   executeQuery(graph, { tensorId, region, direction: "backward" }).backward!;
 
@@ -28,13 +32,52 @@ describe("reuse estimation", () => {
       box([2, 4], [0, 2]),
       box([2, 4], [2, 4]),
     ]);
-    expect(sweep.frames.map((frame) => [frame.weight, Object.keys(frame.shared)])).toEqual([
+    const met = (frame: (typeof sweep.frames)[number]) =>
+      Object.entries(frame.surfaces.backward!)
+        .filter(([tensorId, reach]) => reach.shared && !resolved.tensors[tensorId].producer)
+        .map(([tensorId]) => tensorId);
+    expect(sweep.frames.map((frame) => [frame.weight, met(frame)])).toEqual([
       [1, ["A", "B"]],
       [1, ["A"]],
       [1, ["B"]],
       [1, []],
     ]);
-    expect(sweep.frames[1].shared.A.boxes).toEqual([box([0, 2], [0, 8])]);
+    expect(sweep.frames[1].surfaces.backward!.A.shared!.boxes).toEqual([box([0, 2], [0, 8])]);
+  });
+
+  /* The relations are what the canvas paints, so an unasked one has to be
+     absent rather than empty - the two read differently on a card. A tile on
+     the intermediate has all three: it reads A and B, it feeds E, and it is
+     combined with W at the second contraction. */
+  it("traces only the relations it was asked for", () => {
+    const { resolved } = compileDSL(CHAIN);
+    const anchor = { tensorId: "C", region: fromBox(box([0, 2], [0, 2])) };
+
+    const plain = estimateInputReuseSweep(resolved, anchor);
+    expect(plain.surfaces).toEqual(["backward"]);
+    expect(plain.frames[0].surfaces.forward).toBeUndefined();
+    expect(plain.frames[0].surfaces.entangled).toBeUndefined();
+
+    const all = estimateInputReuseSweep(resolved, anchor, {
+      surfaces: ["backward", "forward", "entangled"],
+    });
+    expect(all.surfaces).toEqual(["backward", "forward", "entangled"]);
+    expect(Object.keys(all.frames[0].surfaces.forward!)).toContain("E");
+    expect(Object.keys(all.frames[0].surfaces.entangled!)).toEqual(["W"]);
+    // The estimate is the same work either way; only the paint data grew.
+    expect(all.estimates).toEqual(plain.estimates);
+  });
+
+  /* The backward walk happens either way, because the estimate is made of it.
+     Reporting it per tensor is paint, and paint nobody asked for is not sent. */
+  it("still estimates with nothing painted", () => {
+    const { resolved } = compileDSL(CHAIN);
+    const anchor = { tensorId: "C", region: fromBox(box([0, 2], [0, 2])) };
+    const bare = estimateInputReuseSweep(resolved, anchor, { surfaces: [] });
+
+    expect(bare.surfaces).toEqual([]);
+    expect(bare.frames.every((frame) => Object.keys(frame.surfaces).length === 0)).toBe(true);
+    expect(bare.estimates).toEqual(estimateInputReuseSweep(resolved, anchor).estimates);
   });
 
   it("is exact when every tile fits under the sample cap", () => {

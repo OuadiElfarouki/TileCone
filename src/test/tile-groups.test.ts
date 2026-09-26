@@ -63,17 +63,19 @@ describe("reuse presentation", () => {
   it("never presents a result against another graph or probe", () => {
     const original = chain();
     const replacement = compileDSL("X = Tensor(8)\nY = relu(X)\n").resolved;
-    const probe = { tensorId: "D", box: box([0, 8], [0, 8]) };
-    const run = { graph: original, probe, rows: [] };
+    const probe = { tensorId: "D", box: box([0, 8], [0, 8]), colorIndex: 0 };
+    const run = { graph: original, probe, rows: [], surfaces: ["backward" as const] };
 
     expect(currentReuseRows(run, original, {
       tensorId: "D",
       box: box([0, 8], [0, 8]),
+      colorIndex: 0,
     })).toEqual([]);
     expect(currentReuseRows(run, replacement, probe)).toBeNull();
     expect(currentReuseRows(run, original, {
       tensorId: "D",
       box: box([8, 16], [0, 8]),
+      colorIndex: 0,
     })).toBeNull();
   });
 
@@ -235,6 +237,118 @@ D = matmul(CC, W)
     S().applyDSL(SRC);
     S().setSelection("D", fromBox(box([160, 224], [48, 80])));
     S().setSelection("D", fromBox(box([16, 80], [128, 160])), "union");
+  });
+
+  /* A sweep is about one tile, and the figures beside it are about that tile,
+     so Execution narrows to it and Dependencies gets its own state back
+     whatever happened in between. */
+  describe("scoping to the swept tile", () => {
+    it("keeps just the new anchor enabled after drawing and undoing in Execution", () => {
+      S().setInspectorTab("execution");
+      S().setSelection("D", fromBox(box([240, 256], [240, 256])), "union");
+      const check = () => {
+        const state = S();
+        const enabled = state.selection!.parts.flatMap((_, i) => state.hiddenBoxes.has(i) ? [] : [i]);
+        expect(enabled).toEqual([state.focusedBox]);
+        expect(state.pinnedBox).toBe(state.focusedBox);
+      };
+      check();
+      S().undoWorkspace();
+      check();
+      S().setInspectorTab("dependencies");
+      expect([...S().hiddenBoxes]).toEqual([]);
+    });
+
+    it("scopes a first draw made in an empty Execution view", () => {
+      S().clearSelection();
+      S().setInspectorTab("execution");
+      S().setSelection("D", fromBox(box([0, 8], [0, 8])));
+      expect(S().executionScope).not.toBeNull();
+      expect(S().focusedBox).toBe(0);
+      expect(S().pinnedBox).toBe(0);
+    });
+
+    it("queries only the anchor above the cap and restores grouped analysis on exit", () => {
+      S().clearSelection();
+      for (let i = 0; i <= MAX_PER_BOX_PROPS; i++)
+        S().setSelection("D", fromBox(box([i * 16, i * 16 + 8], [0, 8])), "union");
+      expect(S().perBox).toBeNull();
+      const before = count(S().byTensorRes!.D.backward!.tensors.get("D")!.region);
+      S().setInspectorTab("execution");
+      const state = S();
+      const result = groupPropResult(state.byTensorRes, state.perBox,
+        state.selection!.parts, state.hiddenBoxes, state.focusedBox, "D", "backward")!;
+      expect(count(result.tensors.get("D")!.region)).toBe(64);
+      expect(state.perBox!.filter((part) => part.backward)).toHaveLength(1);
+      S().setInspectorTab("dependencies");
+      expect(S().perBox).toBeNull();
+      expect(count(S().byTensorRes!.D.backward!.tensors.get("D")!.region)).toBe(before);
+    });
+
+    it("disables every tile but the swept one, and restores them on the way out", () => {
+      S().setSelection("D", fromBox(box([200, 240], [8, 40])), "union");
+      S().toggleBoxHidden(0);
+      const before = { hidden: [...S().hiddenBoxes], focused: S().focusedBox };
+      expect(before.hidden).toEqual([0]);
+
+      S().setInspectorTab("execution");
+      // The anchor is the last enabled tile in the group; the rest are off.
+      expect(S().focusedBox).toBe(2);
+      expect([...S().hiddenBoxes].sort()).toEqual([0, 1]);
+
+      S().setInspectorTab("dependencies");
+      expect([...S().hiddenBoxes]).toEqual(before.hidden);
+      expect(S().focusedBox).toBe(before.focused);
+    });
+
+    it("sweeps the focused tile rather than the last drawn one", () => {
+      S().togglePinBox(0);
+      S().setInspectorTab("execution");
+      expect(S().focusedBox).toBe(0);
+      expect([...S().hiddenBoxes]).toEqual([1]);
+
+      S().setInspectorTab("dependencies");
+      expect(S().pinnedBox).toBe(0);
+      expect([...S().hiddenBoxes]).toEqual([]);
+    });
+
+    it("restores what was set aside, not what Execution was left holding", () => {
+      S().setInspectorTab("execution");
+      // Whatever the reader does in here is scoping, not an edit to come back to.
+      S().toggleBoxHidden(1);
+      S().clearFocus();
+      S().setInspectorTab("plan");
+
+      expect([...S().hiddenBoxes]).toEqual([]);
+      expect(S().focusedBox).toBeNull();
+      expect(S().executionScope).toBeNull();
+    });
+
+    it("restores by identity, so a redrawn group comes back as the draw left it", () => {
+      S().setSelection("CC", fromBox(box([112, 144], [192, 224])), "union");
+      S().selectAnalysisGroup("D");
+      S().toggleBoxHidden(0); // a tile on D
+      S().toggleBoxHidden(2); // the tile on CC
+      S().setInspectorTab("execution");
+      S().setSelection("D", fromBox(box([200, 240], [8, 40])), "union");
+      S().setInspectorTab("dependencies");
+
+      /* Drawing on D rebuilds every part on D, so their identity is gone and
+         the snapshot cannot put them back - the same thing an ordinary draw
+         does to their hidden state, rather than a second rule. CC was not
+         redrawn, keeps its identity, and comes back hidden. The tile just
+         drawn was never in the snapshot, so it comes back enabled. */
+      const parts = S().selection!.parts;
+      expect([...S().hiddenBoxes].map((index) => parts[index].tensorId)).toEqual(["CC"]);
+      expect(partsOn(S().selection, "D")).toHaveLength(3);
+    });
+
+    it("scopes nothing when there is nothing drawn", () => {
+      S().clearSelection();
+      S().setInspectorTab("execution");
+      expect(S().executionScope).toBeNull();
+      expect([...S().hiddenBoxes]).toEqual([]);
+    });
   });
 
   it("follows a tile drawn on another tensor, dropping a pin left behind", () => {

@@ -2,11 +2,12 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Tensor } from "../core/graph";
 import { DTYPE_BYTES } from "../core/dtypes";
 import type { Supply } from "../core/plan/interfaces";
-import type { ReuseSweepFrame } from "../core/reuse";
+import type { ReuseSurface, ReuseSweepFrame } from "../core/reuse";
 import type { TilePlan } from "../core/plan/plan";
 import { tileBox } from "../core/plan/tile-family";
 import { useFrameThrottle } from "./useFrameThrottle";
 import { useDebounced } from "./useDebounced";
+import { playbackDifference } from "./execution-paint";
 import {
   Box,
   canonicalize,
@@ -459,13 +460,13 @@ export function buildPlanPaint({
 }
 
 /**
- * The settled summary of one tensor's shared footprint, computed once per
- * sweep rather than once per repaint.
+ * A union over the visited probes, computed once per sweep rather than once
+ * per repaint.
  *
  * `union` canonicalizes to a fixpoint on every call, so folding forty-eight
  * probes pairwise is forty-seven of them for one answer - inside the paint
- * effect, redone on every dependency that repaints the card, on every input
- * the sweep touches. One canonicalize over the concatenated boxes
+ * effect, redone on every dependency that repaints the card, for every tensor
+ * and relation the sweep touches. One canonicalize over the concatenated boxes
  * represents the same set, with the same exactness and reasons: `union` is
  * that same call over two box lists, and is union-preserving either way. The
  * decomposition may differ, which nothing here reads - the fill is
@@ -475,36 +476,63 @@ export function buildPlanPaint({
  * so ticking `visited`, settling, and fading all reuse the entry. A `WeakMap`
  * keeps it bounded without anyone having to retire it.
  */
-const settledShare = new WeakMap<ReuseSweepFrame[], Map<string, Region | null>>();
+const settledUnions = new WeakMap<ReuseSweepFrame[], Map<string, Region | null>>();
 
-function sharedAcrossFrames(
+function unionAcrossFrames(
   frames: ReuseSweepFrame[],
   all: ReuseSweepFrame[],
-  tensorId: string
+  key: string,
+  pick: (frame: ReuseSweepFrame) => Region | null | undefined
 ): Region | null {
   const complete = frames.length === all.length;
-  const cached = complete ? settledShare.get(all)?.get(tensorId) : undefined;
+  const cached = complete ? settledUnions.get(all)?.get(key) : undefined;
   if (cached !== undefined) return cached;
 
-  const parts = frames.flatMap((frame) => frame.shared[tensorId] ?? []);
-  const shared = parts.length === 0 ? null : canonicalize({
+  const parts = frames.flatMap((frame) => pick(frame) ?? []);
+  const united = parts.length === 0 ? null : canonicalize({
     boxes: parts.flatMap((region) => region.boxes),
     exact: parts.every((region) => region.exact),
     reasons: [...new Set(parts.flatMap((region) => region.reasons))],
   });
   if (complete) {
-    const byTensor = settledShare.get(all) ?? new Map<string, Region | null>();
-    byTensor.set(tensorId, shared);
-    settledShare.set(all, byTensor);
+    const byKey = settledUnions.get(all) ?? new Map<string, Region | null>();
+    byKey.set(key, united);
+    settledUnions.set(all, byKey);
   }
-  return shared;
+  return united;
 }
+
+/** Relations in paint order, so a solid never lands on top of a texture that
+ *  was meant to read through it. Same order `buildLayers` uses. */
+const REUSE_SURFACES: ReuseSurface[] = ["backward", "forward", "entangled"];
+
+/**
+ * The mark each relation owns, borrowed from `buildLayers` rather than
+ * reinvented: a probe's upstream reach must not be readable as its downstream
+ * reach just because it arrived through the playback (§9).
+ */
+const surfacePattern = (
+  surface: ReuseSurface,
+  colorIndex: number
+): Layer["pattern"] | undefined => {
+  if (surface === "forward") return downstreamPattern(colorIndex);
+  if (surface === "entangled") return { kind: "stipple", density: 0.5 };
+  return undefined;
+};
 
 /**
  * Paint the probes the reuse estimator actually performed. This is an overlay:
  * it never substitutes sampled boxes for the user's selection.
  *
- * It paints the probes and leaves the lattice alone. The sweep's own cover -
+ * On the studied tensor a probe is its own rectangle. Everywhere else it is
+ * whatever that probe reaches through each relation the sweep was asked for,
+ * in that relation's own mark, with the part the anchor also reaches drawn at
+ * full strength over the rest. Those two readings are the point: the sweep
+ * shows where a tile of this size lands, and the emphasis shows the overlap
+ * the estimate is actually counting. Painting only the overlap left a probe
+ * that shares nothing painting nothing, which is most of a large sweep.
+ *
+ * It paints all of that and leaves the lattice alone. The sweep's own cover -
  * tiles of the anchor's extents laid over the tensor - would read naturally as
  * a lattice, but drawing one here breaks the rule that every drawn line is a
  * snapping boundary (§9): the card still takes ordinary selection drags under
@@ -545,10 +573,35 @@ export function buildExecutionPaint({
         hatch: false,
         seed: true,
       });
-  } else {
+    return { layers };
+  }
+
+  for (const surface of REUSE_SURFACES) {
+    const reached = active
+      ? active.surfaces[surface]?.[tensorId] ?? null
+      : null;
+    const region = active
+      ? reached?.region ?? null
+      : unionAcrossFrames(frames, playback.frames, `${surface}|${tensorId}|reach`,
+          (frame) => frame.surfaces[surface]?.[tensorId]?.region);
+    if (!region) continue;
     const shared = active
-      ? active.shared[tensorId] ?? null
-      : sharedAcrossFrames(frames, playback.frames, tensorId);
+      ? reached?.shared ?? null
+      : unionAcrossFrames(frames, playback.frames, `${surface}|${tensorId}|shared`,
+          (frame) => frame.surfaces[surface]?.[tensorId]?.shared);
+    const pattern = surfacePattern(surface, playback.colorIndex);
+    /* Cache the display difference across fade ticks. Its splitting budget
+       keeps fragmented geometry bounded; on exhaustion the full reach remains
+       visible and overlap may darken. This never changes estimator figures. */
+    const rest = shared ? playbackDifference(region, shared) : region;
+    if (!isEmpty(rest))
+      layers.push({
+        region: rest,
+        color,
+        alpha: (active ? 0.26 : 0.09) * playback.opacity,
+        hatch: !rest.exact,
+        pattern,
+      });
     if (shared)
       layers.push({
         region: shared,
@@ -556,6 +609,7 @@ export function buildExecutionPaint({
         alpha: (active ? 0.62 : 0.22) * playback.opacity,
         hatch: !shared.exact,
         seed: !!active,
+        pattern,
       });
   }
 
@@ -650,14 +704,15 @@ function TensorCardView({
   const entangledAll = useStore((s) => s.entangled);
   const inspectorTab = useStore((s) => s.inspectorTab);
   const planView = inspectorTab === "plan";
-  // Only the studied tensor and inputs that share something in at least one
-  // probe repaint on each playback frame. Unrelated cards keep selecting null
-  // and React.memo can leave their canvases alone.
+  // Only the studied tensor and the ones some probe reaches repaint on each
+  // playback frame. Unrelated cards keep selecting null and React.memo can
+  // leave their canvases alone.
   const executionPlayback = useStore((s) => {
     const playback = s.executionPlayback;
     return playback && (
       playback.tensorId === tensor.id ||
-      playback.frames.some((frame) => !!frame.shared[tensor.id])
+      playback.frames.some((frame) =>
+        Object.values(frame.surfaces).some((byTensor) => !!byTensor?.[tensor.id]))
     ) ? playback : null;
   });
   const plan = useStore((s) => s.plan);

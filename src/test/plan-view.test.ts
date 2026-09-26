@@ -95,7 +95,7 @@ describe("planning from the canvas", () => {
       anchorBox: selected,
       tile: [4, 4],
       colorIndex: 0,
-      frames: [{ box: selected, weight: 1, shared: {} }],
+      frames: [{ box: selected, weight: 1, surfaces: { backward: {} } }],
       visited: 1,
       phase: "settled",
       exiting: false,

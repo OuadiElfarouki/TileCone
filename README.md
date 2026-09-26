@@ -66,7 +66,10 @@ a match, since one output buffer has no result type to infer.
 Alongside the dependency cone, the app reports element and byte footprints, FLOPs and arithmetic
 intensity, reuse estimates, and plain-language notes naming the constraint each operation puts on
 tiling or fusion. Running the reuse estimate in **Execution** replays its actual sampled tiles on
-the graph once, together with the graph-input footprint each probe shares with the anchor tile.
+the graph once: each probe lights up wherever it lands across the relations you have switched on -
+what it needs, what it feeds, what it is combined with - with the part it shares with the tile you
+drew picked out on top. Execution narrows to that one tile while it is open and hands your other
+tiles back when you leave.
 
 **Entanglement** is a third relation, next to upstream and downstream: what a tile is *combined
 with*. For `C = A @ B`, the block `A[0:4, 0:4]` is multiplied only against `B[0:4, :]` - the rows a

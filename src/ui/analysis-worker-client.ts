@@ -4,7 +4,7 @@ import {
   type ResolvedGraphData,
 } from "../core/graph";
 import type { InterfaceReport } from "../core/plan/interfaces";
-import type { ReuseSweep } from "../core/reuse";
+import type { ReuseSurface, ReuseSweep } from "../core/reuse";
 import type { Box } from "../core/region";
 import type {
   AnalysisRequest,
@@ -195,6 +195,7 @@ export async function reuseInWorker(args: {
   graph: ResolvedGraph;
   tensorId: string;
   box: Box;
+  surfaces: ReuseSurface[];
 }): Promise<ReuseSweep> {
   const request = takeQueryLane(args.graphId, args.graph);
   const response = await send(queryLane, {
@@ -202,6 +203,7 @@ export async function reuseInWorker(args: {
     ...request,
     tensorId: args.tensorId,
     box: args.box,
+    surfaces: args.surfaces,
   });
   if (response.kind !== "reuse") throw new Error("analysis worker returned the wrong response");
   return response.result;
