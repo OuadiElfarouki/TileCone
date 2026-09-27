@@ -1,7 +1,8 @@
 import { Box } from "../core/region";
 import { AxisMode } from "../view/tensor/shape-label";
 import { isViewCfg, type ViewCfg } from "../view/tensor/tensor-view";
-import { Direction, MAX_TENSOR_OFFSET } from "../view/workspace";
+import { nodeKey, readNodeKey } from "../view/graph/graph-scene";
+import { Direction, MAX_NODE_OFFSET } from "../view/workspace";
 
 /**
  * Shareable workspace state.
@@ -22,7 +23,9 @@ export type WorkspaceLink = {
   snap?: boolean;
   /** Optional: links written before the shape view existed keep numeric cards. */
   axes?: AxisMode;
-  /** Optional: user displacement from the generated graph layout. */
+  /** Optional: user displacement from the generated graph layout, keyed by
+   * scene node key. Links written before operations could move carry bare
+   * tensor ids, which `decodeWorkspace` reads as the `t:` keys they were. */
   pos?: Record<string, [number, number]>;
   /** Missing entries use the default projected view at index zero. */
   views?: Record<string, ViewCfg>;
@@ -108,10 +111,12 @@ export function decodeWorkspace(hash: string): WorkspaceLink | null {
           !!id && Array.isArray(offset) && offset.length === 2 &&
           offset.every((value) =>
             typeof value === "number" && Number.isFinite(value) &&
-            Math.abs(value) <= MAX_TENSOR_OFFSET
+            Math.abs(value) <= MAX_NODE_OFFSET
           )
       )) return null;
-      pos = Object.fromEntries(entries) as Record<string, [number, number]>;
+      pos = Object.fromEntries(
+        entries.map(([id, offset]) => [readNodeKey(id) ? id : nodeKey("tensor", id), offset])
+      ) as Record<string, [number, number]>;
     }
 
     let views: WorkspaceLink["views"];

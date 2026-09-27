@@ -69,18 +69,40 @@ describe("live graph scene projection", () => {
     height: 110,
   };
 
-  it("moves tensors, leaves operators fixed, and reroutes their connectors", () => {
+  it("moves either kind of node and reroutes their connectors", () => {
     const before = buildGraphScene(base, {});
-    const after = buildGraphScene(base, { X: { dx: 15, dy: 25 } });
+    const after = buildGraphScene(base, {
+      "t:X": { dx: 15, dy: 25 },
+      "n:op": { dx: -10, dy: 5 },
+    });
 
     expect(after.nodes.find((node) => node.id === "X")).toMatchObject({ x: 35, y: 55 });
-    expect(after.nodes.find((node) => node.id === "op")).toEqual(base.nodes[1]);
+    expect(after.nodes.find((node) => node.id === "op")).toMatchObject({ x: 190, y: 50 });
     expect(after.edges[0].path).not.toBe(before.edges[0].path);
     expect(base.nodes[0]).toMatchObject({ x: 20, y: 30 });
+    expect(base.nodes[1]).toMatchObject({ x: 200, y: 45 });
+  });
+
+  /* The key carries the kind, so a tensor and an operation that share a name
+     are still two nodes: moving the card must leave the operator where dagre
+     put it. */
+  it("keeps the two id spaces apart", () => {
+    const shared: BaseGraphLayout = {
+      ...base,
+      nodes: [
+        { id: "mul", kind: "tensor", x: 20, y: 30, w: 100, h: 60 },
+        { id: "mul", kind: "op", x: 200, y: 45, w: 64, h: 30 },
+      ],
+      links: [{ from: "t:mul", to: "n:mul", tensorId: "mul", opId: "mul" }],
+    };
+    const scene = buildGraphScene(shared, { "t:mul": { dx: 40, dy: 0 } });
+
+    expect(scene.nodes.find((node) => node.kind === "tensor")).toMatchObject({ x: 60 });
+    expect(scene.nodes.find((node) => node.kind === "op")).toMatchObject({ x: 200 });
   });
 
   it("expands scene bounds to contain moved cards and the world margin", () => {
-    const scene = buildGraphScene(base, { X: { dx: 300, dy: 200 } });
+    const scene = buildGraphScene(base, { "t:X": { dx: 300, dy: 200 } });
     const tensor = scene.nodes.find((node) => node.id === "X")!;
 
     expect(scene.width).toBe(tensor.x + tensor.w + WORLD_MARGIN);
@@ -88,7 +110,7 @@ describe("live graph scene projection", () => {
   });
 
   it("includes cards moved left or above the original scene origin", () => {
-    const scene = buildGraphScene(base, { X: { dx: -150, dy: -100 } });
+    const scene = buildGraphScene(base, { "t:X": { dx: -150, dy: -100 } });
     const tensor = scene.nodes.find((node) => node.id === "X")!;
 
     expect(scene.left).toBe(tensor.x - WORLD_MARGIN);

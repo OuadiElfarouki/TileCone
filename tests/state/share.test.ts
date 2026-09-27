@@ -16,7 +16,7 @@ const LINK: WorkspaceLink = {
   tile: -2,
   snap: false,
   axes: "numeric",
-  pos: { B: [35, -20] },
+  pos: { "t:B": [35, -20], "n:elementwise_B": [0, 40] },
   sel: [{ t: "B", box: [[0, 2], [1, 3]] }],
 };
 
@@ -134,11 +134,24 @@ describe("a link that cannot be trusted is refused, not repaired", () => {
     }
   });
 
-  it("rejects malformed tensor layout offsets", () => {
-    for (const pos of [{ B: [1] }, { B: [1, Infinity] }, { B: [1e20, 0] }, { B: "near" }]) {
+  it("rejects malformed node layout offsets", () => {
+    for (const pos of [
+      { "t:B": [1] },
+      { "t:B": [1, Infinity] },
+      { "t:B": [1e20, 0] },
+      { "t:B": "near" },
+    ]) {
       const bad = btoa(JSON.stringify({ ...LINK, pos }));
       expect(decodeWorkspace(`#s=${bad}`)).toBeNull();
     }
+  });
+
+  /* Positions were tensor-only when the link format was written, so a bare id
+     is not an unknown key: it is the `t:` key it predates. Dropping it would
+     silently flatten a shared arrangement back to the generated layout. */
+  it("reads a legacy link's bare tensor ids as tensor keys", () => {
+    const legacy = btoa(JSON.stringify({ ...LINK, pos: { B: [35, -20] } }));
+    expect(decodeWorkspace(`#s=${legacy}`)?.pos).toEqual({ "t:B": [35, -20] });
   });
 
   it("defaults snapping on for links written before it existed", () => {

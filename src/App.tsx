@@ -15,6 +15,7 @@ export default function App(): React.ReactElement {
   const restoreWorkspaceAsync = useStore((s) => s.restoreWorkspaceAsync);
   const resolved = useStore((s) => s.resolved);
   const theme = useStore((s) => s.theme);
+  const moveOps = useStore((s) => s.moveOps);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const showShortcuts = useCallback(() => setShortcutsOpen(true), []);
   const closeShortcuts = useCallback(() => setShortcutsOpen(false), []);
@@ -32,6 +33,15 @@ export default function App(): React.ReactElement {
   }, [theme]);
 
   useEffect(() => {
+    try {
+      localStorage.setItem("tilecone.moveOps", moveOps ? "on" : "off");
+    } catch {
+      // As with the theme, persistence is optional: the setting still applies
+      // to this session.
+    }
+  }, [moveOps]);
+
+  useEffect(() => {
     let live = true;
     void (async () => {
       const link = decodeWorkspace(location.hash);
@@ -44,7 +54,7 @@ export default function App(): React.ReactElement {
           snapToGrid: link.snap !== false,
           axisMode: link.axes ?? "symbolic",
           viewCfgs: link.views,
-          tensorOffsets: Object.fromEntries(
+          nodeOffsets: Object.fromEntries(
             Object.entries(link.pos ?? {}).map(([id, [dx, dy]]) => [id, { dx, dy }])
           ),
           parts:

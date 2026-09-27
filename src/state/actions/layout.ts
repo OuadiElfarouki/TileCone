@@ -1,17 +1,17 @@
-import { TensorOffset } from "../../view/graph/tensor-layout";
+import { NodeOffset } from "../../view/graph/node-layout";
 import { idRecord, PANEL_COLLAPSE_AT, PANEL_MAX, PANEL_MIN } from "../../view/workspace";
 import { appendWorkspaceHistory, planEditOf } from "../history";
 import { GetState, SetState, State } from "../types";
 
-/** Panel geometry and tensor-card placement. */
+/** Panel geometry and node placement. */
 export const layoutActions = (set: SetState, get: GetState): Pick<
   State,
   "setPanelWidth"
   | "finishPanelResize"
   | "togglePanel"
-  | "setTensorOffset"
-  | "commitTensorMove"
-  | "resetTensorLayout"
+  | "setNodeOffset"
+  | "commitNodeMove"
+  | "resetNodeLayout"
 > => ({
   setPanelWidth: (side, w) => {
     const { panelW, panelCollapsed } = get();
@@ -47,35 +47,35 @@ export const layoutActions = (set: SetState, get: GetState): Pick<
     });
   },
 
-  setTensorOffset: (tensorId, offset) => {
-    const tensorOffsets = idRecord(get().tensorOffsets);
-    if (Math.abs(offset.dx) < 1e-6 && Math.abs(offset.dy) < 1e-6) delete tensorOffsets[tensorId];
-    else tensorOffsets[tensorId] = offset;
-    set({ tensorOffsets });
+  setNodeOffset: (key, offset) => {
+    const nodeOffsets = idRecord(get().nodeOffsets);
+    if (Math.abs(offset.dx) < 1e-6 && Math.abs(offset.dy) < 1e-6) delete nodeOffsets[key];
+    else nodeOffsets[key] = offset;
+    set({ nodeOffsets });
   },
 
-  commitTensorMove: (tensorId, before) => {
-    const { selection, tensorOffsets, workspaceHistory } = get();
-    const after = tensorOffsets[tensorId] ?? { dx: 0, dy: 0 };
+  commitNodeMove: (key, before) => {
+    const { selection, nodeOffsets, workspaceHistory } = get();
+    const after = nodeOffsets[key] ?? { dx: 0, dy: 0 };
     if (Math.abs(after.dx - before.dx) < 1e-6 && Math.abs(after.dy - before.dy) < 1e-6) return;
-    const previousOffsets = idRecord(tensorOffsets);
-    if (Math.abs(before.dx) < 1e-6 && Math.abs(before.dy) < 1e-6) delete previousOffsets[tensorId];
-    else previousOffsets[tensorId] = before;
+    const previousOffsets = idRecord(nodeOffsets);
+    if (Math.abs(before.dx) < 1e-6 && Math.abs(before.dy) < 1e-6) delete previousOffsets[key];
+    else previousOffsets[key] = before;
     set({
       workspaceHistory: appendWorkspaceHistory(workspaceHistory, {
         selection,
-        tensorOffsets: previousOffsets,
+        nodeOffsets: previousOffsets,
         plan: planEditOf(get()),
       }),
     });
   },
 
-  resetTensorLayout: () => {
-    const { selection, tensorOffsets, workspaceHistory } = get();
-    if (!Object.keys(tensorOffsets).length) return;
+  resetNodeLayout: () => {
+    const { selection, nodeOffsets, workspaceHistory } = get();
+    if (!Object.keys(nodeOffsets).length) return;
     set({
-      tensorOffsets: idRecord<TensorOffset>(),
-      workspaceHistory: appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets, plan: planEditOf(get()) }),
+      nodeOffsets: idRecord<NodeOffset>(),
+      workspaceHistory: appendWorkspaceHistory(workspaceHistory, { selection, nodeOffsets, plan: planEditOf(get()) }),
     });
   },
 });

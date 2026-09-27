@@ -438,9 +438,16 @@ textarea.source.error-state { border-color: var(--err); }
   display: flex; align-items: center; justify-content: space-between;
   flex-wrap: wrap-reverse; gap: 8px 12px; pointer-events: none;
 }
+/* The viewport controls and what a drag may move, grouped: both are about the
+   scene rather than the tiles cut in it, and the pair reads as one bar end. */
+.hud-left {
+  display: inline-flex; align-items: center; gap: 10px; flex: none; min-width: 0;
+}
 /* The lattice, snap and axis reading: canvas settings, so they ride the canvas
-   rather than the inspector, at the end of the bar the viewport controls open. */
-.grid-controls {
+   rather than the inspector, at the end of the bar the viewport controls open.
+   The move group is the same kind of setting and wears the same chip. */
+.grid-controls,
+.layout-controls {
   display: inline-flex; align-items: center; gap: 8px; flex: none;
   padding: 3px 9px; pointer-events: auto;
   border: 1px solid var(--line); border-radius: var(--r); background: var(--panel);
@@ -478,6 +485,12 @@ textarea.source.error-state { border-color: var(--err); }
   font-size: var(--t-body); font-weight: 500; color: var(--muted); cursor: default;
 }
 .op-node.dim { opacity: var(--dim); }
+/* Unlocked, an operation answers a drag, so it says so the way a card header
+   does - the cursor is the whole affordance, since a grab handle on a 64px box
+   would crowd the label it exists to keep readable. */
+.op-node.movable { cursor: grab; touch-action: none; }
+.op-node.moving { z-index: 5; opacity: 1; cursor: grabbing; }
+.op-node.moving.blocked { color: var(--warn-ink); border-color: var(--warn-ink); }
 /* Below the overview scale the label is counter-scaled to hold a readable size,
    which makes it wider than the node box - the box is sized for the label at
    scale 1. It is therefore taken out of flow and positioned by the solver that

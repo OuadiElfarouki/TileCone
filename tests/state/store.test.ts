@@ -216,13 +216,13 @@ C = matmul(A, B)
     expect(() => S().undoWorkspace()).not.toThrow();
   });
 
-  it("drops graph-specific tensor positions when the graph is replaced", () => {
-    S().setTensorOffset("A", { dx: 80, dy: 25 });
-    S().commitTensorMove("A", { dx: 0, dy: 0 });
-    expect(S().tensorOffsets.A).toEqual({ dx: 80, dy: 25 });
+  it("drops graph-specific node positions when the graph is replaced", () => {
+    S().setNodeOffset("t:A", { dx: 80, dy: 25 });
+    S().commitNodeMove("t:A", { dx: 0, dy: 0 });
+    expect(S().nodeOffsets["t:A"]).toEqual({ dx: 80, dy: 25 });
 
     S().applyDSL("X = Tensor(2, 3, dtype=fp32)\nY = identity(X)\n");
-    expect(S().tensorOffsets).toEqual({});
+    expect(S().nodeOffsets).toEqual({});
     expect(S().workspaceHistory).toEqual([]);
   });
 });
@@ -238,7 +238,7 @@ describe("transactional workspace restore", () => {
       tileScale: 2,
       snapToGrid: false,
       axisMode: "symbolic",
-      tensorOffsets: { X: { dx: -30, dy: 25 } },
+      nodeOffsets: { "t:X": { dx: -30, dy: 25 } },
       parts: [
         { tensorId: "Y", box: box([0, 2], [1, 3]) },
         { tensorId: "X", box: box([2, 4], [0, 1]) },
@@ -251,7 +251,7 @@ describe("transactional workspace restore", () => {
     expect(S().showEntangled).toBe(true);
     expect(S().tileScale).toBe(2);
     expect(S().snapToGrid).toBe(false);
-    expect(S().tensorOffsets).toEqual({ X: { dx: -30, dy: 25 } });
+    expect(S().nodeOffsets).toEqual({ "t:X": { dx: -30, dy: 25 } });
     expect(selTensors()).toEqual(["Y", "X"]);
     expect(S().workspaceHistory).toEqual([]);
     expect(S().exampleIndex).toBe(-1);
@@ -305,62 +305,81 @@ describe("transactional workspace restore", () => {
     }
   });
 
-  it("rejects layout offsets for tensors outside the shared graph", () => {
-    const before = S();
+  it("rejects layout offsets for nodes outside the shared graph", () => {
+    // A bare id is rejected here too: `decodeWorkspace` is what reads a legacy
+    // link's tensor ids as `t:` keys, so anything arriving unprefixed is a
+    // caller that never spoke this map's key language.
+    for (const key of ["t:missing", "n:missing", "X"]) {
+      const before = S();
+      const restored = S().restoreWorkspace({
+        dsl: "X = Tensor(4, 4, dtype=fp32)\nY = relu(X)\n",
+        direction: "both",
+        tileScale: 0,
+        snapToGrid: true,
+        axisMode: "symbolic",
+        nodeOffsets: { [key]: { dx: 20, dy: 10 } },
+        parts: null,
+      });
+      expect(restored, key).toBe(false);
+      expect(S()).toBe(before);
+    }
+  });
+
+  it("restores an operation node's own position", () => {
     const restored = S().restoreWorkspace({
       dsl: "X = Tensor(4, 4, dtype=fp32)\nY = relu(X)\n",
       direction: "both",
       tileScale: 0,
       snapToGrid: true,
       axisMode: "symbolic",
-      tensorOffsets: { missing: { dx: 20, dy: 10 } },
+      nodeOffsets: { "n:elementwise_Y": { dx: 15, dy: -40 } },
       parts: null,
     });
-    expect(restored).toBe(false);
-    expect(S()).toBe(before);
+    expect(restored).toBe(true);
+    expect(S().nodeOffsets).toEqual({ "n:elementwise_Y": { dx: 15, dy: -40 } });
   });
 });
 
-describe("tensor layout transactions", () => {
+describe("node layout transactions", () => {
   beforeEach(() => S().loadExample(0));
 
   it("records a complete drag as one undo step", () => {
     const depth = S().workspaceHistory.length;
-    S().setTensorOffset("A", { dx: 25, dy: 10 });
-    S().setTensorOffset("A", { dx: 60, dy: 30 });
+    S().setNodeOffset("t:A", { dx: 25, dy: 10 });
+    S().setNodeOffset("t:A", { dx: 60, dy: 30 });
     expect(S().workspaceHistory).toHaveLength(depth); // live drag previews are unrecorded
 
-    S().commitTensorMove("A", { dx: 0, dy: 0 });
+    S().commitNodeMove("t:A", { dx: 0, dy: 0 });
     expect(S().workspaceHistory).toHaveLength(depth + 1);
     S().undoWorkspace();
-    expect(S().tensorOffsets.A).toBeUndefined();
+    expect(S().nodeOffsets["t:A"]).toBeUndefined();
   });
 
   it("does not record a pointer gesture that produced no displacement", () => {
     const depth = S().workspaceHistory.length;
-    S().commitTensorMove("A", { dx: 0, dy: 0 });
+    S().commitNodeMove("t:A", { dx: 0, dy: 0 });
     expect(S().workspaceHistory).toHaveLength(depth);
   });
 
-  it("resets every tensor to generated placement as one undoable action", () => {
-    S().setTensorOffset("A", { dx: 80, dy: -30 });
-    S().commitTensorMove("A", { dx: 0, dy: 0 });
-    S().setTensorOffset("B", { dx: -45, dy: 60 });
-    S().commitTensorMove("B", { dx: 0, dy: 0 });
-    const before = S().tensorOffsets;
+  it("resets every node to generated placement as one undoable action", () => {
+    S().setNodeOffset("t:A", { dx: 80, dy: -30 });
+    S().commitNodeMove("t:A", { dx: 0, dy: 0 });
+    S().setNodeOffset("t:B", { dx: -45, dy: 60 });
+    S().commitNodeMove("t:B", { dx: 0, dy: 0 });
+    const before = S().nodeOffsets;
     const depth = S().workspaceHistory.length;
 
-    S().resetTensorLayout();
-    expect(S().tensorOffsets).toEqual({});
+    S().resetNodeLayout();
+    expect(S().nodeOffsets).toEqual({});
     expect(S().workspaceHistory).toHaveLength(depth + 1);
 
     S().undoWorkspace();
-    expect(S().tensorOffsets).toEqual(before);
+    expect(S().nodeOffsets).toEqual(before);
   });
 
   it("does not record resetting an untouched layout", () => {
     const depth = S().workspaceHistory.length;
-    S().resetTensorLayout();
+    S().resetNodeLayout();
     expect(S().workspaceHistory).toHaveLength(depth);
   });
 
@@ -369,35 +388,94 @@ describe("tensor layout transactions", () => {
     S().moveSelection(0, 64);
     const afterSelectionMove = selBoxes();
 
-    S().setTensorOffset("A", { dx: 90, dy: 35 });
-    S().commitTensorMove("A", { dx: 0, dy: 0 });
+    S().setNodeOffset("t:A", { dx: 90, dy: 35 });
+    S().commitNodeMove("t:A", { dx: 0, dy: 0 });
     S().moveSelection(1, 64);
 
     S().undoWorkspace(); // selection edit after the tensor drag
     expect(selBoxes()).toEqual(afterSelectionMove);
-    expect(S().tensorOffsets.A).toEqual({ dx: 90, dy: 35 });
+    expect(S().nodeOffsets["t:A"]).toEqual({ dx: 90, dy: 35 });
 
     S().undoWorkspace(); // tensor drag itself
     expect(selBoxes()).toEqual(afterSelectionMove);
-    expect(S().tensorOffsets.A).toBeUndefined();
+    expect(S().nodeOffsets["t:A"]).toBeUndefined();
 
     S().undoWorkspace(); // selection edit before the tensor drag
     expect(selBoxes()).toEqual(initial);
   });
 
-  it("can undo the first selection without disturbing tensor placement", () => {
+  /* An operation is a node like any other once the unlock is on: the same live
+     preview, the same single undo step. The unlock itself gates the gesture in
+     the view, not the store, so moving one is never silently unrecordable. */
+  it("moves an operation node on the same terms as a card", () => {
+    S().applyDSL("X = Tensor(8, 8, dtype=fp32)\nY = relu(X)\n");
+    const depth = S().workspaceHistory.length;
+    S().setNodeOffset("n:elementwise_Y", { dx: 40, dy: -15 });
+    S().setNodeOffset("n:elementwise_Y", { dx: 55, dy: -20 });
+    expect(S().workspaceHistory).toHaveLength(depth);
+
+    S().commitNodeMove("n:elementwise_Y", { dx: 0, dy: 0 });
+    expect(S().nodeOffsets["n:elementwise_Y"]).toEqual({ dx: 55, dy: -20 });
+    expect(S().workspaceHistory).toHaveLength(depth + 1);
+
+    S().undoWorkspace();
+    expect(S().nodeOffsets["n:elementwise_Y"]).toBeUndefined();
+  });
+
+  it("resets cards and operations together", () => {
+    S().applyDSL("X = Tensor(8, 8, dtype=fp32)\nY = relu(X)\n");
+    S().setNodeOffset("t:X", { dx: 20, dy: 5 });
+    S().commitNodeMove("t:X", { dx: 0, dy: 0 });
+    S().setNodeOffset("n:elementwise_Y", { dx: -10, dy: 30 });
+    S().commitNodeMove("n:elementwise_Y", { dx: 0, dy: 0 });
+    const before = S().nodeOffsets;
+
+    S().resetNodeLayout();
+    expect(S().nodeOffsets).toEqual({});
+    S().undoWorkspace();
+    expect(S().nodeOffsets).toEqual(before);
+  });
+
+  it("can undo the first selection without disturbing node placement", () => {
     S().applyDSL("X = Tensor(8, 8, dtype=fp32)\nY = identity(X)\n");
-    S().setTensorOffset("X", { dx: 45, dy: 20 });
-    S().commitTensorMove("X", { dx: 0, dy: 0 });
+    S().setNodeOffset("t:X", { dx: 45, dy: 20 });
+    S().commitNodeMove("t:X", { dx: 0, dy: 0 });
     S().setSelection("Y", fromBox(box([0, 2], [0, 2])), "replace");
 
     S().undoWorkspace();
     expect(S().selection).toBeNull();
-    expect(S().tensorOffsets.X).toEqual({ dx: 45, dy: 20 });
+    expect(S().nodeOffsets["t:X"]).toEqual({ dx: 45, dy: 20 });
   });
 });
 
 /** Drives the store exactly as the UI does, to cover the selection-editing actions. */
+describe("unlocking operation nodes", () => {
+  beforeEach(() => S().loadExample(0));
+
+  it("starts locked and toggles without touching the layout or an undo step", () => {
+    expect(S().moveOps).toBe(false);
+    const depth = S().workspaceHistory.length;
+
+    S().setMoveOps(true);
+    expect(S().moveOps).toBe(true);
+    expect(S().nodeOffsets).toEqual({});
+    expect(S().workspaceHistory).toHaveLength(depth);
+
+    S().setMoveOps(false);
+    expect(S().moveOps).toBe(false);
+  });
+
+  /* Locking again is about the gesture, not the graph: positions already moved
+     stay where the author put them, and `reset` remains the way back. */
+  it("keeps positions already moved when it is switched back off", () => {
+    S().setMoveOps(true);
+    S().setNodeOffset("n:matmul_C", { dx: 25, dy: 10 });
+    S().commitNodeMove("n:matmul_C", { dx: 0, dy: 0 });
+    S().setMoveOps(false);
+    expect(S().nodeOffsets["n:matmul_C"]).toEqual({ dx: 25, dy: 10 });
+  });
+});
+
 describe("snapping is a gesture setting, not an analysis one", () => {
   beforeEach(() => {
     S().loadExample(0);

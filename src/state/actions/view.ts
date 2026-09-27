@@ -6,7 +6,8 @@ import { inspectTask } from "../plan";
 import { revealHidden } from "../selection-edit";
 import { GetState, SetState, State } from "../types";
 
-/** View settings: directions, theme, per-tensor views, detail, snapping, the inspector view, playback. */
+/** View settings: directions, theme, per-tensor views, detail, snapping, what a
+ *  drag may move, the inspector view, playback. */
 export const viewActions = (set: SetState, get: GetState): Pick<
   State,
   "setDragging"
@@ -14,6 +15,7 @@ export const viewActions = (set: SetState, get: GetState): Pick<
   | "setDirection"
   | "toggleDirection"
   | "setTheme"
+  | "setMoveOps"
   | "setViewCfg"
   | "setViewAxes"
   | "setSnapToGrid"
@@ -46,6 +48,8 @@ export const viewActions = (set: SetState, get: GetState): Pick<
   },
 
   setTheme: (theme) => set({ theme }),
+
+  setMoveOps: (v) => set({ moveOps: v }),
 
   setViewCfg: (tensorId, cfg) => {
     const state = get();

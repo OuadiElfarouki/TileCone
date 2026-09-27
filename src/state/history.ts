@@ -3,7 +3,7 @@
 import { Graph, ResolvedGraph } from "../core/graph";
 import { TaskRef } from "../core/plan/plan";
 import { BaseGraphLayout } from "../view/graph/graph-scene";
-import { TensorOffsets } from "../view/graph/tensor-layout";
+import { NodeOffsets } from "../view/graph/node-layout";
 import { type Selection } from "../view/workspace";
 import { State } from "./types";
 
@@ -12,7 +12,7 @@ export type PlanEdit = { tiles: Record<string, number[]>; task: TaskRef | null }
 
 export type WorkspaceSnapshot = {
   selection: Selection;
-  tensorOffsets: TensorOffsets;
+  nodeOffsets: NodeOffsets;
   /** Required so that no edit can record a snapshot that forgets the plan. */
   plan: PlanEdit;
   /**

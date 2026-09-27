@@ -10,7 +10,7 @@ import {
   type Rect,
   WORLD_MARGIN,
 } from "./graph-geometry";
-import type { TensorOffsets } from "./tensor-layout";
+import type { NodeOffsets } from "./node-layout";
 
 export type GraphNodeKind = "tensor" | "op";
 
@@ -57,8 +57,18 @@ export type GraphScene = {
 
 export type TensorMeasure = (tensor: Tensor) => Pick<Rect, "w" | "h">;
 
-const graphId = (node: PlacedGraphNode): string =>
-  `${node.kind === "tensor" ? "t" : "n"}:${node.id}`;
+/** The scene's key for a node of either kind: `t:<tensor>` / `n:<node>`. */
+export const nodeKey = (kind: GraphNodeKind, id: string): string =>
+  `${kind === "tensor" ? "t" : "n"}:${id}`;
+
+/** The kind and id a scene key names, or null when it is not one. */
+export function readNodeKey(key: string): { kind: GraphNodeKind; id: string } | null {
+  if (key.startsWith("t:")) return { kind: "tensor", id: key.slice(2) };
+  if (key.startsWith("n:")) return { kind: "op", id: key.slice(2) };
+  return null;
+}
+
+const graphId = (node: PlacedGraphNode): string => nodeKey(node.kind, node.id);
 
 /**
  * Run structural graph layout exactly once for a resolved graph and a tensor
@@ -136,15 +146,14 @@ export function buildBaseGraphLayout(
 
 /**
  * Apply user movement and route the live connectors without invoking Dagre.
- * This is intentionally cheap enough to run for every tensor drag frame.
+ * This is intentionally cheap enough to run for every drag frame.
  */
 export function buildGraphScene(
   base: BaseGraphLayout,
-  tensorOffsets: Readonly<TensorOffsets>
+  nodeOffsets: Readonly<NodeOffsets>
 ): GraphScene {
   const nodes = base.nodes.map((node) => {
-    if (node.kind !== "tensor") return node;
-    const offset = tensorOffsets[node.id];
+    const offset = nodeOffsets[graphId(node)];
     return offset
       ? { ...node, x: node.x + offset.dx, y: node.y + offset.dy }
       : node;

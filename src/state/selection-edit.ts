@@ -48,7 +48,7 @@ export function editSelection(
     selection,
     resolved,
     workspaceHistory,
-    tensorOffsets,
+    nodeOffsets,
     focusedBox,
     perBox,
     entangled,
@@ -67,7 +67,7 @@ export function editSelection(
     selectedOp: operationForTensor(resolved, anchor),
     selection: sel,
     workspaceHistory: record
-      ? appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets, plan: planEditOf(get()) })
+      ? appendWorkspaceHistory(workspaceHistory, { selection, nodeOffsets, plan: planEditOf(get()) })
       : workspaceHistory,
     focusedBox: nextFocus,
     pinnedBox: nextFocus === null ? null : get().pinnedBox,

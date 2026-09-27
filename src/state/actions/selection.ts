@@ -31,7 +31,7 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
       selection,
       resolved,
       workspaceHistory,
-      tensorOffsets,
+      nodeOffsets,
       hiddenBoxes,
       perBox,
       entangled,
@@ -80,7 +80,7 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
       selectedOp: sel ? drawnOp : null,
       // Null is a real workspace state: the first selection must be undoable
       // without also rewinding an earlier tensor move.
-      workspaceHistory: appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets, plan: planEditOf(get()) }),
+      workspaceHistory: appendWorkspaceHistory(workspaceHistory, { selection, nodeOffsets, plan: planEditOf(get()) }),
       // Drawing releases the pin, and the analysis follows the pointer to this
       // tensor. Remapping it was never able to keep a pin on the tensor being
       // drawn on - those parts are rebuilt, so their identity is gone - and
@@ -99,12 +99,12 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
   },
 
   clearSelection: () => {
-    const { selection, workspaceHistory, tensorOffsets } = get();
+    const { selection, workspaceHistory, nodeOffsets } = get();
     set({
       selection: null,
       selectedOp: null,
       workspaceHistory: selection
-        ? appendWorkspaceHistory(workspaceHistory, { selection, tensorOffsets, plan: planEditOf(get()) })
+        ? appendWorkspaceHistory(workspaceHistory, { selection, nodeOffsets, plan: planEditOf(get()) })
         : workspaceHistory,
       backwardRes: null,
       byTensorRes: null,

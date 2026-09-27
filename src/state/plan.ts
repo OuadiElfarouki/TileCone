@@ -135,7 +135,7 @@ export function inspectTask(
   set({
     workspaceHistory: appendWorkspaceHistory(state.workspaceHistory, {
       selection: state.selection,
-      tensorOffsets: state.tensorOffsets,
+      nodeOffsets: state.nodeOffsets,
       plan: planEditOf(state),
     }),
     selectedOp: operationForTensor(resolved, tensorId),

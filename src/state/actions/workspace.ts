@@ -172,7 +172,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
         dslText: source.dslText,
         draftText: source.draftText,
         exampleIndex: source.exampleIndex,
-        tensorOffsets: prev.tensorOffsets,
+        nodeOffsets: prev.nodeOffsets,
         selection: prev.selection,
         workspaceHistory: workspaceHistory.slice(0, -1),
         focusNode: null,
@@ -184,7 +184,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
     }
     set({
       selection: prev.selection,
-      tensorOffsets: prev.tensorOffsets,
+      nodeOffsets: prev.nodeOffsets,
       workspaceHistory: workspaceHistory.slice(0, -1),
       focusedBox: null,
       pinnedBox: null,
@@ -220,7 +220,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
       // *to* — recorded after the clear, for that reason.
       const restore: WorkspaceSnapshot = {
         selection: state.selection,
-        tensorOffsets: state.tensorOffsets,
+        nodeOffsets: state.nodeOffsets,
         plan: planEditOf(state),
         source: {
           dslText: state.dslText,

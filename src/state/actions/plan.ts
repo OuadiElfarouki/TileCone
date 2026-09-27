@@ -44,7 +44,7 @@ export const planActions = (set: SetState, get: GetState): Pick<
     set({
       workspaceHistory: appendWorkspaceHistory(state.workspaceHistory, {
         selection: state.selection,
-        tensorOffsets: state.tensorOffsets,
+        nodeOffsets: state.nodeOffsets,
         plan: planEditOf(state),
       }),
       ...derivePlan(resolved, tiles, task, state),
@@ -66,7 +66,7 @@ export const planActions = (set: SetState, get: GetState): Pick<
     set({
       workspaceHistory: appendWorkspaceHistory(state.workspaceHistory, {
         selection: state.selection,
-        tensorOffsets: state.tensorOffsets,
+        nodeOffsets: state.nodeOffsets,
         plan: planEditOf(state),
       }),
       selectedOp: next.planTask ? operationForTensor(state.resolved, next.planTask.tensorId) : state.selectedOp,
@@ -114,7 +114,7 @@ export const planActions = (set: SetState, get: GetState): Pick<
       workspaceHistory: record
         ? appendWorkspaceHistory(state.workspaceHistory, {
             selection: state.selection,
-            tensorOffsets: state.tensorOffsets,
+            nodeOffsets: state.nodeOffsets,
             plan: planEditOf(state),
           })
         : state.workspaceHistory,

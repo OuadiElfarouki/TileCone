@@ -146,6 +146,26 @@ describe("built-in examples", () => {
     expect(res.tensors.get("Scores")!.region.exact).toBe(true);
   });
 
+  it("grouped-query attention: a whole group of query heads reads one KV head", () => {
+    const g = resolveGraph(parseDSL(exampleNamed("Grouped-query decode step").dsl));
+    const cache = (cols: [number, number]) =>
+      propagateBackward(g, {
+        tensorId: "Out",
+        region: fromBox(box([0, 1], [3, 4], cols)),
+      }).tensors.get("Kc")!;
+
+    // One query head, and then all four heads sharing KV head 0: the query work
+    // quadruples, the band of cache read does not.
+    const one = cache([0, 32]);
+    const group = cache([0, 128]);
+    expect(one.region.boxes).toEqual([box([0, 1], [0, 1], [0, 96], [0, 32])]);
+    expect(group.region.boxes).toEqual(one.region.boxes);
+    expect(group.region.exact).toBe(true);
+
+    // The next group reads the other KV head, so the two bands are disjoint.
+    expect(cache([128, 160]).region.boxes).toEqual([box([0, 1], [1, 2], [0, 96], [0, 32])]);
+  });
+
   it("examples validate against the oracle at miniature shapes", () => {
     // reshape trap + layernorm residual + cumsum are cheap enough to brute force as-is
     checkGraph(parseDSL(exampleNamed("Reshape trap").dsl), { perTensorElementCap: 16 });

@@ -45,7 +45,7 @@ export type ExecutionPlayback = {
 };
 /** Defensive share-state bound; far beyond any usable graph arrangement while
  * preventing finite-but-overflowing coordinates from poisoning scene bounds. */
-export const MAX_TENSOR_OFFSET = 1_000_000;
+export const MAX_NODE_OFFSET = 1_000_000;
 
 /** User-authored tensor IDs are dictionary keys, so these records must not
  * inherit magic names such as `__proto__` or `toString`. */

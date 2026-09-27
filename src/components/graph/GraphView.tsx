@@ -4,7 +4,9 @@ import { constrainRectMotion, Rect } from "../../view/graph/graph-geometry";
 import {
   buildBaseGraphLayout,
   buildGraphScene,
+  GraphNodeKind,
   GraphScene,
+  nodeKey,
   PlacedGraphNode,
 } from "../../view/graph/graph-scene";
 import { TensorCard, CardGestures } from "../card/TensorCard";
@@ -13,23 +15,25 @@ import { remapped } from "../../view/tensor/tensor-view";
 import { shapeLabel, symbolicExtentLabel } from "../../view/tensor/shape-label";
 import { opLabel } from "../../core/ops/index";
 import { useStore } from "../../state/store";
-import type { TensorOffset } from "../../view/graph/tensor-layout";
+import type { NodeOffset } from "../../view/graph/node-layout";
 import { MIN_SIDE_PX, settledTiles } from "../../view/tensor/tiling";
 import { overviewLabels } from "../../view/graph/overview-labels";
 import { paintScale } from "../../view/tensor/grid";
 import { FIT_GRAPH_EVENT } from "../hooks/useKeyboard";
 import { GridControls } from "../chrome/GridControls";
+import { LayoutControls } from "../chrome/LayoutControls";
 import { useFrameThrottle } from "../hooks/useFrameThrottle";
 import { involvedTensorIds, PANEL_RAIL } from "../../view/workspace";
 import { planesOf } from "../../view/tensor/seeds";
 
-type CardDrag = {
-  id: string;
+type NodeDrag = {
+  /** Scene key, so one gesture serves cards and operation nodes alike. */
+  key: string;
   pointerId: number;
   lastClient: { x: number; y: number };
   rect: Rect;
-  offset: TensorOffset;
-  before: TensorOffset;
+  offset: NodeOffset;
+  before: NodeOffset;
   blockers: Rect[];
   moved: boolean;
   viewportMovedBefore: boolean;
@@ -124,7 +128,8 @@ export function graphZoomBounds(
 }
 
 /** Elements that own their pointer gesture instead of panning the viewport. */
-const GRAPH_PAN_BLOCKERS = ".card-slot, .op-node, .zoom-controls, .grid-controls";
+const GRAPH_PAN_BLOCKERS =
+  ".card-slot, .op-node, .zoom-controls, .layout-controls, .grid-controls";
 
 /** @internal DOM-light hit-test seam for the graph interaction tests. */
 export function canStartGraphPan(target: unknown): boolean {
@@ -134,13 +139,15 @@ export function canStartGraphPan(target: unknown): boolean {
 
 /** The header is the card's drag surface, so the one thing in it that owns a
  * click has to be carved back out: the name is the focus target for the shape
- * popover, and starting a drag there would swallow the gesture that opens it. */
-const CARD_DRAG_BLOCKERS = ".tc-name-wrap";
+ * popover, and starting a drag there would swallow the gesture that opens it.
+ * An operation node's whole box is its drag surface, and the substitute button
+ * is the same kind of exception - a click it would otherwise swallow. */
+const NODE_DRAG_BLOCKERS = ".tc-name-wrap, .expand-btn";
 
-/** @internal DOM-light hit-test seam for the card gesture tests. */
+/** @internal DOM-light hit-test seam for the node gesture tests. */
 export function canStartCardDrag(target: unknown): boolean {
   if (!target || typeof (target as { closest?: unknown }).closest !== "function") return true;
-  return !(target as { closest: (selector: string) => unknown }).closest(CARD_DRAG_BLOCKERS);
+  return !(target as { closest: (selector: string) => unknown }).closest(NODE_DRAG_BLOCKERS);
 }
 
 /** Tensors carrying visible combined-with regions. Kept separate from the
@@ -179,18 +186,19 @@ export function GraphView(): React.ReactElement {
   const setSelectedOp = useStore((s) => s.setSelectedOp);
   const setFocusNode = useStore((s) => s.setFocusNode);
   const setDragging = useStore((s) => s.setDragging);
-  const tensorOffsets = useStore((s) => s.tensorOffsets);
-  const setTensorOffset = useStore((s) => s.setTensorOffset);
-  const commitTensorMove = useStore((s) => s.commitTensorMove);
-  const resetTensorLayout = useStore((s) => s.resetTensorLayout);
+  const nodeOffsets = useStore((s) => s.nodeOffsets);
+  const moveOps = useStore((s) => s.moveOps);
+  const setNodeOffset = useStore((s) => s.setNodeOffset);
+  const commitNodeMove = useStore((s) => s.commitNodeMove);
+  const resetNodeLayout = useStore((s) => s.resetNodeLayout);
 
   const [tf, setTf] = useState({ x: 20, y: 20, k: 1 });
-  const [movingTensor, setMovingTensor] = useState<string | null>(null);
-  const [blockedTensor, setBlockedTensor] = useState<string | null>(null);
+  const [movingNode, setMovingNode] = useState<string | null>(null);
+  const [blockedNode, setBlockedNode] = useState<string | null>(null);
   const [panning, setPanning] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const panRef = useRef<{ x0: number; y0: number; tx: number; ty: number } | null>(null);
-  const cardDragRef = useRef<CardDrag | null>(null);
+  const nodeDragRef = useRef<NodeDrag | null>(null);
   const fitAfterResetRef = useRef(false);
   /** True once the user has panned or zoomed away from a fitted view. Resizing
    * the viewport re-fits only while this is false, so collapsing a panel keeps a
@@ -276,9 +284,9 @@ export function GraphView(): React.ReactElement {
   const scene = useMemo(
     () =>
       baseLayout
-        ? buildGraphScene(baseLayout, tensorOffsets)
+        ? buildGraphScene(baseLayout, nodeOffsets)
         : null,
-    [baseLayout, tensorOffsets]
+    [baseLayout, nodeOffsets]
   );
   /* Bucketed, not raw: the label solver is an all-pairs collision pass over
      every node, and keyed to `tf.k` it re-ran on every wheel event at the zoom
@@ -568,37 +576,45 @@ export function GraphView(): React.ReactElement {
      is not reconciled because the graph re-rendered. Everything they read that
      changes - the scene, the viewport scale, the stored offsets - is reached
      through a ref or the store rather than captured. */
-  const startCardDrag = useCallback((e: React.PointerEvent<HTMLElement>, tensorId: string) => {
+  const startNodeDrag = useCallback((
+    e: React.PointerEvent<HTMLElement>,
+    kind: GraphNodeKind,
+    id: string
+  ) => {
     if (!canStartCardDrag(e.target)) return;
+    // The unlock is read here rather than captured, so the handler stays stable
+    // across renders and toggling it mid-session takes effect on the next press.
+    if (kind === "op" && !useStore.getState().moveOps) return;
     const placed = sceneRef.current?.nodes.find(
-      (node) => node.kind === "tensor" && node.id === tensorId
+      (node) => node.kind === kind && node.id === id
     );
     if (!placed) return;
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
-    const before = useStore.getState().tensorOffsets[tensorId] ?? { dx: 0, dy: 0 };
-    cardDragRef.current = {
-      id: tensorId,
+    const key = nodeKey(kind, id);
+    const before = useStore.getState().nodeOffsets[key] ?? { dx: 0, dy: 0 };
+    nodeDragRef.current = {
+      key,
       pointerId: e.pointerId,
       lastClient: { x: e.clientX, y: e.clientY },
       rect: { x: placed.x, y: placed.y, w: placed.w, h: placed.h },
       offset: before,
       before,
       blockers: (sceneRef.current?.nodes ?? [])
-        .filter((other) => !(other.kind === "tensor" && other.id === tensorId))
+        .filter((other) => !(other.kind === kind && other.id === id))
         .map(({ x, y, w, h }) => ({ x, y, w, h })),
       moved: false,
       viewportMovedBefore: movedRef.current,
     };
-    setMovingTensor(tensorId);
-    setBlockedTensor(null);
+    setMovingNode(key);
+    setBlockedNode(null);
     setDragging(true);
   }, [setDragging]);
 
   const cardPointRef = useRef<{ x: number; y: number } | null>(null);
   const applyCardMove = useCallback(() => {
-    const drag = cardDragRef.current;
+    const drag = nodeDragRef.current;
     const point = cardPointRef.current;
     if (!drag || !point) return;
     const delta = {
@@ -614,19 +630,19 @@ export function GraphView(): React.ReactElement {
     drag.lastClient = { x: point.x, y: point.y };
     drag.rect = rect;
     if (accepted.x === 0 && accepted.y === 0) {
-      if (Math.abs(delta.x) > 0.1 || Math.abs(delta.y) > 0.1) setBlockedTensor(drag.id);
+      if (Math.abs(delta.x) > 0.1 || Math.abs(delta.y) > 0.1) setBlockedNode(drag.key);
       return;
     }
-    setBlockedTensor(null);
+    setBlockedNode(null);
     drag.moved = true;
     movedRef.current = true;
     drag.offset = { dx: drag.offset.dx + accepted.x, dy: drag.offset.dy + accepted.y };
-    setTensorOffset(drag.id, drag.offset);
-  }, [setTensorOffset]);
+    setNodeOffset(drag.key, drag.offset);
+  }, [setNodeOffset]);
   const requestCardMove = useFrameThrottle(applyCardMove);
 
   const moveCard = useCallback((e: React.PointerEvent<HTMLElement>) => {
-    const drag = cardDragRef.current;
+    const drag = nodeDragRef.current;
     if (!drag || drag.pointerId !== e.pointerId) return;
     e.preventDefault();
     e.stopPropagation();
@@ -640,35 +656,35 @@ export function GraphView(): React.ReactElement {
     // final move must commit where the pointer left it.
     if (commit) applyCardMove();
     cardPointRef.current = null;
-    const drag = cardDragRef.current;
+    const drag = nodeDragRef.current;
     if (!drag) return;
-    cardDragRef.current = null;
-    if (commit && drag.moved) commitTensorMove(drag.id, drag.before);
+    nodeDragRef.current = null;
+    if (commit && drag.moved) commitNodeMove(drag.key, drag.before);
     else if (!commit && drag.moved) {
-      setTensorOffset(drag.id, drag.before);
+      setNodeOffset(drag.key, drag.before);
       movedRef.current = drag.viewportMovedBefore;
     }
-    setMovingTensor(null);
-    setBlockedTensor(null);
+    setMovingNode(null);
+    setBlockedNode(null);
     setDragging(false);
-  }, [applyCardMove, commitTensorMove, setDragging, setTensorOffset]);
+  }, [applyCardMove, commitNodeMove, setDragging, setNodeOffset]);
 
   /** One gesture object for every card, so a card's props do not change when
    * the graph re-renders. Each handler takes the tensor it acts on. */
   const cardGestures = useMemo<CardGestures>(
     () => ({
-      onPointerDown: startCardDrag,
+      onPointerDown: (e, tensorId) => startNodeDrag(e, "tensor", tensorId),
       onPointerMove: moveCard,
       onPointerUp: () => finishCardDrag(true),
       onPointerCancel: () => finishCardDrag(false),
       onLostPointerCapture: () => finishCardDrag(false),
     }),
-    [startCardDrag, moveCard, finishCardDrag]
+    [startNodeDrag, moveCard, finishCardDrag]
   );
 
   useEffect(() => {
     const cancel = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || !cardDragRef.current) return;
+      if (e.key !== "Escape" || !nodeDragRef.current) return;
       e.preventDefault();
       finishCardDrag(false);
     };
@@ -677,10 +693,10 @@ export function GraphView(): React.ReactElement {
   }, [finishCardDrag]);
 
   const resetLayout = () => {
-    if (!Object.keys(tensorOffsets).length) return;
+    if (!Object.keys(nodeOffsets).length) return;
     fitAfterResetRef.current = true;
     movedRef.current = false;
-    resetTensorLayout();
+    resetNodeLayout();
   };
 
   if (!resolved || !scene) return <div className="canvas-empty">no graph loaded</div>;
@@ -737,17 +753,34 @@ export function GraphView(): React.ReactElement {
             const node = nodeById.get(p.id)!;
             const hot = !hasResult || hotNodes.has(p.id);
             const label = overview.ops.get(p.id);
+            const key = nodeKey("op", p.id);
             return (
               <div
                 key={`n:${p.id}`}
-                className={`op-node${hot ? "" : " dim"}${label ? " overview" : ""}`}
+                className={`op-node${hot ? "" : " dim"}${label ? " overview" : ""}${
+                  moveOps ? " movable" : ""
+                }${movingNode === key ? " moving" : ""}${blockedNode === key ? " blocked" : ""}`}
                 style={{
                   left: p.x, top: p.y, width: p.w, height: p.h,
                   "--view-scale": tf.k,
                 } as React.CSSProperties}
                 /* The registry name stays in the tooltip beside the attributes:
-                   the card says what was written, the title says what runs. */
-                title={`${node.op}\n${JSON.stringify(node.attrs)}`}
+                   the card says what was written, the title says what runs. The
+                   unlock adds a line rather than replacing them: the operation
+                   is still the subject, dragging is just now available. */
+                title={`${node.op}\n${JSON.stringify(node.attrs)}${
+                  moveOps
+                    ? blockedNode === key
+                      ? "\ndrag: blocked by a neighbouring node"
+                      : "\ndrag to reposition"
+                    : ""
+                }`}
+                /* Locking prevents new drags; an active drag must still finish. */
+                onPointerDown={moveOps ? (e) => startNodeDrag(e, "op", p.id) : undefined}
+                onPointerMove={cardGestures.onPointerMove}
+                onPointerUp={cardGestures.onPointerUp}
+                onPointerCancel={cardGestures.onPointerCancel}
+                onLostPointerCapture={cardGestures.onLostPointerCapture}
               >
                 <span style={label ? { width: label.w, top: label.dy } : undefined}>
                   {opLabel(node)}
@@ -780,16 +813,17 @@ export function GraphView(): React.ReactElement {
           // but deliberately does not enter `contributing`: doing that would
           // heat every unrelated edge that happens to carry the same tensor.
           const hot = !hasResult || contributing.has(p.id) || visibleEntangled.has(p.id);
+          const key = nodeKey("tensor", p.id);
           return (
             <div
               key={`t:${p.id}`}
-              className={`${hot ? "card-slot" : "card-slot dim"}${movingTensor === p.id ? " moving" : ""}${blockedTensor === p.id ? " blocked" : ""}`}
+              className={`${hot ? "card-slot" : "card-slot dim"}${movingNode === key ? " moving" : ""}${blockedNode === key ? " blocked" : ""}`}
               style={{ left: p.x, top: p.y, width: p.w, height: p.h }}
             >
               <button
                 className="tensor-grab"
                 aria-label={`move tensor ${t.name}`}
-                title={blockedTensor === p.id ? `${t.name} is blocked by a neighbouring node` : `drag to reposition ${t.name}`}
+                title={blockedNode === key ? `${t.name} is blocked by a neighbouring node` : `drag to reposition ${t.name}`}
                 onPointerDown={(e) => cardGestures.onPointerDown(e, p.id)}
                 onPointerMove={cardGestures.onPointerMove}
                 onPointerUp={cardGestures.onPointerUp}
@@ -813,11 +847,12 @@ export function GraphView(): React.ReactElement {
           left, the lattice a tile is cut against on the right, where the strip
           that used to carry it sat. */}
       <div className="graph-hud">
+        <div className="hud-left">
         <div className="zoom-controls">
           <button onClick={() => zoomBy(1 / 1.25)} title="zoom out">−</button>
           <button onClick={() => zoomBy(1.25)} title="zoom in">+</button>
           <button onClick={fit} title="fit to view (f)">fit</button>
-          <button onClick={resetLayout} disabled={!Object.keys(tensorOffsets).length} title="restore generated tensor layout (undoable)">reset</button>
+          <button onClick={resetLayout} disabled={!Object.keys(nodeOffsets).length} title="restore the generated layout, cards and operations alike (undoable)">reset</button>
           {/* At the floor the percentage is a number with no reference — 12%
               of what, and why will it not go lower. `fit` names the scale the
               zoom-out is actually resting against, which D72 made a derived
@@ -825,6 +860,8 @@ export function GraphView(): React.ReactElement {
           <span title={`${Math.round(tf.k * 100)}% of actual size`}>
             {Math.abs(tf.k - lowZoom()) < ZOOM_EPSILON ? "fit" : `${Math.round(tf.k * 100)}%`}
           </span>
+        </div>
+          <LayoutControls />
         </div>
         <GridControls />
       </div>

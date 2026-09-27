@@ -34,7 +34,7 @@ function ShareButton(): React.ReactElement {
         )
       ),
       pos: Object.fromEntries(
-        Object.entries(s.tensorOffsets).map(([id, { dx, dy }]) => [id, [dx, dy]])
+        Object.entries(s.nodeOffsets).map(([key, { dx, dy }]) => [key, [dx, dy]])
       ),
       sel: selectionToLink(s.selection),
     });

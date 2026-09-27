@@ -7,7 +7,7 @@ import { PropResult } from "../core/propagate";
 import { Box, Region } from "../core/region";
 import { CompilerDiagnostic } from "../parse/compiler";
 import { BaseGraphLayout } from "../view/graph/graph-scene";
-import { TensorOffset, TensorOffsets } from "../view/graph/tensor-layout";
+import { NodeOffset, NodeOffsets } from "../view/graph/node-layout";
 import { AxisMode } from "../view/tensor/shape-label";
 import { ViewCfg } from "../view/tensor/tensor-view";
 import {
@@ -33,7 +33,7 @@ export type WorkspaceRestore = {
   snapToGrid: boolean;
   /** Whether a compact shape reads as semantic labels or numeric extents. */
   axisMode: AxisMode;
-  tensorOffsets?: TensorOffsets;
+  nodeOffsets?: NodeOffsets;
   viewCfgs?: Record<string, ViewCfg>;
   parts: SelPart[] | null;
 };
@@ -196,8 +196,16 @@ export type State = {
    * rail. Collapsing keeps the remembered width so reopening restores it. */
   panelW: { left: number; right: number };
   panelCollapsed: { left: boolean; right: boolean };
-  /** User displacement from dagre's collision-free base placement. */
-  tensorOffsets: TensorOffsets;
+  /** User displacement from dagre's collision-free base placement, keyed by
+   * scene node key so operation nodes move on the same terms as cards. */
+  nodeOffsets: NodeOffsets;
+  /**
+   * Whether operation nodes answer a drag. Off, only cards move and an
+   * operation keeps the rank dagre gave it, which is the reading most graphs
+   * want: the generated row order is what makes a chain legible. On, the whole
+   * scene is furniture, for laying a graph out to be looked at or shown.
+   */
+  moveOps: boolean;
 
   /**
    * Tile extents per planned tensor (see `core/plan`). Independent of the
@@ -250,6 +258,7 @@ export type State = {
   setDirection: (d: Direction) => void;
   toggleDirection: (d: ConeDirection) => void;
   setTheme: (theme: Theme) => void;
+  setMoveOps: (v: boolean) => void;
   setViewCfg: (tensorId: string, cfg: Partial<ViewCfg>) => void;
   /**
    * Give a tensor a tile of its own, one extent per axis, or return it to the
@@ -305,11 +314,11 @@ export type State = {
   finishPanelResize: (side: PanelSide, w: number) => void;
   togglePanel: (side: PanelSide) => void;
   /** Live, unrecorded movement used while a drag owns pointer capture. */
-  setTensorOffset: (tensorId: string, offset: TensorOffset) => void;
+  setNodeOffset: (key: string, offset: NodeOffset) => void;
   /** Record one completed drag, restoring `before` when workspace undo runs. */
-  commitTensorMove: (tensorId: string, before: TensorOffset) => void;
+  commitNodeMove: (key: string, before: NodeOffset) => void;
   /** Restore Dagre's generated placement as one undoable workspace action. */
-  resetTensorLayout: () => void;
+  resetNodeLayout: () => void;
   /** Preview the cone of the box a click would commit, not of one element:
    * a projection gesture selects whole hidden axes, so a cell-sized preview
    * would understate the cone the same gesture goes on to produce. */

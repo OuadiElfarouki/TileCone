@@ -108,6 +108,81 @@ Out = reshape(Zt, shape=[B, T, H*D])
     defaultSelection: { tensor: "Out", box: [[0, 1], [31, 32], [0, 128]] },
   },
   {
+    name: "Grouped-query decode step",
+    dsl: `B = 1
+KVH = 2
+G = 4
+P = 96
+T = 4
+D = 32
+
+# Grouped-query attention: KVH*G query heads share KVH key/value heads, G query
+# heads to each one. expand is where that sharing is written down - the cache is
+# stored once per KV head and read by G query heads. So a tile of Out covering
+# one query head pulls one KV head band of the cache, and the four heads in
+# columns 0..4*D pull the same band rather than four of them.
+
+Kc = Tensor(batch=B, kv_head=KVH, kv=P, dim=D, dtype=fp16)
+Vc = Tensor(batch=B, kv_head=KVH, kv=P, dim=D, dtype=fp16)
+X = Tensor(batch=B, seq=T, emb=KVH*G*D, dtype=fp16)
+Wq = Parameter(emb=KVH*G*D, proj=KVH*G*D, dtype=fp16)
+Wk = Parameter(emb=KVH*G*D, kv_proj=KVH*D, dtype=fp16)
+Wv = Parameter(emb=KVH*G*D, kv_proj=KVH*D, dtype=fp16)
+
+Qp = einsum("bse,ef->bsf", X, Wq)
+Kp = einsum("bse,ef->bsf", X, Wk)
+Vp = einsum("bse,ef->bsf", X, Wv)
+Q4 = reshape(Qp, shape=[B, T, KVH*G, D])
+K4 = reshape(Kp, shape=[B, T, KVH, D])
+V4 = reshape(Vp, shape=[B, T, KVH, D])
+Qh = transpose(Q4, perm=[0, 2, 1, 3])
+Kh = transpose(K4, perm=[0, 2, 1, 3])
+Vh = transpose(V4, perm=[0, 2, 1, 3])
+Kf = concat(Kc, Kh, axis=2)
+Vf = concat(Vc, Vh, axis=2)
+K5 = reshape(Kf, shape=[B, KVH, 1, P+T, D])
+V5 = reshape(Vf, shape=[B, KVH, 1, P+T, D])
+Kg = expand(K5, shape=[B, KVH, G, P+T, D])
+Vg = expand(V5, shape=[B, KVH, G, P+T, D])
+Kx = reshape(Kg, shape=[B, KVH*G, P+T, D])
+Vx = reshape(Vg, shape=[B, KVH*G, P+T, D])
+Sc = einsum("bhqd,bhkd->bhqk", Qh, Kx)
+Pr = softmax(Sc, axis=-1)
+Z = einsum("bhqk,bhkd->bhqd", Pr, Vx)
+Zt = transpose(Z, perm=[0, 2, 1, 3])
+Out = reshape(Zt, shape=[B, T, KVH*G*D])
+`,
+    defaultSelection: { tensor: "Out", box: [[0, 1], [3, 4], [0, 32]] },
+  },
+  {
+    name: "SwiGLU feed-forward",
+    dsl: `S = 128
+E = 256
+F = 704
+
+# The feed-forward half of a transformer block. Xn fans out to two projections
+# and the branches rejoin at the elementwise multiply, so a tile of Y reads the
+# same band of Xn twice: once for the gate, once for the value it scales. The
+# norm is why that band is whole rows of X; the residual adds the tile's own
+# columns of X, which those rows already cover.
+
+X = Tensor(seq=S, emb=E, dtype=fp16)
+Wn = Parameter(emb=E, dtype=fp16)
+Wg = Parameter(emb=E, ff=F, dtype=fp16)
+Wu = Parameter(emb=E, ff=F, dtype=fp16)
+Wd = Parameter(ff=F, emb=E, dtype=fp16)
+
+Xn = rmsnorm(X, Wn, axes=[-1])
+G = matmul(Xn, Wg)
+U = matmul(Xn, Wu)
+Ga = silu(G)
+Hd = mul(Ga, U)
+Y = matmul(Hd, Wd)
+Out = add(Y, X)
+`,
+    defaultSelection: { tensor: "Out", box: [[16, 24], [0, 64]] },
+  },
+  {
     name: "Conv2d 3x3 stride 2 (stacked)",
     dsl: `N = 1
 C = 3

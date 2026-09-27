@@ -14,6 +14,7 @@ const target = (blocked: boolean) => ({
   closest: (selector: string) => {
     expect(selector).toContain(".card-slot");
     expect(selector).toContain(".op-node");
+    expect(selector).toContain(".layout-controls");
     return blocked ? {} : null;
   },
 });
@@ -29,21 +30,25 @@ describe("graph viewport pan hit-testing", () => {
   });
 });
 
-describe("card drag hit-testing", () => {
-  const headerTarget = (onName: boolean) => ({
+describe("node drag hit-testing", () => {
+  const dragTarget = (onOwnClick: boolean) => ({
     closest: (selector: string) => {
       expect(selector).toContain(".tc-name-wrap");
-      return onName ? {} : null;
+      expect(selector).toContain(".expand-btn");
+      return onOwnClick ? {} : null;
     },
   });
 
-  it("drags from anywhere on the header chrome", () => {
+  it("drags from anywhere on the header chrome or an operation's box", () => {
     expect(canStartCardDrag(null)).toBe(true);
-    expect(canStartCardDrag(headerTarget(false))).toBe(true);
+    expect(canStartCardDrag(dragTarget(false))).toBe(true);
   });
 
-  it("leaves the tensor name its click, so the shape popover stays reachable", () => {
-    expect(canStartCardDrag(headerTarget(true))).toBe(false);
+  /* Two exceptions, one rule: an element inside the drag surface that owns a
+     click of its own keeps it. The tensor name opens the shape popover, and the
+     operation's chevron substitutes the primitive subgraph. */
+  it("leaves the tensor name and the substitute button their clicks", () => {
+    expect(canStartCardDrag(dragTarget(true))).toBe(false);
   });
 });
 

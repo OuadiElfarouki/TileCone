@@ -4,12 +4,12 @@ import { validateSelection } from "../core/executor";
 import { Graph, ResolvedGraph } from "../core/graph";
 import { fromBox } from "../core/region";
 import { EXAMPLES } from "../examples/index";
-import { BaseGraphLayout } from "../view/graph/graph-scene";
-import { TensorOffset, TensorOffsets } from "../view/graph/tensor-layout";
+import { BaseGraphLayout, readNodeKey } from "../view/graph/graph-scene";
+import { NodeOffset, NodeOffsets } from "../view/graph/node-layout";
 import { planesOf } from "../view/tensor/seeds";
 import { defaultViewCfg, remapped, ViewCfg, viewCfgFits } from "../view/tensor/tensor-view";
 import { graphScale, TILE_SCALE_MAX, TILE_SCALE_MIN } from "../view/tensor/tiling";
-import { idRecord, MAX_TENSOR_OFFSET } from "../view/workspace";
+import { idRecord, MAX_NODE_OFFSET } from "../view/workspace";
 import { recompute } from "./analysis";
 import { NO_PLAN } from "./plan";
 import { State, WorkspaceRestore } from "./types";
@@ -24,7 +24,7 @@ export function loadResolvedGraph(
   | "byTensorRes"
   | "entangled"
   | "perBox" | "focusedBox" | "pinnedBox" | "viewCfgs" | "preview" | "graphPx"
-  | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "tensorOffsets"
+  | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "nodeOffsets"
   | "planTiles" | "planTask" | "plan" | "planSupply"
   | "executionPlayback" | "executionScope"
 > {
@@ -39,10 +39,10 @@ export function loadResolvedGraph(
     diagnostics: [],
     entangled: null,
     selection: null,
-    // Undo entries refer to tensor IDs and coordinates in one resolved graph.
+    // Undo entries refer to node IDs and coordinates in one resolved graph.
     // They must never survive a graph replacement or composite rewrite.
     workspaceHistory: [],
-    tensorOffsets: idRecord<TensorOffset>(),
+    nodeOffsets: idRecord<NodeOffset>(),
     backwardRes: null,
     byTensorRes: null,
     forwardRes: null,
@@ -132,14 +132,18 @@ export function restoredWorkspaceState(
     return { tensorId: checked.tensorId, box: checked.region.boxes[0] };
   });
   const selection = checkedParts.length ? { parts: checkedParts } : null;
-  const checkedOffsets = Object.create(null) as TensorOffsets;
-  for (const [tensorId, offset] of Object.entries(workspace.tensorOffsets ?? {})) {
-    if (!resolved.tensors[tensorId] ||
+  const nodeIds = new Set(resolved.nodes.map((node) => node.id));
+  const checkedOffsets = Object.create(null) as NodeOffsets;
+  for (const [key, offset] of Object.entries(workspace.nodeOffsets ?? {})) {
+    const named = readNodeKey(key);
+    const placed = named !== null &&
+      (named.kind === "tensor" ? !!resolved.tensors[named.id] : nodeIds.has(named.id));
+    if (!placed ||
         !Number.isFinite(offset.dx) || !Number.isFinite(offset.dy) ||
-        Math.abs(offset.dx) > MAX_TENSOR_OFFSET || Math.abs(offset.dy) > MAX_TENSOR_OFFSET)
-      throw new Error(`invalid layout offset for tensor "${tensorId}"`);
+        Math.abs(offset.dx) > MAX_NODE_OFFSET || Math.abs(offset.dy) > MAX_NODE_OFFSET)
+      throw new Error(`invalid layout offset for node "${key}"`);
     if (Math.abs(offset.dx) >= 1e-6 || Math.abs(offset.dy) >= 1e-6)
-      checkedOffsets[tensorId] = { dx: offset.dx, dy: offset.dy };
+      checkedOffsets[key] = { dx: offset.dx, dy: offset.dy };
   }
   return {
     ...base,
@@ -152,7 +156,7 @@ export function restoredWorkspaceState(
     tileScale: Math.max(TILE_SCALE_MIN, Math.min(TILE_SCALE_MAX, Math.round(workspace.tileScale))),
     snapToGrid: workspace.snapToGrid,
     axisMode: workspace.axisMode,
-    tensorOffsets: checkedOffsets,
+    nodeOffsets: checkedOffsets,
     selection,
     compiling: false,
     ...recompute(resolved, selection),
