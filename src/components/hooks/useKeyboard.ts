@@ -20,7 +20,13 @@ const isTyping = (el: EventTarget | null) => {
  */
 const ownsArrowKeys = (el: EventTarget | null) => {
   const t = el as HTMLElement | null;
-  return isTyping(t) || !!t?.closest?.('[role="listbox"], [role="menu"]');
+  // `data-node-move` is the third case: a focused card handle or operation node
+  // moves itself with the arrows, and the selection must not walk at the same
+  // time - the same failure the menu guard exists for.
+  return (
+    isTyping(t) ||
+    !!t?.closest?.('[role="listbox"], [role="menu"], [data-node-move]')
+  );
 };
 
 /**

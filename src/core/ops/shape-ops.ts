@@ -1,14 +1,14 @@
 import { z } from "zod";
 import { DTYPES, DType } from "../dtypes";
 import { Box, Interval, Region, canonicalize, empty, fromBox, iv } from "../region";
-import { resolveShape } from "../shapes";
+import { resolveShape, Shape } from "../shapes";
 import {
   broadcastBackwardBox,
   broadcastForwardBox,
   broadcastOracleIndex,
 } from "./elementwise";
 import { normAxis } from "./reduce";
-import { OpSpec, uniformDTypeOutputs } from "./types";
+import { OpCtx, OpSpec, uniformDTypeOutputs } from "./types";
 import { limitsOf } from "./limits";
 import { broadcastAxisNames, firstNamedAxis, sameAxisNames } from "./axis-names";
 import { sameSymShape } from "./sym-shape";
@@ -384,40 +384,52 @@ export const concatOp: OpSpec = {
   flopsPerElement: zero,
 };
 
+/** Each output's extent along the cut axis - the sizes, already resolved. The
+ *  attribute is only needed to infer shapes; every later pass reads the shapes
+ *  it produced, so a symbolic `sizes` costs those passes nothing. */
+const splitSizes = (ctx: OpCtx, axis: number): number[] =>
+  ctx.outShapes.map((out) => out[axis]);
+
 export const splitOp: OpSpec = {
   name: "split",
-  attrSchema: z.object({ axis: z.number().int(), sizes: z.array(z.number().int().min(1)).min(1) }),
+  attrSchema: z.object({
+    axis: z.number().int(),
+    // Symbolic like `reshape` and `expand`: `sizes=[H*D, KVH*D]` is the point of
+    // writing a fused projection with named dimensions at all.
+    sizes: z.array(z.union([z.string(), z.number().int().min(1)])).min(1),
+  }),
   arity: { inputs: 1, outputs: { min: 1 } },
   inferAxisNames: (inNames, ctx) => ctx.outShapes.map(() => inNames[0].slice()),
   // Only the axis being cut changes, and it becomes a literal size.
   inferSymShapes: (inSyms, ctx) =>
     ctx.outShapes.map((out) => inSyms[0].map((sym, ax) => (out[ax] === ctx.inShapes[0][ax] ? sym : out[ax]))),
   validateArity: (_inputCount, outputCount, attrs) => {
-    const sizeCount = (attrs.sizes as number[]).length;
+    const sizeCount = (attrs.sizes as Shape).length;
     if (outputCount !== sizeCount)
       throw new Error(
         `sizes declares ${sizeCount} outputs, got ${outputCount}`
       );
   },
   inferDTypes: uniformDTypeOutputs("split"),
-  inferShapes: (inShapes, attrs) => {
+  inferShapes: (inShapes, attrs, params) => {
     const sh = inShapes[0];
     const ax = normAxis(attrs.axis as number, sh.length);
-    const sizes = attrs.sizes as number[];
+    const sizes = resolveShape(attrs.sizes as Shape, params ?? {});
+    if (sizes.some((s) => s < 1))
+      throw new Error(`split: sizes [${sizes}] must each be at least one element`);
     if (sizes.reduce((a, b) => a + b, 0) !== sh[ax])
       throw new Error(`split: sizes [${sizes}] don't sum to extent ${sh[ax]}`);
     return sizes.map((s) => sh.map((e, i) => (i === ax ? s : e)));
   },
   backward: (outSlot, outBox, ctx) => {
     const ax = normAxis(ctx.attrs.axis as number, ctx.inShapes[0].length);
-    const sizes = ctx.attrs.sizes as number[];
-    const ofs = sizes.slice(0, outSlot).reduce((a, b) => a + b, 0);
+    const ofs = splitSizes(ctx, ax).slice(0, outSlot).reduce((a, b) => a + b, 0);
     const b = outBox.map((I, i) => (i === ax ? iv(I.lo + ofs, I.hi + ofs) : { ...I }));
     return [fromBox(b)];
   },
   forward: (_s, inBox, ctx) => {
     const ax = normAxis(ctx.attrs.axis as number, ctx.inShapes[0].length);
-    const sizes = ctx.attrs.sizes as number[];
+    const sizes = splitSizes(ctx, ax);
     const out: Region[] = [];
     let ofs = 0;
     for (const s of sizes) {
@@ -431,8 +443,7 @@ export const splitOp: OpSpec = {
   },
   oracleDeps: (outSlot, outIndex, ctx) => {
     const ax = normAxis(ctx.attrs.axis as number, ctx.inShapes[0].length);
-    const sizes = ctx.attrs.sizes as number[];
-    const ofs = sizes.slice(0, outSlot).reduce((a, b) => a + b, 0);
+    const ofs = splitSizes(ctx, ax).slice(0, outSlot).reduce((a, b) => a + b, 0);
     const idx = outIndex.slice();
     idx[ax] += ofs;
     return [[idx]];

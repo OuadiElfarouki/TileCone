@@ -121,17 +121,18 @@ D = 32
 # stored once per KV head and read by G query heads. So a tile of Out covering
 # one query head pulls one KV head band of the cache, and the four heads in
 # columns 0..4*D pull the same band rather than four of them.
+#
+# The three projections are one fused weight cut by split, the way a served
+# model stores them: a tile of Out reaches three column bands of the same Wqkv
+# rather than bands of three separate tensors.
 
 Kc = Tensor(batch=B, kv_head=KVH, kv=P, dim=D, dtype=fp16)
 Vc = Tensor(batch=B, kv_head=KVH, kv=P, dim=D, dtype=fp16)
 X = Tensor(batch=B, seq=T, emb=KVH*G*D, dtype=fp16)
-Wq = Parameter(emb=KVH*G*D, proj=KVH*G*D, dtype=fp16)
-Wk = Parameter(emb=KVH*G*D, kv_proj=KVH*D, dtype=fp16)
-Wv = Parameter(emb=KVH*G*D, kv_proj=KVH*D, dtype=fp16)
+Wqkv = Parameter(emb=KVH*G*D, qkv=KVH*G*D+2*KVH*D, dtype=fp16)
 
-Qp = einsum("bse,ef->bsf", X, Wq)
-Kp = einsum("bse,ef->bsf", X, Wk)
-Vp = einsum("bse,ef->bsf", X, Wv)
+QKV = einsum("bse,ef->bsf", X, Wqkv)
+Qp, Kp, Vp = split(QKV, axis=-1, sizes=[KVH*G*D, KVH*D, KVH*D])
 Q4 = reshape(Qp, shape=[B, T, KVH*G, D])
 K4 = reshape(Kp, shape=[B, T, KVH, D])
 V4 = reshape(Vp, shape=[B, T, KVH, D])
@@ -181,6 +182,44 @@ Y = matmul(Hd, Wd)
 Out = add(Y, X)
 `,
     defaultSelection: { tensor: "Out", box: [[16, 24], [0, 64]] },
+  },
+  {
+    name: "MoE expert dispatch",
+    dsl: `T = 8
+E = 128
+F = 256
+N = 8
+K = 2
+
+# A mixture-of-experts step. The expert weights are one stacked tensor and the
+# routing picks slabs out of it, which is the only place in these examples where
+# a dependency is not decidable from the graph: gather's indices are data, so
+# every expert is reported as needed and the cone is marked inexact.
+#
+# Declaring the choice makes it exact - add indexValues=[3, 5] to both gathers
+# and the same tile narrows to those two slabs. The router's own top-k cannot be
+# written here (no argmax), so Idx arrives as an input and Pr is left as an
+# output of its own: what the graph can state is that the choice is data.
+
+X = Tensor(seq=T, emb=E, dtype=fp16)
+Wr = Parameter(emb=E, expert=N, dtype=fp16)
+W1 = Parameter(expert=N, emb=E, ff=F, dtype=fp16)
+W2 = Parameter(expert=N, ff=F, emb=E, dtype=fp16)
+Idx = Tensor(chosen=K, dtype=int32)
+Gate = Tensor(seq=T, chosen=K, dtype=fp16)
+
+Sc = einsum("se,en->sn", X, Wr)
+Pr = softmax(Sc, axis=-1)
+E1 = gather(W1, Idx, axis=0)
+E2 = gather(W2, Idx, axis=0)
+Hd = einsum("se,kef->skf", X, E1)
+Ac = silu(Hd)
+Yk = einsum("skf,kfe->ske", Ac, E2)
+Gw = reshape(Gate, shape=[T, K, 1])
+Yg = mul(Yk, Gw)
+Y = sum(Yg, axis=1, keepdim=false)
+`,
+    defaultSelection: { tensor: "Y", box: [[3, 4], [0, 64]] },
   },
   {
     name: "Conv2d 3x3 stride 2 (stacked)",

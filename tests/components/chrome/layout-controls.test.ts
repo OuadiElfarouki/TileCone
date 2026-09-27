@@ -15,19 +15,20 @@ vi.mock("../../../src/state/store", async (importOriginal) => {
 });
 
 const S = () => useStore.getState();
-const render = () => renderToStaticMarkup(createElement(LayoutControls));
+const onResetLayout = vi.fn();
+const render = () => renderToStaticMarkup(createElement(LayoutControls, { onResetLayout }));
 
 beforeEach(() => {
   S().applyDSL("X = Tensor(8)\nY = relu(X)\n");
   S().setMoveOps(false);
 });
 
-describe("the op-drag unlock", () => {
+describe("the layout group", () => {
   it("reads as an unpressed toggle while operations are pinned", () => {
     const html = render();
     expect(html).toContain('aria-pressed="false"');
     expect(html).not.toContain("mini toggle on");
-    expect(html).toContain(">ops<");
+    expect(html).toContain(">move ops<");
   });
 
   it("reads as pressed once it is on", () => {
@@ -41,5 +42,15 @@ describe("the op-drag unlock", () => {
      graph behind it pans: `.layout-controls` is a pan blocker by class name. */
   it("carries the class the canvas hit-test excludes from panning", () => {
     expect(render()).toContain('class="layout-controls"');
+  });
+});
+
+describe("restoring generated placement", () => {
+  it("offers reset only once something has been moved", () => {
+    expect(render()).toContain("disabled");
+
+    S().setNodeOffset("t:X", { dx: 30, dy: 0 });
+    S().commitNodeMove("t:X", { dx: 0, dy: 0 });
+    expect(render()).not.toContain("disabled");
   });
 });

@@ -24,6 +24,7 @@ import { GridControls } from "../chrome/GridControls";
 import { LayoutControls } from "../chrome/LayoutControls";
 import { useFrameThrottle } from "../hooks/useFrameThrottle";
 import { involvedTensorIds, PANEL_RAIL } from "../../view/workspace";
+import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
 import { planesOf } from "../../view/tensor/seeds";
 
 type NodeDrag = {
@@ -37,6 +38,21 @@ type NodeDrag = {
   blockers: Rect[];
   moved: boolean;
   viewportMovedBefore: boolean;
+};
+
+/** How far one arrow press moves a node, in world px, and what Shift
+ * multiplies it by. The pair mirrors the tile nudge's one-step / eight-step
+ * relationship, so the two sets of arrows behave alike even though they move
+ * different things. A single px would be true to the tile nudge's literal step
+ * and useless here: a node is furniture, not a coordinate. */
+const NUDGE_PX = 8;
+const NUDGE_FAST = 8;
+
+const ARROW_DELTAS: Record<string, { x: number; y: number }> = {
+  ArrowLeft: { x: -1, y: 0 },
+  ArrowRight: { x: 1, y: 0 },
+  ArrowUp: { x: 0, y: -1 },
+  ArrowDown: { x: 0, y: 1 },
 };
 
 type EdgePresentation = {
@@ -669,6 +685,55 @@ export function GraphView(): React.ReactElement {
     setDragging(false);
   }, [applyCardMove, commitNodeMove, setDragging, setNodeOffset]);
 
+  /**
+   * Move a node by keyboard, one press at a time.
+   *
+   * A pointer drag is the same motion sampled continuously: same collision
+   * sweep, same accepted-delta accounting, same key space. It differs in what
+   * a gesture is - a press is complete on arrival, so each one records its own
+   * undo step rather than one per press-to-release.
+   */
+  const nudgeNode = useCallback((
+    e: React.KeyboardEvent<HTMLElement>,
+    kind: GraphNodeKind,
+    id: string
+  ) => {
+    const step = ARROW_DELTAS[e.key];
+    if (!step || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (kind === "op" && !useStore.getState().moveOps) return;
+    const placed = sceneRef.current?.nodes.find(
+      (node) => node.kind === kind && node.id === id
+    );
+    if (!placed) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const reach = NUDGE_PX * (matchesShortcut(e, SHORTCUTS.moveNodeFast) ? NUDGE_FAST : 1);
+    const rect = constrainRectMotion(
+      { x: placed.x, y: placed.y, w: placed.w, h: placed.h },
+      { x: step.x * reach, y: step.y * reach },
+      (sceneRef.current?.nodes ?? [])
+        .filter((other) => !(other.kind === kind && other.id === id))
+        .map(({ x, y, w, h }) => ({ x, y, w, h }))
+    );
+    const accepted = { x: rect.x - placed.x, y: rect.y - placed.y };
+    const key = nodeKey(kind, id);
+    if (accepted.x === 0 && accepted.y === 0) {
+      setBlockedNode(key);
+      return;
+    }
+    const before = useStore.getState().nodeOffsets[key] ?? { dx: 0, dy: 0 };
+    setBlockedNode(null);
+    movedRef.current = true;
+    setNodeOffset(key, { dx: before.dx + accepted.x, dy: before.dy + accepted.y });
+    commitNodeMove(key, before);
+  }, [commitNodeMove, setNodeOffset]);
+
+  /** Blocked is feedback on the last attempt, so it belongs to the element that
+   * made it: leaving clears it rather than leaving a stale mark behind. */
+  const clearBlocked = useCallback((key: string) => {
+    setBlockedNode((current) => (current === key ? null : current));
+  }, []);
+
   /** One gesture object for every card, so a card's props do not change when
    * the graph re-renders. Each handler takes the tensor it acts on. */
   const cardGestures = useMemo<CardGestures>(
@@ -775,6 +840,15 @@ export function GraphView(): React.ReactElement {
                       : "\ndrag to reposition"
                     : ""
                 }`}
+                /* Focusable only while unlocked: an operation that cannot move
+                   is not a stop on the way to anything, and putting every one
+                   of them in the tab order would bury the cards that are. */
+                tabIndex={moveOps ? 0 : undefined}
+                data-node-move={moveOps ? "" : undefined}
+                aria-label={moveOps ? `move ${opLabel(node)}` : undefined}
+                aria-keyshortcuts={moveOps ? "ArrowUp ArrowDown ArrowLeft ArrowRight" : undefined}
+                onKeyDown={moveOps ? (e) => nudgeNode(e, "op", p.id) : undefined}
+                onBlur={moveOps ? () => clearBlocked(key) : undefined}
                 /* Locking prevents new drags; an active drag must still finish. */
                 onPointerDown={moveOps ? (e) => startNodeDrag(e, "op", p.id) : undefined}
                 onPointerMove={cardGestures.onPointerMove}
@@ -822,7 +896,11 @@ export function GraphView(): React.ReactElement {
             >
               <button
                 className="tensor-grab"
+                data-node-move=""
                 aria-label={`move tensor ${t.name}`}
+                aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight"
+                onKeyDown={(e) => nudgeNode(e, "tensor", p.id)}
+                onBlur={() => clearBlocked(key)}
                 title={blockedNode === key ? `${t.name} is blocked by a neighbouring node` : `drag to reposition ${t.name}`}
                 onPointerDown={(e) => cardGestures.onPointerDown(e, p.id)}
                 onPointerMove={cardGestures.onPointerMove}
@@ -852,7 +930,6 @@ export function GraphView(): React.ReactElement {
           <button onClick={() => zoomBy(1 / 1.25)} title="zoom out">−</button>
           <button onClick={() => zoomBy(1.25)} title="zoom in">+</button>
           <button onClick={fit} title="fit to view (f)">fit</button>
-          <button onClick={resetLayout} disabled={!Object.keys(nodeOffsets).length} title="restore the generated layout, cards and operations alike (undoable)">reset</button>
           {/* At the floor the percentage is a number with no reference — 12%
               of what, and why will it not go lower. `fit` names the scale the
               zoom-out is actually resting against, which D72 made a derived
@@ -861,7 +938,7 @@ export function GraphView(): React.ReactElement {
             {Math.abs(tf.k - lowZoom()) < ZOOM_EPSILON ? "fit" : `${Math.round(tf.k * 100)}%`}
           </span>
         </div>
-          <LayoutControls />
+          <LayoutControls onResetLayout={resetLayout} />
         </div>
         <GridControls />
       </div>

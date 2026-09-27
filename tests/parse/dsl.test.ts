@@ -94,6 +94,46 @@ m = mean(X, axes=[0])
     expect(() => parseDSL(`X = Tensor(4, dtype=fp32)\nY = bogus_op_name(X`)).toThrow(/line 2/);
   });
 
+  /* A fused projection is the reason `sizes` exists in named dimensions: with
+     literal sizes, editing H silently splits the wrong columns. */
+  it("cuts a split on symbolic sizes", () => {
+    const text = `H = 8
+KVH = 2
+D = 32
+X = Tensor(4, H*D+2*KVH*D, dtype=fp16)
+Q, K, V = split(X, axis=-1, sizes=[H*D, KVH*D, KVH*D])
+`;
+    const g = resolveGraph(parseDSL(text));
+    expect(g.tensors.Q.resolved).toEqual([4, 256]);
+    expect(g.tensors.K.resolved).toEqual([4, 64]);
+    expect(g.tensors.V.resolved).toEqual([4, 64]);
+    expect(toDSL(parseDSL(text))).toContain("sizes=[H*D, KVH*D, KVH*D]");
+  });
+
+  it("reports symbolic sizes that do not cut up the axis", () => {
+    const bad = () => resolveGraph(parseDSL(`H = 8
+D = 32
+X = Tensor(4, 100, dtype=fp16)
+A, B = split(X, axis=-1, sizes=[H*D, D])
+`));
+    expect(bad).toThrow(/don't sum to extent 100/);
+  });
+
+  /* An attribute holding a dimension expression is source, not a string: it has
+     to print as the author wrote it, because expanding a composite writes this
+     text back into the editor. Free text such as an equation still quotes. */
+  it("prints dimension expressions bare and other strings quoted", () => {
+    const out = toDSL(parseDSL(`B = 2
+E = 4
+X = Tensor(B, E, dtype=fp16)
+W = Tensor(E, E, dtype=fp16)
+Y = einsum("be,ef->bf", X, W)
+Z = reshape(Y, shape=[B, E*1])
+`));
+    expect(out).toContain("shape=[B, E*1]");
+    expect(out).toContain('einsum("be,ef->bf"');
+  });
+
   it("round-trips JSON -> DSL -> JSON losslessly", () => {
     for (const ex of EXAMPLES) {
       const g1 = parseDSL(ex.dsl);
@@ -164,6 +204,56 @@ describe("built-in examples", () => {
 
     // The next group reads the other KV head, so the two bands are disjoint.
     expect(cache([128, 160]).region.boxes).toEqual([box([0, 1], [1, 2], [0, 96], [0, 32])]);
+  });
+
+  /* The fused projection is one tensor cut three ways, so a single query head
+     reaches three disjoint column bands of it: its own query columns, and the
+     key and value columns of the KV head its group shares. */
+  it("grouped-query attention: one head reaches three bands of the fused weight", () => {
+    const g = resolveGraph(parseDSL(exampleNamed("Grouped-query decode step").dsl));
+    const weight = (cols: [number, number]) =>
+      propagateBackward(g, {
+        tensorId: "Out",
+        region: fromBox(box([0, 1], [3, 4], cols)),
+      }).tensors.get("Wqkv")!;
+
+    // 8 query heads of 32, then 2 key heads of 32, then 2 value heads of 32.
+    expect(weight([0, 32]).region.boxes).toEqual([
+      box([0, 256], [0, 32]),
+      box([0, 256], [256, 288]),
+      box([0, 256], [320, 352]),
+    ]);
+    expect(weight([0, 32]).region.exact).toBe(true);
+    expect(weight([128, 160]).region.boxes).toEqual([
+      box([0, 256], [128, 160]),
+      box([0, 256], [288, 320]),
+      box([0, 256], [352, 384]),
+    ]);
+  });
+
+  /* The one example whose dependency is not decidable from the graph, and the
+     example comment tells the reader what to edit to make it decidable - so
+     both halves of that claim are checked here. */
+  it("mixture of experts: routing is data until it is declared", () => {
+    const source = exampleNamed("MoE expert dispatch").dsl;
+    const cone = (dsl: string) =>
+      propagateBackward(resolveGraph(parseDSL(dsl)), {
+        tensorId: "Y",
+        region: fromBox(box([3, 4], [0, 64])),
+      }).tensors;
+
+    const unknown = cone(source).get("W1")!;
+    expect(unknown.region.boxes).toEqual([box([0, 8], [0, 128], [0, 256])]);
+    expect(unknown.region.exact).toBe(false);
+
+    const declared = cone(
+      source.replace(/gather\((W[12]), Idx, axis=0\)/g, "gather($1, Idx, axis=0, indexValues=[3, 5])")
+    ).get("W1")!;
+    expect(declared.region.boxes).toEqual([
+      box([3, 4], [0, 128], [0, 256]),
+      box([5, 6], [0, 128], [0, 256]),
+    ]);
+    expect(declared.region.exact).toBe(true);
   });
 
   it("examples validate against the oracle at miniature shapes", () => {

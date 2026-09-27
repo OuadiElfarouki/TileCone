@@ -41,6 +41,19 @@ export const SHORTCUTS = {
     action: "show or hide the focused tile's needs and feeds",
     keys: ["h"],
   },
+  moveNode: {
+    id: "move-node",
+    label: "Arrow keys",
+    action: "move the focused card or operation",
+    keys: ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"],
+  },
+  moveNodeFast: {
+    id: "move-node-fast",
+    label: "Shift + arrow",
+    action: "move it eight steps",
+    keys: ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"],
+    shift: true,
+  },
   movePlanTask: {
     id: "move-plan-task",
     label: "Arrow keys",
@@ -124,6 +137,14 @@ export const SHORTCUT_GROUPS = [
     title: "Plan",
     items: [SHORTCUTS.movePlanTask],
     note: "Applies while the inspector shows Plan, the view that names the task.",
+  },
+  /* Layout keys are reached through the thing they move, not globally: they
+     act on whatever has focus, which is what makes one pair of arrows mean the
+     tile in one place and the card in another without either claiming them. */
+  {
+    title: "Layout",
+    items: [SHORTCUTS.moveNode, SHORTCUTS.moveNodeFast],
+    note: "Tab to a card's move handle, or to an operation while Move ops is on.",
   },
   { title: "Panels", items: [SHORTCUTS.leftPanel, SHORTCUTS.rightPanel] },
   { title: "Source", items: [SHORTCUTS.run] },

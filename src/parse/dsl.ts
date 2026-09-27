@@ -15,6 +15,7 @@
  */
 
 import { Graph } from "../core/graph";
+import { readDimExpr } from "../core/shapes";
 import { DType } from "../core/dtypes";
 import { lowerProgram, DTYPE_TO_DSL } from "./lower";
 import { parseProgram } from "./parser";
@@ -42,6 +43,15 @@ export function parseDSLWithSource(text: string): ParsedDSL {
 
 // ------------------------------------------------------------------- toDSL
 
+/** Whether this attribute string is a dimension expression in full: a bare
+ *  symbol, or arithmetic over symbols and literals. An einsum equation and any
+ *  other free text are not, and stay quoted. */
+function isDimExpr(v: string): boolean {
+  if (!v) return false;
+  const read = readDimExpr(v);
+  return read !== null && read.end === v.length;
+}
+
 function attrValueToDSL(v: unknown, name?: string): string {
   // The attribute's name travels into its items: a per-output `dtypes` list
   // holds canonical dtypes that have to come back out in the DSL's spellings,
@@ -53,10 +63,12 @@ function attrValueToDSL(v: unknown, name?: string): string {
     Object.prototype.hasOwnProperty.call(DTYPE_TO_DSL, v)
   )
     return DTYPE_TO_DSL[v as DType];
+  // A symbolic dimension is source the author wrote - `H*D`, `P+T` - and has to
+  // come back out that way. Quoting it printed `shape=[B, "KVH*G", D]`, which
+  // parses back to the same graph but is not what anyone typed, and expanding a
+  // composite writes this text into the editor.
   if (typeof v === "string")
-    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(v) && !isDSLBooleanLiteral(v)
-      ? v
-      : JSON.stringify(v);
+    return isDimExpr(v) && !isDSLBooleanLiteral(v) ? v : JSON.stringify(v);
   return String(v);
 }
 

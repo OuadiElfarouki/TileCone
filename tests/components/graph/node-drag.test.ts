@@ -15,17 +15,19 @@ vi.mock("../../../src/state/store", async (importOriginal) => {
 
 type OpProps = React.HTMLAttributes<HTMLDivElement>;
 
-function findOp(node: ReactNode): OpProps | undefined {
+function findByClass(node: ReactNode, wanted: string): OpProps | undefined {
   if (Array.isArray(node)) {
     for (const child of node) {
-      const found = findOp(child);
+      const found = findByClass(child, wanted);
       if (found) return found;
     }
   } else if (isValidElement<{ className?: string; children?: ReactNode }>(node)) {
-    if (node.props.className?.split(" ").includes("op-node")) return node.props;
-    return findOp(node.props.children);
+    if (node.props.className?.split(" ").includes(wanted)) return node.props;
+    return findByClass(node.props.children, wanted);
   }
 }
+
+const findOp = (node: ReactNode) => findByClass(node, "op-node");
 
 // Capture the actual JSX handlers with React providing the hooks. This tests
 // handler wiring and store effects, not the browser's pointer-capture behavior.
@@ -39,6 +41,24 @@ function operationProps(): OpProps {
   expect(props).toBeDefined();
   return props!;
 }
+
+/** The first tensor card's move handle, probed as `operationProps` probes the
+ *  operation node. */
+function cardHandleProps(): OpProps {
+  let props: OpProps | undefined;
+  function Probe() {
+    props = findByClass(GraphView(), "tensor-grab");
+    return null;
+  }
+  renderToStaticMarkup(createElement(Probe));
+  expect(props).toBeDefined();
+  return props!;
+}
+
+const arrow = (key: string, shiftKey = false) => ({
+  key, shiftKey, ctrlKey: false, metaKey: false, altKey: false,
+  preventDefault: vi.fn(), stopPropagation: vi.fn(),
+}) as unknown as React.KeyboardEvent<HTMLDivElement>;
 
 const pointer = (x: number) => ({
   pointerId: 1, clientX: x, clientY: 0, target: null,
@@ -86,4 +106,69 @@ describe("locking operations during a drag", () => {
       expect(useStore.getState().nodeOffsets).toEqual({});
     }
   );
+});
+
+describe("moving a node by keyboard", () => {
+  it("nudges a card one step per press, each its own undo entry", () => {
+    const props = cardHandleProps();
+    const depth = useStore.getState().workspaceHistory.length;
+
+    props.onKeyDown!(arrow("ArrowRight"));
+    props.onKeyDown!(arrow("ArrowDown"));
+    const moved = Object.values(useStore.getState().nodeOffsets)[0];
+    expect(moved.dx).toBeGreaterThan(0);
+    expect(moved.dy).toBeGreaterThan(0);
+    expect(useStore.getState().workspaceHistory).toHaveLength(depth + 2);
+
+    useStore.getState().undoWorkspace();
+    expect(Object.values(useStore.getState().nodeOffsets)[0].dy).toBe(0);
+  });
+
+  it("travels eight times as far with Shift", () => {
+    // Upwards, where this row of nodes leaves the card open space to move into.
+    const props = cardHandleProps();
+    props.onKeyDown!(arrow("ArrowUp"));
+    const step = Object.values(useStore.getState().nodeOffsets)[0].dy;
+    expect(step).toBeLessThan(0);
+
+    useStore.getState().resetNodeLayout();
+    props.onKeyDown!(arrow("ArrowUp", true));
+    expect(Object.values(useStore.getState().nodeOffsets)[0].dy).toBe(step * 8);
+  });
+
+  /* A nudge is the drag's motion sampled once, so it inherits the collision
+     sweep: the operation node sits to this card's right in a left-to-right
+     layout, and a long press lands against it rather than through it. */
+  it("stops a nudge at a neighbour instead of tunnelling through it", () => {
+    const props = cardHandleProps();
+    props.onKeyDown!(arrow("ArrowRight", true));
+
+    const dx = Object.values(useStore.getState().nodeOffsets)[0].dx;
+    expect(dx).toBeGreaterThan(0);
+    expect(dx).toBeLessThan(8 * 8);
+  });
+
+  it("leaves keys that are not a bare arrow to whoever else wants them", () => {
+    const props = cardHandleProps();
+    const event = arrow("ArrowRight");
+    (event as { ctrlKey: boolean }).ctrlKey = true;
+    props.onKeyDown!(event);
+    props.onKeyDown!(arrow("Home"));
+
+    expect(useStore.getState().nodeOffsets).toEqual({});
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+
+  /* The same gate as the pointer: an operation is not focusable while locked,
+     so the handler is absent rather than present and silently refusing. */
+  it("gives an operation the keys only while the unlock is on", () => {
+    expect(operationProps().onKeyDown).toBeUndefined();
+
+    useStore.getState().setMoveOps(true);
+    const unlocked = operationProps();
+    expect(unlocked.tabIndex).toBe(0);
+    unlocked.onKeyDown!(arrow("ArrowUp"));
+    expect(Object.keys(useStore.getState().nodeOffsets)).toEqual(["n:elementwise_Y"]);
+    expect(useStore.getState().nodeOffsets["n:elementwise_Y"].dy).toBeLessThan(0);
+  });
 });
