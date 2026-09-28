@@ -227,11 +227,17 @@ export function GraphView(): React.ReactElement {
   const planSupply = useStore((s) => s.planSupply);
   const contributing = useMemo(
     () =>
-      // The Plan view lights the inspected task's tensor and the ones it reads,
-      // so the graph shows the relation the cards are showing.
+      // The Plan view lights the inspected task's tensor, the ones it reads and
+      // the untiled ones it computes, so the graph shows what the cards show.
       planView
         ? new Set(
-            planSupply ? [planSupply.task.tensorId, ...planSupply.demand.map((d) => d.tensorId)] : []
+            planSupply
+              ? [
+                  planSupply.task.tensorId,
+                  ...planSupply.demand.map((d) => d.tensorId),
+                  ...planSupply.computes.map((c) => c.tensorId),
+                ]
+              : []
           )
         : involvedTensorIds(selection, backwardRes, forwardRes, perBox, hiddenBoxes, direction),
     [backwardRes, direction, forwardRes, hiddenBoxes, perBox, selection, planView, planSupply]

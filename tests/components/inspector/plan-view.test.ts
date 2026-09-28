@@ -44,7 +44,30 @@ describe("planning from the canvas", () => {
       ["C", "tasks"],
       ["W", "input"],
     ]);
-    expect(S().planSupply!.complete).toBe(true);
+    expect(S().planSupply!.computes).toEqual([]);
+    expect(S().planSupply!.producers.length).toBeGreaterThan(0);
+  });
+
+  it("fuses an operand whose tiling is cleared into the tasks that read it", () => {
+    S().setPlanTileAt("Y", [4, 4], [9, 2]);
+    S().setPlanTile("C", null);
+    const supply = S().planSupply!;
+    // Y's task now computes its band of C itself, reading A and B for it.
+    expect(supply.demand.map((d) => [d.tensorId, d.supplier])).toEqual([
+      ["A", "input"],
+      ["B", "input"],
+      ["W", "input"],
+    ]);
+    expect(supply.producers).toEqual([]);
+    expect(supply.computes.map((c) => [c.tensorId, c.region.boxes])).toEqual([
+      ["C", [box([8, 12], [0, 16])]],
+    ]);
+    // Its own tile (4x4, K=16) and the band of C (4x16, K=16), two FLOPs per term.
+    expect(supply.flops).toEqual({ value: 2 * 16 * (4 * 4 + 4 * 16), status: "exact", reasons: [] });
+
+    // Tiling C again is what writes it back to memory.
+    S().tilePlanTensor("C");
+    expect(S().planSupply!.computes).toEqual([]);
     expect(S().planSupply!.producers.length).toBeGreaterThan(0);
   });
 
@@ -120,7 +143,7 @@ describe("planning from the canvas", () => {
     S().setPlanTileAt("Y", [4, 4], [4, 0]);
     S().setPlanTile("C", [4, 4]);
     const supply = S().planSupply!;
-    expect(supply.complete).toBe(true);
+    expect(supply.computes).toEqual([]);
     expect(supply.producers.map((p) => p.task.coord.join(","))).toEqual(["1,0", "1,1", "1,2", "1,3"]);
     expect(supply.producers.every((p) => p.definite)).toBe(true);
   });
@@ -332,6 +355,17 @@ describe("the plan view's paint", () => {
     ]);
     expect(paint.tiles.every((t) => t.definite)).toBe(true);
     expect(paint.lattice).toEqual({ rows: 4, cols: 4 });
+  });
+
+  it("fills an untiled tensor the task computes, with no lattice and no producers", () => {
+    S().setPlanTile("C", null);
+    const { layers, paint } = paintOf("C");
+    expect(layers).toHaveLength(1);
+    expect(layers[0].region.boxes).toEqual([box([4, 8], [0, 16])]);
+    expect(paint.lattice).toBeNull();
+    expect(paint.tiles).toEqual([]);
+    // What it reads to compute that band is painted where it lands.
+    expect(paintOf("A").layers[0].region.boxes).toEqual([box([4, 8], [0, 16])]);
   });
 
   it("gives a tensor the plan does not tile no lattice", () => {

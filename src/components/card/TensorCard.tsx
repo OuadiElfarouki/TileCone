@@ -448,7 +448,9 @@ function TensorCardView({
   // Exactness is carried by hatching on the canvas; this repeats it in the
   // header because an over-approximation must never be mistakable for ground
   // truth, and hatching is easy to miss on a small or sparsely covered card.
-  const planDemand = planView ? planSupply?.demand.filter((d) => d.tensorId === tensor.id) ?? [] : [];
+  const planDemand = planView
+    ? [...(planSupply?.demand ?? []), ...(planSupply?.computes ?? [])].filter((d) => d.tensorId === tensor.id)
+    : [];
   const planFamily = planView ? plan?.families.get(tensor.id) : undefined;
   const approximation = planView
     ? visibleApproximation(...planDemand.map((d) => d.region))

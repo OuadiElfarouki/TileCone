@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hydrateResolvedGraph } from "../../src/core/graph";
-import { compileArtifact, familyArtifact, reuseArtifact } from "../../src/worker/analysis-jobs";
+import { compileArtifact, planArtifact, reuseArtifact } from "../../src/worker/analysis-jobs";
 import { box } from "../../src/core/region";
 
 const CHAIN = `A = Tensor(256, 256, dtype=fp16)
@@ -35,19 +35,21 @@ describe("analysis worker jobs", () => {
     expect(result.diagnostics.map((diagnostic) => diagnostic.span.start.line)).toEqual([1, 2]);
   });
 
-  it("evaluates a tiled family from serialized graph data", () => {
+  it("evaluates a plan from serialized graph data, into a report that crosses back", () => {
     const result = compileArtifact(CHAIN);
     if (!result.ok) throw new Error(result.diagnostics[0].message);
 
-    const report = familyArtifact(
-      structuredClone(result.artifact.resolved),
-      { C: [64, 64], Y: [64, 64] },
-      "Y"
-    );
-    expect(report.status).toBe("evaluated");
-    if (report.status !== "evaluated") return;
-    expect(report.tasks).toBe(8);
-    expect(report.boundary.map((row) => row.tensorId)).toEqual(["C", "W"]);
+    const report = planArtifact(structuredClone(result.artifact.resolved), {
+      C: [64, 64],
+      Y: [64, 64],
+    });
+    expect(() => structuredClone(report)).not.toThrow();
+    const y = report.families.find((family) => family.tensorId === "Y")!;
+    expect(y.status).toBe("evaluated");
+    if (y.status !== "evaluated") return;
+    expect(y.tasks).toBe(8);
+    expect(y.boundary.map((row) => row.tensorId)).toEqual(["C", "W"]);
+    expect(report.total?.tasks).toBe(report.families.reduce((n, family) => n + family.tasks, 0));
   });
 
   it("returns a structured-cloneable reuse trace for canvas playback", () => {

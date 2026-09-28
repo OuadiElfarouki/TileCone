@@ -104,6 +104,21 @@ export function ratioFigure(numerator: Figure, denominator: Figure): Figure {
   return figure(numerator.value / denominator.value, inexact ? "approximate" : "exact", reasons);
 }
 
+/**
+ * `a - b`, keeping whatever direction the difference still has.
+ *
+ * Overstating `a` overstates the difference, so an upper bound less an exact
+ * figure is still an upper bound. Overstating `b` understates it, and no figure
+ * here is a lower bound, so a difference whose subtrahend is inexact is only
+ * approximate.
+ */
+export function differenceFigure(a: Figure, b: Figure): Figure {
+  const reasons = [...a.reasons, ...b.reasons];
+  if (a.value === null || b.value === null) return figure(0, "unknown", reasons);
+  const status = b.status !== "exact" ? "approximate" : a.status;
+  return figure(a.value - b.value, status, reasons);
+}
+
 export type AggregateReadout = {
   /**
    * Arithmetic over the cone, or `unknown` where a barrier is in it.
@@ -246,24 +261,101 @@ export function viewLayouts(graph: ResolvedGraph): {
   return { views, layouts };
 }
 
-export function computeMetrics(graph: ResolvedGraph, back: PropResult): AggregateReadout {
+const layoutMemo = new WeakMap<ResolvedGraph, ReturnType<typeof viewLayouts>>();
+
+/** `viewLayouts`, computed once per graph: a plan asks for it once per task. */
+function layoutsOf(graph: ResolvedGraph): ReturnType<typeof viewLayouts> {
+  let layouts = layoutMemo.get(graph);
+  if (!layouts) {
+    layouts = viewLayouts(graph);
+    layoutMemo.set(graph, layouts);
+  }
+  return layouts;
+}
+
+/**
+ * The arithmetic that computes the given regions of produced tensors, each
+ * element once, or `unknown` where one of them is an output of an operation
+ * nobody described.
+ *
+ * Shared by cone metrics and tile plans, so a task's FLOPs and a cone's FLOPs
+ * are one count over one kind of region. Graph inputs cost nothing, and a view
+ * computes nothing; both are passed over.
+ */
+export function flopsOver(
+  graph: ResolvedGraph,
+  regions: ReadonlyMap<string, { region: Region }>
+): { flops: Figure; unknownOperations: number } {
   let flops = 0;
-  let flopsOverflow = false;
-  let flopsExact = true;
-  const flopsReasons = new Set<string>();
-  // Nodes in this cone whose arithmetic nobody described. One of them is enough
-  // to make the FLOP total meaningless; they are collected rather than counted
-  // so the reason can name them.
+  let overflow = false;
+  let exact = true;
+  const reasons = new Set<string>();
+  // Nodes whose arithmetic nobody described. One of them is enough to make the
+  // FLOP total meaningless; they are collected rather than counted so the
+  // reason can name them.
   const unknownWork = new Map<string, string>();
-  let unfusedFigure = figure(0, "exact");
-  const addFlops = (value: number) => {
+  const add = (value: number) => {
     if (!Number.isSafeInteger(value) || flops > Number.MAX_SAFE_INTEGER - value) {
-      flopsOverflow = true;
+      overflow = true;
       return;
     }
     flops += value;
   };
-  const layouts = viewLayouts(graph);
+  const { views } = layoutsOf(graph);
+  for (const node of graph.topo) {
+    if (views.has(node.id)) continue;
+    const spec = getOp(node.op)!;
+    const ctx: OpCtx = {
+      inShapes: graph.shapesOf(node.inputs),
+      outShapes: graph.shapesOf(node.outputs),
+      attrs: node.attrs,
+    };
+    node.outputs.forEach((tid, slot) => {
+      const region = regions.get(tid)?.region;
+      if (!region) return;
+      // An operation that cannot say what it computes cannot say what it costs.
+      // Its `flopsFor` returns zero, which is the only honest answer and not a
+      // contribution to a total: recording the node here is what stops that
+      // zero from being summed in beside real upper bounds as if it were one.
+      if (spec.unknownWork) {
+        unknownWork.set(node.id, opLabel(node));
+        return;
+      }
+      if (!region.exact) {
+        exact = false;
+        region.reasons.forEach((reason) => reasons.add(reason));
+      }
+      if (spec.flopsForRegion) add(spec.flopsForRegion(slot, region, ctx));
+      else if (spec.flopsPerElement) add(count(region) * spec.flopsPerElement(slot, ctx));
+      // Per-box costs are summed, so they must be summed over a partition.
+      // Tiles may overlap, and a shared element would otherwise be paid for
+      // once per box that covers it. A partition past its work budget is a
+      // coarser superset, and the count over it a bound.
+      else {
+        const parts = disjointify(region);
+        if (!parts.exact) {
+          exact = false;
+          parts.reasons.forEach((reason) => reasons.add(reason));
+        }
+        for (const b of parts.boxes) add(spec.flopsFor(slot, b, ctx));
+      }
+    });
+  }
+  // Unknown beats every other claim: a total that skipped an operation's
+  // arithmetic entirely is not an upper bound on the work, and a reader who
+  // saw one number would have no way to tell.
+  const total: Figure = unknownWork.size || overflow
+    ? figure(0, "unknown", [
+        ...[...unknownWork.values()].map((op) => `unknown work in ${op}`),
+        ...(overflow ? ["FLOP count exceeds safe integer range"] : []),
+      ])
+    : figure(flops, exact ? "exact" : "upper", [...reasons]);
+  return { flops: total, unknownOperations: unknownWork.size };
+}
+
+export function computeMetrics(graph: ResolvedGraph, back: PropResult): AggregateReadout {
+  let unfusedFigure = figure(0, "exact");
+  const layouts = layoutsOf(graph);
   for (const node of graph.topo) {
     const spec = getOp(node.op)!;
     // A view writes nothing and reads nothing: the consumer reads the viewed
@@ -296,25 +388,6 @@ export function computeMetrics(graph: ResolvedGraph, back: PropResult): Aggregat
           } : region);
         });
       }
-      // An operation that cannot say what it computes cannot say what it costs.
-      // Its `flopsFor` returns zero, which is the only honest answer and not a
-      // contribution to a total: recording the node here is what stops that
-      // zero from being summed in beside real upper bounds as if it were one.
-      if (spec.unknownWork) {
-        unknownWork.set(node.id, opLabel(node));
-        return;
-      }
-      if (!tr.region.exact) {
-        flopsExact = false;
-        tr.region.reasons.forEach((reason) => flopsReasons.add(reason));
-      }
-      if (spec.flopsForRegion) addFlops(spec.flopsForRegion(slot, tr.region, ctx));
-      else if (spec.flopsPerElement)
-        addFlops(count(tr.region) * spec.flopsPerElement(slot, ctx));
-      // Per-box costs are summed, so they must be summed over a partition.
-      // Tiles may overlap, and a shared element would otherwise be paid for
-      // once per box that covers it.
-      else for (const b of disjointify(tr.region).boxes) addFlops(spec.flopsFor(slot, b, ctx));
     });
     for (const [tid, region] of reads)
       unfusedFigure = addFigures(
@@ -322,6 +395,7 @@ export function computeMetrics(graph: ResolvedGraph, back: PropResult): Aggregat
         byteFigure(graph.tensors[tid], count(region), region)
       );
   }
+  const { flops: flopsFigure, unknownOperations } = flopsOver(graph, back.tensors);
 
   const tensors = coneReadout(graph, back);
   // Each byte bucket carries only the rows it actually summed. A widened weight
@@ -338,16 +412,6 @@ export function computeMetrics(graph: ResolvedGraph, back: PropResult): Aggregat
   const intermediateBytes = bytesIn("intermediate");
   const outputBytes = bytesIn("output");
 
-  // Unknown beats every other claim: a total that skipped an operation's
-  // arithmetic entirely is not an upper bound on the work, and a reader who
-  // saw one number would have no way to tell.
-  const flopsFigure: Figure = unknownWork.size || flopsOverflow
-    ? figure(0, "unknown", [
-        ...[...unknownWork.values()].map((op) => `unknown work in ${op}`),
-        ...(flopsOverflow ? ["FLOP count exceeds safe integer range"] : []),
-      ])
-    : figure(flops, flopsExact ? "exact" : "upper", [...flopsReasons]);
-
   // Traffic, not just what is read: the tile is written in both worlds.
   const fusedBytes = addFigures(inputBytes, outputBytes);
   const figures = [
@@ -359,7 +423,7 @@ export function computeMetrics(graph: ResolvedGraph, back: PropResult): Aggregat
   ];
   return {
     flops: flopsFigure,
-    unknownOperations: unknownWork.size,
+    unknownOperations,
     inputBytes,
     intermediateBytes,
     outputBytes,

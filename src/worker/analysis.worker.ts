@@ -1,5 +1,5 @@
 import { hydrateResolvedGraph, type ResolvedGraph } from "../core/graph";
-import { compileArtifact, familyArtifact, reuseArtifact } from "./analysis-jobs";
+import { compileArtifact, planArtifact, reuseArtifact } from "./analysis-jobs";
 import type { AnalysisRequest, AnalysisResponse } from "./analysis-protocol";
 
 type WorkerHost = {
@@ -42,11 +42,11 @@ host.onmessage = ({ data }) => {
       }
     }
     if (!graph) throw new Error("the graph is no longer available to the analysis worker");
-    if (data.kind === "family") {
+    if (data.kind === "plan") {
       host.postMessage({
         id: data.id,
-        kind: "family",
-        result: familyArtifact(graph, data.tiles, data.tensorId),
+        kind: "plan",
+        result: planArtifact(graph, data.tiles),
       });
     } else {
       host.postMessage({

@@ -1,41 +1,44 @@
 /**
- * The Plan view: which produced tensors are divided into tasks, what one task
- * reads, which producer tasks supply it, and the same questions asked of the
- * task's whole family.
+ * The Plan view: which produced tensors are divided into tasks, what each
+ * family of tasks and the whole plan cost, what one task reads and computes,
+ * and which producer tasks supply it.
  *
  * Every figure here is a function of the graph and the declared tiling. It is
  * exact for the plan as given, or an upper bound with the reason named. The
- * family evaluation declines above its budget instead of reporting part of a
- * sum.
+ * plan evaluation declines a family above its budget instead of reporting part
+ * of a sum.
  */
 
 import React, { useEffect, useMemo, useState } from "react";
 import type { Node } from "../../core/graph";
-import { byteFigure, regionSliceExprs } from "../../core/metrics";
+import { byteFigure, regionSliceExprs, type Figure } from "../../core/metrics";
 import { opLabel } from "../../core/ops/index";
 import {
-  interfaceOf,
+  planReport,
   supplyOf,
   type BoundaryDemand,
+  type Computed,
   type Demand,
   type InterfaceReport,
+  type PlanReport,
   type ProducerNeed,
+  type Work,
 } from "../../core/plan/interfaces";
 import type { TaskRef, TilePlan } from "../../core/plan/plan";
 import type { Region } from "../../core/region";
 import { tileBox, tileOrdinal, tiles, type TileFamily } from "../../core/plan/tile-family";
 import { count, formatBoxIndices } from "../../core/region";
-import { formatBytes, formatFigure } from "../../view/format";
+import { fmt, formatBytes, formatFigure } from "../../view/format";
 import { boxColor, rgbCss } from "../../view/palette";
 import { useDark, useStore } from "../../state/store";
 import {
   analysisWorkerAvailable,
-  familyInWorker,
   isAnalysisCancelled,
+  planInWorker,
 } from "../../state/analysis-worker-client";
 
-/** Families up to this many tasks are evaluated as soon as they are shown; larger ones on request. */
-export const AUTO_FAMILY_TASKS = 256;
+/** Plans up to this many tasks in all are evaluated as soon as they are shown; larger ones on request. */
+export const AUTO_PLAN_TASKS = 256;
 /** The dependency matrix is drawn when both sides have at most this many tiles. */
 export const MATRIX_MAX_SIDE = 64;
 
@@ -119,13 +122,191 @@ function TileExtentsInput({
   );
 }
 
-function TiledTensors({ plan }: { plan: TilePlan | null }): React.ReactElement {
+/** The plan's evaluation: every family and their total, computed once per tiling. */
+type PlanRun = {
+  report: PlanReport | null;
+  evaluating: boolean;
+  error: string | null;
+  /** Tasks across every family. */
+  tasks: number;
+  /** Whether the plan is evaluated without being asked. */
+  auto: boolean;
+  evaluate: () => void;
+};
+
+function usePlanRun(plan: TilePlan | null): PlanRun {
+  const workerGraphId = useStore((s) => s.workerGraphId);
+  const tasks = plan ? [...plan.families.values()].reduce((n, f) => n + f.count, 0) : 0;
+  const auto = tasks <= AUTO_PLAN_TASKS;
+  const workerEnabled = analysisWorkerAvailable();
+  const tiles = useMemo(
+    () => Object.fromEntries(
+      [...(plan?.families ?? [])].map(([tensorId, family]) => [tensorId, [...family.tile]])
+    ),
+    [plan]
+  );
+  const analysisKey = useMemo(
+    () => plan && JSON.stringify([workerGraphId ?? plan.graph.nodes.map((node) => node.id), tiles]),
+    [plan, tiles, workerGraphId]
+  );
+  const automatic = useMemo(
+    () => (plan && !workerEnabled && auto ? planReport(plan) : null),
+    [auto, plan, workerEnabled]
+  );
+  const [run, setRun] = useState<{ plan: TilePlan; report: PlanReport } | null>(null);
+  const [requestedKey, setRequestedKey] = useState<string | null>(null);
+  const [workerRun, setWorkerRun] = useState<{
+    key: string;
+    report: PlanReport | null;
+    error: string | null;
+  } | null>(null);
+  const shouldRunInWorker = !!plan && workerEnabled && (auto || requestedKey === analysisKey);
+  /* A cancellation is the lane dropping this work, not an answer about it, and
+     the question is unchanged - so ask again rather than leaving `evaluating`
+     true with no dependency left that could retry it. This terminates: only
+     one query holds the lane at a time, and the reuse sweep that shares it
+     lives on a mutually exclusive inspector tab, so what cancels a plan run
+     is a build finishing, once per build. */
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    if (!shouldRunInWorker || !plan || !analysisKey) return;
+    let live = true;
+    setWorkerRun({ key: analysisKey, report: null, error: null });
+    void planInWorker({ graphId: workerGraphId, graph: plan.graph, tiles }).then((report) => {
+      if (live) setWorkerRun({ key: analysisKey, report, error: null });
+    }).catch((error) => {
+      if (!live) return;
+      if (isAnalysisCancelled(error)) setAttempt((previous) => previous + 1);
+      else setWorkerRun({
+        key: analysisKey,
+        report: null,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    return () => { live = false; };
+  }, [analysisKey, attempt, shouldRunInWorker, workerGraphId]);
+
+  const requested = run && run.plan === plan ? run.report : null;
+  const currentWorkerRun = workerRun?.key === analysisKey ? workerRun : null;
+  return {
+    report: automatic ?? requested ?? currentWorkerRun?.report ?? null,
+    evaluating: shouldRunInWorker &&
+      (!currentWorkerRun || (currentWorkerRun.report === null && !currentWorkerRun.error)),
+    error: currentWorkerRun?.error ?? null,
+    tasks,
+    auto,
+    evaluate: () => {
+      if (!plan) return;
+      if (workerEnabled) setRequestedKey(analysisKey);
+      else setRun({ plan, report: planReport(plan) });
+    },
+  };
+}
+
+const flopText = (f: Figure) => formatFigure(f, fmt);
+const intensityText = (f: Figure) => formatFigure(f, (v) => `${v.toFixed(2)} FLOP/B`);
+
+/** One family's work on a line: what it computes, moves, and the ratio of the two. */
+function WorkLine({ work }: { work: Work }): React.ReactElement {
+  const recomputed = (work.recomputed.value ?? 0) !== 0;
+  return (
+    <span className="plan-work muted">
+      <span title={work.flops.reasons.join("; ") || undefined}>{flopText(work.flops)} FLOP</span>
+      {recomputed && (
+        <span title="work more than one task does">, {flopText(work.recomputed)} recomputed</span>
+      )}
+      {" · "}
+      <span title={`each task's reads summed; ${formatFigure(work.readDistinct, formatBytes)} distinct`}>
+        reads {formatFigure(work.read, formatBytes)}
+      </span>
+      {" · "}
+      <span>writes {formatFigure(work.written, formatBytes)}</span>
+      {" · "}
+      <span title="FLOPs per byte read or written">{intensityText(work.intensity)}</span>
+    </span>
+  );
+}
+
+/**
+ * The whole plan in the figures plans are compared by. Every row is always
+ * shown, so two plans read side by side line up.
+ */
+function PlanTotal({ total }: { total: Work }): React.ReactElement {
+  const inexact = [
+    total.dependencies,
+    total.flops,
+    total.recomputed,
+    total.read,
+    total.readDistinct,
+    total.written,
+    total.intensity,
+  ].some((f) => f.status === "upper" || f.status === "approximate");
+  return (
+    <>
+      <div className="plan-total-label muted">whole plan</div>
+      <div className="kv plan-total">
+        <span title="one task per tile of every tiled tensor">tasks</span>
+        <span>{total.tasks}</span>
+        <span title="producer tasks each task reads from, summed over tasks">dependencies</span>
+        <span>{formatFigure(total.dependencies, String)}</span>
+        <span>FLOPs</span>
+        <span title={total.flops.reasons.join("; ") || undefined}>{flopText(total.flops)}</span>
+        <span title="work more than one task does: an untiled tensor several tasks compute, or a row statistic every tile across a normalised axis computes again">
+          recomputed
+        </span>
+        <span>{flopText(total.recomputed)}</span>
+        <span title="what the tasks read, each task counted separately: no reuse between tasks">
+          read
+        </span>
+        <span>{formatFigure(total.read, formatBytes)}</span>
+        <span title="what the tasks read, each element counted once">distinct read</span>
+        <span>{formatFigure(total.readDistinct, formatBytes)}</span>
+        <span title="every tiled tensor, once">written</span>
+        <span>{formatFigure(total.written, formatBytes)}</span>
+        <span title="FLOPs per byte read or written">intensity</span>
+        <span>{intensityText(total.intensity)}</span>
+      </div>
+      <p className="hint">
+        Logical figures for this plan: each task reads its own demand and each tiled tensor is
+        written once. Not measured traffic; FLOPs follow each operation's cost formula.
+      </p>
+      {total.flops.status === "unknown" ? (
+        <p className="hint overlap">
+          No FLOP total: some task computes an operation whose arithmetic is not modelled. The byte
+          figures still hold.
+        </p>
+      ) : inexact ? (
+        <p className="hint overlap">
+          Some reads are widened: ≤ is “no more than”, ~ moved in an unknown direction.
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+function TiledTensors({ plan, run }: { plan: TilePlan | null; run: PlanRun }): React.ReactElement {
   const resolved = useStore((s) => s.resolved)!;
   const setPlanTile = useStore((s) => s.setPlanTile);
   const families = plan ? [...plan.families.values()] : [];
+  const reports = new Map(run.report?.families.map((r) => [r.tensorId, r]) ?? []);
+  const total = run.report?.total ?? null;
+  const unwritten = run.report?.unwritten ?? [];
   return (
     <div className="ins-section">
-      <div className="ins-title">Tiled tensors</div>
+      <div className="ins-title with-action">
+        Tiled tensors
+        {plan && !run.auto && !run.report && (
+          <button
+            className="mini"
+            onClick={run.evaluate}
+            disabled={run.evaluating}
+            title="run one bounded query per task of every tiled tensor"
+          >
+            {run.evaluating ? "evaluating…" : "evaluate"}
+          </button>
+        )}
+      </div>
       {families.length === 0 ? (
         <p className="hint">
           Draw a rectangle on a produced tensor to divide it, or click one to divide it at the size
@@ -134,12 +315,14 @@ function TiledTensors({ plan }: { plan: TilePlan | null }): React.ReactElement {
       ) : (
         <>
         <p className="hint">
-          Click a tile to inspect its task; the arrow keys step it. A tensor is divided once: clear
-          it here, or type new extents, to divide it differently.
+          Click a tile to inspect its task; the arrow keys step it. A tiled tensor is written to
+          memory. Clear one and the tasks that read it compute it themselves; type new extents to
+          divide it differently.
         </p>
         <ul className="plan-list">
           {families.map((family) => {
             const tensor = resolved.tensors[family.tensorId];
+            const report = reports.get(family.tensorId);
             return (
               <li key={family.tensorId}>
                 <code>{tensor.name}</code>
@@ -154,16 +337,45 @@ function TiledTensors({ plan }: { plan: TilePlan | null }): React.ReactElement {
                 </span>
                 <button
                   className="mini danger"
-                  title={`stop tiling ${tensor.name}`}
+                  title={`stop tiling ${tensor.name}: the tasks that read it compute it instead`}
                   aria-label={`stop tiling ${tensor.name}`}
                   onClick={() => setPlanTile(family.tensorId, null)}
                 >
                   ×
                 </button>
+                {families.length > 1 && report?.status === "evaluated" && (
+                  <WorkLine work={report.work} />
+                )}
+                {report?.status === "over-budget" && (
+                  <span className="plan-work muted">over the budget of {report.budget} tasks</span>
+                )}
               </li>
             );
           })}
         </ul>
+        {run.error ? (
+          <p className="hint overlap">Plan analysis failed: {run.error}</p>
+        ) : run.evaluating ? (
+          <p className="hint">Evaluating one bounded query per task…</p>
+        ) : !run.report ? (
+          <p className="hint">
+            {run.tasks} tasks in all · plans above {AUTO_PLAN_TASKS} tasks are evaluated on request.
+          </p>
+        ) : total ? (
+          <PlanTotal total={total} />
+        ) : (
+          <p className="hint">
+            No totals: a tensor is over the task budget, and a total over part of the plan would
+            understate it.
+          </p>
+        )}
+        {run.report && unwritten.length > 0 && (
+          <p className="hint">
+            Not written by this plan:{" "}
+            {unwritten.map((id) => resolved.tensors[id].name).join(", ")}. Tile a graph output to
+            count its work.
+          </p>
+        )}
         </>
       )}
     </div>
@@ -213,9 +425,9 @@ export const PRODUCERS_SHOWN = 8;
 /**
  * One tensor a task reads, with a line per operand slot that reads it.
  *
- * Grouped by tensor rather than by slot because the producers, the supplier and
- * the action that tiles it are facts about the tensor. Listed per slot, an
- * operation reading one tensor twice printed its whole producer list twice.
+ * Grouped by tensor rather than by slot because the producers and the supplier
+ * are facts about the tensor. Listed per slot, an operation reading one tensor
+ * twice printed its whole producer list twice.
  */
 function DemandGroup({
   tensorId,
@@ -233,12 +445,20 @@ function DemandGroup({
   onSelect: (task: TaskRef) => void;
 }): React.ReactElement {
   const tensor = plan.graph.tensors[tensorId];
-  const tilePlanTensor = useStore((s) => s.tilePlanTensor);
   const [all, setAll] = useState(false);
   const family = plan.families.get(tensorId);
   const mine = producers.filter((p) => p.task.tensorId === tensorId);
   const shown = all ? mine : mine.slice(0, PRODUCERS_SHOWN);
-  const named = demands.length > 1 || node.inputs.length > 1;
+  // A task that computes an untiled tensor reads through that tensor's
+  // operation, and such a slot is named by the tensor it computes: two matmuls
+  // are both `matmul`, and the tensor is what the reader can find on the graph.
+  const own = demands.every((d) => d.node === node.id);
+  const named = demands.length > 1 || !own || node.inputs.length > 1;
+  const slotLabel = (d: Demand) => {
+    if (d.node === node.id) return `arg${d.slot}`;
+    const reader = plan.graph.nodes.find((n) => n.id === d.node)!;
+    return `arg${d.slot} of ${plan.graph.tensors[reader.outputs[0]].name}`;
+  };
 
   // One element counts once however many slots read it, as the family figures
   // count it, so the bytes here and under the family mean the same thing.
@@ -253,7 +473,7 @@ function DemandGroup({
       <div className="plan-demand-head">
         <code>{tensor.name}</code>
         <span className="muted">
-          {named ? `${demands.map((d) => `arg${d.slot}`).join(", ")} · ` : ""}
+          {named ? `${demands.map(slotLabel).join(", ")} · ` : ""}
           {formatFigure(byteFigure(tensor, count(union), union), formatBytes)}
         </span>
         {!union.exact && (
@@ -267,13 +487,6 @@ function DemandGroup({
       ))}
       {demands[0].supplier === "input" ? (
         <p className="hint">Graph input: read from memory, produced by no task.</p>
-      ) : demands[0].supplier === "unplanned" ? (
-        <p className="hint">
-          {tensor.name} is not tiled, so the tasks that produce it are not named.{" "}
-          <button className="mini" onClick={() => tilePlanTensor(tensorId)}>
-            tile {tensor.name}
-          </button>
-        </p>
       ) : (
         family && (
           <>
@@ -414,80 +627,20 @@ function BoundaryRow({
   );
 }
 
-function FamilySection({ plan, task }: { plan: TilePlan; task: TaskRef }): React.ReactElement {
+function FamilySection({
+  plan,
+  task,
+  run,
+}: {
+  plan: TilePlan;
+  task: TaskRef;
+  run: PlanRun;
+}): React.ReactElement {
   const selectPlanTask = useStore((s) => s.selectPlanTask);
-  const workerGraphId = useStore((s) => s.workerGraphId);
   const family = plan.families.get(task.tensorId)!;
   const name = plan.graph.tensors[task.tensorId].name;
-  const auto = family.count <= AUTO_FAMILY_TASKS;
-  const workerEnabled = analysisWorkerAvailable();
-  const familyTiles = useMemo(
-    () => Object.fromEntries(
-      [...plan.families].map(([tensorId, tiled]) => [tensorId, [...tiled.tile]])
-    ),
-    [plan]
-  );
-  const analysisKey = useMemo(
-    () => JSON.stringify([
-      workerGraphId ?? plan.graph.nodes.map((node) => node.id),
-      task.tensorId,
-      familyTiles,
-    ]),
-    [familyTiles, plan.graph.nodes, task.tensorId, workerGraphId]
-  );
-  const automatic = useMemo(
-    () => (!workerEnabled && auto ? interfaceOf(plan, task.tensorId) : null),
-    [auto, plan, task.tensorId, workerEnabled]
-  );
-  const [run, setRun] = useState<{ plan: TilePlan; tensorId: string; report: InterfaceReport } | null>(null);
-  const [requestedKey, setRequestedKey] = useState<string | null>(null);
-  const [workerRun, setWorkerRun] = useState<{
-    key: string;
-    report: InterfaceReport | null;
-    error: string | null;
-  } | null>(null);
-  const shouldRunInWorker = workerEnabled && (auto || requestedKey === analysisKey);
-  /* A cancellation is the lane dropping this work, not an answer about it, and
-     the question is unchanged - so ask again rather than leaving `evaluating`
-     true with no dependency left that could retry it. This terminates: only
-     one query holds the lane at a time, and the reuse sweep that shares it
-     lives on a mutually exclusive inspector tab, so what cancels a family run
-     is a build finishing, once per build. */
-  const [attempt, setAttempt] = useState(0);
-
-  useEffect(() => {
-    if (!shouldRunInWorker) return;
-    let live = true;
-    setWorkerRun({ key: analysisKey, report: null, error: null });
-    void familyInWorker({
-      graphId: workerGraphId,
-      graph: plan.graph,
-      tiles: familyTiles,
-      tensorId: task.tensorId,
-    }).then((report) => {
-      if (live) setWorkerRun({ key: analysisKey, report, error: null });
-    }).catch((error) => {
-      if (!live) return;
-      if (isAnalysisCancelled(error)) setAttempt((previous) => previous + 1);
-      else setWorkerRun({
-        key: analysisKey,
-        report: null,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
-    return () => { live = false; };
-  }, [analysisKey, attempt, shouldRunInWorker, workerGraphId]);
-
-  const requested = run && run.plan === plan && run.tensorId === task.tensorId ? run.report : null;
-  const currentWorkerRun = workerRun?.key === analysisKey ? workerRun : null;
-  const report = automatic ?? requested ?? currentWorkerRun?.report ?? null;
-  const evaluating = shouldRunInWorker &&
-    (!currentWorkerRun || (currentWorkerRun.report === null && !currentWorkerRun.error));
-
-  const evaluate = () => {
-    if (workerEnabled) setRequestedKey(analysisKey);
-    else setRun({ plan, tensorId: task.tensorId, report: interfaceOf(plan, task.tensorId) });
-  };
+  const report: InterfaceReport | undefined =
+    run.report?.families.find((r) => r.tensorId === task.tensorId);
 
   const matrixFor = (row: BoundaryDemand) => {
     const producer = plan.families.get(row.tensorId);
@@ -501,25 +654,15 @@ function FamilySection({ plan, task }: { plan: TilePlan; task: TaskRef }): React
 
   return (
     <div className="ins-section">
-      <div className="ins-title with-action">
+      <div className="ins-title">
         Across all {family.count} {name} task{family.count === 1 ? "" : "s"}
-        {!auto && (
-          <button
-            className="mini"
-            onClick={evaluate}
-            disabled={evaluating}
-            title="run one bounded query per task of this family"
-          >
-            {evaluating ? "evaluating…" : "evaluate"}
-          </button>
-        )}
       </div>
-      {currentWorkerRun?.error ? (
-        <p className="hint overlap">Family analysis failed: {currentWorkerRun.error}</p>
-      ) : evaluating ? (
+      {run.error ? (
+        <p className="hint overlap">Plan analysis failed: {run.error}</p>
+      ) : run.evaluating ? (
         <p className="hint">Evaluating one bounded query per task…</p>
       ) : !report ? (
-        <p className="hint">One query per task · run on request above {AUTO_FAMILY_TASKS} tasks.</p>
+        <p className="hint">Evaluate the plan above to see what the family reads.</p>
       ) : report.status === "over-budget" ? (
         <p className="hint">
           {report.tasks} tasks is over the budget of {report.budget}. No totals are shown: a sum over
@@ -561,6 +704,42 @@ function FamilySection({ plan, task }: { plan: TilePlan; task: TaskRef }): React
   );
 }
 
+/**
+ * The untiled tensors a task computes on the way to its tile. Tiling one here
+ * writes it to memory instead, and the task reads it from its producer tasks.
+ */
+function ComputedSection({ plan, computes }: { plan: TilePlan; computes: Computed[] }): React.ReactElement {
+  const tilePlanTensor = useStore((s) => s.tilePlanTensor);
+  return (
+    <section className="ins-section">
+      <div className="ins-title">Computed in this task</div>
+      <p className="hint">Not tiled, so this task computes them itself rather than reading them.</p>
+      {computes.map(({ tensorId, region }) => {
+        const tensor = plan.graph.tensors[tensorId];
+        return (
+          <div className="plan-demand" key={tensorId}>
+            <div className="plan-demand-head">
+              <code>{tensor.name}</code>
+              <span className="muted">{fmt(count(region))} elements</span>
+              {!region.exact && (
+                <span className="badge approx" title={region.reasons.join("; ")}>≈</span>
+              )}
+              <button
+                className="mini"
+                title={`write ${tensor.name} to memory: its tasks compute it, and this task reads it`}
+                onClick={() => tilePlanTensor(tensorId)}
+              >
+                tile {tensor.name}
+              </button>
+            </div>
+            <pre className="plan-slice">{regionSliceExprs(tensor.name, region).join("\n")}</pre>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
 export function PlanPanel(): React.ReactElement {
   const resolved = useStore((s) => s.resolved)!;
   const plan = useStore((s) => s.plan);
@@ -569,6 +748,7 @@ export function PlanPanel(): React.ReactElement {
   const selectPlanTask = useStore((s) => s.selectPlanTask);
   const setFocusNode = useStore((s) => s.setFocusNode);
   const dark = useDark();
+  const run = usePlanRun(plan);
 
   /** Following a producer makes it the task, and brings its tensor into view. */
   const follow = (next: TaskRef) => {
@@ -584,17 +764,23 @@ export function PlanPanel(): React.ReactElement {
   return (
     <div className="ins-tabpanel" role="region" id="ins-panel-plan" aria-labelledby="ins-tab-plan">
       <p className="tab-note">
-        A plan divides produced tensors into tiles, one task per tile, each computing its tile
-        completely. Figures are exact for the plan as given, or bounded with the reason named.
+        A plan divides produced tensors into tiles, one task per tile, and writes each tiled tensor
+        to memory. A task computes any untiled tensor it needs itself. Figures are exact for the
+        plan as given, or bounded with the reason named.
       </p>
-      <TiledTensors plan={plan} />
+      <TiledTensors plan={plan} run={run} />
       {plan && task && family && tensor && node && supply ? (
         <>
           <div className="ins-section">
             <div className="ins-title">Task {taskName(tensor.name, task.coord)}</div>
             <p className="plan-op">
               <code>{`${tensor.name}[${formatBoxIndices(tileBox(family, task.coord))}]`}</code>
-              <span className="muted"> computed by {opLabel(node)}</span>
+              <span className="muted">
+                {" "}computed by {opLabel(node)} ·{" "}
+                <span title={supply.flops.reasons.join("; ") || undefined}>
+                  {flopText(supply.flops)} FLOP
+                </span>
+              </span>
             </p>
           </div>
           <section className="ins-section">
@@ -617,14 +803,9 @@ export function PlanPanel(): React.ReactElement {
                 />
               ))
             )}
-            {!supply.complete && (
-              <p className="hint overlap">
-                Some of what this task reads is produced by a tensor the plan does not tile, so the
-                list of tasks it waits on is incomplete.
-              </p>
-            )}
           </section>
-          <FamilySection plan={plan} task={task} />
+          {supply.computes.length > 0 && <ComputedSection plan={plan} computes={supply.computes} />}
+          <FamilySection plan={plan} task={task} run={run} />
         </>
       ) : (
         plan && <p className="hint">Click a tile of a tiled tensor to inspect its task.</p>

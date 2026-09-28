@@ -1,5 +1,5 @@
 import type { Graph, ResolvedGraphData } from "../core/graph";
-import type { InterfaceReport } from "../core/plan/interfaces";
+import type { PlanReport } from "../core/plan/interfaces";
 import type { ReuseSurface, ReuseSweep } from "../core/reuse";
 import type { Box } from "../core/region";
 import type { CompilerDiagnostic } from "../parse/compiler";
@@ -21,11 +21,10 @@ export type AnalysisRequest =
   | { id: number; kind: "register"; graphId: number; graph: ResolvedGraphData }
   | {
       id: number;
-      kind: "family";
+      kind: "plan";
       graphId: number | null;
       graph?: ResolvedGraphData;
       tiles: Record<string, number[]>;
-      tensorId: string;
     }
   | {
       id: number;
@@ -41,6 +40,6 @@ export type AnalysisRequest =
 export type AnalysisResponse =
   | { id: number; kind: "compile"; result: CompileJobResult }
   | { id: number; kind: "registered"; graphId: number }
-  | { id: number; kind: "family"; result: InterfaceReport }
+  | { id: number; kind: "plan"; result: PlanReport }
   | { id: number; kind: "reuse"; result: ReuseSweep }
   | { id: number; kind: "error"; message: string };

@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { DTYPE_BYTES } from "../../../src/core/dtypes";
-import { resolveGraph, ResolvedGraph } from "../../../src/core/graph";
+import { resolveGraph } from "../../../src/core/graph";
 import { DEFAULT_LIMITS, Limits } from "../../../src/core/ops/limits";
 import { getOp } from "../../../src/core/ops/index";
 import { propagateWithin } from "../../../src/core/propagate";
-import { interfaceOf, joinDemand, supplyOf, Supply } from "../../../src/core/plan/interfaces";
+import { interfaceOf, joinDemand, planReport, supplyOf, Supply, Work } from "../../../src/core/plan/interfaces";
 import { TaskRef, tilePlan, TilePlan } from "../../../src/core/plan/plan";
 import { PlanError, tileBox, tileOrdinal, tiles } from "../../../src/core/plan/tile-family";
-import { Box, fromBox, points } from "../../../src/core/region";
+import { Box, fromBox, points, Region } from "../../../src/core/region";
 import { compileDSL } from "../../../src/parse/compiler";
 import { randInt, randomGraph, rng } from "../../corpus/harness";
 import { flatIndex, regionToFlatSet, unflatIndex } from "../../corpus/oracle";
@@ -52,13 +52,15 @@ describe("the two-matmul chain", () => {
       expect(p.definite).toBe(true);
       expect(p.used).toMatchObject({ value: 4096, status: "exact" });
       expect(p.volume).toBe(4096);
-      expect(p.witnesses).toEqual([{ slot: 0, region: expect.objectContaining({ exact: true }) }]);
+      expect(p.witnesses).toEqual([
+        { node: expect.any(String), slot: 0, region: expect.objectContaining({ exact: true }) },
+      ]);
     }
     expect(s.demand.map((d) => [d.tensorId, d.slot, d.supplier])).toEqual([
       ["C", 0, "tasks"],
       ["W", 1, "input"],
     ]);
-    expect(s.complete).toBe(true);
+    expect(s.computes).toEqual([]);
   });
 
   it("lets both Y tasks in a band share its C tasks, and no other band's", () => {
@@ -135,13 +137,6 @@ Q = exp(X)
     expect(s.demand).toEqual([expect.objectContaining({ tensorId: "X", supplier: "input" })]);
   });
 
-  it("marks demand on a tensor the plan does not tile as unplanned", () => {
-    const s = supplyOf(tilePlan(chain(), { Y: [64, 64] }), { tensorId: "Y", coord: [0, 0] });
-    expect(s.demand[0]).toMatchObject({ tensorId: "C", supplier: "unplanned" });
-    expect(s.producers).toEqual([]);
-    expect(s.complete).toBe(false);
-  });
-
   it("marks producers possible when the demand over-approximates", () => {
     // Without index values a lookup may read any row, so every row tile is a
     // possible producer and none is definite.
@@ -164,6 +159,144 @@ Y = gather(F, I, axis=0)
     expect(f.exact).toBe(false);
     expect(f.summed.status).toBe("upper");
     expect(f.duplication.status).toBe("approximate");
+  });
+});
+
+/* The chain's C, 256x256 from K=256, and Y, 256x128 from K=256: two FLOPs per term. */
+const C_FLOPS = 2 * 256 * 256 * 256;
+const Y_FLOPS = 2 * 256 * 128 * 256;
+
+describe("untiled tensors are computed by the tasks that read them", () => {
+  it("reads through an untiled tensor to what computes it", () => {
+    const g = chain();
+    const s = supplyOf(tilePlan(g, { Y: [64, 64] }), { tensorId: "Y", coord: [1, 0] });
+    const cNode = g.tensors.C.producer!.nodeId;
+    const yNode = g.tensors.Y.producer!.nodeId;
+    expect(s.demand.map((d) => [d.tensorId, d.node, d.slot, d.supplier])).toEqual([
+      ["A", cNode, 0, "input"],
+      ["B", cNode, 1, "input"],
+      ["W", yNode, 1, "input"],
+    ]);
+    expect(s.producers).toEqual([]);
+    expect(s.computes.map((c) => [c.tensorId, c.region.boxes])).toEqual([
+      ["C", [[{ lo: 64, hi: 128 }, { lo: 0, hi: 256 }]]],
+    ]);
+    // Its own 64x64 tile of Y and the 64x256 band of C it needs.
+    expect(s.flops).toEqual({ value: 2 * 256 * (64 * 64 + 64 * 256), status: "exact", reasons: [] });
+  });
+
+  it("counts nothing as recomputed when every task computes only its own tile", () => {
+    const report = planReport(tilePlan(chain(), { C: [64, 64], Y: [64, 64] }));
+    const [c, y] = report.families;
+    if (c.status !== "evaluated" || y.status !== "evaluated") throw new Error("not evaluated");
+    expect(c.work).toMatchObject({
+      tasks: 16,
+      dependencies: { value: 0, status: "exact" },
+      flops: { value: C_FLOPS, status: "exact" },
+      recomputed: { value: 0, status: "exact" },
+      read: { value: 16 * (64 * 256 + 256 * 64) * 2, status: "exact" },
+      readDistinct: { value: 2 * 256 * 256 * 2, status: "exact" },
+      written: { value: 256 * 256 * 2, status: "exact" },
+    });
+    // Each Y task reads the four C tasks in its row band.
+    expect(y.work).toMatchObject({
+      tasks: 8,
+      dependencies: { value: 32, status: "exact" },
+      flops: { value: Y_FLOPS, status: "exact" },
+      recomputed: { value: 0, status: "exact" },
+      written: { value: 256 * 128 * 2, status: "exact" },
+    });
+    expect(report.total).toMatchObject({
+      tasks: 24,
+      dependencies: { value: 32 },
+      flops: { value: C_FLOPS + Y_FLOPS },
+      recomputed: { value: 0 },
+      written: { value: (256 * 256 + 256 * 128) * 2 },
+    });
+    expect(report.total!.intensity.value).toBeCloseTo(
+      (C_FLOPS + Y_FLOPS) / (report.total!.read.value! + report.total!.written.value!)
+    );
+  });
+
+  it("counts an untiled tensor computed by several tasks as recomputed", () => {
+    // Two Y tasks share each row band, and each computes that band of C.
+    const narrow = planReport(tilePlan(chain(), { Y: [64, 64] })).total!;
+    expect(narrow).toMatchObject({
+      tasks: 8,
+      dependencies: { value: 0 },
+      flops: { value: 2 * C_FLOPS + Y_FLOPS, status: "exact" },
+      recomputed: { value: C_FLOPS, status: "exact" },
+      // A 64x256 band of A, all of B and a 256x64 block of W per task; C is never written.
+      read: { value: 8 * (64 * 256 + 256 * 256 + 256 * 64) * 2 },
+      written: { value: 256 * 128 * 2 },
+    });
+
+    // Full-width Y tiles compute each band of C once.
+    const wide = planReport(tilePlan(chain(), { Y: [64, 128] })).total!;
+    expect(wide.flops.value).toBe(C_FLOPS + Y_FLOPS);
+    expect(wide.recomputed.value).toBe(0);
+  });
+
+  it("counts a normalised axis's statistics again in every tile across it", () => {
+    const { resolved } = compileDSL(`X = Tensor(8, 64)
+P = softmax(X, axis=-1)
+`);
+    const whole = planReport(tilePlan(resolved, { P: [8, 64] })).total!;
+    const split = planReport(tilePlan(resolved, { P: [8, 16] })).total!;
+    expect(whole.recomputed.value).toBe(0);
+    // Four tiles across each row each compute the row's max and sum.
+    expect(split.recomputed.value).toBe(split.flops.value! - whole.flops.value!);
+    expect(split.recomputed.value).toBeGreaterThan(0);
+  });
+});
+
+describe("a whole plan", () => {
+  const fork = () =>
+    compileDSL(`A = Tensor(8, 8)
+B = Tensor(8, 8)
+C = matmul(A, B)
+P = relu(C)
+Q = exp(C)
+`).resolved;
+
+  it("measures work and reads two families share once, so the overlap is recomputed", () => {
+    const report = planReport(tilePlan(fork(), { P: [8, 8], Q: [8, 8] }));
+    const works = report.families.map((f) => (f.status === "evaluated" ? f.work : null)!);
+    // Within each family C is computed once; across the plan it is computed twice.
+    for (const w of works) expect(w.recomputed.value).toBe(0);
+    expect(report.total!.recomputed).toMatchObject({ value: 2 * 8 * 8 * 8, status: "exact" });
+    // Both read all of A and B; the plan reads them once each at best.
+    expect(report.total!.read.value).toBe(2 * 2 * 64 * 4);
+    expect(report.total!.readDistinct.value).toBe(2 * 64 * 4);
+    expect(report.unwritten).toEqual([]);
+  });
+
+  it("names the graph outputs it never writes", () => {
+    expect(planReport(tilePlan(fork(), { P: [8, 8] })).unwritten).toEqual(["Q"]);
+    expect(planReport(tilePlan(fork(), { C: [8, 8] })).unwritten).toEqual(["P", "Q"]);
+  });
+
+  it("gives no total when a family is over budget, rather than part of one", () => {
+    const report = planReport(tilePlan(chain(), { C: [64, 64], Y: [64, 64] }), { budget: 8 });
+    expect(report.families.map((f) => f.status)).toEqual(["over-budget", "evaluated"]);
+    expect(report.total).toBeNull();
+  });
+
+  it("has no FLOP total when a task computes an operation nobody described", () => {
+    const { resolved } = compileDSL(`X = Tensor(4, 4)
+H = opaque(X, op="Mystery", shapes=[[4, 4]])
+Y = relu(H)
+`);
+    const report = planReport(tilePlan(resolved, { Y: [2, 2] }));
+    const total = report.total!;
+    expect(supplyOf(tilePlan(resolved, { Y: [2, 2] }), { tensorId: "Y", coord: [0, 0] }).computes
+      .map((c) => c.tensorId)).toEqual(["H"]);
+    expect(total.flops.status).toBe("unknown");
+    expect(total.recomputed.status).toBe("unknown");
+    expect(total.intensity.status).toBe("unknown");
+    // The bytes are still figures: the barrier's output shape is declared.
+    expect(total.written).toMatchObject({ value: 16 * 4, status: "exact" });
+    expect(total.read.status).toBe("upper");
   });
 });
 
@@ -191,22 +324,50 @@ describe("plan and task validation", () => {
 /* ------------------------------------------------------------------------ */
 
 /**
- * Ground truth for one task from the producing operation's `oracleDeps` alone:
- * for each operand slot the task reads, the flat indices of the input elements.
+ * Ground truth for one task from `oracleDeps` alone: walk back from every
+ * element of the tile, element by element, through every untiled tensor, and
+ * stop at tiled tensors and graph inputs. What the walk stops on is read, per
+ * operation and operand slot; what it passes through is computed by the task.
  */
-function truthDemand(g: ResolvedGraph, tensorId: string, box: Box): Map<number, Set<number>> {
-  const producer = g.tensors[tensorId].producer!;
-  const node = g.nodes.find((n) => n.id === producer.nodeId)!;
-  const ctx = { inShapes: g.shapesOf(node.inputs), outShapes: g.shapesOf(node.outputs), attrs: node.attrs };
-  const bySlot = new Map<number, Set<number>>();
-  for (const p of points(fromBox(box)))
-    getOp(node.op)!.oracleDeps(producer.slot, p, ctx).forEach((tuples, slot) => {
-      if (!tuples.length) return;
-      const set = bySlot.get(slot) ?? new Set<number>();
-      bySlot.set(slot, set);
-      for (const tuple of tuples) set.add(flatIndex(tuple, ctx.inShapes[slot]));
+type TaskTruth = {
+  /** `node#slot` -> the tensor read through that slot, and its flat indices. */
+  reads: Map<string, { tensorId: string; flats: Set<number> }>;
+  /** Untiled tensor -> the flat indices the task computes. */
+  computes: Map<string, Set<number>>;
+};
+
+function truthTask(plan: TilePlan, tensorId: string, box: Box): TaskTruth {
+  const g = plan.graph;
+  const frontier = new Set(plan.frontier);
+  const reads: TaskTruth["reads"] = new Map();
+  const computes: TaskTruth["computes"] = new Map();
+  const queue: [string, number[]][] = [...points(fromBox(box))].map((p) => [tensorId, p]);
+  while (queue.length) {
+    const [id, index] = queue.pop()!;
+    const producer = g.tensors[id].producer!;
+    const node = g.nodes.find((n) => n.id === producer.nodeId)!;
+    const ctx = { inShapes: g.shapesOf(node.inputs), outShapes: g.shapesOf(node.outputs), attrs: node.attrs };
+    getOp(node.op)!.oracleDeps(producer.slot, index, ctx).forEach((tuples, slot) => {
+      const inId = node.inputs[slot];
+      for (const tuple of tuples) {
+        const flat = flatIndex(tuple, ctx.inShapes[slot]);
+        if (frontier.has(inId)) {
+          const key = `${node.id}#${slot}`;
+          const entry = reads.get(key) ?? { tensorId: inId, flats: new Set<number>() };
+          reads.set(key, entry);
+          entry.flats.add(flat);
+        } else {
+          const seen = computes.get(inId) ?? new Set<number>();
+          computes.set(inId, seen);
+          if (!seen.has(flat)) {
+            seen.add(flat);
+            queue.push([inId, tuple]);
+          }
+        }
+      }
     });
-  return bySlot;
+  }
+  return { reads, computes };
 }
 
 /** The producer tiles a set of flat indices on a planned tensor falls in. */
@@ -221,10 +382,17 @@ function tilesOf(plan: TilePlan, tensorId: string, flats: Iterable<number>): Set
 /** The task's supply, from the checked path or from a cone under the given limits. */
 function supplyUnder(plan: TilePlan, task: TaskRef, limits?: Limits): Supply {
   if (!limits) return supplyOf(plan, task);
-  const g = plan.graph;
-  const node = g.nodes.find((n) => n.id === g.tensors[task.tensorId].producer!.nodeId)!;
   const seed = { tensorId: task.tensorId, region: fromBox(tileBox(plan.families.get(task.tensorId)!, task.coord)) };
-  return joinDemand(plan, task, propagateWithin(g, seed, "backward", node.inputs, limits).crossings);
+  return joinDemand(plan, task, propagateWithin(plan.graph, seed, "backward", plan.frontier, limits));
+}
+
+/** Truth keys for the producer tiles a task reads. */
+function truthProducers(plan: TilePlan, truth: TaskTruth): Set<string> {
+  const keys = new Set<string>();
+  for (const { tensorId, flats } of truth.reads.values())
+    if (plan.families.has(tensorId))
+      for (const o of tilesOf(plan, tensorId, flats)) keys.add(`${tensorId}#${o}`);
+  return keys;
 }
 
 /**
@@ -235,29 +403,35 @@ function supplyUnder(plan: TilePlan, task: TaskRef, limits?: Limits): Supply {
 function checkTask(plan: TilePlan, task: TaskRef, limits?: Limits): { supply: Supply; extra: number } {
   const g = plan.graph;
   const family = plan.families.get(task.tensorId)!;
-  const node = g.nodes.find((n) => n.id === g.tensors[task.tensorId].producer!.nodeId)!;
-  const truth = truthDemand(g, task.tensorId, tileBox(family, task.coord));
+  const truth = truthTask(plan, task.tensorId, tileBox(family, task.coord));
   const supply = supplyUnder(plan, task, limits);
   const label = `${task.tensorId}[${task.coord.join(",")}]`;
+  const matches = (region: Region, flats: Set<number>, shape: number[], what: string) => {
+    const got = regionToFlatSet(region, shape);
+    if (region.exact) expect(got, what).toEqual(flats);
+    else for (const f of flats) expect(got.has(f), `${what} misses ${f}`).toBe(true);
+  };
 
-  // Demand per slot: equal when exact, a superset when not.
-  const slots = new Set([...truth.keys(), ...supply.demand.map((d) => d.slot)]);
-  for (const slot of slots) {
-    const tensorId = node.inputs[slot];
-    const d = supply.demand.find((x) => x.slot === slot);
-    const got = d ? regionToFlatSet(d.region, g.tensors[tensorId].resolved!) : new Set<number>();
-    const want = truth.get(slot) ?? new Set<number>();
-    if (!d || d.region.exact) expect(got, `${label} slot ${slot}`).toEqual(want);
-    else for (const f of want) expect(got.has(f), `${label} slot ${slot} misses ${f}`).toBe(true);
+  // Reads per operation and slot: equal when exact, a superset when not.
+  const keys = new Set([...truth.reads.keys(), ...supply.demand.map((d) => `${d.node}#${d.slot}`)]);
+  for (const key of keys) {
+    const d = supply.demand.find((x) => `${x.node}#${x.slot}` === key);
+    const want = truth.reads.get(key);
+    expect(d, `${label} reads nothing through ${key}`).toBeDefined();
+    if (want) expect(d!.tensorId).toBe(want.tensorId);
+    matches(d!.region, want?.flats ?? new Set(), g.tensors[d!.tensorId].resolved!, `${label} ${key}`);
+  }
+
+  // What it computes on the way: the same untiled tensors, the same elements.
+  const computed = new Set([...truth.computes.keys(), ...supply.computes.map((c) => c.tensorId)]);
+  for (const id of computed) {
+    const c = supply.computes.find((x) => x.tensorId === id);
+    expect(c, `${label} does not compute ${id}`).toBeDefined();
+    matches(c!.region, truth.computes.get(id) ?? new Set(), g.tensors[id].resolved!, `${label} computes ${id}`);
   }
 
   // Producers: none missed, every definite one real, all of them real when exact.
-  const truthKeys = new Set<string>();
-  for (const [slot, flats] of truth) {
-    const tensorId = node.inputs[slot];
-    if (plan.families.has(tensorId))
-      for (const o of tilesOf(plan, tensorId, flats)) truthKeys.add(`${tensorId}#${o}`);
-  }
+  const truthKeys = truthProducers(plan, truth);
   const key = (p: Supply["producers"][number]) =>
     `${p.task.tensorId}#${tileOrdinal(plan.families.get(p.task.tensorId)!, p.task.coord)}`;
   const all = new Set(supply.producers.map(key));
@@ -272,18 +446,20 @@ function checkInterface(plan: TilePlan, tensorId: string): boolean {
   if (report.status !== "evaluated") return false;
   const g = plan.graph;
   const family = plan.families.get(tensorId)!;
-  const node = g.nodes.find((n) => n.id === g.tensors[tensorId].producer!.nodeId)!;
 
   // Truth per boundary tensor: each task's distinct demand, then summed and joined.
   const summed = new Map<string, number>();
   const union = new Map<string, Set<number>>();
   const readers = new Map<string, number>();
   const fanOut = new Map<string, Map<number, number>>();
+  let edges = 0;
   for (const coord of tiles(family)) {
+    const truth = truthTask(plan, tensorId, tileBox(family, coord));
+    edges += truthProducers(plan, truth).size;
     const perTensor = new Map<string, Set<number>>();
-    for (const [slot, flats] of truthDemand(g, tensorId, tileBox(family, coord))) {
-      const set = perTensor.get(node.inputs[slot]) ?? new Set<number>();
-      perTensor.set(node.inputs[slot], set);
+    for (const { tensorId: id, flats } of truth.reads.values()) {
+      const set = perTensor.get(id) ?? new Set<number>();
+      perTensor.set(id, set);
       flats.forEach((f) => set.add(f));
     }
     for (const [id, set] of perTensor) {
@@ -312,23 +488,36 @@ function checkInterface(plan: TilePlan, tensorId: string): boolean {
     for (const [o, n] of fanOut.get(id) ?? []) cmp(b!.fanOut!.get(o) ?? 0, n, `${tensorId}->${id} fan-out ${o}`);
     if (b!.exact) expect(b!.fanOut?.size ?? 0).toBe(fanOut.get(id)?.size ?? 0);
   }
+
+  // The family's work: its tasks, its links, what it writes and reads.
+  const { work } = report;
+  const tensor = g.tensors[tensorId];
+  expect(work.tasks).toBe(family.count);
+  expect(work.written.value).toBe(tensor.resolved!.reduce((n, e) => n * e, 1) * DTYPE_BYTES[tensor.dtype]);
+  if (work.dependencies.status === "exact") expect(work.dependencies.value).toBe(edges);
+  else expect(work.dependencies.value).toBeGreaterThanOrEqual(edges);
+  expect(work.read.value).toBe(report.boundary.reduce((n, b) => n + b.summed.value!, 0));
+  if (work.recomputed.status === "exact") expect(work.recomputed.value).toBeGreaterThanOrEqual(0);
   return true;
 }
 
 describe("plans against a task oracle", () => {
   /* Random graphs with most produced tensors tiled at random extents, some
-     wider than their axis. Tasks are checked one at a time, and small
-     families as a whole, against truth taken from `oracleDeps` alone. */
+     wider than their axis; the rest are computed by the tasks that read them.
+     Tasks are checked one at a time, and small families as a whole, against
+     truth taken from `oracleDeps` alone. */
   it("agrees on random graphs and random tilings", () => {
     const r = rng(21);
     let tasks = 0;
     let joined = 0;
+    let fused = 0;
     let families = 0;
     for (let trial = 0; trial < 30; trial++) {
       const g = resolveGraph(randomGraph(r, randInt(r, 5, 14)));
       const tiling: Record<string, number[]> = {};
       for (const t of Object.values(g.tensors))
-        if (t.producer && r() < 0.8) tiling[t.id] = t.resolved!.map((e) => randInt(r, 1, e + 2));
+        if (t.producer && r() < 0.7) tiling[t.id] = t.resolved!.map((e) => randInt(r, 1, e + 2));
+      if (!Object.keys(tiling).length) continue;
       const plan = tilePlan(g, tiling);
 
       for (const f of plan.families.values()) {
@@ -338,12 +527,15 @@ describe("plans against a task oracle", () => {
           const { supply } = checkTask(plan, { tensorId: f.tensorId, coord });
           tasks++;
           if (supply.producers.length) joined++;
+          if (supply.computes.length) fused++;
         }
         if (checkInterface(plan, f.tensorId)) families++;
       }
     }
-    // Agreement only means something if tasks actually had producers to find.
+    // Agreement only means something if tasks actually had producers to find,
+    // and untiled tensors to compute.
     expect(joined).toBeGreaterThan(tasks / 4);
+    expect(fused).toBeGreaterThan(tasks / 10);
     expect(families).toBeGreaterThan(30);
   });
 
@@ -374,5 +566,58 @@ describe("plans against a task oracle", () => {
     // the labelling of possible producers to have been tested.
     expect(widened).toBeGreaterThanOrEqual(10);
     expect(spurious).toBeGreaterThan(0);
+
+    // With some tensors untiled, widening is also carried through what a task
+    // computes itself, and must stay a superset there too.
+    const q = rng(26);
+    let widenedFused = 0;
+    for (let trial = 0; trial < 60; trial++) {
+      const g = resolveGraph(randomGraph(q, randInt(q, 5, 14)));
+      const tiling: Record<string, number[]> = {};
+      for (const t of Object.values(g.tensors))
+        if (t.producer && q() < 0.4) tiling[t.id] = t.resolved!.map((e) => randInt(q, 1, e + 2));
+      if (!Object.keys(tiling).length) continue;
+      const plan = tilePlan(g, tiling);
+      for (const f of plan.families.values())
+        for (const coord of tiles(f)) {
+          const { supply } = checkTask(plan, { tensorId: f.tensorId, coord }, limits);
+          if (supply.computes.some((c) => !c.region.exact)) widenedFused++;
+        }
+    }
+    // Rarer still: a widened region on a tensor the task computes. This seed
+    // gives eight.
+    expect(widenedFused).toBeGreaterThanOrEqual(4);
+  });
+
+  /* A whole plan measures shared work and reads once across families, so its
+     distinct figures can only be smaller than the families' summed. */
+  it("totals families without undercounting what they share", () => {
+    const r = rng(23);
+    let shared = 0;
+    for (let trial = 0; trial < 30; trial++) {
+      const g = resolveGraph(randomGraph(r, randInt(r, 5, 14)));
+      const tiling: Record<string, number[]> = {};
+      for (const t of Object.values(g.tensors))
+        if (t.producer && r() < 0.5) tiling[t.id] = t.resolved!.map((e) => randInt(r, 1, e + 2));
+      if (!Object.keys(tiling).length) continue;
+      const report = planReport(tilePlan(g, tiling), { budget: 48 });
+      if (!report.total) continue;
+      const works = report.families.map((f) => (f.status === "evaluated" ? f.work : null)!);
+      const sum = (pick: (w: Work) => number | null) => works.reduce((n, w) => n + pick(w)!, 0);
+      const { total } = report;
+      expect(total.tasks).toBe(sum((w) => w.tasks));
+      expect(total.read.value).toBe(sum((w) => w.read.value));
+      expect(total.written.value).toBe(sum((w) => w.written.value));
+      expect(total.readDistinct.value!).toBeLessThanOrEqual(sum((w) => w.readDistinct.value));
+      if (total.flops.status !== "unknown") {
+        expect(total.flops.value).toBe(sum((w) => w.flops.value));
+        if (total.recomputed.status === "exact") {
+          expect(total.recomputed.value!).toBeGreaterThanOrEqual(sum((w) => w.recomputed.value));
+          if (total.recomputed.value! > sum((w) => w.recomputed.value)) shared++;
+        }
+      }
+    }
+    // Some plans must have had an untiled tensor that two families compute.
+    expect(shared).toBeGreaterThan(0);
   });
 });

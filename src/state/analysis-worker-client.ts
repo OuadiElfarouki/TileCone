@@ -3,7 +3,7 @@ import {
   type ResolvedGraph,
   type ResolvedGraphData,
 } from "../core/graph";
-import type { InterfaceReport } from "../core/plan/interfaces";
+import type { PlanReport } from "../core/plan/interfaces";
 import type { ReuseSurface, ReuseSweep } from "../core/reuse";
 import type { Box } from "../core/region";
 import type {
@@ -25,7 +25,7 @@ type WorkerLane = {
 
 type AnalysisRequestBody =
   | Omit<Extract<AnalysisRequest, { kind: "compile" }>, "id">
-  | Omit<Extract<AnalysisRequest, { kind: "family" }>, "id">
+  | Omit<Extract<AnalysisRequest, { kind: "plan" }>, "id">
   | Omit<Extract<AnalysisRequest, { kind: "reuse" }>, "id">;
 
 let nextRequestId = 1;
@@ -173,20 +173,18 @@ export async function compileInWorker(source: string): Promise<CompileJobResult>
   return response.result;
 }
 
-export async function familyInWorker(args: {
+export async function planInWorker(args: {
   graphId: number | null;
   graph: ResolvedGraph;
   tiles: Record<string, number[]>;
-  tensorId: string;
-}): Promise<InterfaceReport> {
+}): Promise<PlanReport> {
   const request = takeQueryLane(args.graphId, args.graph);
   const response = await send(queryLane, {
-    kind: "family",
+    kind: "plan",
     ...request,
     tiles: args.tiles,
-    tensorId: args.tensorId,
   });
-  if (response.kind !== "family") throw new Error("analysis worker returned the wrong response");
+  if (response.kind !== "plan") throw new Error("analysis worker returned the wrong response");
   return response.result;
 }
 

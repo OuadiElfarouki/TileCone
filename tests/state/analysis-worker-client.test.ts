@@ -68,11 +68,10 @@ describe("analysis worker client", () => {
     if (!compiled.ok) throw new Error(compiled.diagnostics[0].message);
     const graph = hydrateResolvedGraph(structuredClone(compiled.artifact.resolved));
 
-    const family = client.familyInWorker({
+    const family = client.planInWorker({
       graphId: null,
       graph,
       tiles: { Y: [64, 64] },
-      tensorId: "Y",
     }).catch((error: unknown) => error);
     const oldQuery = FakeWorker.instances[0];
 
@@ -105,11 +104,10 @@ describe("analysis worker client", () => {
     if (!compiled.ok) throw new Error(compiled.diagnostics[0].message);
     const graph = hydrateResolvedGraph(structuredClone(compiled.artifact.resolved));
 
-    const family = client.familyInWorker({
+    const family = client.planInWorker({
       graphId: null,
       graph,
       tiles: { Y: [64, 64] },
-      tensorId: "Y",
     }).catch((error: unknown) => error);
     const first = FakeWorker.instances[0];
     const region = box([0, 64], [0, 64]);

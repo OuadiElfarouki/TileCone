@@ -74,10 +74,11 @@ export function derivePlan(
 /**
  * Tiling a consumer also tiles the produced tensors it reads.
  *
- * A task's producers cannot be named while the tensor holding them is untiled,
- * and needing a second act before the view answers anything left the first
- * click at a dead end. The extents are defaults like any other and can be
- * changed or removed.
+ * An untiled tensor is computed inside every task that reads it, so tiling the
+ * consumer alone would open on a task that recomputes its whole upstream graph
+ * and names no producer. Starting from one operation per task shows the
+ * interface the view is for; clearing an operand's tiling is then what fuses
+ * it. The extents are defaults like any other and can be changed or removed.
  */
 export function withProducedInputs(
   state: Pick<State, "resolved" | "tileScale" | "graphPx" | "viewCfgs">,

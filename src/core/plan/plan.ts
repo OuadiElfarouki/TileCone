@@ -1,16 +1,19 @@
 /**
  * A tile plan: which produced tensors are divided into tasks, and how.
  *
- * A task computes one complete tile of one produced tensor. Its demand is what
- * the producing operation reads to compute that tile, which is the bounded
- * cone from the tile stopped at that operation's inputs.
+ * Tiling a tensor is what writes it to memory. A task computes one complete
+ * tile of one tiled tensor. It reads tiled tensors and graph inputs, and
+ * computes every untiled tensor between them and its tile itself, so an untiled
+ * intermediate is recomputed by each task that needs it. The task's demand is
+ * therefore the bounded cone from its tile, stopped at every tiled tensor and
+ * graph input.
  *
  * A plan keeps the graph it was checked against, so every query on it runs
  * against that graph.
  */
 
 import { executeBoundedQuery } from "../executor";
-import type { Node, ResolvedGraph } from "../graph";
+import type { ResolvedGraph } from "../graph";
 import type { BoundedCone } from "../propagate";
 import { fromBox } from "../region";
 import { isTile, PlanError, tileBox, TileFamily, tileFamily } from "./tile-family";
@@ -19,6 +22,8 @@ export type TilePlan = {
   readonly graph: ResolvedGraph;
   /** One family per planned tensor, in tensor-id order. */
   readonly families: ReadonlyMap<string, TileFamily>;
+  /** Where every task stops: the tiled tensors and the graph inputs, sorted. */
+  readonly frontier: readonly string[];
 };
 
 /** A task: tile `coord` of the family planned for `tensorId`. */
@@ -44,7 +49,11 @@ export function tilePlan(
       );
     families.set(tensorId, tileFamily(tensorId, tensor.resolved!, tiles[tensorId]));
   }
-  return { graph, families };
+  const frontier = Object.values(graph.tensors)
+    .filter((t) => !t.producer || families.has(t.id))
+    .map((t) => t.id)
+    .sort();
+  return { graph, families, frontier };
 }
 
 /** The family a task belongs to, after checking that the task names one of its tiles. */
@@ -59,22 +68,11 @@ export function familyOf(plan: TilePlan, task: TaskRef): TileFamily {
   return family;
 }
 
-const producerIndex = new WeakMap<ResolvedGraph, Map<string, Node>>();
-
-function producerOf(graph: ResolvedGraph, tensorId: string): Node {
-  let index = producerIndex.get(graph);
-  if (!index) {
-    index = new Map();
-    for (const node of graph.nodes) for (const out of node.outputs) index.set(out, node);
-    producerIndex.set(graph, index);
-  }
-  return index.get(tensorId)!;
-}
-
 /**
- * What one task reads: the bounded cone from its tile, stopped at the inputs
- * of the operation that computes it. `crossings` gives the demand per operand
- * slot, so a tensor the operation reads through two slots appears twice.
+ * What one task reads and computes: the bounded cone from its tile, stopped at
+ * the plan's frontier. `crossings` gives what it reads per operand slot, so a
+ * tensor read through two slots appears twice; the cone's other produced
+ * tensors are the untiled intermediates the task computes itself.
  */
 export function taskDemand(plan: TilePlan, task: TaskRef): BoundedCone {
   const family = familyOf(plan, task);
@@ -82,6 +80,6 @@ export function taskDemand(plan: TilePlan, task: TaskRef): BoundedCone {
     tensorId: task.tensorId,
     region: fromBox(tileBox(family, task.coord)),
     direction: "backward",
-    frontier: producerOf(plan.graph, task.tensorId).inputs,
+    frontier: plan.frontier,
   });
 }

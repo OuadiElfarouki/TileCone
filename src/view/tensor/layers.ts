@@ -279,10 +279,11 @@ export function buildLayers({
  *
  * The meanings are the ones the cards already use. The inspected task's tile
  * is drawn like a placed tile: outline and corner marks in the first hue. What
- * it reads on this tensor is the solid needs fill in that hue, one layer per
- * tensor so two slots reading one element do not paint it twice, with the
- * approximation hatch when the demand is widened. The lattice is the plan's
- * tiling, and the producer tiles the task needs are outlined in neutral ink.
+ * it reads or computes on this tensor is the solid needs fill in that hue, one
+ * layer per tensor so two slots reading one element do not paint it twice,
+ * with the approximation hatch when the region is widened. The lattice is the
+ * plan's tiling, and the producer tiles the task needs are outlined in neutral
+ * ink; an untiled tensor the task computes has neither.
  */
 /** @internal Pure rendering seam exported for deterministic plan-view tests. */
 export function buildPlanPaint({
@@ -310,12 +311,18 @@ export function buildPlanPaint({
   const hue = boxColor(0, dark);
   const layers: Layer[] = [];
 
-  const demand = supply?.demand.filter((d) => d.tensorId === tensorId) ?? [];
-  if (demand.length) {
+  // What the task reads and what it computes itself are both its backward cone
+  // within the plan, and take the one needs fill. A tensor is only ever one of
+  // the two: a lattice and producer outlines say which.
+  const cone = [
+    ...(supply?.demand.filter((d) => d.tensorId === tensorId) ?? []),
+    ...(supply?.computes.filter((c) => c.tensorId === tensorId) ?? []),
+  ];
+  if (cone.length) {
     const region: Region = {
-      boxes: demand.flatMap((d) => d.region.boxes),
-      exact: demand.every((d) => d.region.exact),
-      reasons: [...new Set(demand.flatMap((d) => d.region.reasons))],
+      boxes: cone.flatMap((d) => d.region.boxes),
+      exact: cone.every((d) => d.region.exact),
+      reasons: [...new Set(cone.flatMap((d) => d.region.reasons))],
     };
     layers.push({ region, color: hue, alpha: CONE_ALPHA, hatch: !region.exact });
   }

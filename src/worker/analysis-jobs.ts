@@ -4,7 +4,7 @@ import {
   type ResolvedGraph,
   type ResolvedGraphData,
 } from "../core/graph";
-import { interfaceOf, type InterfaceReport } from "../core/plan/interfaces";
+import { planReport, type PlanReport } from "../core/plan/interfaces";
 import { tilePlan } from "../core/plan/plan";
 import {
   estimateInputReuseSweep,
@@ -49,13 +49,12 @@ export function compileArtifact(source: string):
   };
 }
 
-export function familyArtifact(
+export function planArtifact(
   graph: ResolvedGraph | ResolvedGraphData,
-  tiles: Record<string, number[]>,
-  tensorId: string
-): InterfaceReport {
+  tiles: Record<string, number[]>
+): PlanReport {
   const resolved = "shapesOf" in graph ? graph : hydrateResolvedGraph(graph);
-  return interfaceOf(tilePlan(resolved, tiles), tensorId);
+  return planReport(tilePlan(resolved, tiles));
 }
 
 export function reuseArtifact(
