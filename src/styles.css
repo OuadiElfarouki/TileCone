@@ -961,10 +961,19 @@ textarea.source.error-state { border-color: var(--err); }
 /* A tiled tensor's work under its row, and the whole plan below them all. The
    total always shows every row, so two plans read one after the other line up. */
 .plan-work { flex: 1 0 100%; font-size: var(--t-micro); }
-.plan-total-label {
+.plan-total-head {
+  display: flex; align-items: baseline; justify-content: space-between;
   margin: 7px 0 2px; padding-top: 5px; border-top: 1px dashed var(--line);
   font-size: var(--t-micro);
 }
+/* One column per plan: the kept ones oldest first, then the current one. */
+.plan-compare { display: grid; gap: 1px 10px; font-size: var(--t-body); }
+.plan-compare .num { text-align: right; font-variant-numeric: tabular-nums; }
+.plan-compare-head {
+  font: var(--t-micro)/1.5 var(--mono); color: var(--muted); text-align: right;
+}
+.plan-kept { margin-top: 5px; }
+.plan-kept .plan-kept-tiling { flex: 1 1 0; min-width: 0; font-size: var(--t-micro); }
 
 /* Consumer tasks down, producer tiles across. The rows are a pointer
    convenience; the arrow keys are the accessible route to the same move. */

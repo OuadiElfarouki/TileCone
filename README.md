@@ -115,6 +115,10 @@ many tasks read each producer tile. For the MLP in the headless example below:
 Fusing `H` stops writing and re-reading it, but with 64-wide `Y` tiles two tasks compute each row
 band of `H`. Full-width `Y` tiles compute each band once.
 
+**keep** saves the current plan with its figures, and the whole-plan rows gain a column for it, so
+up to two kept plans read beside the current one. Each kept plan can be restored as the current
+tiling, which undoes like any other plan edit.
+
 Split reductions, working sets and execution order are not modelled. A plan is not included in
 share links.
 

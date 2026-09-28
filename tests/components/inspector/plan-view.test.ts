@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { planReport } from "../../../src/core/plan/interfaces";
 import { tileFamily } from "../../../src/core/plan/tile-family";
 import { box, fromBox } from "../../../src/core/region";
 import { useStore } from "../../../src/state/store";
@@ -315,6 +316,75 @@ describe("plan edits and the workspace", () => {
 
     expect(S().workspaceHistory).toHaveLength(history);
     expect(S().selectedOp).toBe(S().resolved!.tensors.Y.producer!.nodeId);
+  });
+});
+
+describe("kept plans", () => {
+  beforeEach(() => {
+    S().applyDSL(CHAIN);
+    S().setPlanTileAt("Y", [4, 4], [4, 0]); // tiles Y, and C with it
+  });
+
+  const reportOf = () => planReport(S().plan!);
+
+  it("keeps the current tiling with its totals, once", () => {
+    const report = reportOf();
+    S().keepPlan(report);
+    expect(S().keptPlans).toEqual([{ id: 1, tiles: S().planTiles, total: report.total, unwritten: [] }]);
+    S().keepPlan(report); // the same tiling again
+    expect(S().keptPlans).toHaveLength(1);
+  });
+
+  it("keeps the outputs a plan does not write beside its totals", () => {
+    S().setPlanTile("Y", null); // C alone: Y is never written
+    S().keepPlan(reportOf());
+    expect(S().keptPlans[0].unwritten).toEqual(["Y"]);
+  });
+
+  it("does not keep a plan with no total", () => {
+    S().keepPlan(planReport(S().plan!, { budget: 1 }));
+    expect(S().keptPlans).toEqual([]);
+  });
+
+  it("keeps at most two plans", () => {
+    S().keepPlan(reportOf());
+    S().setPlanTile("C", null);
+    S().keepPlan(reportOf());
+    S().setPlanTile("Y", [4, 8]);
+    S().keepPlan(reportOf());
+    expect(S().keptPlans.map((k) => k.id)).toEqual([1, 2]);
+    S().dropKeptPlan(1);
+    S().keepPlan(reportOf());
+    expect(S().keptPlans.map((k) => k.id)).toEqual([2, 3]);
+  });
+
+  it("restores a kept tiling as one undoable plan edit, keeping the task on its elements", () => {
+    const tiles = { ...S().planTiles };
+    S().keepPlan(reportOf());
+    S().setPlanTile("C", null);
+    S().setPlanTile("Y", [8, 8]);
+    expect(S().planTask).toEqual({ tensorId: "Y", coord: [0, 0] });
+
+    const history = S().workspaceHistory.length;
+    S().restoreKeptPlan(1);
+    expect(S().planTiles).toEqual(tiles);
+    expect(S().planTask).toEqual({ tensorId: "Y", coord: [0, 0] });
+    expect(S().workspaceHistory).toHaveLength(history + 1);
+
+    S().undoWorkspace();
+    expect(S().planTiles).toEqual({ Y: [8, 8] });
+    expect(S().keptPlans).toHaveLength(1); // keeping is not a workspace edit
+  });
+
+  it("keeps plans while the current one is cleared, and drops them with the graph", () => {
+    S().keepPlan(reportOf());
+    S().setPlanTile("C", null);
+    S().setPlanTile("Y", null);
+    expect(S().plan).toBeNull();
+    expect(S().keptPlans).toHaveLength(1);
+
+    S().applyDSL(CHAIN.replace("W = Tensor(16, 8)", "W = Tensor(16, 4)"));
+    expect(S().keptPlans).toEqual([]);
   });
 });
 

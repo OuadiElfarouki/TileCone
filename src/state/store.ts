@@ -89,6 +89,7 @@ export const useStore = create<State>((commit, get) => {
   executionPlayback: null,
   executionScope: null,
   ...NO_PLAN,
+  keptPlans: [],
   entangled: null,
   selection: null,
   workspaceHistory: [],

@@ -1,7 +1,7 @@
 import { StoreApi } from "zustand";
 import { Entanglement } from "../core/entangle";
 import { Graph, ResolvedGraph } from "../core/graph";
-import { Supply } from "../core/plan/interfaces";
+import { PlanReport, Supply, Work } from "../core/plan/interfaces";
 import { TaskRef, TilePlan } from "../core/plan/plan";
 import { PropResult } from "../core/propagate";
 import { Box, Region } from "../core/region";
@@ -23,6 +23,17 @@ import {
   Theme,
 } from "../view/workspace";
 import { WorkspaceSnapshot } from "./history";
+
+/**
+ * A plan kept for comparison: its tiling, the whole-plan work it was evaluated
+ * to, and the graph outputs it does not write, whose work that total leaves out.
+ */
+export type KeptPlan = {
+  id: number;
+  tiles: Record<string, number[]>;
+  total: Work;
+  unwritten: readonly string[];
+};
 
 export type WorkspaceRestore = {
   dsl: string;
@@ -219,6 +230,13 @@ export type State = {
   plan: TilePlan | null;
   /** Derived: what `planTask` reads and which producer tasks supply it. */
   planSupply: Supply | null;
+  /**
+   * Plans kept for comparison with the current one, oldest first, at most
+   * `MAX_KEPT_PLANS`. Each holds the totals it was evaluated to; the graph
+   * cannot change under them, since replacing it clears them. Not workspace
+   * history, and not part of a share link.
+   */
+  keptPlans: KeptPlan[];
 
   /** Compile and install an example immediately: app boot and tests. */
   loadExample: (i: number) => void;
@@ -304,6 +322,12 @@ export type State = {
   tilePlanTensor: (tensorId: string) => void;
   /** Step the inspected task `delta` tiles along `axis`, stopping at the grid's edge. */
   movePlanTask: (axis: number, delta: number, record?: boolean) => void;
+  /** Keep the current tiling and its evaluation for comparison; one without a total is not kept. */
+  keepPlan: (report: PlanReport) => void;
+  /** Stop keeping a plan. */
+  dropKeptPlan: (id: number) => void;
+  /** Make a kept plan's tiling the current one. Undoable. */
+  restoreKeptPlan: (id: number) => void;
   setFocusNode: (node: { kind: "tensor" | "op"; id: string } | null) => void;
   /** Light one row of the operations list, or clear it with `null`. */
   setSelectedOp: (nodeId: string | null) => void;

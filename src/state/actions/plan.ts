@@ -1,8 +1,8 @@
 import { tilePlan } from "../../core/plan/plan";
 import { defaultPlanTile } from "../../view/tensor/seeds";
 import { idRecord, operationForTensor } from "../../view/workspace";
-import { appendWorkspaceHistory, planEditOf, sameNumbers, sameTask } from "../history";
-import { derivePlan, inspectTask, tileContaining } from "../plan";
+import { appendWorkspaceHistory, planEditOf, sameNumbers, sameTask, sameTiles } from "../history";
+import { derivePlan, inspectTask, MAX_KEPT_PLANS, tileContaining } from "../plan";
 import { GetState, SetState, State } from "../types";
 
 /** The declared tiling and the inspected task. */
@@ -14,6 +14,9 @@ export const planActions = (set: SetState, get: GetState): Pick<
   | "setPlanTileAt"
   | "tilePlanTensor"
   | "movePlanTask"
+  | "keepPlan"
+  | "dropKeptPlan"
+  | "restoreKeptPlan"
 > => ({
   setPlanTile: (tensorId, tile) => {
     const state = get();
@@ -119,6 +122,50 @@ export const planActions = (set: SetState, get: GetState): Pick<
           })
         : state.workspaceHistory,
       ...derivePlan(resolved, state.planTiles, { tensorId: planTask.tensorId, coord }, state),
+    });
+  },
+
+  /* `report` is the evaluation of the current tiling, which the caller holds:
+     the plan report is computed in the query Worker, not in the store. */
+  keepPlan: ({ total, unwritten }) => {
+    const { plan, planTiles, keptPlans } = get();
+    if (!plan || !total || keptPlans.length >= MAX_KEPT_PLANS) return;
+    if (keptPlans.some((kept) => sameTiles(kept.tiles, planTiles))) return;
+    const id = (keptPlans[keptPlans.length - 1]?.id ?? 0) + 1;
+    set({ keptPlans: [...keptPlans, { id, tiles: planTiles, total, unwritten }] });
+  },
+
+  dropKeptPlan: (id) => {
+    const { keptPlans } = get();
+    if (keptPlans.some((kept) => kept.id === id))
+      set({ keptPlans: keptPlans.filter((kept) => kept.id !== id) });
+  },
+
+  restoreKeptPlan: (id) => {
+    const state = get();
+    const { resolved, planTask, planTiles } = state;
+    const kept = state.keptPlans.find((k) => k.id === id);
+    if (!resolved || !kept || sameTiles(kept.tiles, planTiles)) return;
+    // The inspected task moves to the kept tiling's tile holding its first
+    // element, and is dropped when the kept plan does not tile its tensor.
+    const tile = planTask ? kept.tiles[planTask.tensorId] : undefined;
+    const task =
+      planTask && tile
+        ? {
+            tensorId: planTask.tensorId,
+            coord: tileContaining(
+              tile,
+              planTask.coord.map((c, axis) => c * planTiles[planTask.tensorId][axis])
+            ),
+          }
+        : null;
+    set({
+      workspaceHistory: appendWorkspaceHistory(state.workspaceHistory, {
+        selection: state.selection,
+        nodeOffsets: state.nodeOffsets,
+        plan: planEditOf(state),
+      }),
+      ...derivePlan(resolved, kept.tiles, task, state),
     });
   },
 });

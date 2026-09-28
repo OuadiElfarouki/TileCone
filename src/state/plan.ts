@@ -9,6 +9,12 @@ import { idRecord, operationForTensor } from "../view/workspace";
 import { appendWorkspaceHistory, planEditOf, sameNumbers, sameTask, sameTiles } from "./history";
 import { State } from "./types";
 
+/**
+ * How many plans can be kept for comparison. Two kept and the current one make
+ * three columns, which is what the inspector's width holds legibly.
+ */
+export const MAX_KEPT_PLANS = 2;
+
 export const NO_PLAN = {
   planTiles: idRecord<number[]>(),
   planTask: null,

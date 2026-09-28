@@ -25,7 +25,7 @@ export function loadResolvedGraph(
   | "entangled"
   | "perBox" | "focusedBox" | "pinnedBox" | "viewCfgs" | "preview" | "graphPx"
   | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "nodeOffsets"
-  | "planTiles" | "planTask" | "plan" | "planSupply"
+  | "planTiles" | "planTask" | "plan" | "planSupply" | "keptPlans"
   | "executionPlayback" | "executionScope"
 > {
   const viewCfgs = Object.create(null) as Record<string, ViewCfg>;
@@ -56,8 +56,10 @@ export function loadResolvedGraph(
     preview: null,
     viewCfgs,
     graphPx: worker?.graphPx ?? graphScale(planesOf(resolved)),
-    // A plan names tensors and tile coordinates in one graph, as the selection does.
+    // A plan names tensors and tile coordinates in one graph, as the selection
+    // does, and a kept plan's totals were measured on this graph alone.
     ...NO_PLAN,
+    keptPlans: [],
   };
 }
 

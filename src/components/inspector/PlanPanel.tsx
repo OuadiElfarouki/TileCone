@@ -29,8 +29,11 @@ import type { Region } from "../../core/region";
 import { tileBox, tileOrdinal, tiles, type TileFamily } from "../../core/plan/tile-family";
 import { count, formatBoxIndices } from "../../core/region";
 import { fmt, formatBytes, formatFigure } from "../../view/format";
+import { describeTiling, WORK_ROWS, workCell, workCellTitle } from "../../view/plan-work";
 import { boxColor, rgbCss } from "../../view/palette";
 import { useDark, useStore } from "../../state/store";
+import { sameTiles } from "../../state/history";
+import { MAX_KEPT_PLANS } from "../../state/plan";
 import {
   analysisWorkerAvailable,
   isAnalysisCancelled,
@@ -229,54 +232,129 @@ function WorkLine({ work }: { work: Work }): React.ReactElement {
 }
 
 /**
- * The whole plan in the figures plans are compared by. Every row is always
- * shown, so two plans read side by side line up.
+ * The whole plan in the figures plans are compared by, beside the plans kept
+ * for comparison. Every row is always shown, so the columns line up.
  */
-function PlanTotal({ total }: { total: Work }): React.ReactElement {
-  const inexact = [
-    total.dependencies,
-    total.flops,
-    total.recomputed,
-    total.read,
-    total.readDistinct,
-    total.written,
-    total.intensity,
-  ].some((f) => f.status === "upper" || f.status === "approximate");
+function PlanTotals({ report }: { report: PlanReport | null }): React.ReactElement {
+  const resolved = useStore((s) => s.resolved)!;
+  const planTiles = useStore((s) => s.planTiles);
+  const kept = useStore((s) => s.keptPlans);
+  const keepPlan = useStore((s) => s.keepPlan);
+  const dropKeptPlan = useStore((s) => s.dropKeptPlan);
+  const restoreKeptPlan = useStore((s) => s.restoreKeptPlan);
+  const nameOf = (tensorId: string) => resolved.tensors[tensorId].name;
+  const total = report?.total ?? null;
+
+  const same = kept.find((k) => sameTiles(k.tiles, planTiles));
+  const full = kept.length >= MAX_KEPT_PLANS;
+  const keepTitle = !total
+    ? "evaluate the plan to keep its figures"
+    : same
+      ? `this tiling is kept as P${same.id}`
+      : full
+        ? `at most ${MAX_KEPT_PLANS} plans are kept: remove one to keep this one`
+        : "keep this plan's figures, to compare it with the next tiling";
+  const columns = [
+    ...kept.map((k) => ({ key: `P${k.id}`, work: k.total as Work | null, unwritten: k.unwritten })),
+    { key: "current", work: total, unwritten: report?.unwritten ?? [] },
+  ];
+  const works = columns.flatMap((c) => (c.work ? [c.work] : []));
+  const figures = works.flatMap((w) => WORK_ROWS.map((row) => row.figure(w)));
+
   return (
     <>
-      <div className="plan-total-label muted">whole plan</div>
-      <div className="kv plan-total">
-        <span title="one task per tile of every tiled tensor">tasks</span>
-        <span>{total.tasks}</span>
-        <span title="producer tasks each task reads from, summed over tasks">dependencies</span>
-        <span>{formatFigure(total.dependencies, String)}</span>
-        <span>FLOPs</span>
-        <span title={total.flops.reasons.join("; ") || undefined}>{flopText(total.flops)}</span>
-        <span title="work more than one task does: an untiled tensor several tasks compute, or a row statistic every tile across a normalised axis computes again">
-          recomputed
-        </span>
-        <span>{flopText(total.recomputed)}</span>
-        <span title="what the tasks read, each task counted separately: no reuse between tasks">
-          read
-        </span>
-        <span>{formatFigure(total.read, formatBytes)}</span>
-        <span title="what the tasks read, each element counted once">distinct read</span>
-        <span>{formatFigure(total.readDistinct, formatBytes)}</span>
-        <span title="every tiled tensor, once">written</span>
-        <span>{formatFigure(total.written, formatBytes)}</span>
-        <span title="FLOPs per byte read or written">intensity</span>
-        <span>{intensityText(total.intensity)}</span>
+      <div className="plan-total-head">
+        <span className="muted">whole plan</span>
+        <button
+          className="mini"
+          onClick={() => report && keepPlan(report)}
+          disabled={!total || !!same || full}
+          title={keepTitle}
+        >
+          keep
+        </button>
       </div>
+      <div
+        className="plan-compare"
+        style={{ gridTemplateColumns: `auto repeat(${columns.length}, auto)` }}
+      >
+        {kept.length > 0 && (
+          <>
+            <span />
+            {columns.map((c) => (
+              <span key={c.key} className="plan-compare-head">{c.key}</span>
+            ))}
+          </>
+        )}
+        {WORK_ROWS.map((row) => (
+          <React.Fragment key={row.label}>
+            <span className="muted" title={row.title}>{row.label}</span>
+            {columns.map((c) => (
+              <span
+                key={c.key}
+                className="num"
+                title={c.work ? workCellTitle(row, c.work, total) : undefined}
+              >
+                {c.work ? workCell(row, c.work) : "–"}
+              </span>
+            ))}
+          </React.Fragment>
+        ))}
+        {/* A plan that skips an output looks cheaper for doing less of the
+            program. The row is shown whenever any plan here does, so that
+            reading stays beside the figures it qualifies. */}
+        {columns.some((c) => c.work && c.unwritten.length > 0) && (
+          <>
+            <span
+              className="muted"
+              title="graph outputs the plan does not tile: its figures leave out their work"
+            >
+              not written
+            </span>
+            {columns.map((c) => (
+              <span key={c.key} className="num">
+                {c.work ? (c.unwritten.length ? c.unwritten.map(nameOf).join(", ") : "none") : "–"}
+              </span>
+            ))}
+          </>
+        )}
+      </div>
+      {kept.length > 0 && (
+        <ul className="plan-list plan-kept">
+          {kept.map((k) => (
+            <li key={k.id}>
+              <span className="plan-compare-head">P{k.id}</span>
+              <span className="muted plan-kept-tiling">{describeTiling(k.tiles, nameOf)}</span>
+              <button
+                className="mini"
+                onClick={() => restoreKeptPlan(k.id)}
+                disabled={sameTiles(k.tiles, planTiles)}
+                title="make this tiling the current plan"
+              >
+                restore
+              </button>
+              <button
+                className="mini danger"
+                aria-label={`stop keeping P${k.id}`}
+                title={`stop keeping P${k.id}`}
+                onClick={() => dropKeptPlan(k.id)}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       <p className="hint">
-        Logical figures for this plan: each task reads its own demand and each tiled tensor is
+        Logical figures for each plan: each task reads its own demand and each tiled tensor is
         written once. Not measured traffic; FLOPs follow each operation's cost formula.
       </p>
-      {total.flops.status === "unknown" ? (
+      {works.some((w) => w.flops.status === "unknown") ? (
         <p className="hint overlap">
           No FLOP total: some task computes an operation whose arithmetic is not modelled. The byte
           figures still hold.
         </p>
-      ) : inexact ? (
+      ) : figures.some((f) => f.status === "upper" || f.status === "approximate") ? (
         <p className="hint overlap">
           Some reads are widened: ≤ is “no more than”, ~ moved in an unknown direction.
         </p>
@@ -290,7 +368,10 @@ function TiledTensors({ plan, run }: { plan: TilePlan | null; run: PlanRun }): R
   const setPlanTile = useStore((s) => s.setPlanTile);
   const families = plan ? [...plan.families.values()] : [];
   const reports = new Map(run.report?.families.map((r) => [r.tensorId, r]) ?? []);
-  const total = run.report?.total ?? null;
+  const keptCount = useStore((s) => s.keptPlans.length);
+  // A report is about the plan it was evaluated for, and there is none to
+  // show while nothing is tiled; kept plans are still shown, to restore one.
+  const total = plan ? run.report?.total ?? null : null;
   const unwritten = run.report?.unwritten ?? [];
   return (
     <div className="ins-section">
@@ -361,14 +442,12 @@ function TiledTensors({ plan, run }: { plan: TilePlan | null; run: PlanRun }): R
           <p className="hint">
             {run.tasks} tasks in all · plans above {AUTO_PLAN_TASKS} tasks are evaluated on request.
           </p>
-        ) : total ? (
-          <PlanTotal total={total} />
-        ) : (
+        ) : !total ? (
           <p className="hint">
             No totals: a tensor is over the task budget, and a total over part of the plan would
             understate it.
           </p>
-        )}
+        ) : null}
         {run.report && unwritten.length > 0 && (
           <p className="hint">
             Not written by this plan:{" "}
@@ -378,6 +457,7 @@ function TiledTensors({ plan, run }: { plan: TilePlan | null; run: PlanRun }): R
         )}
         </>
       )}
+      {(total || keptCount > 0) && <PlanTotals report={plan ? run.report : null} />}
     </div>
   );
 }
