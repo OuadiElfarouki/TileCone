@@ -111,19 +111,6 @@ describe("a tensor's tile in the workspace", () => {
     expect(S().viewCfgs.X.tile).toBeUndefined();
   });
 
-  it("steps along a hidden axis and keeps the slice on the tile", () => {
-    S().setViewCfg("X", { projection: false });
-    S().setTensorTile("X", TILE, 0);
-    S().stepTile(0, 1, 1);
-    expect(S().selection!.parts[0].box[1]).toEqual({ lo: 2, hi: 4 });
-    expect(S().viewCfgs.X.sliders[1]).toBe(2);
-    // To the shortened last tile, and back onto the full one before it.
-    S().stepTile(0, 2, 5);
-    expect(S().selection!.parts[0].box[2]).toEqual({ lo: 192, hi: 200 });
-    S().stepTile(0, 2, -1);
-    expect(S().selection!.parts[0].box[2]).toEqual({ lo: 128, hi: 192 });
-  });
-
   it("seeds starter tiles and plan divisions from the tensor's tile", () => {
     S().setTensorTile("Y", TILE);
     expect(defaultPlanTile(S().resolved!, "Y", S().tileScale, S().graphPx, S().viewCfgs)).toEqual(TILE);

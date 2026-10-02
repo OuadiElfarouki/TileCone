@@ -1,8 +1,7 @@
 import { executeQuery } from "../../core/executor";
 import { addPart, Box, Region, subtractFromParts, translateAllParts, translatePart } from "../../core/region";
-import { nudgeDelta, tileOf } from "../../view/tensor/grid";
 import { viewAxes } from "../../view/tensor/tensor-view";
-import { gestureTile, tileFits, tilePosition, tileSpanAt } from "../../view/tensor/tile-spec";
+import { tileFits, tileSpanAt } from "../../view/tensor/tile-spec";
 import { analysisTarget, MAX_PREVIEW_NODES, operationForTensor, partsOn, SelPart } from "../../view/workspace";
 import { recompute } from "../analysis";
 import { appendWorkspaceHistory, planEditOf } from "../history";
@@ -22,7 +21,6 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
   | "clearFocus"
   | "selectAnalysisGroup"
   | "toggleBoxHidden"
-  | "stepTile"
   | "setTensorTile"
   | "setPreviewBox"
 > => ({
@@ -210,37 +208,6 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
       hiddenBoxes: next,
       ...(hiding && focused ? { focusedBox: null, pinnedBox: null } : {}),
     });
-  },
-
-  stepTile: (index, axis, steps) => {
-    const state = get();
-    const part = state.selection?.parts[index];
-    const shape = part && state.resolved?.tensors[part.tensorId]?.resolved;
-    if (!part || !shape || axis < 0 || axis >= shape.length || steps === 0) return;
-    const cfg = state.viewCfgs[part.tensorId];
-    const unit = gestureTile(shape, cfg, tileOf(shape, state.tileScale, state.graphPx, cfg))[axis];
-    const at = tilePosition(part.box[axis], unit, shape[axis]);
-    let moved: Box;
-    if (at.aligned) {
-      // A tile moves to another tile, so the shortened last one is reachable
-      // and a step back from it lands on the full tile before it.
-      const coord = Math.max(0, Math.min(at.count - 1, at.coord + steps));
-      if (coord === at.coord) return;
-      moved = part.box.map((interval, ax) =>
-        ax === axis ? tileSpanAt(coord * unit, unit, shape[axis]) : interval);
-    } else {
-      // Anything else keeps its extent and first lands an edge on the lattice.
-      const delta = nudgeDelta(part.box[axis], steps > 0 ? 1 : -1, unit, true, Math.abs(steps));
-      [moved] = translatePart([part.box], 0, axis, delta, shape);
-      if (moved === part.box) return;
-    }
-    editSelection(
-      get,
-      set,
-      (parts) => parts.map((p, i) => (i === index ? { ...p, box: moved } : p)),
-      true
-    );
-    revealHidden(get, part.tensorId, moved);
   },
 
   setTensorTile: (tensorId, tile, refit) => {

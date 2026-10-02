@@ -114,6 +114,13 @@ export function tilePosition(
   };
 }
 
+/**
+ * Whether a box is exactly one tile of a tiling, on every axis, a shortened
+ * last tile included. A box drawn at other extents or offsets is not.
+ */
+export const isLatticeTile = (box: readonly Interval[], tile: readonly number[], shape: readonly number[]): boolean =>
+  box.every((interval, axis) => tilePosition(interval, tile[axis], shape[axis]).aligned);
+
 /** A tile is valid for a shape when it names every axis with an extent in [1, axis]. */
 export function tileFits(shape: readonly number[], tile: readonly number[]): boolean {
   return tile.length === shape.length &&

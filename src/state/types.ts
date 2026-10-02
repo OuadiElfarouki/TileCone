@@ -287,13 +287,6 @@ export type State = {
    */
   setTensorTile: (tensorId: string, tile: number[] | null, refit?: number) => void;
   /**
-   * Step one part `steps` tiles along `axis`, where a tile is the extent its
-   * tensor's tile has on that axis. An off-lattice part first lands its lower
-   * edge on the lattice, as an arrow nudge does. Works on hidden axes too, and
-   * the view follows the part there.
-   */
-  stepTile: (index: number, axis: number, steps: number) => void;
-  /**
    * Draw `axes` as the tensor card's rows and columns, or the default pair with
    * `null`. Presentation only. With `keep`, the hidden-axis positions move onto
    * that part, so the tile being studied stays on screen when the axes it was

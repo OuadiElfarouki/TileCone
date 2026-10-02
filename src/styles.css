@@ -816,9 +816,6 @@ textarea.source.error-state { border-color: var(--err); }
 /* One row per axis of the inspected tile. The card draws two of them; this
    names every one, so the tile's extent on a hidden axis is written down
    rather than implied by a slider position. */
-.axis-editor .ins-title.with-action { flex-wrap: wrap; row-gap: 4px; }
-.axis-actions { display: inline-flex; flex-wrap: wrap; gap: 4px; }
-.axis-actions .mini { white-space: nowrap; }
 .axis-table {
   width: 100%; border-collapse: collapse; margin: 2px 0 4px;
   font: var(--t-small)/1.5 var(--mono); font-variant-numeric: tabular-nums;
@@ -842,9 +839,6 @@ textarea.source.error-state { border-color: var(--err); }
 /* Warn ink rather than accent: the inspected tile is the short one, which is a
    fact about its extent, not an active control. */
 .axis-table .boundary.on { color: var(--warn-ink); }
-.axis-step { white-space: nowrap; }
-.axis-step .mini { padding: 0 3px; }
-.axis-step span { display: inline-block; min-width: 2.6em; text-align: center; }
 .axis-extent {
   width: 3.8em; padding: 1px 3px; border-radius: var(--r); text-align: right;
   background: var(--bg); color: var(--muted); font: inherit;
@@ -925,6 +919,26 @@ textarea.source.error-state { border-color: var(--err); }
 .panel-frame.will-collapse .panel-content { opacity: var(--dim-soft); }
 .panel-frame.will-collapse.left { box-shadow: inset -2px 0 0 var(--accent); }
 .panel-frame.will-collapse.right { box-shadow: inset 2px 0 0 var(--accent); }
+
+/* ---------------- options menu ---------------- */
+/* Occasional actions behind ⋯ or a right-click: the same floating surface as
+   the example picker, at fixed coordinates so a scrolling panel cannot clip it. */
+.options-trigger { padding: 0 5px; line-height: 1.2; }
+.options-trigger.on { color: var(--accent); border-color: var(--accent); }
+.options-menu {
+  position: fixed; z-index: 40; min-width: 168px;
+  margin: 0; padding: 3px; list-style: none;
+  background: var(--panel); border: 1px solid var(--card-line);
+  border-radius: var(--r-pop); box-shadow: var(--shadow-pop);
+}
+.options-item {
+  display: block; width: 100%; padding: 4px 8px; border: 0; border-radius: var(--r);
+  background: transparent; color: var(--ink); text-align: left;
+  font-size: var(--t-small); white-space: nowrap; cursor: pointer;
+}
+.options-item:hover, .options-item:focus-visible { background: var(--bg); outline: none; }
+.options-item[aria-disabled] { color: var(--muted); cursor: default; }
+.options-item[aria-disabled]:hover { background: transparent; }
 
 /* ---------------- plan view ---------------- */
 /* A tiled tensor: its name, its tile extents, what that costs in tasks, and the
