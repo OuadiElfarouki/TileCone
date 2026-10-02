@@ -11,7 +11,7 @@ import { useDark, useStore } from "../../state/store";
 import { shapeLabel, shapeReadings } from "../../view/tensor/shape-label";
 import { OVERVIEW_SCALE } from "../../view/graph/overview-labels";
 import { formatBytes } from "../../view/format";
-import { axesWith, remapped, viewAxes } from "../../view/tensor/tensor-view";
+import { axesWith, hiddenAxisPositioned, remapped, viewAxes } from "../../view/tensor/tensor-view";
 import { cardViewMenu, type CardViewAction, type CardViewChoice } from "../../view/tensor/menus";
 import { OptionsMenu, useOptionsMenu } from "../chrome/OptionsMenu";
 import type { MenuHandlers } from "../../view/menu";
@@ -567,9 +567,7 @@ function TensorCardView({
       )}
       {shape.map((e, ax) => {
         if (ax === rowAxis || ax === colAxis) return null;
-        // With a tile of its own that is narrower than the axis, the position
-        // says which tile a gesture takes, so it matters in projection too.
-        const positioned = !cfg.projection || (!!ownTile && ownTile[ax] < e);
+        const positioned = hiddenAxisPositioned(shape, cfg, ax);
         return (
           <div className="tc-slider" key={ax}>
             <span>{axisName(ax)}</span>

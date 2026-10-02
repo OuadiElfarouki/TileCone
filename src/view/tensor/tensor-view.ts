@@ -16,6 +16,22 @@ export type ViewCfg = {
   axes?: [number, number];
 };
 
+/**
+ * Whether a hidden axis has a position the reader can set, by its slider or
+ * by the scrub keys. In slice mode it is the slice drawn. In projection the
+ * card draws the union over the axis, so a position means something only when
+ * the tensor's tile is narrower than the axis: it says which tile a gesture
+ * takes. The slider and the keys read this one rule, so a slider that moves
+ * always has keys that move it, and a disabled one has none.
+ */
+export function hiddenAxisPositioned(
+  shape: readonly number[],
+  cfg: Pick<ViewCfg, "projection" | "tile">,
+  axis: number
+): boolean {
+  return !cfg.projection || (!!cfg.tile && cfg.tile[axis] < shape[axis]);
+}
+
 export function defaultViewCfg(shape: number[]): ViewCfg {
   return { sliders: shape.map(() => 0), projection: true };
 }

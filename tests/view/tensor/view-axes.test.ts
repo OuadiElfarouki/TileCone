@@ -4,7 +4,7 @@ import { cardScaleFor, cardSize } from "../../../src/view/tensor/card-size";
 import { gridGeometry } from "../../../src/view/tensor/grid";
 import { decodeWorkspace, encodeWorkspace } from "../../../src/state/share";
 import { useStore } from "../../../src/state/store";
-import { axesWith, remapped, viewAxes, viewCfgFits } from "../../../src/view/tensor/tensor-view";
+import { axesWith, hiddenAxisPositioned, remapped, viewAxes, viewCfgFits } from "../../../src/view/tensor/tensor-view";
 import { MAX_GRAPH_H, MAX_GRAPH_W } from "../../../src/view/tensor/tiling";
 import { selectionBoxFromDrag } from "../../../src/view/tensor/gesture";
 
@@ -48,6 +48,15 @@ describe("choosing the axes a card draws", () => {
     expect([geom.rows, geom.cols]).toEqual([128, 32]);
     const picked = selectionBoxFromDrag(SHAPE, cfg, geom, { r0: 64, c0: 0, r1: 127, c1: 31 }, false);
     expect(picked).toEqual(box([0, 1], [64, 128], [3, 4], [0, 32]));
+  });
+});
+
+describe("a hidden axis's position", () => {
+  it("is settable in slice mode, and in projection only where the tensor's tile is narrower", () => {
+    expect(hiddenAxisPositioned(SHAPE, { projection: false }, 2)).toBe(true);
+    expect(hiddenAxisPositioned(SHAPE, { projection: true }, 2)).toBe(false);
+    expect(hiddenAxisPositioned(SHAPE, { projection: true, tile: [1, 64, 1, 32] }, 1)).toBe(true);
+    expect(hiddenAxisPositioned(SHAPE, { projection: true, tile: [1, 128, 1, 32] }, 1)).toBe(false);
   });
 });
 

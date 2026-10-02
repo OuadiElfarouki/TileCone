@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useStore } from "../../state/store";
 import { nudgeDelta, nudgeUnit } from "../../view/tensor/grid";
 import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
-import { viewAxes } from "../../view/tensor/tensor-view";
+import { hiddenAxisPositioned, viewAxes } from "../../view/tensor/tensor-view";
 import { analysisTarget, InspectorTab } from "../../view/workspace";
 
 const isTyping = (el: EventTarget | null) => {
@@ -225,12 +225,11 @@ export function useKeyboard({
         return;
       }
 
-      // hidden-axis scrub
+      // hidden-axis scrub: the first hidden axis whose slider is live
       if (matchesShortcut(e, SHORTCUTS.scrub)) {
-        if (cfg.projection) return;
-        const hidden = shape.map((_, ax) => ax).filter((ax) => !visible.includes(ax));
-        if (!hidden.length) return;
-        const ax = hidden[0];
+        const ax = shape.findIndex((_, axis) =>
+          !visible.includes(axis) && hiddenAxisPositioned(shape, cfg, axis));
+        if (ax < 0) return;
         const sliders = cfg.sliders.slice();
         // A tensor with a tile of its own steps a whole tile on this axis.
         const delta = (e.key === "]" ? 1 : -1) * (cfg.tile?.[ax] ?? 1);

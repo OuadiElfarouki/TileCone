@@ -292,10 +292,12 @@ function ExamplePicker(): React.ReactElement {
     setOpen(true);
   };
 
-  const choose = (index: number) => {
+  /** Focus goes back to the trigger only when the keyboard made the choice:
+   *  a pointer choice leaves nothing holding the keys (`useFocusPolicy`). */
+  const choose = (index: number, refocus: boolean) => {
     if (index !== staged) stageExample(index);
     setOpen(false);
-    triggerRef.current?.focus();
+    if (refocus) triggerRef.current?.focus();
   };
 
   const onListKeyDown = (e: React.KeyboardEvent) => {
@@ -307,7 +309,7 @@ function ExamplePicker(): React.ReactElement {
     else if (e.key === "ArrowUp") step(-1);
     else if (e.key === "Home") { e.preventDefault(); setActive(0); }
     else if (e.key === "End") { e.preventDefault(); setActive(EXAMPLES.length - 1); }
-    else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose(active); }
+    else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose(active, true); }
     else if (e.key === "Escape") {
       e.preventDefault();
       setOpen(false);
@@ -373,7 +375,7 @@ function ExamplePicker(): React.ReactElement {
                   exampleIndex === index ? " on" : ""
                 }${staged === index && exampleIndex !== index ? " staged" : ""}`}
                 onPointerEnter={() => setActive(index)}
-                onClick={() => choose(index)}
+                onClick={() => choose(index, false)}
               >
                 <span>{example.name}</span>
               </li>

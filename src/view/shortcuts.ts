@@ -85,7 +85,7 @@ export const SHORTCUTS = {
   scrub: {
     id: "scrub",
     label: "[ / ]",
-    action: "scrub the first hidden tensor axis",
+    action: "scrub the first hidden axis whose slider is live",
     keys: ["[", "]"],
   },
   zoom: { id: "zoom", label: "Scroll", action: "zoom around the pointer" },

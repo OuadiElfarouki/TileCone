@@ -46,14 +46,23 @@ export function PanelFrame({
    */
   const [willCollapse, setWillCollapse] = useState(false);
 
+  /* Whether focus is inside this panel. A collapse or expand removes what
+     held it, and focus is carried to the control that replaces it - only when
+     it was here: a collapse from the keyboard shortcut while typing in the
+     other panel, or a click that left nothing focused, must not pull focus to
+     this panel. A removed element takes its focus with it without a blur this
+     can rely on, so only a blur to somewhere else, from an element still in
+     the page, clears it. */
+  const focusWithinRef = useRef(false);
+
   /* The control that caused a collapse/expand disappears in the next render.
      Put focus on its replacement instead of dropping keyboard users onto the
      document body. Initial collapsed state is not a transition and gets no
      unsolicited focus. */
   useLayoutEffect(() => {
     if (wasCollapsedRef.current === collapsed) return;
-    (collapsed ? railRef.current : collapseRef.current)?.focus();
     wasCollapsedRef.current = collapsed;
+    if (focusWithinRef.current) (collapsed ? railRef.current : collapseRef.current)?.focus();
   }, [collapsed]);
 
   const onPointerDown = (e: React.PointerEvent) => {
@@ -94,6 +103,12 @@ export function PanelFrame({
         willCollapse ? " will-collapse" : ""
       }`}
       style={{ width: collapsed ? PANEL_RAIL : width }}
+      onFocus={() => (focusWithinRef.current = true)}
+      onBlur={(e) => {
+        const to = e.relatedTarget as Node | null;
+        if (to ? !e.currentTarget.contains(to) : (e.target as Node).isConnected)
+          focusWithinRef.current = false;
+      }}
     >
       {/* Draft source and selection state live in the store. Unmount transient
           panel UI while collapsed so a hidden field cannot retain focus and an
