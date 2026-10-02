@@ -1,4 +1,4 @@
-/** The Dependencies / Execution / Plan switch, and the panel shown with nothing drawn. */
+/** The Dependencies / Cost model / Plan switch, and the panel shown with nothing drawn. */
 
 import React, { useMemo } from "react";
 import { fromBox } from "../../core/region";
@@ -14,7 +14,7 @@ export const TABS = [
   },
   {
     id: "execution",
-    label: "Execution",
+    label: "Cost model",
     hint: "what an assumed execution would do with them: modelled, not bounded",
   },
   /* A third class, and a third promise. A plan figure rests on a declared
@@ -29,7 +29,7 @@ export const TABS = [
 ] as const satisfies readonly { id: InspectorTab; label: string; hint: string }[];
 
 /**
- * A two-button view switch, deliberately not the ARIA tab pattern. Tabs would
+ * A view switch of plain buttons, deliberately not the ARIA tab pattern. Tabs would
  * promise roving focus and arrow navigation, while arrows already move the
  * tile this panel describes. Both buttons remain ordinary tab stops and expose
  * their current state through `aria-pressed`.

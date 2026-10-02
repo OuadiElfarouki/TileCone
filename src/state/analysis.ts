@@ -56,7 +56,7 @@ export function recompute(
     if (previous?.selection && previous.perBox &&
         previous.selection.parts.length === previous.perBox.length) {
       previous.selection.parts.forEach((part, index) => {
-        // Execution above the attribution cap only populates its anchor.
+        // Cost model above the attribution cap only populates its anchor.
         if (!previous.perBox![index].backward && !previous.perBox![index].forward) return;
         const key = keyOf(part);
         const entries = cached.get(key);

@@ -121,7 +121,7 @@ const surfacePattern = (
  * tiles of the anchor's extents laid over the tensor - would read naturally as
  * a lattice, but drawing one here breaks the rule that every drawn line is a
  * snapping boundary (§9): the card still takes ordinary selection drags under
- * Execution, and those snap to the square display tile, which the anchor's
+ * Cost model, and those snap to the square display tile, which the anchor's
  * extents are generally not. The Plan view can draw its own lattice because a
  * gesture on a tiled card inspects rather than draws; here it still draws. The
  * probe rectangles carry the cover anyway, and carry it more honestly - a

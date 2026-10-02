@@ -36,7 +36,7 @@ different ways.
 | View | Question | What its figures are |
 |---|---|---|
 | **Dependencies** | What do the drawn tiles need, feed and share? | Facts about the graph: exact, or a bound with its reason named. |
-| **Execution** | What would an assumed execution do with them? | Modelled: idealised scenarios, not bounds. |
+| **Cost model** | What would an assumed execution do with them? | Modelled: idealised scenarios, not bounds. |
 | **Plan** | How does a declared tiling divide the work? | Exact for that tiling, or a bound with its reason named. |
 
 ### Dependencies
@@ -62,7 +62,7 @@ against `B[0:4, :]`, the rows a kernel must hold resident alongside it. It is ex
 (so `matmul`, `bmm`, `linear`), elementwise operations, `conv`, `concat` and `gather`; `normalize`
 falls back to a marked bound.
 
-### Execution
+### Cost model
 
 The arithmetic intensity of the tile under two scenarios: **fused** reads the cone's graph inputs
 and writes its output once; **unfused** charges each operation's distinct reads and writes, with
@@ -72,8 +72,8 @@ hardware prediction.
 The **reuse estimate** walks tiles of the same size across the tensor, with a fixed seed, and
 estimates how many touch each input region the tile reads. Running it replays its actual sampled
 tiles on the graph: each probe lights up wherever it lands across the relations switched on, with
-the part it shares with the drawn tile drawn on top. Execution narrows to that one tile while it is
-open and restores the other tiles on leaving.
+the part it shares with the drawn tile drawn on top. The Cost model view narrows to that one tile
+while it is open and restores the other tiles on leaving.
 
 ### Plan
 

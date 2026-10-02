@@ -178,7 +178,7 @@ export function useKeyboard({
       };
       /* Moving a tile is an edit to the selection, and the selection is the
          Dependencies view's subject: its list is what shows which tile the
-         arrows are about to move. Under Execution that list is not on screen,
+         arrows are about to move. Under Cost model that list is not on screen,
          and the panel is a readout of an assumed schedule rather than a place
          to redraw the thing being scheduled - so the keys do nothing there
          instead of editing something the reader cannot see. */

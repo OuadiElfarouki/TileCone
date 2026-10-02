@@ -383,7 +383,7 @@ export function Inspector(): React.ReactElement {
                     at graph inputs. It is a shareable footprint, not a claim
                     about cache hits, transactions, or bytes actually loaded.
                     The sweep that asks the same question of tiles nobody drew
-                    is modelled, and lives under Execution. */}
+                    is modelled, and lives under Cost model. */}
                 <div className="ins-section">
                   <div className="ins-title">Shared graph-input demand</div>
                   {sharing && sharing.length > 0 ? (

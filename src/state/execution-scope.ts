@@ -2,17 +2,17 @@ import { InspectorTab, SelPart, sweepAnchorIndex } from "../view/workspace";
 import { State } from "./types";
 
 /**
- * Narrow the attribution to the swept tile on the way into Execution, and put
+ * Narrow the attribution to the swept tile on the way into Cost model, and put
  * the reader's own back on the way out.
  *
- * Execution answers one question about one tile - how many tiles of this size
+ * Cost model answers one question about one tile - how many tiles of this size
  * share its demand - so the other tiles are not peers of it here the way they
  * are under Dependencies, and leaving them enabled would put their cones on the
  * cards beside a sweep that is not about them. Disabling is the existing
  * control rather than a second kind of invisibility: each tile keeps its faint
  * rectangle, so the reader can see they are still there.
  *
- * What is restored is what was set aside, not what Execution ended up with, so
+ * What is restored is what was set aside, not what Cost model ended up with, so
  * the Dependencies view comes back as it was left however the sweep was driven.
  */
 export function executionScoping(

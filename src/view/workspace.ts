@@ -201,7 +201,7 @@ export function analysisTarget(parts: SelPart[], group: string | null, focus: nu
  * The tile a reuse sweep is about: the focused one when it is in the analysis
  * group and still enabled, else the last enabled tile drawn there.
  *
- * Lives here rather than in the inspector because entering Execution has to
+ * Lives here rather than in the inspector because entering Cost model has to
  * know which tile it is scoping to before the inspector renders, and the two
  * choosing differently would scope the panel to one tile and sweep another.
  */

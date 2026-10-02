@@ -8,12 +8,12 @@ import { analysisWorkerAvailable, isAnalysisCancelled, reuseInWorker } from "../
 import { useStore } from "../../state/store";
 
 /**
- * The reuse sweep behind the Execution view: the tile it is anchored on, the
+ * The reuse sweep behind the Cost model view: the tile it is anchored on, the
  * Worker request, the cached run, and the playback that replays its probes on
  * the cards.
  *
  * The playback's timers live here, with the panel that shows the figures, so
- * the hook also owns retiring them: on leaving Execution, when the anchor tile
+ * the hook also owns retiring them: on leaving Cost model, when the anchor tile
  * changes, and when the panel unmounts.
  */
 export function useReuseSweep({

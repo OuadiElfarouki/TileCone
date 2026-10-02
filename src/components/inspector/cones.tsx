@@ -228,7 +228,7 @@ export const CONE = {
 
 /* The two classes of question the panel answers, and the promise each one
    makes. A figure under Dependencies is a function of the graph and the drawn
-   region - exact, or a bound that names why. A figure under Execution exists
+   region - exact, or a bound that names why. A figure under Cost model exists
    only once an execution is assumed, so it is modelled and could be wrong in
    either direction; mixing the two in one column would lend the models the
    others' credibility. */

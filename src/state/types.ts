@@ -154,7 +154,7 @@ export type State = {
    * It never changes `selection` or `plan`; those remain underneath it. */
   executionPlayback: ExecutionPlayback | null;
   /**
-   * The attribution Execution set aside while it scopes the panel to the one
+   * The attribution the Cost model view set aside while it scopes the panel to the one
    * tile its sweep is about.
    *
    * A sweep is defined by a single tile, and the figures beside it are about

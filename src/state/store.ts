@@ -40,7 +40,7 @@ function initialMoveOps(): boolean {
 
 export const useStore = create<State>((commit, get) => {
   // Keep scope transactional with edits, including undo and the first draw in
-  // an empty Execution view. Playback ticks must never trigger propagation.
+  // an empty Cost model view. Playback ticks must never trigger propagation.
   const set: typeof commit = (update, replace) => commit((previous) => {
     const patch = typeof update === "function" ? update(previous) : update;
     let next = { ...previous, ...patch };

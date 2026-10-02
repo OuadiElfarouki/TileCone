@@ -234,10 +234,10 @@ D = matmul(CC, W)
   });
 
   /* A sweep is about one tile, and the figures beside it are about that tile,
-     so Execution narrows to it and Dependencies gets its own state back
+     so Cost model narrows to it and Dependencies gets its own state back
      whatever happened in between. */
   describe("scoping to the swept tile", () => {
-    it("keeps just the new anchor enabled after drawing and undoing in Execution", () => {
+    it("keeps just the new anchor enabled after drawing and undoing in Cost model", () => {
       S().setInspectorTab("execution");
       S().setSelection("D", fromBox(box([240, 256], [240, 256])), "union");
       const check = () => {
@@ -253,7 +253,7 @@ D = matmul(CC, W)
       expect([...S().hiddenBoxes]).toEqual([]);
     });
 
-    it("scopes a first draw made in an empty Execution view", () => {
+    it("scopes a first draw made in an empty Cost model view", () => {
       S().clearSelection();
       S().setInspectorTab("execution");
       S().setSelection("D", fromBox(box([0, 8], [0, 8])));
@@ -306,7 +306,7 @@ D = matmul(CC, W)
       expect([...S().hiddenBoxes]).toEqual([]);
     });
 
-    it("restores what was set aside, not what Execution was left holding", () => {
+    it("restores what was set aside, not what Cost model was left holding", () => {
       S().setInspectorTab("execution");
       // Whatever the reader does in here is scoping, not an edit to come back to.
       S().toggleBoxHidden(1);
