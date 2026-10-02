@@ -1,6 +1,7 @@
 import React, { useLayoutEffect, useRef, useState } from "react";
 import { useStore } from "../../state/store";
 import { PANEL_COLLAPSE_AT, PANEL_MAX, PANEL_MIN, PANEL_RAIL, PanelSide } from "../../view/workspace";
+import { isPrimaryPress } from "../pointer";
 
 /**
  * Width, collapse-to-rail, and the drag strip shared by both side panels.
@@ -56,7 +57,7 @@ export function PanelFrame({
   }, [collapsed]);
 
   const onPointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
+    if (!isPrimaryPress(e)) return;
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     dragRef.current = true;

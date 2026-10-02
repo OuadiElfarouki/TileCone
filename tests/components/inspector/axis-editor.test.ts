@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AxisEditor, axisOptions } from "../../../src/components/inspector/AxisEditor";
+import { AxisEditor } from "../../../src/components/inspector/AxisEditor";
 import { box, fromBox } from "../../../src/core/region";
 import { useStore } from "../../../src/state/store";
 import { tileOf } from "../../../src/view/tensor/grid";
 import { gestureTile, isLatticeTile } from "../../../src/view/tensor/tile-spec";
+import { axisTableMenu, type AxisTableAction } from "../../../src/view/tensor/menus";
+import type { MenuAction } from "../../../src/view/menu";
 
 // Static-render tests read the live test store rather than Zustand's initial
 // server snapshot. Actions and all derivation logic remain the real implementation.
@@ -25,17 +27,16 @@ const currentTile = () => {
   return gestureTile(shape, S().viewCfgs.X, tileOf(shape, S().tileScale, S().graphPx, S().viewCfgs.X));
 };
 
-/** The menu's options for the inspected part of X, derived as the panel derives them. */
-const optionsNow = () => {
+/** The menu's actions for the inspected part of X, derived as the panel derives them. */
+const actionsNow = () => {
   const shape = S().resolved!.tensors.X.resolved!;
-  return axisOptions({
+  return axisTableMenu({
     own: !!S().viewCfgs.X.tile,
     matchesTile: isLatticeTile(S().selection!.parts[0].box, currentTile(), shape),
-    planeRemapped: false,
     input: true,
-  });
+  }).filter((entry): entry is MenuAction<AxisTableAction> => entry.kind === "action");
 };
-const option = (id: string) => optionsNow().find((o) => o.id === id)!;
+const option = (id: AxisTableAction) => actionsNow().find((o) => o.id === id)!;
 
 describe("the axis table at rest", () => {
   beforeEach(() => {
@@ -48,8 +49,13 @@ describe("the axis table at rest", () => {
     const html = render();
     expect(html).toContain('aria-label="axis options"');
     expect(html).toContain('aria-haspopup="menu"');
-    for (const hidden of ["tile #", "use as tile", "reset tile", "draw default plane", "plan with this tile"])
+    for (const hidden of ["tile #", "use as tile", "reset tile", "plan with this tile"])
       expect(html).not.toContain(hidden);
+  });
+
+  it("does not choose the card's axes: that is the tensor's setting, made on the card", () => {
+    const html = render();
+    for (const gone of ["↕", "↔", "draw ax0 as", "draw default plane"]) expect(html).not.toContain(gone);
   });
 });
 
@@ -87,14 +93,17 @@ describe("keeping the canvas tile as a tensor's own", () => {
   });
 });
 
-describe("the options that do not apply", () => {
+describe("the actions that do not apply", () => {
   it("says why, rather than disappearing", () => {
-    const options = axisOptions({ own: false, matchesTile: false, planeRemapped: false, input: true });
-    const byId = Object.fromEntries(options.map((o) => [o.id, o]));
-    expect(options.map((o) => o.id)).toEqual(["own", "reset", "plane", "plan"]);
-    expect(byId.plane).toMatchObject({ disabled: true, title: "the card already draws the last two axes" });
-    expect(byId.plan).toMatchObject({ disabled: true, title: "a graph input has no tasks: nothing computes it" });
-    expect(axisOptions({ own: false, matchesTile: false, planeRemapped: true, input: false })
-      .filter((o) => o.disabled).map((o) => o.id)).toEqual(["reset"]);
+    const actions = axisTableMenu({ own: false, matchesTile: false, input: true })
+      .filter((entry): entry is MenuAction<AxisTableAction> => entry.kind === "action");
+    expect(actions.map((o) => o.id)).toEqual(["own", "reset", "plan"]);
+    expect(actions.find((o) => o.id === "plan")).toMatchObject({
+      disabled: true,
+      title: "a graph input has no tasks: nothing computes it",
+    });
+    expect(axisTableMenu({ own: false, matchesTile: false, input: false })
+      .filter((entry) => entry.kind === "action" && entry.disabled)
+      .map((entry) => entry.kind === "action" && entry.id)).toEqual(["reset"]);
   });
 });

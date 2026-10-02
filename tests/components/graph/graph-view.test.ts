@@ -1,3 +1,4 @@
+import { isPrimaryPress } from "../../../src/components/pointer";
 import { describe, expect, it } from "vitest";
 import {
   canStartCardDrag,
@@ -161,5 +162,13 @@ describe("graph viewport fit", () => {
     const viewport = { width: 1200, height: 800 };
     const bounds = { min: 0.4, max: 4 };
     expect(lowZoomBound(scene, viewport, bounds)).toBe(0.4);
+  });
+});
+
+describe("which presses start a gesture", () => {
+  it("is the primary button alone: a secondary press is the context menu's", () => {
+    expect(isPrimaryPress({ button: 0 })).toBe(true);
+    expect(isPrimaryPress({ button: 1 })).toBe(false);
+    expect(isPrimaryPress({ button: 2 })).toBe(false);
   });
 });

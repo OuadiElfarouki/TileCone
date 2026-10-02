@@ -288,11 +288,11 @@ export type State = {
   setTensorTile: (tensorId: string, tile: number[] | null, refit?: number) => void;
   /**
    * Draw `axes` as the tensor card's rows and columns, or the default pair with
-   * `null`. Presentation only. With `keep`, the hidden-axis positions move onto
-   * that part, so the tile being studied stays on screen when the axes it was
-   * seen through become hidden.
+   * `null`. Presentation only. The hidden-axis positions move onto the tile the
+   * tensor's view is about (`viewAnchorIndex`), so the tile being studied stays
+   * on screen when the axes it was seen through become hidden.
    */
-  setViewAxes: (tensorId: string, axes: [number, number] | null, keep?: number) => void;
+  setViewAxes: (tensorId: string, axes: [number, number] | null) => void;
   setTileScale: (v: number) => void;
   setSnapToGrid: (v: boolean) => void;
   setAxisMode: (v: AxisMode) => void;

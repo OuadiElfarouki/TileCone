@@ -194,8 +194,19 @@ export function analysisTarget(parts: SelPart[], group: string | null, focus: nu
   const tensorId = group && parts.some((part) => part.tensorId === group)
     ? group : anchorTensorId({ parts }, null);
   const focusedBox = focus !== null && parts[focus]?.tensorId === tensorId ? focus : null;
-  const index = focusedBox ?? parts.reduce((last, part, i) => part.tensorId === tensorId ? i : last, -1);
+  const index = tensorId === null ? -1 : viewAnchorIndex(parts, tensorId, focus) ?? -1;
   return { tensorId, focusedBox, index };
+}
+
+/**
+ * The tile a tensor's own view is about: the focused tile when it is on that
+ * tensor, else the last tile drawn there, or null when it has none. A change to
+ * how the tensor is drawn keeps this tile on screen.
+ */
+export function viewAnchorIndex(parts: SelPart[], tensorId: string, focus: number | null): number | null {
+  if (focus !== null && parts[focus]?.tensorId === tensorId) return focus;
+  const last = parts.reduce((found, part, i) => (part.tensorId === tensorId ? i : found), -1);
+  return last >= 0 ? last : null;
 }
 /**
  * The tile a reuse sweep is about: the focused one when it is in the analysis

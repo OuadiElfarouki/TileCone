@@ -26,6 +26,7 @@ import { useFrameThrottle } from "../hooks/useFrameThrottle";
 import { involvedTensorIds, PANEL_RAIL } from "../../view/workspace";
 import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
 import { planesOf } from "../../view/tensor/seeds";
+import { isPrimaryPress } from "../pointer";
 
 type NodeDrag = {
   /** Scene key, so one gesture serves cards and operation nodes alike. */
@@ -553,7 +554,7 @@ export function GraphView(): React.ReactElement {
   };
 
   const onPointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0 || !canStartGraphPan(e.target)) return;
+    if (!isPrimaryPress(e) || !canStartGraphPan(e.target)) return;
     cancelGlide();
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -603,7 +604,7 @@ export function GraphView(): React.ReactElement {
     kind: GraphNodeKind,
     id: string
   ) => {
-    if (!canStartCardDrag(e.target)) return;
+    if (!isPrimaryPress(e) || !canStartCardDrag(e.target)) return;
     // The unlock is read here rather than captured, so the handler stays stable
     // across renders and toggling it mid-session takes effect on the next press.
     if (kind === "op" && !useStore.getState().moveOps) return;

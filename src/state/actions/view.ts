@@ -1,6 +1,6 @@
 import { remapped, ViewCfg, viewCfgFits } from "../../view/tensor/tensor-view";
 import { TILE_SCALE_MAX, TILE_SCALE_MIN } from "../../view/tensor/tiling";
-import { Direction, idRecord } from "../../view/workspace";
+import { Direction, idRecord, viewAnchorIndex } from "../../view/workspace";
 import { executionScoping } from "../execution-scope";
 import { inspectTask } from "../plan";
 import { revealHidden } from "../selection-edit";
@@ -67,7 +67,7 @@ export const viewActions = (set: SetState, get: GetState): Pick<
     });
   },
 
-  setViewAxes: (tensorId, axes, keep) => {
+  setViewAxes: (tensorId, axes) => {
     const state = get();
     const shape = state.resolved?.tensors[tensorId]?.resolved;
     if (!shape) return;
@@ -80,8 +80,9 @@ export const viewActions = (set: SetState, get: GetState): Pick<
     else delete next.axes;
     if (!viewCfgFits(shape, next)) return;
     set({ viewCfgs: idRecord({ ...state.viewCfgs, [tensorId]: next }), preview: null });
-    const part = keep === undefined ? undefined : get().selection?.parts[keep];
-    if (part?.tensorId === tensorId) revealHidden(get, tensorId, part.box);
+    const parts = state.selection?.parts ?? [];
+    const anchor = viewAnchorIndex(parts, tensorId, state.focusedBox);
+    if (anchor !== null) revealHidden(get, tensorId, parts[anchor].box);
   },
 
   setSnapToGrid: (v) => set({ snapToGrid: v }),

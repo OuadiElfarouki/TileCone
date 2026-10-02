@@ -67,3 +67,20 @@ export function remapped(shape: readonly number[], cfg?: Pick<ViewCfg, "axes">):
   const plain = viewAxes(shape);
   return chosen.rowAxis !== plain.rowAxis || chosen.colAxis !== plain.colAxis;
 }
+
+/**
+ * The pair a card draws after `axis` takes the given role. A card draws two
+ * distinct axes, so taking the axis that holds the other role swaps the two;
+ * any other axis replaces the one in that role.
+ */
+export function axesWith(
+  shape: readonly number[],
+  cfg: Pick<ViewCfg, "axes"> | undefined,
+  axis: number,
+  role: "rows" | "cols"
+): [number, number] {
+  const { rowAxis, colAxis } = viewAxes(shape, cfg);
+  return role === "rows"
+    ? [axis, axis === colAxis ? rowAxis : colAxis]
+    : [axis === rowAxis ? colAxis : rowAxis, axis];
+}

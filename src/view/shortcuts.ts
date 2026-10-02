@@ -89,6 +89,14 @@ export const SHORTCUTS = {
     keys: ["[", "]"],
   },
   zoom: { id: "zoom", label: "Scroll", action: "zoom around the pointer" },
+  /* The browser raises the same context-menu event for a right-click, the
+     Menu key and Shift+F10 on a focused element, so one handler serves all
+     three and none of them is a binding this manifest matches. */
+  options: {
+    id: "options",
+    label: "Right-click / Shift+F10",
+    action: "options: the axes a card draws, or the inspected tile's",
+  },
   help: { id: "help", label: "?", action: "open this shortcut sheet", keys: ["?"] },
   leftPanel: {
     id: "left-panel",
@@ -129,7 +137,7 @@ export const SHORTCUT_GROUPS = [
     ],
     note: "Tile edits apply while the inspector shows Dependencies, the view that lists them.",
   },
-  { title: "View", items: [SHORTCUTS.needs, SHORTCUTS.feeds, SHORTCUTS.entangled, SHORTCUTS.fit, SHORTCUTS.scrub, SHORTCUTS.zoom, SHORTCUTS.help] },
+  { title: "View", items: [SHORTCUTS.needs, SHORTCUTS.feeds, SHORTCUTS.entangled, SHORTCUTS.fit, SHORTCUTS.scrub, SHORTCUTS.zoom, SHORTCUTS.options, SHORTCUTS.help] },
   /* `run` builds the source; it is not a panel control. The sheet is the one
      place the bindings are taught, so its grouping is the mental model a reader
      leaves with. */

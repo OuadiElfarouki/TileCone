@@ -4,7 +4,7 @@ import { cardScaleFor, cardSize } from "../../../src/view/tensor/card-size";
 import { gridGeometry } from "../../../src/view/tensor/grid";
 import { decodeWorkspace, encodeWorkspace } from "../../../src/state/share";
 import { useStore } from "../../../src/state/store";
-import { remapped, viewAxes, viewCfgFits } from "../../../src/view/tensor/tensor-view";
+import { axesWith, remapped, viewAxes, viewCfgFits } from "../../../src/view/tensor/tensor-view";
 import { MAX_GRAPH_H, MAX_GRAPH_W } from "../../../src/view/tensor/tiling";
 import { selectionBoxFromDrag } from "../../../src/view/tensor/gesture";
 
@@ -34,6 +34,14 @@ describe("choosing the axes a card draws", () => {
     expect(size.h).toBeLessThanOrEqual(24 + 24 + 2 * 20 + MAX_GRAPH_H + 1);
   });
 
+  it("gives an axis a role, swapping when it holds the other one", () => {
+    // Default plane: rows H (2), columns D (3).
+    expect(axesWith(SHAPE, undefined, 1, "rows")).toEqual([1, 3]);
+    expect(axesWith(SHAPE, undefined, 3, "rows")).toEqual([3, 2]);
+    expect(axesWith(SHAPE, undefined, 0, "cols")).toEqual([2, 0]);
+    expect(axesWith(SHAPE, { axes: [1, 3] }, 1, "cols")).toEqual([3, 1]);
+  });
+
   it("selects on the chosen axes and takes the hidden positions on the others", () => {
     const cfg = { projection: false, sliders: [0, 0, 3, 0], axes: [1, 3] as [number, number] };
     const geom = gridGeometry(SHAPE, cfg, 0, 2);
@@ -51,7 +59,7 @@ describe("axes in the workspace", () => {
   });
 
   it("keeps the studied tile on screen when its axes become hidden", () => {
-    S().setViewAxes("X", [1, 3], 0);
+    S().setViewAxes("X", [1, 3]);
     expect(S().viewCfgs.X.axes).toEqual([1, 3]);
     // H is hidden now; the slice moves onto the tile's head.
     expect(S().viewCfgs.X.sliders[2]).toBe(2);
@@ -59,14 +67,37 @@ describe("axes in the workspace", () => {
     expect(S().selection!.parts[0].box).toEqual(box([0, 1], [64, 128], [2, 3], [0, 32]));
   });
 
+  it("keeps the focused tile on screen, else the last one drawn on the tensor", () => {
+    const tile = (head: number) => box([0, 1], [64, 128], [head, head + 1], [0, 32]);
+    S().setSelection("X", { boxes: [tile(2)], exact: true, reasons: [] }, "replace");
+    S().setSelection("X", { boxes: [tile(3)], exact: true, reasons: [] }, "union");
+    expect(S().selection!.parts).toHaveLength(2);
+
+    S().setViewAxes("X", [1, 3]);
+    expect(S().viewCfgs.X.sliders[2]).toBe(3); // the last one drawn
+
+    S().setViewAxes("X", null);
+    S().hoverBox(0);
+    S().togglePinBox(0);
+    S().setViewAxes("X", [1, 3]);
+    expect(S().viewCfgs.X.sliders[2]).toBe(2); // the focused one
+  });
+
+  it("leaves the positions alone on a tensor with no tile", () => {
+    S().setSelection("Y", { boxes: [box([0, 1], [0, 8], [0, 1], [0, 32])], exact: true, reasons: [] }, "replace");
+    const sliders = S().viewCfgs.X.sliders.slice();
+    S().setViewAxes("X", [1, 3]);
+    expect(S().viewCfgs.X.sliders).toEqual(sliders);
+  });
+
   it("stores the default pair as absent", () => {
-    S().setViewAxes("X", [1, 3], 0);
-    S().setViewAxes("X", [2, 3], 0);
+    S().setViewAxes("X", [1, 3]);
+    S().setViewAxes("X", [2, 3]);
     expect(S().viewCfgs.X.axes).toBeUndefined();
   });
 
   it("round trips through a share link", () => {
-    S().setViewAxes("X", [1, 3], 0);
+    S().setViewAxes("X", [1, 3]);
     const views = { X: S().viewCfgs.X };
     const decoded = decodeWorkspace(`#s=${encodeWorkspace({ dsl: DSL, dir: "both", tile: 0, sel: null, views })}`)!;
     expect(S().restoreWorkspace({

@@ -11,13 +11,17 @@ import { useDark, useStore } from "../../state/store";
 import { shapeLabel, shapeReadings } from "../../view/tensor/shape-label";
 import { OVERVIEW_SCALE } from "../../view/graph/overview-labels";
 import { formatBytes } from "../../view/format";
-import { remapped, viewAxes } from "../../view/tensor/tensor-view";
+import { axesWith, remapped, viewAxes } from "../../view/tensor/tensor-view";
+import { cardViewMenu, type CardViewAction, type CardViewChoice } from "../../view/tensor/menus";
+import { OptionsMenu, useOptionsMenu } from "../chrome/OptionsMenu";
+import type { MenuHandlers } from "../../view/menu";
 import { cardScaleFor } from "../../view/tensor/card-size";
 import { seedTile } from "../../view/tensor/tile-spec";
 import { partsOn } from "../../view/workspace";
 import { buildPlanPaint, buildLayers } from "../../view/tensor/layers";
 import { CellDrag, planGesture, selectionBoxFromDrag, planElementFromCell, visibleApproximation } from "../../view/tensor/gesture";
 import { buildExecutionPaint } from "../../view/tensor/execution-paint";
+import { isPrimaryPress } from "../pointer";
 
 export { cardSize } from "../../view/tensor/card-size";
 
@@ -83,6 +87,10 @@ function TensorCardView({
   const rank = shape.length;
   const cfg = useStore((s) => s.viewCfgs[tensor.id]);
   const setViewCfg = useStore((s) => s.setViewCfg);
+  const setViewAxes = useStore((s) => s.setViewAxes);
+  /** How the tensor is drawn is its own setting, so it is changed here, on the
+   *  card, from a right-click rather than from the inspected tile's table. */
+  const viewMenu = useOptionsMenu();
   const selection = useStore((s) => s.selection);
   const backwardRes = useStore((s) => s.backwardRes);
   const forwardRes = useStore((s) => s.forwardRes);
@@ -343,6 +351,7 @@ function TensorCardView({
    * index, as a kernel grid usually assigns batch and head.
    */
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isPrimaryPress(e)) return;
     const cell = elementFromEvent(e, canvasRef.current!, geom);
     if (!cell) return;
     e.preventDefault();
@@ -409,6 +418,17 @@ function TensorCardView({
    *  on the default plane. */
   const scaleRatio = graphPx / cardScaleFor(shape, cfg, graphPx);
   const axisName = (ax: number) => tensor.axisNames?.[ax] ?? `ax${ax}`;
+  const viewSpec = cardViewMenu(shape, cfg, axisName);
+  const viewHandlers: MenuHandlers<CardViewAction, CardViewChoice> = {
+    action: {
+      swap: () => setViewAxes(tensor.id, [colAxis, rowAxis]),
+      default: () => setViewAxes(tensor.id, null),
+    },
+    choice: {
+      rows: (axis) => setViewAxes(tensor.id, axesWith(shape, cfg, axis, "rows")),
+      cols: (axis) => setViewAxes(tensor.id, axesWith(shape, cfg, axis, "cols")),
+    },
+  };
   // Keep the compact header to one reading. The details popover preserves the
   // separate axis-label, symbolic-extent, and numeric-extent facts.
   const symbolicShape = shapeLabel(tensor, "symbolic");
@@ -465,7 +485,13 @@ function TensorCardView({
   );
 
   return (
-    <div className={`tensor-card${isSelected ? " selected" : ""}${viewScale < OVERVIEW_SCALE ? " overview" : ""}`} data-tensor={tensor.id} style={{ "--view-scale": viewScale } as React.CSSProperties}>
+    <div
+      className={`tensor-card${isSelected ? " selected" : ""}${viewScale < OVERVIEW_SCALE ? " overview" : ""}`}
+      data-tensor={tensor.id}
+      style={{ "--view-scale": viewScale } as React.CSSProperties}
+      onContextMenu={viewSpec.length ? viewMenu.onContextMenu : undefined}
+    >
+      <OptionsMenu menu={viewMenu} label={`${tensor.name} view`} spec={viewSpec} handlers={viewHandlers} />
       {/* The tensor plate is deliberately frameless. Its persistent label is the
           name, the resolved numeric shape, and the two facts that change how the
           grid below should be read: where the tensor comes from, and whether its
@@ -531,7 +557,7 @@ function TensorCardView({
             <span
               className="tc-plane"
               title={`display only: the card draws ${axisName(rowAxis)} down and ${axisName(colAxis)} across; the graph is unchanged${
-                scaleRatio > 1 ? `. Drawn at 1/${formatRatio(scaleRatio)} of the graph's scale to fit, so its lengths are not comparable with other cards` : ""}`}
+                scaleRatio > 1 ? `. Drawn at 1/${formatRatio(scaleRatio)} of the graph's scale to fit, so its lengths are not comparable with other cards` : ""}. Right-click the card to change it.`}
             >
               rows {axisName(rowAxis)} · cols {axisName(colAxis)}
               {scaleRatio > 1 && <b> · scale ÷{formatRatio(scaleRatio)}</b>}

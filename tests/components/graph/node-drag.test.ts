@@ -61,7 +61,7 @@ const arrow = (key: string, shiftKey = false) => ({
 }) as unknown as React.KeyboardEvent<HTMLDivElement>;
 
 const pointer = (x: number) => ({
-  pointerId: 1, clientX: x, clientY: 0, target: null,
+  pointerId: 1, button: 0, clientX: x, clientY: 0, target: null,
   currentTarget: { setPointerCapture: vi.fn() },
   preventDefault: vi.fn(), stopPropagation: vi.fn(),
 }) as unknown as React.PointerEvent<HTMLDivElement>;
