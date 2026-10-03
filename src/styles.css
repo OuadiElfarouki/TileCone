@@ -485,30 +485,26 @@ textarea.source.error-state { border-color: var(--err); }
   font-size: var(--t-body); font-weight: 500; color: var(--muted); cursor: pointer;
 }
 .op-node.dim { opacity: var(--dim); }
-/* Hover and selection work independently of the layout movement toggle. */
-.op-node:hover, .op-node.selected {
+/* A node has one border, and its colour says how the node is engaged: accent
+   while it is inspected - hovered, focused or selected - grey while it is being
+   moved, warning when a neighbour refuses the move. Thin is pointing at it,
+   thick is holding it. The rules run in that order at one specificity, so a
+   later state recolours the border rather than drawing a second one beside it;
+   keyboard focus included, which takes the border instead of an outer ring. */
+.op-node:hover, .op-node:focus-visible, .op-node.selected {
   opacity: 1; color: var(--ink); border-color: var(--accent);
 }
+.op-node:focus-visible { outline: none; }
 .op-node.selected { box-shadow: 0 0 0 1px var(--accent); }
-/* One dot diagonally outside the corner: equal offsets keep it at 45 degrees. */
-.op-grab {
-  position: absolute; left: -6px; top: -6px; width: 3px; height: 3px;
-  border-radius: 50%; background: currentColor;
-  color: var(--muted); opacity: 0.24;
-  transition: opacity 120ms ease, color 120ms ease;
+:where(.graph-canvas.move-tool) .op-node:hover { border-color: var(--muted); box-shadow: none; }
+.op-node.moving, .op-node:where([data-node-move]):focus-visible {
+  border-color: var(--muted); box-shadow: 0 0 0 1px var(--muted);
 }
-.op-node:hover .op-grab, .op-node:focus-visible .op-grab,
-.op-node.selected .op-grab, .op-node.moving .op-grab {
-  color: var(--accent); opacity: 1;
-}
-.op-node.blocked .op-grab { color: var(--warn-ink); opacity: 1; }
-.op-node.movable { cursor: grab; touch-action: none; }
-.op-node.moving { z-index: 5; opacity: 1; cursor: grabbing; }
+.op-node.moving { z-index: 5; opacity: 1; }
 /* Blocked is not drag-only: an arrow press that a neighbour refuses has no
    motion of its own to report the refusal with, so the mark is the feedback. */
-.op-node.blocked { color: var(--warn-ink); border-color: var(--warn-ink); }
-.op-node:focus-visible {
-  outline: 2px solid var(--accent); outline-offset: 2px; opacity: 1;
+.op-node.blocked {
+  color: var(--warn-ink); border-color: var(--warn-ink); box-shadow: 0 0 0 1px var(--warn-ink);
 }
 /* Below the overview scale the label is counter-scaled to hold a readable size,
    which makes it wider than the node box - the box is sized for the label at
@@ -521,7 +517,7 @@ textarea.source.error-state { border-color: var(--err); }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center;
   pointer-events: none;
 }
-/* Quiet at rest, like `.tensor-grab`: accent is reserved for *active*, and a
+/* Quiet at rest: accent is reserved for *active*, and a
    resting accent mark on every softmax and normalize node reads as "this node
    is in the answer" on a graph that has dozens of them. */
 .expand-btn {
@@ -534,27 +530,26 @@ textarea.source.error-state { border-color: var(--err); }
 .card-slot { position: absolute; cursor: default; }
 .card-slot.dim { opacity: var(--dim); }
 .card-slot.moving { z-index: 5; opacity: 1; }
-.card-slot.moving.blocked .tensor-grab { color: var(--warn-ink); opacity: 1; }
-.card-slot.moving.blocked .tc-canvas-wrap canvas {
-  outline-color: var(--warn-ink); box-shadow: 0 0 0 2px color-mix(in srgb, var(--warn-ink) 24%, transparent);
-}
+/* Focus is shown on the grid's own border, with the card's other states. */
+.card-slot:focus-visible { outline: none; opacity: 1; }
+/* The move tool, chosen or borrowed with Ctrl/Cmd: a press anywhere on a node
+   moves it. What is inside a node stops taking the pointer, so the grid's hover
+   preview, a slider or the name's popover cannot answer a press that is about to
+   move the whole node. The card plate itself still takes it, which keeps its
+   right-click menu. */
+.graph-canvas.move-tool .card-slot,
+.graph-canvas.move-tool .op-node { cursor: grab; }
+.graph-canvas.move-tool .card-slot:hover,
+.graph-canvas.move-tool .op-node:hover { opacity: 1; }
+.card-slot.moving, .op-node.moving { cursor: grabbing; }
+.graph-canvas.move-tool .tensor-card > *,
+.graph-canvas.move-tool .op-node > * { pointer-events: none; }
 /* Pointer capture keeps the pan alive across nodes; keep its cursor equally
    stable instead of flashing back to a card's default/crosshair on the way by. */
 .graph-canvas.panning .card-slot,
 .graph-canvas.panning .card-slot *,
 .graph-canvas.panning .op-node,
 .graph-canvas.panning .op-node * { cursor: grabbing !important; }
-.tensor-grab {
-  position: absolute; left: -18px; top: 3px; z-index: 4;
-  width: 15px; height: 15px; padding: 0; border: 0; border-radius: var(--r);
-  color: var(--muted); opacity: 0.24; cursor: grab; touch-action: none;
-  background-color: transparent;
-  background-image: radial-gradient(currentColor 1px, transparent 1.25px);
-  background-size: 5px 5px; background-position: 1px 1px;
-  transition: opacity 120ms ease, color 120ms ease;
-}
-.tensor-grab:hover, .tensor-grab:focus-visible { opacity: 1; color: var(--accent); }
-.tensor-grab:active { cursor: grabbing; }
 
 /* ---------------- tensor card ---------------- */
 .tensor-card {
@@ -566,8 +561,6 @@ textarea.source.error-state { border-color: var(--err); }
   gap: 6px; min-height: 20px; padding-bottom: 3px; white-space: nowrap;
   background: transparent;
 }
-.tc-header.movable { cursor: grab; touch-action: none; }
-.card-slot.moving .tc-header.movable { cursor: grabbing; }
 .tc-name-wrap { position: relative; display: inline-flex; }
 .tc-name { font-size: var(--t-base); font-weight: 600; line-height: 1; cursor: help; outline: none; }
 .tc-name:focus-visible { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
@@ -611,9 +604,18 @@ textarea.source.error-state { border-color: var(--err); }
   display: block; image-rendering: auto;
   outline: none;
 }
-/* The selection outline competes with the cones drawn inside it, so it stays a
-   hairline-plus: the ring is reserved for keyboard focus. */
+/* The grid's outline is the card's one border, and follows the operation
+   node's colours: accent while a tile on it is inspected, grey while the card is
+   being moved or pointed at to move, warning when a neighbour refuses the move.
+   It stays a hairline-plus because it competes with the cones drawn inside it.
+   The rules run in that order at one specificity, so a later state recolours it. */
 .tensor-card.selected .tc-canvas-wrap canvas { outline: calc(2px / var(--view-scale, 1)) solid var(--accent); }
+:where(.graph-canvas.move-tool) .card-slot:hover .tc-canvas-wrap canvas,
+.card-slot.moving .tc-canvas-wrap canvas,
+.card-slot:focus-visible .tc-canvas-wrap canvas {
+  outline: calc(2px / var(--view-scale, 1)) solid var(--muted);
+}
+.card-slot.blocked .tc-canvas-wrap canvas { outline: calc(2px / var(--view-scale, 1)) solid var(--warn-ink); }
 .tc-tooltip {
   position: absolute; right: 0; top: calc(100% + 4px); font-size: var(--t-micro); color: var(--muted);
   transform: scale(calc(1 / var(--view-scale, 1))); transform-origin: top right;

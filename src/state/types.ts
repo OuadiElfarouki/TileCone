@@ -12,6 +12,7 @@ import { AxisMode } from "../view/tensor/shape-label";
 import { ViewCfg } from "../view/tensor/tensor-view";
 import {
   BoxProp,
+  CanvasTool,
   ConeDirection,
   Direction,
   ExecutionPlayback,
@@ -211,12 +212,13 @@ export type State = {
    * scene node key so operation nodes move on the same terms as cards. */
   nodeOffsets: NodeOffsets;
   /**
-   * Whether operation nodes answer a drag. Off, only cards move and an
-   * operation keeps the rank dagre gave it, which is the reading most graphs
-   * want: the generated row order is what makes a chain legible. On, the whole
-   * scene is furniture, for laying a graph out to be looked at or shown.
+   * What a press on a card or an operation does. `select` keeps the graph's
+   * placement fixed while tiles are drawn and operations picked; `move` makes
+   * every node furniture, dragged from anywhere on it, for laying a graph out
+   * to be looked at or shown. Holding Ctrl/Cmd borrows `move` for one gesture
+   * without changing this.
    */
-  moveOps: boolean;
+  canvasTool: CanvasTool;
 
   /**
    * Tile extents per planned tensor (see `core/plan`). Independent of the
@@ -276,7 +278,7 @@ export type State = {
   setDirection: (d: Direction) => void;
   toggleDirection: (d: ConeDirection) => void;
   setTheme: (theme: Theme) => void;
-  setMoveOps: (v: boolean) => void;
+  setCanvasTool: (tool: CanvasTool) => void;
   setViewCfg: (tensorId: string, cfg: Partial<ViewCfg>) => void;
   /**
    * Give a tensor a tile of its own, one extent per axis, or return it to the

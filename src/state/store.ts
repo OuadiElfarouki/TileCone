@@ -3,7 +3,7 @@ import { EXAMPLES } from "../examples/index";
 import { NodeOffset } from "../view/graph/node-layout";
 import { ViewCfg } from "../view/tensor/tensor-view";
 import { MAX_ELEM_PX } from "../view/tensor/tiling";
-import { idRecord, MAX_PER_BOX_PROPS, Theme } from "../view/workspace";
+import { CanvasTool, idRecord, MAX_PER_BOX_PROPS, Theme } from "../view/workspace";
 import { layoutActions } from "./actions/layout";
 import { planActions } from "./actions/plan";
 import { selectionActions } from "./actions/selection";
@@ -27,14 +27,14 @@ function initialTheme(): Theme {
 
 /** A workspace preference, like the theme: remembered, never shared in a link.
  *  The generated layout is what a link should reproduce, plus whatever the
- *  author moved, and not whether their own canvas was unlocked. */
-function initialMoveOps(): boolean {
-  if (typeof window === "undefined") return false;
+ *  author moved, and not which tool their own canvas was in. */
+function initialCanvasTool(): CanvasTool {
+  if (typeof window === "undefined") return "select";
   try {
-    return window.localStorage.getItem("tilecone.moveOps") === "on";
+    return window.localStorage.getItem("tilecone.canvasTool") === "move" ? "move" : "select";
   } catch {
-    // Storage is optional; the locked default is the complete fallback.
-    return false;
+    // Storage is optional; the select default is the complete fallback.
+    return "select";
   }
 }
 
@@ -118,7 +118,7 @@ export const useStore = create<State>((commit, get) => {
   panelW: { left: 330, right: 300 },
   panelCollapsed: { left: false, right: false },
   nodeOffsets: idRecord<NodeOffset>(),
-  moveOps: initialMoveOps(),
+  canvasTool: initialCanvasTool(),
   ...workspaceActions(set, get),
   ...selectionActions(set, get),
   ...viewActions(set, get),

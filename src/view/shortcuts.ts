@@ -41,6 +41,11 @@ export const SHORTCUTS = {
     action: "show or hide the focused tile's needs and feeds",
     keys: ["h"],
   },
+  borrowMove: {
+    id: "borrow-move",
+    label: "Ctrl/Cmd + drag",
+    action: "move a card or operation from anywhere on it",
+  },
   moveNode: {
     id: "move-node",
     label: "Arrow keys",
@@ -63,7 +68,7 @@ export const SHORTCUTS = {
   escape: {
     id: "escape",
     label: "Esc",
-    action: "cancel a gesture, unpin a tile, or leave a field",
+    action: "cancel a gesture, leave the move tool, unpin a tile, or leave a field",
     keys: ["Escape"],
   },
   undo: {
@@ -151,8 +156,8 @@ export const SHORTCUT_GROUPS = [
      tile in one place and the card in another without either claiming them. */
   {
     title: "Layout",
-    items: [SHORTCUTS.moveNode, SHORTCUTS.moveNodeFast],
-    note: "Tab to a card's move handle, or to an operation while Move ops is on.",
+    items: [SHORTCUTS.borrowMove, SHORTCUTS.moveNode, SHORTCUTS.moveNodeFast],
+    note: "The arrows apply while the Move tool is on: Tab to a card or an operation.",
   },
   { title: "Panels", items: [SHORTCUTS.leftPanel, SHORTCUTS.rightPanel] },
   { title: "Source", items: [SHORTCUTS.run] },

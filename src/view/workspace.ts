@@ -15,6 +15,9 @@ export type Direction = "none" | "backward" | "forward" | "both";
 export type ConeDirection = "backward" | "forward";
 export type PanelSide = "left" | "right";
 export type Theme = "light" | "dark";
+/** What a press on a graph node does: `select` draws tiles on a card and picks
+ *  an operation, `move` drags either from anywhere on it. */
+export type CanvasTool = "select" | "move";
 /** The two classes of question the inspector answers; see `inspectorTab`. */
 export type InspectorTab = "dependencies" | "execution" | "plan";
 export type ExecutionScope = {

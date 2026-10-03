@@ -31,34 +31,6 @@ const formatRatio = (ratio: number): string =>
   Number.isInteger(Math.round(ratio * 10) / 10) ? String(Math.round(ratio)) : ratio.toFixed(1);
 
 /**
- * The card-moving gestures, as callbacks that do not change between renders.
- *
- * The tensor is an argument rather than a closure, so one object serves every
- * card. Binding it per card produced a fresh handler object on each of the
- * graph's renders, which is every pointer event of a pan, and a changing prop
-  onPointerMove: (e: React.PointerEvent<HTMLElement>) => void;
-  onPointerUp: () => void;
-  onPointerCancel: () => void;
-  onLostPointerCapture: () => void;
-};
-
-/**
- * The card-moving gestures, as callbacks that do not change between renders.
- *
- * The tensor is an argument rather than a closure, so one object serves every
- * card. Binding it per card produced a fresh handler object on each of the
- * graph's renders, which is every pointer event of a pan, and a changing prop
- * is what stops a card from being skipped by `React.memo`.
- */
-export type CardGestures = {
-  onPointerDown: (e: React.PointerEvent<HTMLElement>, tensorId: string) => void;
-  onPointerMove: (e: React.PointerEvent<HTMLElement>) => void;
-  onPointerUp: () => void;
-  onPointerCancel: () => void;
-  onLostPointerCapture: () => void;
-};
-
-/**
  * How long the view must hold still before a card re-rasterises, in ms.
  *
  * Long enough that a continuous wheel gesture rasterises once at its end
@@ -75,14 +47,12 @@ function TensorCardView({
   viewScale = 1,
   overviewWidth,
   uniformTile = null,
-  gestures,
 }: {
   tensor: Tensor;
   renderScale?: number;
   viewScale?: number;
   overviewWidth?: number;
   uniformTile?: number | null;
-  gestures?: CardGestures;
 }): React.ReactElement {
   const shape = tensor.resolved!;
   const rank = shape.length;
@@ -451,21 +421,6 @@ function TensorCardView({
    */
   const showTileSpan = !!ownTile || tileSpanRows !== tileSpanCols || uniformTile !== tileSpanRows;
   const roleTag = tensor.producer ? null : tensor.role === "weight" ? "weight" : "input";
-  /** This card's own header handlers, bound once to its tensor. */
-  const moveHandlers = useMemo(
-    () =>
-      gestures
-        ? {
-            onPointerDown: (e: React.PointerEvent<HTMLElement>) =>
-              gestures.onPointerDown(e, tensor.id),
-            onPointerMove: gestures.onPointerMove,
-            onPointerUp: gestures.onPointerUp,
-            onPointerCancel: gestures.onPointerCancel,
-            onLostPointerCapture: gestures.onLostPointerCapture,
-          }
-        : undefined,
-    [gestures, tensor.id]
-  );
   // Exactness is carried by hatching on the canvas; this repeats it in the
   // header because an over-approximation must never be mistakable for ground
   // truth, and hatching is easy to miss on a small or sparsely covered card.
@@ -497,7 +452,7 @@ function TensorCardView({
           name, the resolved numeric shape, and the two facts that change how the
           grid below should be read: where the tensor comes from, and whether its
           highlight is exact. */}
-      <div className={`tc-header${moveHandlers ? " movable" : ""}`} {...moveHandlers}>
+      <div className="tc-header">
         <span className={`tc-name-wrap${overviewWidth ? " overview-name" : ""}`} style={overviewWidth ? { width: overviewWidth } : undefined}>
           <span className="tc-name" tabIndex={0} title={tensor.name}>{tensor.name}</span>
           <span className="tc-info" role="tooltip">

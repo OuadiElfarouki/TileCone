@@ -17,7 +17,7 @@ export default function App(): React.ReactElement {
   const restoreWorkspaceAsync = useStore((s) => s.restoreWorkspaceAsync);
   const resolved = useStore((s) => s.resolved);
   const theme = useStore((s) => s.theme);
-  const moveOps = useStore((s) => s.moveOps);
+  const canvasTool = useStore((s) => s.canvasTool);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const showShortcuts = useCallback(() => setShortcutsOpen(true), []);
   const closeShortcuts = useCallback(() => setShortcutsOpen(false), []);
@@ -38,12 +38,12 @@ export default function App(): React.ReactElement {
 
   useEffect(() => {
     try {
-      localStorage.setItem("tilecone.moveOps", moveOps ? "on" : "off");
+      localStorage.setItem("tilecone.canvasTool", canvasTool);
     } catch {
       // As with the theme, persistence is optional: the setting still applies
       // to this session.
     }
-  }, [moveOps]);
+  }, [canvasTool]);
 
   useEffect(() => {
     let live = true;

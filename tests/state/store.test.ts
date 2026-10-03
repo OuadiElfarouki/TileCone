@@ -449,29 +449,29 @@ describe("node layout transactions", () => {
 });
 
 /** Drives the store exactly as the UI does, to cover the selection-editing actions. */
-describe("unlocking operation nodes", () => {
+describe("the canvas tool", () => {
   beforeEach(() => S().loadExample(0));
 
-  it("starts locked and toggles without touching the layout or an undo step", () => {
-    expect(S().moveOps).toBe(false);
+  it("starts on select and switches without touching the layout or an undo step", () => {
+    expect(S().canvasTool).toBe("select");
     const depth = S().workspaceHistory.length;
 
-    S().setMoveOps(true);
-    expect(S().moveOps).toBe(true);
+    S().setCanvasTool("move");
+    expect(S().canvasTool).toBe("move");
     expect(S().nodeOffsets).toEqual({});
     expect(S().workspaceHistory).toHaveLength(depth);
 
-    S().setMoveOps(false);
-    expect(S().moveOps).toBe(false);
+    S().setCanvasTool("select");
+    expect(S().canvasTool).toBe("select");
   });
 
-  /* Locking again is about the gesture, not the graph: positions already moved
+  /* Switching back is about the gesture, not the graph: positions already moved
      stay where the author put them, and `reset` remains the way back. */
-  it("keeps positions already moved when it is switched back off", () => {
-    S().setMoveOps(true);
+  it("keeps positions already moved when it is switched back to select", () => {
+    S().setCanvasTool("move");
     S().setNodeOffset("n:matmul_C", { dx: 25, dy: 10 });
     S().commitNodeMove("n:matmul_C", { dx: 0, dy: 0 });
-    S().setMoveOps(false);
+    S().setCanvasTool("select");
     expect(S().nodeOffsets["n:matmul_C"]).toEqual({ dx: 25, dy: 10 });
   });
 });

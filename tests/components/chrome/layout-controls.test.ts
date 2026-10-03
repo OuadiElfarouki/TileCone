@@ -20,19 +20,19 @@ const render = () => renderToStaticMarkup(createElement(LayoutControls, { onRese
 
 beforeEach(() => {
   S().applyDSL("X = Tensor(8)\nY = relu(X)\n");
-  S().setMoveOps(false);
+  S().setCanvasTool("select");
 });
 
 describe("the layout group", () => {
-  it("reads as an unpressed toggle while operations are pinned", () => {
+  it("reads as an unpressed toggle under the select tool", () => {
     const html = render();
     expect(html).toContain('aria-pressed="false"');
     expect(html).not.toContain("mini toggle on");
-    expect(html).toContain(">move ops<");
+    expect(html).toContain(">move<");
   });
 
-  it("reads as pressed once it is on", () => {
-    S().setMoveOps(true);
+  it("reads as pressed under the move tool", () => {
+    S().setCanvasTool("move");
     const html = render();
     expect(html).toContain('aria-pressed="true"');
     expect(html).toContain("mini toggle on");

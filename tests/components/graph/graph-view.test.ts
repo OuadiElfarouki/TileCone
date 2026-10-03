@@ -1,7 +1,7 @@
 import { isPrimaryPress } from "../../../src/components/pointer";
 import { describe, expect, it } from "vitest";
 import {
-  canStartCardDrag,
+  canSelectOperation,
   canStartGraphPan,
   edgePresentation,
   fittedTransform,
@@ -31,25 +31,23 @@ describe("graph viewport pan hit-testing", () => {
   });
 });
 
-describe("node drag hit-testing", () => {
-  const dragTarget = (onOwnClick: boolean) => ({
+describe("operation select hit-testing", () => {
+  const pressTarget = (onOwnClick: boolean) => ({
     closest: (selector: string) => {
-      expect(selector).toContain(".tc-name-wrap");
       expect(selector).toContain(".expand-btn");
       return onOwnClick ? {} : null;
     },
   });
 
-  it("drags from anywhere on the header chrome or an operation's box", () => {
-    expect(canStartCardDrag(null)).toBe(true);
-    expect(canStartCardDrag(dragTarget(false))).toBe(true);
+  it("selects from anywhere on an operation's box", () => {
+    expect(canSelectOperation(null)).toBe(true);
+    expect(canSelectOperation(pressTarget(false))).toBe(true);
   });
 
-  /* Two exceptions, one rule: an element inside the drag surface that owns a
-     click of its own keeps it. The tensor name opens the shape popover, and the
-     operation's chevron substitutes the primitive subgraph. */
-  it("leaves the tensor name and the substitute button their clicks", () => {
-    expect(canStartCardDrag(dragTarget(true))).toBe(false);
+  /* The operation's chevron substitutes the primitive subgraph, a click of its
+     own that a select on the same press would swallow. */
+  it("leaves the substitute button its click", () => {
+    expect(canSelectOperation(pressTarget(true))).toBe(false);
   });
 });
 

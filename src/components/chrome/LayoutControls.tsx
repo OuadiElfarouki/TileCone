@@ -2,13 +2,14 @@ import React from "react";
 import { useStore } from "../../state/store";
 
 /**
- * The layout group: what a drag is allowed to move, and the way back.
+ * The layout group: the tool that moves nodes, and the way back.
  *
- * Cards move by default: they are the subject, and reading a cone means putting
- * two of them where they can be compared. Operation nodes are the scaffolding
- * dagre put between them, and their generated rank is what makes a chain
- * legible, so they stay pinned until someone asks otherwise - and then the whole
- * scene is furniture, for arranging a graph to be looked at or shown.
+ * The select tool is the default because reading is: a press on a card draws a
+ * tile and a press on an operation picks it, and the generated rank is what
+ * makes a chain legible. The move tool turns every node, card or operation, into
+ * furniture dragged from anywhere on it, for arranging a graph to be looked at
+ * or shown. Holding Ctrl/Cmd borrows it for one drag without switching, so a
+ * single card can be moved aside in the middle of reading.
  *
  * `reset` belongs here rather than beside the zoom buttons: it restores
  * generated placement, which is this group's subject, while zoom and fit change
@@ -25,20 +26,20 @@ export function LayoutControls({
 }: {
   onResetLayout: () => void;
 }): React.ReactElement {
-  const moveOps = useStore((s) => s.moveOps);
-  const setMoveOps = useStore((s) => s.setMoveOps);
+  const moveTool = useStore((s) => s.canvasTool === "move");
+  const setCanvasTool = useStore((s) => s.setCanvasTool);
   const moved = useStore((s) => Object.keys(s.nodeOffsets).length > 0);
 
   return (
     <div className="layout-controls">
       <span className="setup-kicker">layout</span>
       <button
-        className={`mini toggle${moveOps ? " on" : ""}`}
-        aria-pressed={moveOps}
-        onClick={() => setMoveOps(!moveOps)}
-        title="drag operation nodes as well as tensor cards; off locks operations in place"
+        className={`mini toggle${moveTool ? " on" : ""}`}
+        aria-pressed={moveTool}
+        onClick={() => setCanvasTool(moveTool ? "select" : "move")}
+        title="drag cards and operations from anywhere on them; Esc or off returns to drawing tiles and selecting operations. Hold Ctrl/Cmd to move one without switching"
       >
-        move ops
+        move
       </button>
       <button
         className="mini"

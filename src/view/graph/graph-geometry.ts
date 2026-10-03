@@ -1,8 +1,7 @@
 export type Point = { x: number; y: number };
 export type Rect = Point & { w: number; h: number };
 
-/** Air between every solid graph node. Wide enough for the 15px grab handle to
- * remain usable without sitting over a neighbouring node. */
+/** Air between every solid graph node. */
 export const NODE_GAP = 18;
 export const WORLD_MARGIN = 20;
 

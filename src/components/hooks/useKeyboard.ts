@@ -18,14 +18,11 @@ const isTyping = (el: EventTarget | null) => {
  * arrowing through the example menu also walked the selected tile across its
  * tensor, which reads as the two being connected when they are not.
  */
-const ownsArrowKeys = (el: EventTarget | null) => {
+const ownsWorkspaceKeys = (el: EventTarget | null) => {
   const t = el as HTMLElement | null;
-  // `data-node-move` is the third case: a focused card handle or operation node
-  // moves itself with the arrows, and the selection must not walk at the same
-  // time - the same failure the menu guard exists for.
   return (
     isTyping(t) ||
-    !!t?.closest?.('[role="listbox"], [role="menu"], [data-node-move]')
+    !!t?.closest?.('[role="listbox"], [role="menu"]')
   );
 };
 
@@ -81,8 +78,19 @@ export function useKeyboard({
           el?.blur(); // leave text editing, keeping what was typed
           return;
         }
-        if (ownsArrowKeys(el)) return; // an open menu cancels itself
-        if (s.dragging) return; // the card cancels its own rubber-band
+        // An open menu cancels itself. A focused node does not: it takes the
+        // arrows, not Escape, so the press still reaches the move tool below.
+        if (el?.closest?.('[role="listbox"], [role="menu"]')) return;
+        // A rubber-band or a node drag cancels itself, and that is the whole of
+        // the press - it must not also leave the move tool the drag was made in.
+        if (s.dragging || e.defaultPrevented) return;
+        if (s.canvasTool === "move") {
+          // The tool is the mode the canvas is in, so it goes before anything
+          // the canvas is pointing at: one press puts it back to drawing.
+          e.preventDefault();
+          s.setCanvasTool("select");
+          return;
+        }
         if (s.inspectorTab === "plan" && s.planTask) {
           // The innermost thing the Plan view is pointing at. The tilings stay:
           // clearing those is the panel's explicit act, as clearing tiles is.
@@ -114,7 +122,10 @@ export function useKeyboard({
         return s.togglePanel(panel);
       }
 
-      if (ownsArrowKeys(e.target)) return;
+      if (ownsWorkspaceKeys(e.target)) return;
+      // Movable nodes own arrows, while Undo, Fit and Help remain global.
+      const el = e.target as HTMLElement | null;
+      if (e.key.startsWith("Arrow") && el?.closest?.("[data-node-move]")) return;
       if (matchesShortcut(e, SHORTCUTS.help)) {
         e.preventDefault();
         showShortcuts();

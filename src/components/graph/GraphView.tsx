@@ -9,7 +9,7 @@ import {
   nodeKey,
   PlacedGraphNode,
 } from "../../view/graph/graph-scene";
-import { TensorCard, CardGestures } from "../card/TensorCard";
+import { TensorCard } from "../card/TensorCard";
 import { cardSize } from "../../view/tensor/card-size";
 import { remapped } from "../../view/tensor/tensor-view";
 import { shapeLabel, symbolicExtentLabel } from "../../view/tensor/shape-label";
@@ -27,6 +27,7 @@ import { involvedTensorIds, PANEL_RAIL } from "../../view/workspace";
 import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
 import { planesOf } from "../../view/tensor/seeds";
 import { isPrimaryPress } from "../pointer";
+import { borrowsMoveTool, useMoveModifier } from "../hooks/useMoveModifier";
 
 type NodeDrag = {
   /** Scene key, so one gesture serves cards and operation nodes alike. */
@@ -154,17 +155,15 @@ export function canStartGraphPan(target: unknown): boolean {
   return !(target as { closest: (selector: string) => unknown }).closest(GRAPH_PAN_BLOCKERS);
 }
 
-/** The header is the card's drag surface, so the one thing in it that owns a
- * click has to be carved back out: the name is the focus target for the shape
- * popover, and starting a drag there would swallow the gesture that opens it.
- * An operation node's whole box is its drag surface, and the substitute button
- * is the same kind of exception - a click it would otherwise swallow. */
-const NODE_DRAG_BLOCKERS = ".tc-name-wrap, .expand-btn";
+/** Under the select tool a press anywhere on an operation selects it, except on
+ * the substitute button, which owns its click. Under the move tool the node's
+ * contents stop taking the pointer, so the whole box moves it. */
+const OPERATION_SELECT_BLOCKERS = ".expand-btn";
 
 /** @internal DOM-light hit-test seam for the node gesture tests. */
-export function canStartCardDrag(target: unknown): boolean {
+export function canSelectOperation(target: unknown): boolean {
   if (!target || typeof (target as { closest?: unknown }).closest !== "function") return true;
-  return !(target as { closest: (selector: string) => unknown }).closest(NODE_DRAG_BLOCKERS);
+  return !(target as { closest: (selector: string) => unknown }).closest(OPERATION_SELECT_BLOCKERS);
 }
 
 /** Tensors carrying visible combined-with regions. Kept separate from the
@@ -205,7 +204,8 @@ export function GraphView(): React.ReactElement {
   const setFocusNode = useStore((s) => s.setFocusNode);
   const setDragging = useStore((s) => s.setDragging);
   const nodeOffsets = useStore((s) => s.nodeOffsets);
-  const moveOps = useStore((s) => s.moveOps);
+  const moveTool = useStore((s) => s.canvasTool === "move");
+  const moveHeld = useMoveModifier();
   const setNodeOffset = useStore((s) => s.setNodeOffset);
   const commitNodeMove = useStore((s) => s.commitNodeMove);
   const resetNodeLayout = useStore((s) => s.resetNodeLayout);
@@ -596,25 +596,36 @@ export function GraphView(): React.ReactElement {
     setDragging(false);
   };
 
-  /* Stable across renders, so one handler object serves every card and a card
-     is not reconciled because the graph re-rendered. Everything they read that
-     changes - the scene, the viewport scale, the stored offsets - is reached
-     through a ref or the store rather than captured. */
+  /* Stable across renders. Everything the drag handlers read that changes - the
+     scene, the viewport scale, the stored offsets - is reached through a ref or
+     the store rather than captured.
+
+     Each node calls this from its capture phase, so a press that moves the node
+     stops before anything inside it - a card's canvas, a slider, the substitute
+     button - sees it. The return value says whether it did. */
   const startNodeDrag = useCallback((
     e: React.PointerEvent<HTMLElement>,
     kind: GraphNodeKind,
     id: string
-  ) => {
-    if (!isPrimaryPress(e) || !canStartCardDrag(e.target)) return;
-    // The unlock is read here rather than captured, so the handler stays stable
-    // across renders and toggling it mid-session takes effect on the next press.
-    if (kind === "op" && !useStore.getState().moveOps) return;
+  ): boolean => {
+    if (!isPrimaryPress(e)) return false;
+    // Portal events follow the React tree, but the card's menu lives outside
+    // this DOM node and must keep its own pointer gestures.
+    if (!e.currentTarget.contains(e.target as Node)) return false;
+    // The tool is read here rather than captured, so switching it mid-session
+    // takes effect on the next press. The modifier comes off the press itself.
+    if (useStore.getState().canvasTool !== "move" && !borrowsMoveTool(e)) return false;
     const placed = sceneRef.current?.nodes.find(
       (node) => node.kind === kind && node.id === id
     );
-    if (!placed) return;
+    if (!placed) return false;
     e.preventDefault();
     e.stopPropagation();
+    // Cancelling the press also cancels native focus. Under Move, subsequent
+    // arrow presses should fine-tune the node that was just dragged.
+    if (useStore.getState().canvasTool === "move") {
+      e.currentTarget.focus({ preventScroll: true });
+    }
     e.currentTarget.setPointerCapture(e.pointerId);
     const key = nodeKey(kind, id);
     const before = useStore.getState().nodeOffsets[key] ?? { dx: 0, dy: 0 };
@@ -634,6 +645,7 @@ export function GraphView(): React.ReactElement {
     setMovingNode(key);
     setBlockedNode(null);
     setDragging(true);
+    return true;
   }, [setDragging]);
 
   const cardPointRef = useRef<{ x: number; y: number } | null>(null);
@@ -708,7 +720,7 @@ export function GraphView(): React.ReactElement {
   ) => {
     const step = ARROW_DELTAS[e.key];
     if (!step || e.ctrlKey || e.metaKey || e.altKey) return;
-    if (kind === "op" && !useStore.getState().moveOps) return;
+    if (useStore.getState().canvasTool !== "move") return;
     const placed = sceneRef.current?.nodes.find(
       (node) => node.kind === kind && node.id === id
     );
@@ -743,17 +755,16 @@ export function GraphView(): React.ReactElement {
     setBlockedNode((current) => (current === key ? null : current));
   }, []);
 
-  /** One gesture object for every card, so a card's props do not change when
-   * the graph re-renders. Each handler takes the tensor it acts on. */
-  const cardGestures = useMemo<CardGestures>(
+  /** What follows a press that started a drag, the same for every node. The
+   * node holds pointer capture, so these arrive on it wherever the pointer goes. */
+  const dragFollow = useMemo(
     () => ({
-      onPointerDown: (e, tensorId) => startNodeDrag(e, "tensor", tensorId),
       onPointerMove: moveCard,
       onPointerUp: () => finishCardDrag(true),
       onPointerCancel: () => finishCardDrag(false),
       onLostPointerCapture: () => finishCardDrag(false),
     }),
-    [startNodeDrag, moveCard, finishCardDrag]
+    [moveCard, finishCardDrag]
   );
 
   useEffect(() => {
@@ -809,8 +820,15 @@ export function GraphView(): React.ReactElement {
   return (
     <div
       ref={containerRef}
-      className={`graph-canvas${panning ? " panning" : ""}`}
+      className={`graph-canvas${panning ? " panning" : ""}${moveTool || moveHeld ? " move-tool" : ""}`}
       onWheel={onWheel}
+      /* On macOS a Ctrl press is also a right-click, so a borrowed move would
+         open the card's menu over the node being dragged. */
+      onContextMenuCapture={(e) => {
+        if (!nodeDragRef.current) return;
+        e.preventDefault();
+        e.stopPropagation();
+      }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={endPan}
@@ -832,56 +850,56 @@ export function GraphView(): React.ReactElement {
               <div
                 key={`n:${p.id}`}
                 className={`op-node${hot ? "" : " dim"}${label ? " overview" : ""}${
-                  moveOps ? " movable" : ""
-                }${selectedOp === p.id ? " selected" : ""}${movingNode === key ? " moving" : ""}${blockedNode === key ? " blocked" : ""}`}
+                  selectedOp === p.id ? " selected" : ""
+                }${movingNode === key ? " moving" : ""}${blockedNode === key ? " blocked" : ""}`}
                 style={{
                   left: p.x, top: p.y, width: p.w, height: p.h,
                   "--view-scale": tf.k,
                 } as React.CSSProperties}
                 /* The registry name stays in the tooltip beside the attributes:
                    the card says what was written, the title says what runs. The
-                   unlock adds a line rather than replacing them: the operation
-                   is still the subject, dragging is just now available. */
+                   move tool adds a line rather than replacing them: the
+                   operation is still the subject, dragging is just now available. */
                 title={`${node.op}\n${JSON.stringify(node.attrs)}${
-                  moveOps
+                  moveTool
                     ? blockedNode === key
                       ? "\ndrag: blocked by a neighbouring node"
                       : "\ndrag to reposition"
                     : ""
                 }`}
-                /* Selection is always available; unlocking adds movement. */
+                /* Selection is always available; the move tool adds movement. */
                 tabIndex={0}
                 role="group"
-                data-node-move={moveOps ? "" : undefined}
+                data-node-move={moveTool ? "" : undefined}
                 aria-label={`${opLabel(node)} operation${selectedOp === p.id ? ", selected" : ""}`}
-                aria-keyshortcuts={moveOps ? "Enter Space ArrowUp ArrowDown ArrowLeft ArrowRight" : "Enter Space"}
+                aria-keyshortcuts={moveTool ? "Enter Space ArrowUp ArrowDown ArrowLeft ArrowRight" : "Enter Space"}
                 onKeyDown={(e) => {
                   if (e.target !== e.currentTarget) return;
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
                     e.stopPropagation();
                     setSelectedOp(p.id);
-                  } else if (moveOps) nudgeNode(e, "op", p.id);
+                  } else nudgeNode(e, "op", p.id);
                 }}
                 onBlur={() => clearBlocked(key)}
                 onClick={(e) => {
-                  if (!canStartCardDrag(e.target)) return;
+                  if (!canSelectOperation(e.target)) return;
                   e.stopPropagation();
                   setSelectedOp(p.id);
                 }}
+                /* Moving an operation selects it, so the list shows which one
+                   is being placed. */
+                onPointerDownCapture={(e) => {
+                  if (startNodeDrag(e, "op", p.id)) setSelectedOp(p.id);
+                }}
                 onPointerDown={(e) => {
-                  if (!isPrimaryPress(e) || !canStartCardDrag(e.target)) return;
+                  if (!isPrimaryPress(e) || !canSelectOperation(e.target)) return;
                   e.preventDefault();
                   e.stopPropagation();
                   setSelectedOp(p.id);
-                  startNodeDrag(e, "op", p.id);
                 }}
-                onPointerMove={cardGestures.onPointerMove}
-                onPointerUp={cardGestures.onPointerUp}
-                onPointerCancel={cardGestures.onPointerCancel}
-                onLostPointerCapture={cardGestures.onLostPointerCapture}
+                {...dragFollow}
               >
-                {moveOps && <i className="op-grab" aria-hidden="true" />}
                 <span style={label ? { width: label.w, top: label.dy } : undefined}>
                   {opLabel(node)}
                 </span>
@@ -919,28 +937,32 @@ export function GraphView(): React.ReactElement {
               key={`t:${p.id}`}
               className={`${hot ? "card-slot" : "card-slot dim"}${movingNode === key ? " moving" : ""}${blockedNode === key ? " blocked" : ""}`}
               style={{ left: p.x, top: p.y, width: p.w, height: p.h }}
+              /* Under the move tool the card itself is the keyboard target, as
+                 an operation is: Tab reaches it and the arrows move it. Under
+                 the select tool it takes no focus, so Tab goes to its name. */
+              {...(moveTool
+                ? {
+                    tabIndex: 0,
+                    role: "group",
+                    "data-node-move": "",
+                    "aria-label": `${t.name} tensor`,
+                    "aria-keyshortcuts": "ArrowUp ArrowDown ArrowLeft ArrowRight",
+                  }
+                : {})}
+              title={blockedNode === key ? `${t.name} is blocked by a neighbouring node` : undefined}
+              onKeyDown={(e) => {
+                if (e.target === e.currentTarget) nudgeNode(e, "tensor", p.id);
+              }}
+              onBlur={() => clearBlocked(key)}
+              onPointerDownCapture={(e) => startNodeDrag(e, "tensor", p.id)}
+              {...dragFollow}
             >
-              <button
-                className="tensor-grab"
-                data-node-move=""
-                aria-label={`move tensor ${t.name}`}
-                aria-keyshortcuts="ArrowUp ArrowDown ArrowLeft ArrowRight"
-                onKeyDown={(e) => nudgeNode(e, "tensor", p.id)}
-                onBlur={() => clearBlocked(key)}
-                title={blockedNode === key ? `${t.name} is blocked by a neighbouring node` : `drag to reposition ${t.name}`}
-                onPointerDown={(e) => cardGestures.onPointerDown(e, p.id)}
-                onPointerMove={cardGestures.onPointerMove}
-                onPointerUp={cardGestures.onPointerUp}
-                onPointerCancel={cardGestures.onPointerCancel}
-                onLostPointerCapture={cardGestures.onLostPointerCapture}
-              />
               <TensorCard
                 uniformTile={uniformTile}
                 tensor={t}
                 renderScale={renderScale}
                 viewScale={tf.k}
                 overviewWidth={overview.tensors.get(t.id)}
-                gestures={cardGestures}
               />
             </div>
           );
