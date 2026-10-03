@@ -69,6 +69,7 @@ const pointer = (x: number) => ({
 beforeEach(() => {
   useStore.getState().applyDSL("X = Tensor(8)\nY = relu(X)\n");
   useStore.getState().setMoveOps(false);
+  useStore.getState().setSelectedOp(null);
   // Layout effects do not run in this handler-only server-render harness.
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
@@ -78,7 +79,10 @@ afterEach(() => { vi.restoreAllMocks(); });
 describe("locking operations during a drag", () => {
   it("blocks initiation but retains movement and cleanup handlers while locked", () => {
     const props = operationProps();
-    expect(props.onPointerDown).toBeUndefined();
+    props.onPointerDown!(pointer(0));
+    expect(useStore.getState().selectedOp).toBe("elementwise_Y");
+    expect(useStore.getState().dragging).toBe(false);
+    expect(useStore.getState().nodeOffsets).toEqual({});
     for (const name of ["onPointerMove", "onPointerUp", "onPointerCancel", "onLostPointerCapture"] as const)
       expect(props[name]).toBeTypeOf("function");
   });
@@ -159,10 +163,12 @@ describe("moving a node by keyboard", () => {
     expect(event.preventDefault).not.toHaveBeenCalled();
   });
 
-  /* The same gate as the pointer: an operation is not focusable while locked,
-     so the handler is absent rather than present and silently refusing. */
+  /* Selection remains keyboard-accessible while movement is locked. */
   it("gives an operation the keys only while the unlock is on", () => {
-    expect(operationProps().onKeyDown).toBeUndefined();
+    const locked = operationProps();
+    expect(locked.tabIndex).toBe(0);
+    locked.onKeyDown!(arrow("ArrowUp"));
+    expect(useStore.getState().nodeOffsets).toEqual({});
 
     useStore.getState().setMoveOps(true);
     const unlocked = operationProps();
@@ -170,5 +176,33 @@ describe("moving a node by keyboard", () => {
     unlocked.onKeyDown!(arrow("ArrowUp"));
     expect(Object.keys(useStore.getState().nodeOffsets)).toEqual(["n:elementwise_Y"]);
     expect(useStore.getState().nodeOffsets["n:elementwise_Y"].dy).toBeLessThan(0);
+  });
+});
+
+
+describe("selecting operations on the canvas", () => {
+  it.each([false, true])("selects without recentering or drawing a tile (movable: %s)", (movable) => {
+    useStore.getState().setMoveOps(movable);
+    const before = useStore.getState().selection;
+    const props = operationProps();
+    props.onClick!({ target: null, stopPropagation: vi.fn() } as unknown as React.MouseEvent<HTMLDivElement>);
+    expect(useStore.getState().selectedOp).toBe("elementwise_Y");
+    expect(useStore.getState().focusNode).toBeNull();
+    expect(useStore.getState().selection).toBe(before);
+    expect(operationProps().className).toContain("selected");
+  });
+
+  it.each(["Enter", " "])("selects with %s while locked", (key) => {
+    operationProps().onKeyDown!(arrow(key));
+    expect(useStore.getState().selectedOp).toBe("elementwise_Y");
+    expect(useStore.getState().nodeOffsets).toEqual({});
+  });
+
+  it("leaves the substitute button's press to its own handler", () => {
+    const event = pointer(0);
+    Object.assign(event, { target: { closest: () => ({}) } });
+    operationProps().onPointerDown!(event);
+    expect(useStore.getState().selectedOp).toBeNull();
+    expect(event.preventDefault).not.toHaveBeenCalled();
   });
 });

@@ -482,12 +482,26 @@ textarea.source.error-state { border-color: var(--err); }
 .op-node {
   position: absolute; display: flex; align-items: center; justify-content: center; gap: 4px;
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
-  font-size: var(--t-body); font-weight: 500; color: var(--muted); cursor: default;
+  font-size: var(--t-body); font-weight: 500; color: var(--muted); cursor: pointer;
 }
 .op-node.dim { opacity: var(--dim); }
-/* Unlocked, an operation answers a drag, so it says so the way a card header
-   does - the cursor is the whole affordance, since a grab handle on a 64px box
-   would crowd the label it exists to keep readable. */
+/* Hover and selection work independently of the layout movement toggle. */
+.op-node:hover, .op-node.selected {
+  opacity: 1; color: var(--ink); border-color: var(--accent);
+}
+.op-node.selected { box-shadow: 0 0 0 1px var(--accent); }
+/* One dot diagonally outside the corner: equal offsets keep it at 45 degrees. */
+.op-grab {
+  position: absolute; left: -6px; top: -6px; width: 3px; height: 3px;
+  border-radius: 50%; background: currentColor;
+  color: var(--muted); opacity: 0.24;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+.op-node:hover .op-grab, .op-node:focus-visible .op-grab,
+.op-node.selected .op-grab, .op-node.moving .op-grab {
+  color: var(--accent); opacity: 1;
+}
+.op-node.blocked .op-grab { color: var(--warn-ink); opacity: 1; }
 .op-node.movable { cursor: grab; touch-action: none; }
 .op-node.moving { z-index: 5; opacity: 1; cursor: grabbing; }
 /* Blocked is not drag-only: an arrow press that a neighbour refuses has no

@@ -11,9 +11,10 @@
  * `A[0:4, 0:4]`, the downstream cone is `C[0:4, :]`, and what that cone reads
  * of `B` is all of `B` - correctly, since every `C[m,n]` in the band does read
  * every row of `B`. But the block of `A` is only ever *multiplied* against
- * `B[0:4, :]`, because `A[m,k]` meets `B[k,n]` and nothing else. That is what a
- * kernel author is asking when they ask what has to be resident alongside a
- * tile, and composing the existing relations cannot answer it: the correlation
+ * `B[0:4, :]`, because `A[m,k]` meets `B[k,n]` and nothing else. That is the
+ * set a kernel author starts from when asking what a tile is combined with -
+ * what must be held at once further depends on how the computation is staged -
+ * and composing the existing relations cannot answer it: the correlation
  * between which input element produced which output element is discarded at the
  * region boundary, where a set of elements becomes a shape.
  *

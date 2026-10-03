@@ -198,8 +198,10 @@ export interface OpSpec {
    *
    * Entanglement asks the narrower question: which elements meet in the *same
    * term* of the computation. For a contraction that is a join on the shared
-   * label, and the answer is `B[k0:k1, :]` - the rows a kernel must hold
-   * resident alongside that block of `A`, and no more.
+   * label, and the answer is `B[k0:k1, :]` - the rows that block of `A` is
+   * multiplied against, and no more. Whether they must be held at the same
+   * time depends on how an execution stages the computation, which this does
+   * not assume.
    *
    * Omitting the hook means the operation cannot answer, and callers fall back
    * to the composition, marked inexact. That is a real superset, never a subset,

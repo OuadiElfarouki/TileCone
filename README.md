@@ -13,8 +13,10 @@ a line-oriented DSL. Select a region of any tensor and it reports:
 Declare a tiling instead, and it reports what each tile's task reads and computes, which producer
 tasks supply it, and what the plan costs in tasks, FLOPs, recomputed work and bytes moved.
 
-No tensor values are computed. The engine works on shapes, dtypes and integer index regions, so
-every answer is either exact or a marked over-approximation with its reason.
+No tensor values are computed. The engine works on shapes, dtypes and integer index regions. A
+dependency region is either exact or a marked over-approximation with its reason, and every figure
+derived from regions carries its own status: exact, an upper bound, approximate, or unknown (see
+[Exact answers and bounds](#exact-answers-and-bounds)).
 
 For `C[M,N] = A[M,K] @ B[K,N]`, the tile `C[64:128, 0:64]` has a Backward Cone of `A[64:128, :]`
 and `B[:, 0:64]`: a row band and a column band, and nothing else.
@@ -57,8 +59,10 @@ tile **completes** a downstream region or only **partly** contributes to it: a t
 of a contracted axis reaches an output without determining any element of it.
 
 The Co-access Surface is not the Forward Cone read backwards. For `C = A @ B`, the Forward Cone of
-`A[0:4, 0:4]` is `C[0:4, :]`, and that band reads all of `B`. But the block is only ever multiplied
-against `B[0:4, :]`, the rows a kernel must hold resident alongside it. It is exact for `einsum`
+`A[0:4, 0:4]` is `C[0:4, :]`, and that band reads all of `B`. But the block only ever meets
+`B[0:4, :]` in a term of the product: those are the elements it is multiplied against. Whether they
+must be held at the same time depends on how an execution stages the computation, which co-access
+does not assume. It is exact for `einsum`
 (so `matmul`, `bmm`, `linear`), elementwise operations, `conv`, `concat` and `gather`; `normalize`
 falls back to a marked bound.
 

@@ -7,6 +7,7 @@ import { WorkspaceHeader } from "./components/chrome/WorkspaceHeader";
 import { useStore } from "./state/store";
 import { useDragGuard } from "./components/hooks/useDragGuard";
 import { useKeyboard } from "./components/hooks/useKeyboard";
+import { useOperationSelection } from "./components/hooks/useOperationSelection";
 import { useFocusPolicy } from "./components/hooks/useFocusPolicy";
 import { decodeWorkspace } from "./state/share";
 import { ShortcutsDialog } from "./components/chrome/ShortcutsDialog";
@@ -23,6 +24,7 @@ export default function App(): React.ReactElement {
 
   useKeyboard({ shortcutsOpen, showShortcuts, closeShortcuts });
   useFocusPolicy();
+  useOperationSelection();
   useDragGuard();
 
   useEffect(() => {

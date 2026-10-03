@@ -201,6 +201,7 @@ export function GraphView(): React.ReactElement {
   const entangled = useStore((s) => s.entangled);
   const focusNode = useStore((s) => s.focusNode);
   const setSelectedOp = useStore((s) => s.setSelectedOp);
+  const selectedOp = useStore((s) => s.selectedOp);
   const setFocusNode = useStore((s) => s.setFocusNode);
   const setDragging = useStore((s) => s.setDragging);
   const nodeOffsets = useStore((s) => s.nodeOffsets);
@@ -714,6 +715,7 @@ export function GraphView(): React.ReactElement {
     if (!placed) return;
     e.preventDefault();
     e.stopPropagation();
+    if (kind === "op") useStore.getState().setSelectedOp(id);
     const reach = NUDGE_PX * (matchesShortcut(e, SHORTCUTS.moveNodeFast) ? NUDGE_FAST : 1);
     const rect = constrainRectMotion(
       { x: placed.x, y: placed.y, w: placed.w, h: placed.h },
@@ -831,7 +833,7 @@ export function GraphView(): React.ReactElement {
                 key={`n:${p.id}`}
                 className={`op-node${hot ? "" : " dim"}${label ? " overview" : ""}${
                   moveOps ? " movable" : ""
-                }${movingNode === key ? " moving" : ""}${blockedNode === key ? " blocked" : ""}`}
+                }${selectedOp === p.id ? " selected" : ""}${movingNode === key ? " moving" : ""}${blockedNode === key ? " blocked" : ""}`}
                 style={{
                   left: p.x, top: p.y, width: p.w, height: p.h,
                   "--view-scale": tf.k,
@@ -847,22 +849,39 @@ export function GraphView(): React.ReactElement {
                       : "\ndrag to reposition"
                     : ""
                 }`}
-                /* Focusable only while unlocked: an operation that cannot move
-                   is not a stop on the way to anything, and putting every one
-                   of them in the tab order would bury the cards that are. */
-                tabIndex={moveOps ? 0 : undefined}
+                /* Selection is always available; unlocking adds movement. */
+                tabIndex={0}
+                role="group"
                 data-node-move={moveOps ? "" : undefined}
-                aria-label={moveOps ? `move ${opLabel(node)}` : undefined}
-                aria-keyshortcuts={moveOps ? "ArrowUp ArrowDown ArrowLeft ArrowRight" : undefined}
-                onKeyDown={moveOps ? (e) => nudgeNode(e, "op", p.id) : undefined}
-                onBlur={moveOps ? () => clearBlocked(key) : undefined}
-                /* Locking prevents new drags; an active drag must still finish. */
-                onPointerDown={moveOps ? (e) => startNodeDrag(e, "op", p.id) : undefined}
+                aria-label={`${opLabel(node)} operation${selectedOp === p.id ? ", selected" : ""}`}
+                aria-keyshortcuts={moveOps ? "Enter Space ArrowUp ArrowDown ArrowLeft ArrowRight" : "Enter Space"}
+                onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setSelectedOp(p.id);
+                  } else if (moveOps) nudgeNode(e, "op", p.id);
+                }}
+                onBlur={() => clearBlocked(key)}
+                onClick={(e) => {
+                  if (!canStartCardDrag(e.target)) return;
+                  e.stopPropagation();
+                  setSelectedOp(p.id);
+                }}
+                onPointerDown={(e) => {
+                  if (!isPrimaryPress(e) || !canStartCardDrag(e.target)) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setSelectedOp(p.id);
+                  startNodeDrag(e, "op", p.id);
+                }}
                 onPointerMove={cardGestures.onPointerMove}
                 onPointerUp={cardGestures.onPointerUp}
                 onPointerCancel={cardGestures.onPointerCancel}
                 onLostPointerCapture={cardGestures.onLostPointerCapture}
               >
+                {moveOps && <i className="op-grab" aria-hidden="true" />}
                 <span style={label ? { width: label.w, top: label.dy } : undefined}>
                   {opLabel(node)}
                 </span>
