@@ -218,18 +218,20 @@ describe("input sharing across the enabled tiles", () => {
 
     // Both cones demand the same 2 x 8 band of A, so half of their summed
     // element demand is duplicate. This does not assume a hardware reload.
+    const exact = (value: number) => ({ value, status: "exact", reasons: [] });
     expect(a).toEqual({
       tensorId: "A",
       selectedTiles: 2,
-      contributingTiles: 2,
-      summedDemandBytes: 2 * 2 * 8 * 2,
-      distinctDemandBytes: 2 * 8 * 2,
-      duplicateDemandBytes: 2 * 8 * 2,
-      geometryExact: true,
+      readers: 2,
+      summed: exact(2 * 2 * 8 * 2),
+      distinct: exact(2 * 8 * 2),
+      duplication: exact(2),
+      duplicate: exact(2 * 8 * 2),
+      exact: true,
       reasons: [],
     });
     // The two cones demand disjoint columns of B, so none of it is duplicate.
-    expect([b.tensorId, b.duplicateDemandBytes, b.summedDemandBytes]).toEqual([
+    expect([b.tensorId, b.duplicate.value, b.summed.value]).toEqual([
       "B",
       0,
       2 * 8 * 2 * 2,
@@ -246,7 +248,7 @@ C = concat(A, B, axis=0)
       coneOf(resolved, "C", fromBox(box([2, 4]))),
     ]);
 
-    expect(rows.map((row) => [row.tensorId, row.contributingTiles, row.selectedTiles]))
+    expect(rows.map((row) => [row.tensorId, row.readers, row.selectedTiles]))
       .toEqual([["A", 1, 2], ["B", 1, 2]]);
   });
 
@@ -264,10 +266,12 @@ C = concat(A, B, axis=0)
     });
 
     const [row] = inputSharing(resolved, [first, second]);
-    expect(row.geometryExact).toBe(false);
-    expect(row.summedDemandBytes).toBe(6 * 4);
-    expect(row.distinctDemandBytes).toBe(5 * 4);
-    expect(row.duplicateDemandBytes).toBe(1 * 4);
+    expect(row.exact).toBe(false);
+    expect(row.summed).toMatchObject({ value: 6 * 4, status: "upper" });
+    expect(row.distinct).toMatchObject({ value: 5 * 4, status: "upper" });
+    // A difference of bounds, still a bound: widening only raises membership.
+    expect(row.duplicate).toMatchObject({ value: 1 * 4, status: "upper" });
+    expect(row.duplication.status).toBe("approximate");
   });
 
   it("refuses to compare tiles that live on different tensors", () => {

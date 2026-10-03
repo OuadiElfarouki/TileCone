@@ -147,7 +147,24 @@ function cloneGraph(source: Graph): Graph {
   };
 }
 
-/** Validate structure, resolve shapes, infer intermediate/output shapes, topo sort. */
+const nodeIndex = new WeakMap<ResolvedGraph, Map<string, Node>>();
+
+/** A node by id, from an index built once per resolved graph. */
+export function nodeById(graph: ResolvedGraph, id: string): Node | undefined {
+  let index = nodeIndex.get(graph);
+  if (!index) {
+    index = new Map(graph.nodes.map((node) => [node.id, node]));
+    nodeIndex.set(graph, index);
+  }
+  return index.get(id);
+}
+
+/** The node that computes a tensor, or undefined for a graph input. */
+export function producerNode(graph: ResolvedGraph, tensorId: string): Node | undefined {
+  const producer = graph.tensors[tensorId]?.producer;
+  return producer ? nodeById(graph, producer.nodeId) : undefined;
+}
+
 /**
  * The tensors nothing consumes - what the graph is for. A produced tensor with
  * no consumer is a result; an unused *input* is a loose end, not an output, so
@@ -373,6 +390,7 @@ export function resolveGraphCollecting(source: Graph): CollectedResolution {
   return { resolved: null, errors };
 }
 
+/** Validate structure, resolve shapes, infer intermediate/output shapes, topo sort. */
 export function resolveGraph(source: Graph): ResolvedGraph {
   const g = cloneGraph(source);
   for (const [name, value] of Object.entries(g.params))

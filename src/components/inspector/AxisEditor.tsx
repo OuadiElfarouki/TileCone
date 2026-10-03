@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from "react";
+import React from "react";
+import { axisName } from "../../view/tensor/shape-label";
 import type { Box } from "../../core/region";
 import { tileOf } from "../../view/tensor/grid";
 import { useStore } from "../../state/store";
 import { axisTableMenu, type AxisTableAction } from "../../view/tensor/menus";
 import { viewAxes } from "../../view/tensor/tensor-view";
 import { gestureTile, isLatticeTile, lastTileExtent, tilePosition } from "../../view/tensor/tile-spec";
+import { DraftField } from "../chrome/DraftField";
 import { OptionsMenu, OptionsMenuButton, useOptionsMenu } from "../chrome/OptionsMenu";
 
 /**
@@ -43,7 +45,7 @@ export function AxisEditor({ index }: { index: number }): React.ReactElement | n
   const tile = gestureTile(shape, cfg, tileOf(shape, tileScale, graphPx, cfg));
   const own = !!cfg?.tile;
   const { rowAxis, colAxis } = viewAxes(shape, cfg);
-  const name = (axis: number) => tensor.axisNames?.[axis] ?? `ax${axis}`;
+  const name = (axis: number) => axisName(tensor, axis);
   const extents = box.map((interval) => interval.hi - interval.lo);
   const matchesTile = isLatticeTile(box, tile, shape);
   // What "use as tile" and "plan with this tile" take: the tile itself when
@@ -140,6 +142,12 @@ export function selectionReading(box: Box, name: (axis: number) => string): stri
   return box.map((interval, axis) => `${name(axis)}[${interval.lo}:${interval.hi}]`).join(" ");
 }
 
+/**
+ * One axis of the tensor's tile. On a tensor without a tile of its own, Enter
+ * is a deliberate act and keeps the canvas tile as the tensor's own even when
+ * the value is unchanged; leaving the field is not, so tabbing through the
+ * fields changes nothing.
+ */
 function ExtentInput({
   value,
   max,
@@ -153,48 +161,23 @@ function ExtentInput({
   label: string;
   onCommit: (value: number) => void;
 }): React.ReactElement {
-  const [draft, setDraft] = useState(String(value));
-  const [invalid, setInvalid] = useState(false);
-  useEffect(() => {
-    setDraft(String(value));
-    setInvalid(false);
-  }, [value]);
-  /** Enter is a deliberate act, so on a tensor without a tile of its own it
-   *  commits even an unchanged value, which makes the canvas tile its own.
-   *  Blur is not: tabbing through the fields must not change anything. */
-  const commit = (explicit: boolean) => {
-    const parsed = Number(draft.trim());
-    if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > max) {
-      setInvalid(true);
-      return;
-    }
-    setInvalid(false);
-    if (parsed !== value || (explicit && !own)) onCommit(parsed);
-  };
   return (
-    <input
-      className={`axis-extent${own ? " own" : ""}${invalid ? " invalid" : ""}`}
+    <DraftField
+      value={String(value)}
+      parse={(text) => {
+        const parsed = Number(text.trim());
+        return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= max ? parsed : null;
+      }}
+      apply={(parsed, explicit) => {
+        if (parsed !== value || (explicit && !own)) onCommit(parsed);
+      }}
+      label={label}
+      title={own
+        ? "Enter or leaving the field applies, Escape abandons"
+        : "Enter or leaving the field applies, Escape abandons; Enter keeps the canvas tile as this tensor's own"}
+      invalidTitle={`a whole number from 1 to ${max}`}
+      className={`axis-extent${own ? " own" : ""}`}
       inputMode="numeric"
-      value={draft}
-      aria-label={label}
-      aria-invalid={invalid}
-      title={invalid
-        ? `a whole number from 1 to ${max}`
-        : own ? "Enter or blur applies" : "Enter or blur applies; Enter keeps the canvas tile as this tensor's own"}
-      spellCheck={false}
-      onChange={(event) => {
-        setDraft(event.target.value);
-        setInvalid(false);
-      }}
-      onBlur={() => commit(false)}
-      onKeyDown={(event) => {
-        event.stopPropagation();
-        if (event.key === "Enter") commit(true);
-        if (event.key === "Escape") {
-          setDraft(String(value));
-          setInvalid(false);
-        }
-      }}
     />
   );
 }

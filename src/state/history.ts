@@ -74,3 +74,23 @@ export function appendWorkspaceHistory(
 ): WorkspaceSnapshot[] {
   return [...history, snapshot].slice(-WORKSPACE_HISTORY_LIMIT);
 }
+
+type WorkspaceState = Pick<State, "workspaceHistory" | "selection" | "nodeOffsets" | "planTiles" | "planTask">;
+
+/** The workspace as it stands: what an undo restores. */
+export function workspaceSnapshot(state: Omit<WorkspaceState, "workspaceHistory">): WorkspaceSnapshot {
+  return { selection: state.selection, nodeOffsets: state.nodeOffsets, plan: planEditOf(state) };
+}
+
+/**
+ * The history with the workspace as it stands recorded as one undo step.
+ * Every edit records through here, so no edit can record a snapshot that
+ * leaves out part of the workspace. `changes` supplies what the state no
+ * longer holds: a node move records the offsets from before the drag.
+ */
+export function recordWorkspace(
+  state: WorkspaceState,
+  changes: Partial<WorkspaceSnapshot> = {}
+): WorkspaceSnapshot[] {
+  return appendWorkspaceHistory(state.workspaceHistory, { ...workspaceSnapshot(state), ...changes });
+}

@@ -589,6 +589,22 @@ export function union(a: Region, b: Region): Region {
 }
 
 /**
+ * The union of several regions on one tensor, as a region whose boxes may
+ * overlap: each box kept as it was, exact only when every part is.
+ *
+ * Not canonicalized, so it is never coarsened by the box cap - which is what
+ * a measurement wants. `count` handles the overlap, and the boxes stay the
+ * regions they came from: two operand slots, two tiles, two tasks.
+ */
+export function unionOf(regions: readonly Region[]): Region {
+  return {
+    boxes: regions.flatMap((r) => r.boxes),
+    exact: regions.every((r) => r.exact),
+    reasons: [...new Set(regions.flatMap((r) => r.reasons))].sort(),
+  };
+}
+
+/**
  * Every pairwise intersection, with no shortcut for a fine result.
  *
  * Two regions of N boxes can meet in N^2 pieces, and families of stripes
@@ -884,12 +900,14 @@ export function markInexact(r: Region, ...reasons: string[]): Region {
 // through disjointify() or count() first, so element totals, propagation seeds
 // and metrics deduplicate overlap no matter which list they were handed.
 
+/** Whether two boxes have the same rank and the same interval on every axis. */
+export const sameBox = (a: Box, b: Box): boolean =>
+  a.length === b.length && a.every((I, i) => I.lo === b[i].lo && I.hi === b[i].hi);
+
 /** Append a drawn box as a new part, ignoring an exact duplicate. */
 export function addPart(parts: Box[], b: Box): Box[] {
   if (isEmptyBox(b)) return parts;
-  const same = (x: Box, y: Box) =>
-    x.length === y.length && x.every((I, i) => I.lo === y[i].lo && I.hi === y[i].hi);
-  return parts.some((p) => same(p, b)) ? parts : [...parts, b];
+  return parts.some((p) => sameBox(p, b)) ? parts : [...parts, b];
 }
 
 /**

@@ -15,6 +15,7 @@
  * one.
  */
 
+import { sharedDemand, type SharedDemand } from "../demand";
 import { graphOutputs } from "../graph";
 import {
   addFigures,
@@ -27,7 +28,8 @@ import {
   sumFigures,
 } from "../metrics";
 import type { BoundedCone } from "../propagate";
-import { Box, canonicalize, count, fromBox, intersect, Region } from "../region";
+import { canonicalize, count, fromBox, intersect, Region, unionOf } from "../region";
+import { elementCount } from "../shapes";
 import { TaskRef, taskDemand, TilePlan } from "./plan";
 import {
   PlanError,
@@ -141,7 +143,7 @@ export function joinDemand(
   for (const tensorId of [...byTensor.keys()].sort())
     for (const [, need] of [...byTensor.get(tensorId)!].sort(([a], [b]) => a - b)) {
       const regions = need.witnesses.map((w) => w.region);
-      const union = merged(regions);
+      const union = unionOf(regions);
       need.used = figure(count(union), union.exact ? "exact" : "upper", union.reasons);
       producers.push(need);
     }
@@ -169,31 +171,16 @@ export function joinDemand(
 /** Tasks a family may have before `interfaceOf` declines to evaluate it. */
 export const DEFAULT_TASK_BUDGET = 4096;
 
-/** One tensor's demand across every task of a consumer family. */
-export type BoundaryDemand = {
-  tensorId: string;
+/**
+ * One tensor's demand across every task of a consumer family (`SharedDemand`,
+ * with the tasks as readers), and who supplies it.
+ */
+export type BoundaryDemand = SharedDemand & {
   supplier: Supplier;
-  /** Tasks whose demand includes this tensor. */
-  readers: number;
-  /**
-   * Bytes of this tensor each task reads, summed over tasks. A task counts an
-   * element once however many of its slots read it.
-   */
-  summed: Figure;
-  /** Bytes in the union of every task's demand. */
-  distinct: Figure;
-  /**
-   * `summed / distinct`: the mean number of tasks that read a demanded element.
-   * This is demand duplication, not a cache hit rate or a count of memory
-   * transfers.
-   */
-  duplication: Figure;
-  /** True when every task's demand on this tensor is exact, so `fanOut` counts only definite dependencies. */
-  exact: boolean;
   /**
    * For a planned tensor, the number of consumer tasks that read each producer
    * tile, keyed by tile ordinal. Tiles no task reads are absent. Null for any
-   * other supplier.
+   * other supplier. Counts only definite dependencies when `exact`.
    */
   fanOut: ReadonlyMap<number, number> | null;
 };
@@ -273,15 +260,9 @@ function evaluateFamily(plan: TilePlan, tensorId: string, budget: number): Famil
       computed: new Map(),
     };
 
-  type Acc = {
-    supplier: Supplier;
-    readers: number;
-    summed: Figure;
-    boxes: Box[];
-    exact: boolean;
-    reasons: Set<string>;
-    fanOut: Map<number, number> | null;
-  };
+  // Per tensor read: one region per task that reads it, each the union of
+  // that task's slots, so a task counts an element once.
+  type Acc = { supplier: Supplier; regions: Region[]; fanOut: Map<number, number> | null };
   const acc = new Map<string, Acc>();
   const computed = new Map<string, Region[]>();
   let flops = figure(0, "exact");
@@ -300,20 +281,11 @@ function evaluateFamily(plan: TilePlan, tensorId: string, budget: number): Famil
     for (const [id, { supplier, regions }] of perTensor) {
       const a = acc.get(id) ?? {
         supplier,
-        readers: 0,
-        summed: figure(0, "exact"),
-        boxes: [],
-        exact: true,
-        reasons: new Set<string>(),
+        regions: [],
         fanOut: supplier === "tasks" ? new Map<number, number>() : null,
       };
       acc.set(id, a);
-      const union = merged(regions);
-      a.readers++;
-      a.summed = addFigures(a.summed, byteFigure(plan.graph.tensors[id], count(union), union));
-      a.boxes.push(...union.boxes);
-      a.exact &&= union.exact;
-      union.reasons.forEach((r) => a.reasons.add(r));
+      a.regions.push(unionOf(regions));
     }
 
     for (const need of supply.producers) {
@@ -337,22 +309,15 @@ function evaluateFamily(plan: TilePlan, tensorId: string, budget: number): Famil
   const reads = new Map<string, Region>();
   const boundary = [...acc.keys()].sort().map((id): BoundaryDemand => {
     const a = acc.get(id)!;
-    const union: Region = { boxes: a.boxes, exact: a.exact, reasons: [...a.reasons].sort() };
-    reads.set(id, union);
-    const distinct = byteFigure(plan.graph.tensors[id], count(union), union);
+    reads.set(id, unionOf(a.regions));
     return {
-      tensorId: id,
+      ...sharedDemand(plan.graph.tensors[id], a.regions),
       supplier: a.supplier,
-      readers: a.readers,
-      summed: a.summed,
-      distinct,
-      duplication: ratioFigure(a.summed, distinct),
-      exact: a.exact,
       fanOut: a.fanOut,
     };
   });
 
-  const unions = new Map([...computed].map(([id, regions]) => [id, merged(regions)]));
+  const unions = new Map([...computed].map(([id, regions]) => [id, unionOf(regions)]));
   const tensor = plan.graph.tensors[tensorId];
   const work = workOf(plan, {
     tasks: family.count,
@@ -360,7 +325,7 @@ function evaluateFamily(plan: TilePlan, tensorId: string, budget: number): Famil
     flops,
     read: sumFigures(boundary.map((b) => b.summed)),
     readDistinct: sumFigures(boundary.map((b) => b.distinct)),
-    written: byteFigure(tensor, tensor.resolved!.reduce((n, e) => n * e, 1), {
+    written: byteFigure(tensor, elementCount(tensor.resolved!), {
       exact: true,
       reasons: [],
     }),
@@ -457,25 +422,12 @@ export function planReport(
     read: sumFigures(works.map((w) => w.read)),
     readDistinct: sumFigures(
       [...reads].map(([id, regions]) => {
-        const union = merged(regions);
+        const union = unionOf(regions);
         return byteFigure(plan.graph.tensors[id], count(union), union);
       })
     ),
     written: sumFigures(works.map((w) => w.written)),
-    computed: new Map([...computed].map(([id, regions]) => [id, merged(regions)])),
+    computed: new Map([...computed].map(([id, regions]) => [id, unionOf(regions)])),
   });
   return { families, total, unwritten };
-}
-
-/**
- * The union of several regions on one tensor, as a region whose boxes may
- * overlap. Measured with `count`, which handles overlap, it is never coarsened
- * by the box cap.
- */
-function merged(regions: Region[]): Region {
-  return {
-    boxes: regions.flatMap((r) => r.boxes),
-    exact: regions.every((r) => r.exact),
-    reasons: [...new Set(regions.flatMap((r) => r.reasons))].sort(),
-  };
 }

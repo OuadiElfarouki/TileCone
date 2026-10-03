@@ -3,7 +3,7 @@ import { executeQuery, validateSelection } from "./executor";
 import { ResolvedGraph } from "./graph";
 import { PropResult, Selection } from "./propagate";
 import { Box, Region, canonicalize, count, fromBox, intersect, isEmpty } from "./region";
-import { DTYPE_BYTES } from "./dtypes";
+import { sharedDemand, type SharedDemand } from "./demand";
 
 export type ReuseEstimate = {
   tensorId: string;
@@ -26,15 +26,10 @@ export type ReuseEstimate = {
   }[];
 };
 
-export type InputSharing = {
-  tensorId: string;
+/** Graph-input demand across the drawn tiles (`SharedDemand`, with the tiles as readers). */
+export type InputSharing = SharedDemand & {
+  /** Tiles analysed together; `readers` is how many of them reach this input. */
   selectedTiles: number;
-  contributingTiles: number;
-  summedDemandBytes: number;
-  distinctDemandBytes: number;
-  duplicateDemandBytes: number;
-  geometryExact: boolean;
-  reasons: string[];
 };
 
 /** Element-granular leaf demand only; excludes memory transactions, caches,
@@ -48,27 +43,8 @@ export function inputSharing(graph: ResolvedGraph, cones: PropResult[]): InputSh
       const region = cone.tensors.get(input.id)?.region;
       return region && !isEmpty(region) ? [region] : [];
     });
-    const boxes = regions.flatMap((region) => region.boxes);
-    if (!boxes.length) return [];
-    const exact = regions.every((region) => region.exact);
-    const reasons = [...new Set(regions.flatMap((region) => region.reasons))];
-    const bytes = DTYPE_BYTES[input.dtype];
-    const summedDemandBytes = regions.reduce((sum, region) => sum + count(region) * bytes, 0);
-    const distinctDemandBytes = count({ boxes, exact, reasons }) * bytes;
-    /* This difference remains an upper bound when regions are conservative.
-       At each element, widening can only increase the number of tile regions
-       containing it; max(membership - 1, 0) is monotone in that membership. */
-    const duplicateDemandBytes = Math.max(0, summedDemandBytes - distinctDemandBytes);
-    return [{
-      tensorId: input.id,
-      selectedTiles: cones.length,
-      contributingTiles: regions.length,
-      summedDemandBytes,
-      distinctDemandBytes,
-      duplicateDemandBytes,
-      geometryExact: exact,
-      reasons,
-    }];
+    if (!regions.length) return [];
+    return [{ ...sharedDemand(input, regions), selectedTiles: cones.length }];
   });
 }
 

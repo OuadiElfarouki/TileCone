@@ -10,7 +10,8 @@ import { box, count, fromBox } from "../../../src/core/region";
 import type { ResolvedGraph } from "../../../src/core/graph";
 import { analysisTensorId, groupAttribution, groupFocus, measuredParts, measuredElements } from "../../../src/components/inspector/inspector-analysis";
 import { groupPropResult, analysisTarget, MAX_PER_BOX_PROPS, partsOn, BoxProp, SelPart } from "../../../src/view/workspace";
-import { currentReuseRows, neighbourShares, reuseQualifiers } from "../../../src/view/reuse-rows";
+import { currentReuseRows, neighbourShares, reuseFigures } from "../../../src/view/reuse-rows";
+import { FIGURE_MARK } from "../../../src/view/format";
 
 // Static-render tests read the live test store rather than Zustand's initial
 // server snapshot. Actions and all derivation logic remain the real implementation.
@@ -74,14 +75,14 @@ describe("reuse presentation", () => {
   });
 
   it("distinguishes sampling uncertainty from conservative geometry", () => {
-    expect(reuseQualifiers({ exhaustive: true, geometryExact: true }))
-      .toEqual({ count: "", fraction: "" });
-    expect(reuseQualifiers({ exhaustive: true, geometryExact: false }))
-      .toEqual({ count: "≤ ", fraction: "~ " });
-    expect(reuseQualifiers({ exhaustive: false, geometryExact: true }))
-      .toEqual({ count: "~ ", fraction: "~ " });
-    expect(reuseQualifiers({ exhaustive: false, geometryExact: false }))
-      .toEqual({ count: "~ ", fraction: "~ " });
+    const statuses = (exhaustive: boolean, geometryExact: boolean) => {
+      const f = reuseFigures({ exhaustive, geometryExact, estimatedTiles: 3, meanSharedFraction: 0.5, reasons: [] });
+      return [f.tiles.status, f.sharedFraction!.status];
+    };
+    expect(statuses(true, true)).toEqual(["exact", "exact"]);
+    expect(statuses(true, false)).toEqual(["upper", "approximate"]);
+    expect(statuses(false, true)).toEqual(["approximate", "approximate"]);
+    expect(statuses(false, false)).toEqual(["approximate", "approximate"]);
   });
 
   it("keeps neighbour precision and approximation reasons visible", () => {
@@ -90,7 +91,7 @@ describe("reuse presentation", () => {
       { axis: 0, delta: 1, sharedFraction: 0.5, exact: true, reasons: [] },
       { axis: 1, delta: 1, sharedFraction: 1, exact: true, reasons: [] },
     ], (axis) => `ax${axis}`)).toEqual({
-      text: "ax0 −~50% / +50% · ax1 100%",
+      text: `ax0 −${FIGURE_MARK.approximate}50% / +50% · ax1 100%`,
       reasons: ["box cap"],
     });
   });

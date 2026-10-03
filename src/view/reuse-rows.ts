@@ -1,8 +1,10 @@
 /** Reading a reuse sweep: which run is current, and how its figures are qualified. */
 
 import { ResolvedGraph } from "../core/graph";
-import { Box } from "../core/region";
+import { figure, type Figure } from "../core/metrics";
+import { Box, sameBox } from "../core/region";
 import { ReuseEstimate, ReuseSurface, ReuseSweep } from "../core/reuse";
+import { FIGURE_MARK } from "./format";
 
 /**
  * The local half of the reuse answer: what one tile's step along each axis still
@@ -24,7 +26,7 @@ export function neighbourShares(
   const text = [...byAxis]
     .map(([axis, probes]) => {
       const values = probes.map((probe) =>
-        `${probe.exact ? "" : "~"}${Math.round(probe.sharedFraction * 100)}%`
+        `${FIGURE_MARK[probe.exact ? "exact" : "approximate"]}${Math.round(probe.sharedFraction * 100)}%`
       );
       const distinct = [...new Set(values)];
       if (distinct.length === 1) return `${label(axis)} ${distinct[0]}`;
@@ -36,15 +38,22 @@ export function neighbourShares(
   return { text, reasons: [...reasons] };
 }
 
-/** Sampling and conservative geometry are independent sources of uncertainty. */
-export function reuseQualifiers(
-  estimate: Pick<ReuseEstimate, "exhaustive" | "geometryExact">
-): { count: string; fraction: string } {
+/**
+ * The estimate's two headline numbers as figures, so they are marked as every
+ * other figure is. Sampling and conservative geometry are independent sources
+ * of uncertainty: an exhaustive count over widened regions can only overstate,
+ * so it is an upper bound; a sampled count can miss either way. The shared
+ * fraction is a ratio, which has no one-sided bound once either applies.
+ */
+export function reuseFigures(
+  estimate: Pick<ReuseEstimate, "exhaustive" | "geometryExact" | "estimatedTiles" | "meanSharedFraction" | "reasons">
+): { tiles: Figure; sharedFraction: Figure | null } {
+  const { exhaustive, geometryExact, reasons } = estimate;
   return {
-    count: estimate.exhaustive ? (estimate.geometryExact ? "" : "≤ ") : "~ ",
-    // A ratio of widened regions has no one-sided bound. Sampling likewise
-    // makes the reported mean an estimate even when every region is exact.
-    fraction: estimate.exhaustive && estimate.geometryExact ? "" : "~ ",
+    tiles: figure(estimate.estimatedTiles, exhaustive ? (geometryExact ? "exact" : "upper") : "approximate", reasons),
+    sharedFraction: estimate.meanSharedFraction === null
+      ? null
+      : figure(estimate.meanSharedFraction, exhaustive && geometryExact ? "exact" : "approximate", reasons),
   };
 }
 
@@ -68,10 +77,6 @@ export type ReuseRun = {
 export const sameSurfaces = (left: readonly ReuseSurface[], right: readonly ReuseSurface[]) =>
   left.length === right.length && left.every((surface, i) => surface === right[i]);
 
-export const sameBox = (left: Box, right: Box) =>
-  left.length === right.length && left.every(
-    (interval, axis) => interval.lo === right[axis].lo && interval.hi === right[axis].hi
-  );
 
 /**
  * A reuse sweep is a cache keyed by the graph and the exact tile that seeded

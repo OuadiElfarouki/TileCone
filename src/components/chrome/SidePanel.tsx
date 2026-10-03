@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useDismiss } from "../hooks/useDismiss";
 import { fromBox } from "../../core/region";
 import { EXAMPLES } from "../../examples";
 import { tileOf } from "../../view/tensor/grid";
@@ -266,14 +267,7 @@ function ExamplePicker(): React.ReactElement {
   const staged = EXAMPLES.findIndex((ex) => ex.dsl === draftText);
   const current = staged >= 0 ? EXAMPLES[staged] : null;
 
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: PointerEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [open]);
+  useDismiss(open, [rootRef], () => setOpen(false));
 
   useEffect(() => {
     if (open) listRef.current?.focus();

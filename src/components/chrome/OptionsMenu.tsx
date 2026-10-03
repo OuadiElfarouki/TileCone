@@ -16,6 +16,7 @@
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { MenuHandlers, MenuSpec } from "../../view/menu";
+import { useDismiss } from "../hooks/useDismiss";
 
 /** Where a menu opens: its top-left corner, or its top-right for `end`. */
 type Anchor = { x: number; y: number; align: "start" | "end" };
@@ -151,26 +152,8 @@ export function OptionsMenu<A extends string, C extends string = never>({
   }, [placed]);
 
   // A press anywhere else closes the menu, and so does anything that moves the
-  // page under a fixed menu.
-  useEffect(() => {
-    if (!anchor) return;
-    // The menu's own trigger toggles it on click; counting its press as
-    // outside would close the menu only for the click to reopen it.
-    const onPointerDown = (e: PointerEvent) => {
-      const target = e.target as Node;
-      if (listRef.current?.contains(target) || triggerRef.current?.contains(target)) return;
-      close(false);
-    };
-    const onMove = () => close(false);
-    document.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("scroll", onMove, true);
-    window.addEventListener("resize", onMove);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("scroll", onMove, true);
-      window.removeEventListener("resize", onMove);
-    };
-  }, [anchor]);
+  // page under a fixed menu. The menu's own trigger toggles it on click.
+  useDismiss(!!anchor, [listRef, triggerRef], () => close(false), { onMove: true });
 
   if (!anchor || !spec.length) return null;
 

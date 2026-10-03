@@ -224,6 +224,9 @@ export function resolveShape(shape: Shape, params: Record<string, number>): numb
   return shape.map((s) => resolveDim(s, params));
 }
 
+/** How many elements a shape holds; one for a scalar. */
+export const elementCount = (shape: readonly number[]): number => shape.reduce((n, e) => n * e, 1);
+
 /**
  * The parameter names one dimension is written in terms of.
  *

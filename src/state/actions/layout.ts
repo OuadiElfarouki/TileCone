@@ -1,6 +1,6 @@
 import { NodeOffset } from "../../view/graph/node-layout";
 import { idRecord, PANEL_COLLAPSE_AT, PANEL_MAX, PANEL_MIN } from "../../view/workspace";
-import { appendWorkspaceHistory, planEditOf } from "../history";
+import { recordWorkspace } from "../history";
 import { GetState, SetState, State } from "../types";
 
 /** Panel geometry and node placement. */
@@ -55,27 +55,23 @@ export const layoutActions = (set: SetState, get: GetState): Pick<
   },
 
   commitNodeMove: (key, before) => {
-    const { selection, nodeOffsets, workspaceHistory } = get();
+    const { nodeOffsets } = get();
     const after = nodeOffsets[key] ?? { dx: 0, dy: 0 };
     if (Math.abs(after.dx - before.dx) < 1e-6 && Math.abs(after.dy - before.dy) < 1e-6) return;
     const previousOffsets = idRecord(nodeOffsets);
     if (Math.abs(before.dx) < 1e-6 && Math.abs(before.dy) < 1e-6) delete previousOffsets[key];
     else previousOffsets[key] = before;
     set({
-      workspaceHistory: appendWorkspaceHistory(workspaceHistory, {
-        selection,
-        nodeOffsets: previousOffsets,
-        plan: planEditOf(get()),
-      }),
+      workspaceHistory: recordWorkspace(get(), { nodeOffsets: previousOffsets }),
     });
   },
 
   resetNodeLayout: () => {
-    const { selection, nodeOffsets, workspaceHistory } = get();
+    const { nodeOffsets } = get();
     if (!Object.keys(nodeOffsets).length) return;
     set({
       nodeOffsets: idRecord<NodeOffset>(),
-      workspaceHistory: appendWorkspaceHistory(workspaceHistory, { selection, nodeOffsets, plan: planEditOf(get()) }),
+      workspaceHistory: recordWorkspace(get()),
     });
   },
 });

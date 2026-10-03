@@ -35,6 +35,12 @@ export function formatFigure(f: Figure, format: (value: number) => string): stri
   return f.value === null ? "unknown" : `${FIGURE_MARK[f.status]}${format(f.value)}`;
 }
 
+/** A ratio of two quantities, to two places. */
+export const formatRatio = (v: number): string => v.toFixed(2);
+
+/** FLOPs per byte, with the mark its status earns. */
+export const formatIntensity = (f: Figure): string => formatFigure(f, (v) => `${formatRatio(v)} FLOP/B`);
+
 export function fmt(n: number): string {
   if (n === 0) return "0";
   if (n >= 1e12) return `${(n / 1e12).toFixed(2)}T`;

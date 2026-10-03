@@ -1,12 +1,12 @@
 /** Plan derivation shared by the plan actions and graph loading. */
 
-import { ResolvedGraph } from "../core/graph";
+import { producerNode, ResolvedGraph } from "../core/graph";
 import { supplyOf } from "../core/plan/interfaces";
 import { TaskRef, tilePlan } from "../core/plan/plan";
 import { isTile } from "../core/plan/tile-family";
 import { defaultPlanTile } from "../view/tensor/seeds";
 import { idRecord, operationForTensor } from "../view/workspace";
-import { appendWorkspaceHistory, planEditOf, sameNumbers, sameTask, sameTiles } from "./history";
+import { recordWorkspace, sameNumbers, sameTask, sameTiles } from "./history";
 import { State } from "./types";
 
 /**
@@ -92,8 +92,7 @@ export function withProducedInputs(
   tensorId: string
 ): Record<string, number[]> {
   const resolved = state.resolved!;
-  const producer = resolved.tensors[tensorId].producer;
-  const node = producer && resolved.nodes.find((n) => n.id === producer.nodeId);
+  const node = producerNode(resolved, tensorId);
   if (!node) return tiles;
   const next = { ...tiles };
   for (const input of node.inputs)
@@ -140,11 +139,7 @@ export function inspectTask(
   const next = derivePlan(resolved, completedTiles, task, state);
   if (!next.planTask) return;
   set({
-    workspaceHistory: appendWorkspaceHistory(state.workspaceHistory, {
-      selection: state.selection,
-      nodeOffsets: state.nodeOffsets,
-      plan: planEditOf(state),
-    }),
+    workspaceHistory: recordWorkspace(state),
     selectedOp: operationForTensor(resolved, tensorId),
     ...next,
   });

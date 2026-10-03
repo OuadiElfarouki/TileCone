@@ -4,6 +4,7 @@ import { getOp, opLabel } from "./ops/index";
 import { Layout, OpCtx, rowMajor } from "./ops/types";
 import { PropResult } from "./propagate";
 import { Region, count, disjointify, formatBoxIndices, regionOverlap } from "./region";
+import { elementCount } from "./shapes";
 
 export type TensorReadout = {
   tensorId: string;
@@ -218,7 +219,7 @@ export function coneReadout(graph: ResolvedGraph, prop: PropResult): TensorReado
       name: t.name,
       depth: tr.depth,
       elements,
-      totalElements: (t.resolved ?? []).reduce((a, b) => a * b, 1),
+      totalElements: elementCount(t.resolved ?? []),
       bytes,
       byteFigure: byteFigure(t, elements, tr.region),
       boxCount: tr.region.boxes.length,

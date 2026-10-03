@@ -761,7 +761,7 @@ textarea.source.error-state { border-color: var(--err); }
   background: repeating-linear-gradient(45deg, var(--muted) 0 2px, var(--line) 2px 5px);
 }
 .slice-exprs { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 4px 0 0; }
-.slice-exprs code { background: var(--bg); padding: 1px 5px; border-radius: var(--r); overflow-x: auto; white-space: pre; }
+.slice-exprs code { overflow-x: auto; white-space: pre; }
 .hint.overlap { color: var(--warn-ink); border-left: 2px solid var(--warn-ink); padding: 2px 0 2px 8px; }
 /* Four rows before it scrolls. Tiles can sit on different tensors, so this list
    is now the place you compare them; capping it at two and a half rows hid the
@@ -894,7 +894,10 @@ textarea.source.error-state { border-color: var(--err); }
 .ent-list li, .reuse-list li {
   display: flex; align-items: baseline; gap: 4px; flex-wrap: wrap; font-size: var(--t-body);
 }
-.ent-list code, .reuse-list code { background: var(--bg); padding: 1px 5px; border-radius: var(--r); }
+/* A tensor or slice named inline in a readout reads as a chip, the same everywhere. */
+.slice-exprs code, .ent-list code, .reuse-list code, .plan-list code, .plan-demand-head code, .plan-op code {
+  background: var(--bg); padding: 1px 5px; border-radius: var(--r);
+}
 .reuse-list li + li { margin-top: 3px; }
 /* Sampling coverage and the neighbour probes qualify the figure above them, the
    way a cone row's flags qualify its bar. */
@@ -952,7 +955,6 @@ textarea.source.error-state { border-color: var(--err); }
   display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap;
   font-size: var(--t-body); margin-bottom: 3px;
 }
-.plan-list code { background: var(--bg); padding: 1px 5px; border-radius: var(--r); }
 .plan-list .box-range { width: auto; flex: 1 1 96px; }
 
 /* A producer task is a link back to the regions that explain it: clicking makes
@@ -966,14 +968,12 @@ textarea.source.error-state { border-color: var(--err); }
 .plan-demand { padding: 5px 0; }
 .plan-demand + .plan-demand { border-top: 1px dashed var(--line); }
 .plan-demand-head { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; }
-.plan-demand-head code { background: var(--bg); padding: 1px 5px; border-radius: var(--r); }
 .plan-slice {
   margin: 3px 0; color: var(--muted); font: var(--t-micro)/1.5 var(--mono);
   white-space: pre-wrap; word-break: break-all;
 }
 .plan-need { margin: 3px 0 2px; font-size: var(--t-body); }
 .plan-op { margin: 2px 0; font-size: var(--t-body); }
-.plan-op code { background: var(--bg); padding: 1px 5px; border-radius: var(--r); }
 .plan-fan { flex: 1 0 100%; font-size: var(--t-micro); }
 /* A tiled tensor's work under its row, and the whole plan below them all. The
    total always shows every row, so two plans read one after the other line up. */

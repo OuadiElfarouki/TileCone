@@ -1,7 +1,8 @@
 /** The tile header, the tiles list, and the range field each row edits. */
 
-import React, { useEffect, useState } from "react";
-import { Box, partsOverlap } from "../../core/region";
+import React from "react";
+import { axisName } from "../../view/tensor/shape-label";
+import { Box, partsOverlap, sameBox } from "../../core/region";
 import { fmt } from "../../view/format";
 import { boxColor, MAX_DISTINCT_HUES, rgbCss } from "../../view/palette";
 import { formatSelectionBox, parseSelectionBox } from "../../view/selection-range";
@@ -9,6 +10,7 @@ import { viewAxes } from "../../view/tensor/tensor-view";
 import { partsOn, selectedTensorIds } from "../../view/workspace";
 import { useDark, useStore } from "../../state/store";
 import { CopyButton } from "../chrome/CopyButton";
+import { DraftField } from "../chrome/DraftField";
 import { MERGED_AT_CAP } from "./cones";
 import { measuredElements, measuredParts } from "./inspector-analysis";
 
@@ -23,50 +25,17 @@ export function SelectionRangeInput({
   label: string;
   onCommit: (box: Box) => void;
 }): React.ReactElement {
-  const formatted = formatSelectionBox(box);
-  const [draft, setDraft] = useState(formatted);
-  const [invalid, setInvalid] = useState(false);
-
-  useEffect(() => {
-    setDraft(formatted);
-    setInvalid(false);
-  }, [formatted]);
-
-  const commit = () => {
-    const parsed = parseSelectionBox(draft, shape);
-    if (!parsed) {
-      setInvalid(true);
-      return;
-    }
-    setInvalid(false);
-    const unchanged = parsed.every(
-      (interval, axis) => interval.lo === box[axis].lo && interval.hi === box[axis].hi
-    );
-    if (!unchanged) onCommit(parsed);
-  };
-
   return (
-    <input
-      className={`box-range${invalid ? " invalid" : ""}`}
-      value={draft}
-      aria-label={label}
-      aria-invalid={invalid}
-      title={invalid ? `expected ${shape.length} in-bounds index or lo:hi fields` : "edit range; Enter or blur applies"}
-      spellCheck={false}
-      onClick={(event) => event.stopPropagation()}
-      onChange={(event) => {
-        setDraft(event.target.value);
-        setInvalid(false);
+    <DraftField
+      value={formatSelectionBox(box)}
+      parse={(text) => parseSelectionBox(text, shape)}
+      apply={(parsed) => {
+        if (!sameBox(parsed, box)) onCommit(parsed);
       }}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        event.stopPropagation();
-        if (event.key === "Enter") commit();
-        if (event.key === "Escape") {
-          setDraft(formatted);
-          setInvalid(false);
-        }
-      }}
+      label={label}
+      title="edit range; Enter or leaving the field applies, Escape abandons"
+      invalidTitle={`expected ${shape.length} in-bounds index or lo:hi fields`}
+      className="box-range"
     />
   );
 }
@@ -112,7 +81,7 @@ export function TileIdentity({
   const tensor = resolved.tensors[anchorId];
   const shape = tensor.resolved!;
   const { rowAxis, colAxis } = viewAxes(shape, viewCfg);
-  const axisLabel = (axis: number) => tensor.axisNames?.[axis] ?? `ax${axis}`;
+  const axisLabel = (axis: number) => axisName(tensor, axis);
   const measured = measuredParts(selection.parts, anchorId, hiddenBoxes, focusedBox, !!perBox);
   const elements = measuredElements(measured);
 

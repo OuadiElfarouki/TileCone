@@ -10,7 +10,7 @@
  */
 
 import React, { useEffect, useMemo, useState } from "react";
-import type { Node } from "../../core/graph";
+import { nodeById, producerNode, type Node } from "../../core/graph";
 import { byteFigure, regionSliceExprs, type Figure } from "../../core/metrics";
 import { opLabel } from "../../core/ops/index";
 import {
@@ -25,13 +25,14 @@ import {
   type Work,
 } from "../../core/plan/interfaces";
 import type { TaskRef, TilePlan } from "../../core/plan/plan";
-import type { Region } from "../../core/region";
 import { tileBox, tileOrdinal, tiles, type TileFamily } from "../../core/plan/tile-family";
-import { count, formatBoxIndices } from "../../core/region";
-import { fmt, formatBytes, formatFigure } from "../../view/format";
+import { count, formatBoxIndices, unionOf } from "../../core/region";
+import { FIGURE_MARK, fmt, formatBytes, formatFigure, formatIntensity } from "../../view/format";
+import { demandDetail, demandSummary } from "../../view/demand";
 import { describeTiling, WORK_ROWS, workCell, workCellTitle } from "../../view/plan-work";
 import { boxColor, rgbCss } from "../../view/palette";
 import { useDark, useStore } from "../../state/store";
+import { DraftField } from "../chrome/DraftField";
 import { sameTiles } from "../../state/history";
 import { MAX_KEPT_PLANS } from "../../state/plan";
 import {
@@ -77,50 +78,17 @@ function TileExtentsInput({
   tile: number[];
 }): React.ReactElement {
   const setPlanTile = useStore((s) => s.setPlanTile);
-  const formatted = formatTileExtents(tile);
-  const [draft, setDraft] = useState(formatted);
-  const [invalid, setInvalid] = useState(false);
-
-  useEffect(() => {
-    setDraft(formatted);
-    setInvalid(false);
-  }, [formatted]);
-
-  const commit = () => {
-    const parsed = parseTileExtents(draft, shape.length);
-    if (!parsed) {
-      setInvalid(true);
-      return;
-    }
-    setInvalid(false);
-    if (parsed.some((e, axis) => e !== tile[axis])) setPlanTile(tensorId, parsed);
-  };
-
   return (
-    <input
-      className={`box-range${invalid ? " invalid" : ""}`}
-      value={draft}
-      aria-label={`${name} tile extents`}
-      aria-invalid={invalid}
-      title={
-        invalid
-          ? `expected ${shape.length} positive whole number${shape.length === 1 ? "" : "s"}, one per axis`
-          : "tile extents per axis; Enter or blur applies"
-      }
-      spellCheck={false}
-      onChange={(event) => {
-        setDraft(event.target.value);
-        setInvalid(false);
+    <DraftField
+      value={formatTileExtents(tile)}
+      parse={(text) => parseTileExtents(text, shape.length)}
+      apply={(parsed) => {
+        if (parsed.some((e, axis) => e !== tile[axis])) setPlanTile(tensorId, parsed);
       }}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        event.stopPropagation();
-        if (event.key === "Enter") commit();
-        if (event.key === "Escape") {
-          setDraft(formatted);
-          setInvalid(false);
-        }
-      }}
+      label={`${name} tile extents`}
+      title="tile extents per axis; Enter or leaving the field applies, Escape abandons"
+      invalidTitle={`expected ${shape.length} positive whole number${shape.length === 1 ? "" : "s"}, one per axis`}
+      className="box-range"
     />
   );
 }
@@ -208,7 +176,6 @@ function usePlanRun(plan: TilePlan | null): PlanRun {
 }
 
 const flopText = (f: Figure) => formatFigure(f, fmt);
-const intensityText = (f: Figure) => formatFigure(f, (v) => `${v.toFixed(2)} FLOP/B`);
 
 /** One family's work on a line: what it computes, moves, and the ratio of the two. */
 function WorkLine({ work }: { work: Work }): React.ReactElement {
@@ -226,7 +193,7 @@ function WorkLine({ work }: { work: Work }): React.ReactElement {
       {" · "}
       <span>writes {formatFigure(work.written, formatBytes)}</span>
       {" · "}
-      <span title="FLOPs per byte read or written">{intensityText(work.intensity)}</span>
+      <span title="FLOPs per byte read or written">{formatIntensity(work.intensity)}</span>
     </span>
   );
 }
@@ -487,7 +454,7 @@ function ProducerRow({
         {taskName(name, need.task.coord)}
       </button>
       <span className="muted" title={`reads ${formatFigure(need.used, String)} of the ${need.volume} elements in ${slice}`}>
-        {need.used.status === "exact" ? "" : "≤ "}
+        {FIGURE_MARK[need.used.status]}
         {share === 100 ? "whole tile" : `${share.toFixed(share < 10 ? 1 : 0)}% of tile`}
       </span>
       {!need.definite && (
@@ -536,17 +503,13 @@ function DemandGroup({
   const named = demands.length > 1 || !own || node.inputs.length > 1;
   const slotLabel = (d: Demand) => {
     if (d.node === node.id) return `arg${d.slot}`;
-    const reader = plan.graph.nodes.find((n) => n.id === d.node)!;
+    const reader = nodeById(plan.graph, d.node)!;
     return `arg${d.slot} of ${plan.graph.tensors[reader.outputs[0]].name}`;
   };
 
   // One element counts once however many slots read it, as the family figures
   // count it, so the bytes here and under the family mean the same thing.
-  const union: Region = {
-    boxes: demands.flatMap((d) => d.region.boxes),
-    exact: demands.every((d) => d.region.exact),
-    reasons: [...new Set(demands.flatMap((d) => d.region.reasons))],
-  };
+  const union = unionOf(demands.map((d) => d.region));
 
   return (
     <div className="plan-demand">
@@ -686,15 +649,11 @@ function BoundaryRow({
   return (
     <li>
       <code>{tensor.name}</code>
-      <span
-        className="muted"
-        title={`${formatFigure(row.summed, formatBytes)} read in total by ${row.readers} of ${tasks} tasks; ${formatFigure(row.distinct, formatBytes)} distinct`}
-      >
-        {formatFigure(row.duplication, (v) => `${v.toFixed(2)}×`)} demand ·{" "}
-        {formatFigure(row.distinct, formatBytes)} distinct
+      <span className="muted" title={demandDetail(row, `${row.readers} of ${tasks} tasks`)}>
+        {demandSummary(row)}
       </span>
       {!row.exact && (
-        <span className="badge approx" title="some tasks' demand on this tensor is widened">≈</span>
+        <span className="badge approx" title={row.reasons.join("; ")}>≈</span>
       )}
       {fan.length > 0 && (
         <span className="plan-fan muted">
@@ -838,8 +797,7 @@ export function PlanPanel(): React.ReactElement {
 
   const family = plan && task ? plan.families.get(task.tensorId) : undefined;
   const tensor = task ? resolved.tensors[task.tensorId] : undefined;
-  const node =
-    tensor?.producer && resolved.nodes.find((n) => n.id === tensor.producer!.nodeId);
+  const node = task ? producerNode(resolved, task.tensorId) : undefined;
 
   return (
     <div className="ins-tabpanel" role="region" id="ins-panel-plan" aria-labelledby="ins-tab-plan">

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Tensor } from "../../core/graph";
+import { elementCount } from "../../core/shapes";
 import { DTYPE_BYTES } from "../../core/dtypes";
 import { reuseReachAt } from "../../core/reuse";
 import { useFrameThrottle } from "../hooks/useFrameThrottle";
@@ -8,7 +9,7 @@ import { Box, formatBoxIndices, fromBox, iv } from "../../core/region";
 import { paintScale, elementFromEvent, gridGeometry, Layer, PlanPaint, tileOf } from "../../view/tensor/grid";
 import { drawGrid } from "./draw-grid";
 import { useDark, useStore } from "../../state/store";
-import { shapeLabel, shapeReadings } from "../../view/tensor/shape-label";
+import { axisName, shapeLabel, shapeReadings } from "../../view/tensor/shape-label";
 import { OVERVIEW_SCALE } from "../../view/graph/overview-labels";
 import { formatBytes } from "../../view/format";
 import { axesWith, hiddenAxisPositioned, remapped, viewAxes } from "../../view/tensor/tensor-view";
@@ -412,13 +413,13 @@ function TensorCardView({
     previewKeyRef.current = null;
   };
 
-  const totalBytes = shape.reduce((a, b) => a * b, 1) * DTYPE_BYTES[tensor.dtype];
+  const totalBytes = elementCount(shape) * DTYPE_BYTES[tensor.dtype];
   const planeRemapped = remapped(shape, cfg);
   /** How much smaller than the graph's scale this card draws; 1 for every card
    *  on the default plane. */
   const scaleRatio = graphPx / cardScaleFor(shape, cfg, graphPx);
-  const axisName = (ax: number) => tensor.axisNames?.[ax] ?? `ax${ax}`;
-  const viewSpec = cardViewMenu(shape, cfg, axisName);
+  const nameOf = (ax: number) => axisName(tensor, ax);
+  const viewSpec = cardViewMenu(shape, cfg, nameOf);
   const viewHandlers: MenuHandlers<CardViewAction, CardViewChoice> = {
     action: {
       swap: () => setViewAxes(tensor.id, [colAxis, rowAxis]),
@@ -556,10 +557,10 @@ function TensorCardView({
           {planeRemapped && (
             <span
               className="tc-plane"
-              title={`display only: the card draws ${axisName(rowAxis)} down and ${axisName(colAxis)} across; the graph is unchanged${
+              title={`display only: the card draws ${nameOf(rowAxis)} down and ${nameOf(colAxis)} across; the graph is unchanged${
                 scaleRatio > 1 ? `. Drawn at 1/${formatRatio(scaleRatio)} of the graph's scale to fit, so its lengths are not comparable with other cards` : ""}. Right-click the card to change it.`}
             >
-              rows {axisName(rowAxis)} · cols {axisName(colAxis)}
+              rows {nameOf(rowAxis)} · cols {nameOf(colAxis)}
               {scaleRatio > 1 && <b> · scale ÷{formatRatio(scaleRatio)}</b>}
             </span>
           )}
@@ -570,11 +571,11 @@ function TensorCardView({
         const positioned = hiddenAxisPositioned(shape, cfg, ax);
         return (
           <div className="tc-slider" key={ax}>
-            <span>{axisName(ax)}</span>
+            <span>{nameOf(ax)}</span>
             <input
               type="range"
               disabled={!positioned}
-              aria-label={`${axisName(ax)} ${cfg.projection ? "tile position" : "slice index"}`}
+              aria-label={`${nameOf(ax)} ${cfg.projection ? "tile position" : "slice index"}`}
               title={!positioned
                 ? "Switch to slice mode to choose an index"
                 : cfg.projection

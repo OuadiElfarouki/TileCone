@@ -7,7 +7,7 @@
 import { Supply } from "../../core/plan/interfaces";
 import { TilePlan } from "../../core/plan/plan";
 import { tileBox } from "../../core/plan/tile-family";
-import { Box, fromBox, intersect, isEmpty, Region, subtract } from "../../core/region";
+import { Box, fromBox, intersect, isEmpty, Region, subtract, unionOf } from "../../core/region";
 import { aggregateColors, boxColor } from "../palette";
 import { Layer, PlanPaint } from "./grid";
 import { BoxProp, Direction } from "../workspace";
@@ -319,11 +319,7 @@ export function buildPlanPaint({
     ...(supply?.computes.filter((c) => c.tensorId === tensorId) ?? []),
   ];
   if (cone.length) {
-    const region: Region = {
-      boxes: cone.flatMap((d) => d.region.boxes),
-      exact: cone.every((d) => d.region.exact),
-      reasons: [...new Set(cone.flatMap((d) => d.region.reasons))],
-    };
+    const region = unionOf(cone.map((d) => d.region));
     layers.push({ region, color: hue, alpha: CONE_ALPHA, hatch: !region.exact });
   }
   if (family && supply?.task.tensorId === tensorId)

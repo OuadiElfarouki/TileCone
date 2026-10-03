@@ -1,6 +1,6 @@
 /** Default extents: the planes cards draw, starter tiles, and first plan divisions. */
 
-import { graphOutputs, ResolvedGraph } from "../../core/graph";
+import { graphOutputs, producerNode, ResolvedGraph } from "../../core/graph";
 import { Box } from "../../core/region";
 import { tileOf } from "./grid";
 import { viewAxes, ViewCfg } from "./tensor-view";
@@ -32,7 +32,7 @@ export function startingTiles(
 ): { label: string; tensorId: string; box: Box }[] {
   const output = graphOutputs(resolved)[0];
   if (!output) return [];
-  const producer = resolved.nodes.find((node) => node.id === output.producer!.nodeId);
+  const producer = producerNode(resolved, output.id);
   const feeding = producer?.inputs.filter((id) => resolved.tensors[id].producer) ?? [];
   const previous = feeding.length ? resolved.tensors[feeding[feeding.length - 1]] : null;
 

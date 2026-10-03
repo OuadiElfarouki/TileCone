@@ -1,7 +1,7 @@
 import { tilePlan } from "../../core/plan/plan";
 import { defaultPlanTile } from "../../view/tensor/seeds";
 import { idRecord, operationForTensor } from "../../view/workspace";
-import { appendWorkspaceHistory, planEditOf, sameNumbers, sameTask, sameTiles } from "../history";
+import { recordWorkspace, sameNumbers, sameTask, sameTiles } from "../history";
 import { derivePlan, inspectTask, MAX_KEPT_PLANS, tileContaining } from "../plan";
 import { GetState, SetState, State } from "../types";
 
@@ -45,11 +45,7 @@ export const planActions = (set: SetState, get: GetState): Pick<
           : null
         : planTask;
     set({
-      workspaceHistory: appendWorkspaceHistory(state.workspaceHistory, {
-        selection: state.selection,
-        nodeOffsets: state.nodeOffsets,
-        plan: planEditOf(state),
-      }),
+      workspaceHistory: recordWorkspace(state),
       ...derivePlan(resolved, tiles, task, state),
     });
   },
@@ -67,11 +63,7 @@ export const planActions = (set: SetState, get: GetState): Pick<
       return;
     }
     set({
-      workspaceHistory: appendWorkspaceHistory(state.workspaceHistory, {
-        selection: state.selection,
-        nodeOffsets: state.nodeOffsets,
-        plan: planEditOf(state),
-      }),
+      workspaceHistory: recordWorkspace(state),
       selectedOp: next.planTask ? operationForTensor(state.resolved, next.planTask.tensorId) : state.selectedOp,
       ...next,
     });
@@ -115,11 +107,7 @@ export const planActions = (set: SetState, get: GetState): Pick<
     if (coord[axis] === planTask.coord[axis]) return;
     set({
       workspaceHistory: record
-        ? appendWorkspaceHistory(state.workspaceHistory, {
-            selection: state.selection,
-            nodeOffsets: state.nodeOffsets,
-            plan: planEditOf(state),
-          })
+        ? recordWorkspace(state)
         : state.workspaceHistory,
       ...derivePlan(resolved, state.planTiles, { tensorId: planTask.tensorId, coord }, state),
     });
@@ -160,11 +148,7 @@ export const planActions = (set: SetState, get: GetState): Pick<
           }
         : null;
     set({
-      workspaceHistory: appendWorkspaceHistory(state.workspaceHistory, {
-        selection: state.selection,
-        nodeOffsets: state.nodeOffsets,
-        plan: planEditOf(state),
-      }),
+      workspaceHistory: recordWorkspace(state),
       ...derivePlan(resolved, kept.tiles, task, state),
     });
   },

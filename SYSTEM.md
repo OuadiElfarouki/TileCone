@@ -54,6 +54,7 @@ src/
 │   ├── region.ts         exact and conservative region algebra
 │   ├── metrics.ts        FLOP, byte, and intensity estimates
 │   ├── reuse.ts          exact tile sharing and seeded reuse sweep
+│   ├── demand.ts         summed and distinct demand on one tensor from several readers
 │   ├── contribution.ts   whether a tile completes its forward cone, or only adds to it
 │   ├── expand.ts         composite-to-primitive graph rewrites
 │   ├── notes.ts          plain-language dependency constraints
@@ -94,7 +95,8 @@ src/
 │   │   └── node-layout.ts    graph-node offset contracts
 │   ├── workspace.ts      shared vocabulary: selection parts, directions, views, and their pure helpers
 │   ├── menu.ts           a menu as data: actions, choices and separators, bound by id
-│   ├── reuse-rows.ts     reading a reuse sweep: the current run and its qualifiers
+│   ├── reuse-rows.ts     reading a reuse sweep: the current run and its figures
+│   ├── demand.ts         a shared-demand row in words, for both views that show one
 │   ├── plan-work.ts      the whole-plan figures as rows, and a tiling in words
 │   ├── palette.ts        validated categorical hues and canvas surfaces
 │   ├── format.ts         presentation-only numeric formatting
@@ -134,8 +136,8 @@ src/
 │   │   ├── AxisEditor.tsx    every axis of the inspected tile
 │   │   └── PlanPanel.tsx     the Plan view: tiled tensors and their work, one task, family demand
 │   ├── chrome/           SidePanel, PanelFrame, WorkspaceHeader, GridControls,
-│   │                     LayoutControls, ShortcutsDialog, OptionsMenu, CopyButton, clipboard
-│   ├── hooks/            useKeyboard, useFocusPolicy, useFrameThrottle, useDebounced, useDragGuard
+│   │                     LayoutControls, ShortcutsDialog, OptionsMenu, DraftField, CopyButton, clipboard
+│   ├── hooks/            useKeyboard, useFocusPolicy, useDismiss, useFrameThrottle, useDebounced, useDragGuard
 │   └── pointer.ts        which presses start a gesture
 ├── examples/             built-in DSL examples
 ├── App.tsx               UI composition and URL-state bootstrap
@@ -528,7 +530,7 @@ Severity decides **what survives the display cap**, not what order notes are rea
 
 `src/core/contribution.ts` answers the downstream half. Being in the forward cone means a tile *influences* a tensor, not that it produces it: a tile spanning part of a contracted axis reaches an output without determining a single element of it. The test runs backwards - what does that downstream region actually read? - and subtracts the tile; anything left is what the tile does not supply. The asymmetry is deliberate and matches the region contract: an over-approximated backward region can make the residue phantom, so the flag may over-warn, but an empty residue proves the true residue is empty, so it can never under-warn. Rows carry `exact` so an over-warning is shown as one, and the probe count is capped up front because each probe is a full propagation.
 
-Reuse is a separate derived analysis in `src/core/reuse.ts`, rather than part of `computeMetrics`, and it answers two questions that share the word. `inputSharing` is the unsampled one: over the enabled tiles' backward cones it compares summed graph-input element demand with the distinct union of that demand, recording both how many tiles were selected and how many actually reach each input. Their difference is duplicate, potentially shareable demand - not a claim that the hardware reloads it or that a kernel can avoid all of it. This difference remains an upper bound when contributing regions were widened: at every element, widening can only increase how many tile regions contain it, and duplicate membership is `max(membership - 1, 0)`. The duplicate byte count therefore uses `≤` in that case, while its ratio to distinct demand uses `~` because both sides of the ratio moved.
+Reuse is a separate derived analysis in `src/core/reuse.ts`, rather than part of `computeMetrics`, and it answers two questions that share the word. `inputSharing` is the unsampled one: over the enabled tiles' backward cones it compares summed graph-input element demand with the distinct union of that demand, recording both how many tiles were selected and how many actually reach each input. It is `sharedDemand` with the tiles as readers, the computation a plan's boundary rows make with tasks, so both report the same figures and `view/demand.ts` words both rows the same way. Their difference is duplicate, potentially shareable demand - not a claim that the hardware reloads it or that a kernel can avoid all of it. This difference remains an upper bound when contributing regions were widened: at every element, widening can only increase how many tile regions contain it, and duplicate membership is `max(membership - 1, 0)`. The duplicate byte count therefore uses `≤` in that case, while its ratio to distinct demand uses `~` because both sides of the ratio moved.
 
 `estimateInputReuse` takes one anchored selection, walks same-sized tiles across that tensor with a fixed seed, and estimates how many touch each input region in the anchor's footprint. One sample is drawn per stratum and carries that stratum's weight, so an uneven grid - five tiles under two probes - is not biased by treating every probe as equal. Sampling and region precision are independent: a non-exhaustive sweep can miss or overrepresent an overlapping tile and therefore always renders with `~`, even when every propagated region is exact. An exhaustive sweep returns the count itself; if its regions were widened, only reported intersections can be false positives, so that count is an upper bound and renders with `≤`. Shared-footprint fractions are ratios and use `~` whenever either sampling or conservative geometry is involved. The immediate-neighbour probes - one tile step along each axis, with out-of-bounds steps skipped rather than resized - carry and display their own precision and reasons because they inform the reader but do not contribute to the global estimate. `estimateInputReuseSweep` retains the sampled boxes, their stratum weights, and, per probe, where that probe landed on each relation it was asked for. A relation is one of the three the canvas paints - `backward`, `forward`, `entangled` - and each entry carries both what the probe reaches and the part of it the anchor reaches too. All of it is paint: the estimate is computed from the same backward walk but is not read back out of the frames, and painting only the overlap left a probe that shares nothing painting nothing, which is most of a large sweep. A relation is present only when it was asked for, since an unpainted relation and an empty one read differently on a card; the backward walk happens either way because the estimate is a statement about backward demand, while `forward` and `entangled` cost a query per probe on top. The inspector asks for whichever relations the Dependencies view has switched on, so one hidden there does not reappear here. The browser runs that sweep in the query Worker and replays those real probes once on the cards; the animation is an explanation of the estimate, never an invented execution order. Keeping the analysis pure and seeded makes repeated estimates and their playback reproducible; the inspector places drawn-tile demand under Dependencies and the execution-wide sweep under Cost model.
 
@@ -551,11 +553,12 @@ Since a task stops only at tiled tensors and graph inputs, every read has one of
 
 A producer found through exact demand is `definite`. A producer found only through over-approximated demand is possible, since the true demand may not meet that tile. No true producer is omitted, because an over-approximated region contains the true one. `used` is the number of distinct elements of the tile the consumer reads, as a figure that is `upper` when a witness is over-approximated.
 
-`interfaceOf(plan, tensorId)` evaluates every task of a family and reports, per tensor the family reads:
+`interfaceOf(plan, tensorId)` evaluates every task of a family and reports, per tensor the family reads, a `SharedDemand` (`core/demand.ts`) with the tasks as readers - the computation the Dependencies view's input sharing makes with the drawn tiles as readers:
 
 - `summed`: bytes each task reads, summed over tasks. A task counts an element once however many slots read it.
 - `distinct`: bytes in the union of all tasks' demand.
 - `duplication`: `summed / distinct`, the mean number of tasks that read a demanded element. This is demand duplication. It is not a cache hit rate or a count of memory transfers.
+- `duplicate`: `summed - distinct`, the bytes more than one task reads.
 - `fanOut`, for a planned tensor: how many consumer tasks read each producer tile.
 
 These use the figure statuses of §8, through the same `byteFigure` as the cone rows. `summed` and `distinct` are `upper` when a demand is over-approximated or a dtype was widened, and `duplication` is then `approximate`. `exact` records whether every demand on the tensor was exact, and `fanOut` counts only definite dependencies when it is.
@@ -677,6 +680,8 @@ parallel derivation - a hover is the click that has not happened yet, and when t
 computed separately the tooltip named a slider slice that the following click did not select.
 
 **Snapping (`snapToGrid`) is a property of future gestures and movement, not stored selection geometry or analysis.** A drag is tracked in elements throughout and expanded to whole current-grid tiles only when it commits. The inspector's text range is an explicit element-space edit and is never rounded, whether snap is on or off. Toggling snap or changing detail leaves every existing box and the workspace undo depth untouched. A keyboard nudge uses the current tile while snapping and one element when not. If the box starts off the current lattice - after a typed edit or grid change - its first snapped nudge aligns its leading edge in the requested direction without changing its extent; later nudges advance by whole tiles. A boundary clamp may use a shorter final delta so the whole box lands flush without shrinking. Changing detail changes the next snapped gesture and nudge, never the current box.
+
+Every typed value in the inspector - a tile's range, a tensor's tile extents, a plan's extents - is a `DraftField`: typing changes a draft, Enter or leaving the field applies it, and Escape abandons it and leaves the field. A draft that does not parse is marked and kept for correction. Only Enter and Escape stop at the field, so the panel shortcuts reach the app from inside it, as they do from the source editor. Every edit records its undo entry through `recordWorkspace`, which snapshots the selection, the node offsets and the plan together, so no edit can record a snapshot that leaves part of the workspace out.
 
 Text edits are normal selection transactions: they repropagate immediately and add one workspace undo entry. An edited pinned tile retains its pin. An edited disabled tile retains its disabled state and its new cached propagation remains excluded from merged analysis until the tile is enabled again. Snap and detail are view/gesture settings rather than workspace geometry, so undoing a later movement restores the box without reverting those settings.
 

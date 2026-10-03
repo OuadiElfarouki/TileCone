@@ -1,10 +1,10 @@
 import { executeQuery } from "../../core/executor";
-import { addPart, Box, Region, subtractFromParts, translateAllParts, translatePart } from "../../core/region";
+import { addPart, Box, Region, sameBox, subtractFromParts, translateAllParts, translatePart } from "../../core/region";
 import { viewAxes } from "../../view/tensor/tensor-view";
 import { tileFits, tileSpanAt } from "../../view/tensor/tile-spec";
 import { analysisTarget, MAX_PREVIEW_NODES, operationForTensor, partsOn, SelPart } from "../../view/workspace";
 import { recompute } from "../analysis";
-import { appendWorkspaceHistory, planEditOf } from "../history";
+import { recordWorkspace } from "../history";
 import { editSelection, revealHidden } from "../selection-edit";
 import { GetState, SetState, State } from "../types";
 
@@ -28,8 +28,6 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
     const {
       selection,
       resolved,
-      workspaceHistory,
-      nodeOffsets,
       hiddenBoxes,
       perBox,
       entangled,
@@ -78,7 +76,7 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
       selectedOp: sel ? drawnOp : null,
       // Null is a real workspace state: the first selection must be undoable
       // without also rewinding an earlier tensor move.
-      workspaceHistory: appendWorkspaceHistory(workspaceHistory, { selection, nodeOffsets, plan: planEditOf(get()) }),
+      workspaceHistory: recordWorkspace(get()),
       // Drawing releases the pin, and the analysis follows the pointer to this
       // tensor. Remapping it was never able to keep a pin on the tensor being
       // drawn on - those parts are rebuilt, so their identity is gone - and
@@ -97,12 +95,12 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
   },
 
   clearSelection: () => {
-    const { selection, workspaceHistory, nodeOffsets } = get();
+    const { selection, workspaceHistory } = get();
     set({
       selection: null,
       selectedOp: null,
       workspaceHistory: selection
-        ? appendWorkspaceHistory(workspaceHistory, { selection, nodeOffsets, plan: planEditOf(get()) })
+        ? recordWorkspace(get())
         : workspaceHistory,
       backwardRes: null,
       byTensorRes: null,
@@ -218,8 +216,7 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
     const part = refit === undefined ? undefined : get().selection?.parts[refit];
     if (!tile || !part || part.tensorId !== tensorId) return;
     const box = part.box.map((interval, axis) => tileSpanAt(interval.lo, tile[axis], shape[axis]));
-    if (box.every((interval, axis) =>
-      interval.lo === part.box[axis].lo && interval.hi === part.box[axis].hi)) return;
+    if (sameBox(box, part.box)) return;
     get().replaceBox(refit!, box);
     revealHidden(get, tensorId, box);
   },

@@ -2,7 +2,7 @@ import { Box } from "../core/region";
 import { viewAxes } from "../view/tensor/tensor-view";
 import { anchorTensorId, operationForTensor, SelPart } from "../view/workspace";
 import { recompute } from "./analysis";
-import { appendWorkspaceHistory, planEditOf } from "./history";
+import { recordWorkspace } from "./history";
 import { State } from "./types";
 
 /**
@@ -48,7 +48,6 @@ export function editSelection(
     selection,
     resolved,
     workspaceHistory,
-    nodeOffsets,
     focusedBox,
     perBox,
     entangled,
@@ -67,7 +66,7 @@ export function editSelection(
     selectedOp: operationForTensor(resolved, anchor),
     selection: sel,
     workspaceHistory: record
-      ? appendWorkspaceHistory(workspaceHistory, { selection, nodeOffsets, plan: planEditOf(get()) })
+      ? recordWorkspace(get())
       : workspaceHistory,
     focusedBox: nextFocus,
     pinnedBox: nextFocus === null ? null : get().pinnedBox,

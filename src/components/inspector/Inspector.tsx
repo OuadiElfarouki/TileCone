@@ -1,10 +1,12 @@
 import React, { useMemo } from "react";
+import { axisName } from "../../view/tensor/shape-label";
 import { MAX_CONTRIBUTION_PROBES } from "../../core/contribution";
 import { ratioFigure, sumFigures } from "../../core/metrics";
 import { formatBoxIndices } from "../../core/region";
-import { fmt, formatBytes, formatFigure } from "../../view/format";
+import { fmt, formatBytes, formatFigure, formatIntensity } from "../../view/format";
+import { demandDetail, demandSummary } from "../../view/demand";
 import { aggregateColors, boxColor, rgbCss } from "../../view/palette";
-import { neighbourShares, reuseQualifiers } from "../../view/reuse-rows";
+import { neighbourShares, reuseFigures } from "../../view/reuse-rows";
 import { SHORTCUTS } from "../../view/shortcuts";
 import { MAX_PER_BOX_PROPS, partsOn } from "../../view/workspace";
 import { useDark, useStore } from "../../state/store";
@@ -191,7 +193,7 @@ export function Inspector(): React.ReactElement {
     const ratio = ratioFigure(cost.flops, cost.bytes);
     if (ratio.value === null) return "unknown";
     if (cost.bytes.value === 0) return "—";
-    return formatFigure(ratio, (v) => `${v.toFixed(2)} FLOP/B`);
+    return formatIntensity(ratio);
   };
 
   /* Summed through the figure algebra rather than by adding three numbers, so
@@ -202,8 +204,8 @@ export function Inspector(): React.ReactElement {
     : null;
 
   /** Reuse neighbours step along the anchor tensor's axes, so it names them. */
-  const axisLabelOf = (axis: number) =>
-    (activeTensorId ? resolved.tensors[activeTensorId]?.axisNames?.[axis] : null) ?? `ax${axis}`;
+  const activeTensor = activeTensorId ? resolved.tensors[activeTensorId] : undefined;
+  const axisLabelOf = (axis: number) => axisName(activeTensor ?? {}, axis);
 
   return (
     <aside className="inspector" aria-label="Tile inspector">
@@ -393,15 +395,11 @@ export function Inspector(): React.ReactElement {
                           <code>{resolved.tensors[row.tensorId].name}</code>
                           <span
                             className="muted"
-                            title={row.geometryExact
-                              ? `${row.contributingTiles} of ${row.selectedTiles} tiles demand ${formatBytes(row.summedDemandBytes)} in total; ${formatBytes(row.distinctDemandBytes)} distinct`
-                              : `${row.contributingTiles} of ${row.selectedTiles} tiles have widened footprints; duplicate demand is no more than ${formatBytes(row.duplicateDemandBytes)}`}
+                            title={demandDetail(row, `${row.readers} of ${row.selectedTiles} tiles`)}
                           >
-                            {row.duplicateDemandBytes > 0
-                              ? `${row.geometryExact ? "" : "~ "}${(row.summedDemandBytes / row.distinctDemandBytes).toFixed(2)}× demand · ${row.geometryExact ? "" : "≤ "}${formatBytes(row.duplicateDemandBytes)} duplicate`
-                              : "no duplicate demand"}
+                            {demandSummary(row)}
                           </span>
-                          {!row.geometryExact && (
+                          {!row.exact && (
                             <span className="badge approx" title={row.reasons.join("; ")}>≈</span>
                           )}
                         </li>
@@ -512,7 +510,7 @@ export function Inspector(): React.ReactElement {
                     <ul className="reuse-list">
                       {reuse.map((estimate) => {
                         const neighbours = neighbourShares(estimate.neighbors, axisLabelOf);
-                        const qualifier = reuseQualifiers(estimate);
+                        const figures = reuseFigures(estimate);
                         return (
                           <li key={estimate.tensorId}>
                             <code>{resolved.tensors[estimate.tensorId].name}</code>
@@ -524,10 +522,9 @@ export function Inspector(): React.ReactElement {
                                   : `${estimate.probes} of ${estimate.totalTiles} tiles probed, one per stratum`
                               }
                             >
-                              {qualifier.count}
-                              {estimate.estimatedTiles} of {estimate.totalTiles} tiles
-                              {estimate.meanSharedFraction !== null &&
-                                ` · ${qualifier.fraction}${Math.round(estimate.meanSharedFraction * 100)}% of the footprint each`}
+                              {formatFigure(figures.tiles, String)} of {estimate.totalTiles} tiles
+                              {figures.sharedFraction &&
+                                ` · ${formatFigure(figures.sharedFraction, (v) => `${Math.round(v * 100)}%`)} of the footprint each`}
                             </span>
                             {!estimate.geometryExact && (
                               <span className="badge approx" title={estimate.reasons.join("; ")}>≈</span>

@@ -29,6 +29,15 @@ export function axisLabel(tensor: Tensor, axis: number): string {
   return String(tensor.resolved?.[axis] ?? symbolic ?? "");
 }
 
+/**
+ * The name an axis is referred to by in controls and readouts: the source's
+ * own name for it, else its position. Unlike `axisLabel`, which reads a shape
+ * and so falls back to the declared dimension, this tells one axis from the
+ * others, and two axes can share a dimension or an extent but not a position.
+ */
+export const axisName = (tensor: Pick<Tensor, "axisNames">, axis: number): string =>
+  tensor.axisNames?.[axis] ?? `ax${axis}`;
+
 export function shapeLabel(tensor: Tensor, mode: AxisMode): string {
   const extents = tensor.resolved ?? [];
   const parts =
