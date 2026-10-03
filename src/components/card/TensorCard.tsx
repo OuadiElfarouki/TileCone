@@ -10,7 +10,7 @@ import { paintScale, elementFromEvent, gridGeometry, Layer, PlanPaint, tileOf } 
 import { drawGrid } from "./draw-grid";
 import { useDark, useStore } from "../../state/store";
 import { axisName, shapeLabel, shapeReadings } from "../../view/tensor/shape-label";
-import { OVERVIEW_SCALE } from "../../view/graph/overview-labels";
+import { OVERVIEW_SCALE, overviewTextScale } from "../../view/graph/overview-labels";
 import { formatBytes } from "../../view/format";
 import { axesWith, hiddenAxisPositioned, remapped, viewAxes } from "../../view/tensor/tensor-view";
 import { cardViewMenu, type CardViewAction, type CardViewChoice } from "../../view/tensor/menus";
@@ -444,7 +444,10 @@ function TensorCardView({
     <div
       className={`tensor-card${isSelected ? " selected" : ""}${viewScale < OVERVIEW_SCALE ? " overview" : ""}`}
       data-tensor={tensor.id}
-      style={{ "--view-scale": viewScale } as React.CSSProperties}
+      style={{
+        "--view-scale": viewScale,
+        "--label-scale": overviewTextScale(viewScale),
+      } as React.CSSProperties}
       onContextMenu={viewSpec.length ? viewMenu.onContextMenu : undefined}
     >
       <OptionsMenu menu={viewMenu} label={`${tensor.name} view`} spec={viewSpec} handlers={viewHandlers} />

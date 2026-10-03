@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { overviewLabels } from "../../../src/view/graph/overview-labels";
+import {
+  LABEL_FLOOR_SCALE,
+  operandLabelsLegible,
+  overviewLabels,
+  overviewTextScale,
+} from "../../../src/view/graph/overview-labels";
 import type { PlacedGraphNode } from "../../../src/view/graph/graph-scene";
 
 const card = (id: string, x: number, y: number, w = 300): PlacedGraphNode =>
@@ -62,5 +67,35 @@ describe("overview operation labels", () => {
     expect(overviewLabels(nodes, 0.2, {
       n: "einsum", L: "L", R: "R", U: "U", D: "D",
     }).ops.has("n")).toBe(false);
+  });
+});
+
+/* Counter-scaling keeps a label readable while zooming out, but only down to a
+   floor: past it the label shrinks with the graph, so it never grows without
+   bound against the nodes it names, and it is dropped once it would be a smudge. */
+describe("bounded label growth", () => {
+  it("counter-scales down to the floor and no further", () => {
+    expect(overviewTextScale(0.5)).toBe(0.5);
+    expect(overviewTextScale(LABEL_FLOOR_SCALE / 2)).toBe(LABEL_FLOOR_SCALE);
+  });
+
+  it("keeps a name's world size below the floor instead of growing it", () => {
+    const nodes = [card("A", 0, 0, 3000)];
+    const atFloor = overviewLabels(nodes, LABEL_FLOOR_SCALE, { A: "Scores" }).tensors.get("A")!;
+    const below = overviewLabels(nodes, LABEL_FLOOR_SCALE * 0.6, { A: "Scores" }).tensors.get("A")!;
+    expect(below).toBeLessThan(atFloor * 1.1);
+  });
+
+  it("places no label once the text would be too small to read", () => {
+    const nodes = [card("A", 0, 0, 3000), { ...card("n", 4000, 0, 70), kind: "op" as const }];
+    const labels = overviewLabels(nodes, LABEL_FLOOR_SCALE * 0.4, { A: "A", n: "matmul" });
+    expect(labels.tensors.size).toBe(0);
+    expect(labels.ops.size).toBe(0);
+  });
+
+  it("draws operand labels only while they are legible", () => {
+    expect(operandLabelsLegible(1)).toBe(true);
+    expect(operandLabelsLegible(0.6)).toBe(true);
+    expect(operandLabelsLegible(0.3)).toBe(false);
   });
 });

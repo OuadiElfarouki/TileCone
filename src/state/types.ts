@@ -200,8 +200,9 @@ export type State = {
    * request and clears the moment the glide lands. This one persists: it is the
    * operation the reader is currently working at, set from either end - click a
    * row and a starter tile appears on its output; touch a tile and its row
-   * lights. A viewport gesture clears it, because panning away is the reader
-   * saying they are looking somewhere else now.
+   * lights. A click on empty canvas, a press elsewhere outside the graph, or
+   * Escape clears it. Panning, zooming and fit keep it: moving the view is not
+   * choosing anything else.
    */
   selectedOp: string | null;
   /** Width in px of each side panel when open, and whether it is collapsed to a

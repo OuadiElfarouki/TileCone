@@ -55,6 +55,18 @@ function cardProps(): OpProps {
   return props!;
 }
 
+/** The canvas container, which owns the pan and the background click. */
+function canvasProps(): OpProps {
+  let props: OpProps | undefined;
+  function Probe() {
+    props = findByClass(GraphView(), "graph-canvas");
+    return null;
+  }
+  renderToStaticMarkup(createElement(Probe));
+  expect(props).toBeDefined();
+  return props!;
+}
+
 const arrow = (key: string, shiftKey = false) => ({
   key, shiftKey, ctrlKey: false, metaKey: false, altKey: false,
   preventDefault: vi.fn(), stopPropagation: vi.fn(),
@@ -279,6 +291,24 @@ describe("selecting operations on the canvas", () => {
     operationProps().onKeyDown!(arrow(key));
     expect(useStore.getState().selectedOp).toBe("elementwise_Y");
     expect(useStore.getState().nodeOffsets).toEqual({});
+  });
+
+  /* Moving the view is not choosing something else: a pan keeps the selected
+     operation, and so does a cancelled press. A click on empty canvas clears it. */
+  it("keeps the operation through a pan and clears it on a background click", () => {
+    useStore.getState().setSelectedOp("elementwise_Y");
+    const canvas = canvasProps();
+    canvas.onPointerDown!(pointer(100));
+    canvas.onPointerUp!(pointer(160));
+    expect(useStore.getState().selectedOp).toBe("elementwise_Y");
+
+    canvas.onPointerDown!(pointer(100));
+    canvas.onPointerCancel!(pointer(100));
+    expect(useStore.getState().selectedOp).toBe("elementwise_Y");
+
+    canvas.onPointerDown!(pointer(100));
+    canvas.onPointerUp!(pointer(101));
+    expect(useStore.getState().selectedOp).toBeNull();
   });
 
   it("leaves the substitute button's press to its own handler", () => {

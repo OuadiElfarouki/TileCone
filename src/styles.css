@@ -426,7 +426,7 @@ textarea.source.error-state { border-color: var(--err); }
 .edge-arrow { stroke-width: 1.7; }
 .edge-operand {
   fill: var(--ink);
-  stroke: color-mix(in srgb, var(--bg) 92%, #000);
+  stroke: color-mix(in srgb, var(--bg) 92%, #000); stroke-width: 3px;
   paint-order: stroke; stroke-linejoin: round;
   font-family: var(--mono); font-weight: 600;
   text-anchor: middle; dominant-baseline: central;
@@ -507,13 +507,14 @@ textarea.source.error-state { border-color: var(--err); }
   color: var(--warn-ink); border-color: var(--warn-ink); box-shadow: 0 0 0 1px var(--warn-ink);
 }
 /* Below the overview scale the label is counter-scaled to hold a readable size,
-   which makes it wider than the node box - the box is sized for the label at
-   scale 1. It is therefore taken out of flow and positioned by the solver that
-   found it free space, and it never takes the pointer, so the expand button
-   underneath stays clickable. */
+   down to the label floor (`--label-scale`, see `overviewTextScale`), which
+   makes it wider than the node box - the box is sized for the label at scale 1.
+   It is therefore taken out of flow and positioned by the solver that found it
+   free space, and it never takes the pointer, so the expand button underneath
+   stays clickable. */
 .op-node.overview > span {
   position: absolute; left: 50%; transform: translateX(-50%);
-  font-size: calc(10px / var(--view-scale)); line-height: calc(12px / var(--view-scale));
+  font-size: calc(10px / var(--label-scale)); line-height: calc(12px / var(--label-scale));
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center;
   pointer-events: none;
 }
@@ -897,10 +898,10 @@ textarea.source.error-state { border-color: var(--err); }
 /* The name can borrow space above its own header only after scene collision
    checks. Keep the header's height fixed so zoom never moves tensor canvases. */
 .overview .tc-shape, .overview .tc-tile, .overview .tc-role { display: none; }
-.overview-name { position: absolute; bottom: 3px; height: calc(12px / var(--view-scale)); }
+.overview-name { position: absolute; bottom: 3px; height: calc(12px / var(--label-scale)); }
 .overview-name .tc-name {
   display: block; width: 100%; overflow: hidden; text-overflow: ellipsis;
-  font-size: calc(10px / var(--view-scale)); line-height: calc(12px / var(--view-scale));
+  font-size: calc(10px / var(--label-scale)); line-height: calc(12px / var(--label-scale));
   text-align: center;
 }
 .overview .tc-approx { position: absolute; right: 0; bottom: 3px; }

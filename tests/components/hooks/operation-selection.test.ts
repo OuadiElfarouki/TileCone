@@ -29,6 +29,23 @@ describe("dismissing the operation selection", () => {
     expect(useStore.getState().selectedOp).toBe("elementwise_Y");
   });
 
+  /* A press on the canvas background may be a pan, and one on its controls a
+     zoom; the canvas decides those at release. A card is a choice of its own. */
+  const onCanvas = (inCard: boolean) => ({
+    closest: (selectors: string) =>
+      selectors === ".graph-canvas" || (inCard && selectors === ".card-slot") ? {} : null,
+  });
+
+  it("leaves presses on the canvas background and its controls to the canvas", () => {
+    dismissOperationOnPointer({ target: onCanvas(false) as unknown as EventTarget });
+    expect(useStore.getState().selectedOp).toBe("elementwise_Y");
+  });
+
+  it("clears on a press on a card", () => {
+    dismissOperationOnPointer({ target: onCanvas(true) as unknown as EventTarget });
+    expect(useStore.getState().selectedOp).toBeNull();
+  });
+
   it("outside presses clear selection", () => {
     const target = { closest: () => null };
     dismissOperationOnPointer({ target: target as unknown as EventTarget });

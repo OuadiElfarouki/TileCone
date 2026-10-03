@@ -7,6 +7,7 @@ import {
   fittedTransform,
   centredOn,
   graphZoomBounds,
+  isBackgroundClick,
   lowZoomBound,
   visibleEntangledTensorIds,
 } from "../../../src/components/graph/GraphView";
@@ -28,6 +29,21 @@ describe("graph viewport pan hit-testing", () => {
 
   it("leaves tensor cards, operation nodes, and controls in charge of their gestures", () => {
     expect(canStartGraphPan(target(true))).toBe(false);
+  });
+});
+
+describe("background click versus pan", () => {
+  const press = { x0: 100, y0: 100 };
+
+  it("reads a release within a few pixels of the press as a click", () => {
+    expect(isBackgroundClick(press, { clientX: 100, clientY: 100 })).toBe(true);
+    expect(isBackgroundClick(press, { clientX: 103, clientY: 102 })).toBe(true);
+  });
+
+  it("reads a longer travel as a pan", () => {
+    expect(isBackgroundClick(press, { clientX: 140, clientY: 100 })).toBe(false);
+    expect(isBackgroundClick(press, { clientX: 100, clientY: 96 })).toBe(true);
+    expect(isBackgroundClick(press, { clientX: 100, clientY: 94 })).toBe(false);
   });
 });
 

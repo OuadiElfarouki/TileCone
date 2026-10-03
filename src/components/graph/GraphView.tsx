@@ -17,7 +17,12 @@ import { opLabel } from "../../core/ops/index";
 import { useStore } from "../../state/store";
 import type { NodeOffset } from "../../view/graph/node-layout";
 import { MIN_SIDE_PX, settledTiles } from "../../view/tensor/tiling";
-import { overviewLabels } from "../../view/graph/overview-labels";
+import {
+  OPERAND_FONT_PX,
+  operandLabelsLegible,
+  overviewLabels,
+  overviewTextScale,
+} from "../../view/graph/overview-labels";
 import { paintScale } from "../../view/tensor/grid";
 import { FIT_GRAPH_EVENT } from "../hooks/useKeyboard";
 import { GridControls } from "../chrome/GridControls";
@@ -153,6 +158,19 @@ const GRAPH_PAN_BLOCKERS =
 export function canStartGraphPan(target: unknown): boolean {
   if (!target || typeof (target as { closest?: unknown }).closest !== "function") return true;
   return !(target as { closest: (selector: string) => unknown }).closest(GRAPH_PAN_BLOCKERS);
+}
+
+/** How far a background press may travel, in screen px, and still be a click
+ * rather than a pan: enough to absorb a hand's tremor on press. */
+const CLICK_SLOP_PX = 4;
+
+/** @internal Pure seam: whether a background press released at `release` was a
+ * click, which deselects, rather than a pan, which does not. */
+export function isBackgroundClick(
+  press: { x0: number; y0: number },
+  release: { clientX: number; clientY: number }
+): boolean {
+  return Math.hypot(release.clientX - press.x0, release.clientY - press.y0) <= CLICK_SLOP_PX;
 }
 
 /** Under the select tool a press anywhere on an operation selects it, except on
@@ -402,7 +420,6 @@ export function GraphView(): React.ReactElement {
 
   const fit = useCallback(() => {
     cancelGlide();
-    if (useStore.getState().selectedOp !== null) useStore.getState().setSelectedOp(null);
     const el = containerRef.current;
     if (!el || el.clientWidth <= 0 || el.clientHeight <= 0) return;
     const current = sceneRef.current;
@@ -514,19 +531,9 @@ export function GraphView(): React.ReactElement {
     }
   }, [focusNode, setFocusNode, glideTo]);
 
-  /* A deliberate viewport gesture means the reader is looking somewhere else,
-     so the operations list stops claiming they are working at a row. Hooked to
-     the gestures themselves rather than to `movedRef`, which the focus glide
-     also sets - and that glide is the *consequence* of clicking a row, so it
-     must not clear the row it was asked for. */
-  const leaveOperation = () => {
-    if (useStore.getState().selectedOp !== null) setSelectedOp(null);
-  };
-
   const onWheel = (e: React.WheelEvent) => {
     e.preventDefault();
     cancelGlide();
-    leaveOperation();
     const el = containerRef.current!;
     const rect = el.getBoundingClientRect();
     const mx = e.clientX - rect.left;
@@ -541,7 +548,6 @@ export function GraphView(): React.ReactElement {
 
   const zoomBy = (factor: number) => {
     cancelGlide();
-    leaveOperation();
     const el = containerRef.current;
     if (!el) return;
     movedRef.current = true;
@@ -560,7 +566,6 @@ export function GraphView(): React.ReactElement {
     e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     panRef.current = { x0: e.clientX, y0: e.clientY, tx: tf.x, ty: tf.y };
-    leaveOperation();
     setPanning(true);
     setDragging(true); // so the drag guard suppresses text selection
   };
@@ -585,11 +590,18 @@ export function GraphView(): React.ReactElement {
     panPointRef.current = { x: e.clientX, y: e.clientY };
     requestPan();
   };
-  const endPan = () => {
-    if (!panRef.current) return;
+  /* `release` is the pointer-up that ended the gesture, absent when it was
+     cancelled. A release that travelled no further than a click was one, and a
+     click on empty canvas lets the selected operation go; a pan or a zoom keeps
+     it, since moving the view is not choosing anything else. */
+  const endPan = (release?: { clientX: number; clientY: number }) => {
+    const p = panRef.current;
+    if (!p) return;
     // Apply the last coalesced position before the gesture's state is cleared,
     // or a pending frame would find nothing to apply and drop the final move.
     applyPan();
+    if (release && isBackgroundClick(p, release) && useStore.getState().selectedOp !== null)
+      setSelectedOp(null);
     panRef.current = null;
     panPointRef.current = null;
     setPanning(false);
@@ -786,6 +798,7 @@ export function GraphView(): React.ReactElement {
 
   if (!resolved || !scene) return <div className="canvas-empty">no graph loaded</div>;
 
+  const operandsShown = operandLabelsLegible(tf.k);
   const renderEdges = (layer: EdgePresentation["layer"]) => (
     <svg className={`edges ${layer}`} width={scene.width} height={scene.height} aria-hidden>
       {scene.edges.map((edge) => {
@@ -798,15 +811,14 @@ export function GraphView(): React.ReactElement {
             {/* Flow direction. Structural, so it is drawn whether or not a
                 query is live. */}
             {edge.mark && <path d={edge.mark} className={`${presentation.className} edge-arrow`} />}
-            {edge.operandLabel && (
+            {/* Sized with the connector it labels, so it never outgrows the
+                nodes around it, and left out once it is too small to read. */}
+            {edge.operandLabel && operandsShown && (
               <text
                 x={edge.operandLabel.x}
                 y={edge.operandLabel.y}
                 className={`edge-operand${hot ? " hot" : hasResult ? " dim" : ""}`}
-                style={{
-                  fontSize: 9 / Math.min(1, tf.k),
-                  strokeWidth: 3 / Math.min(1, tf.k),
-                }}
+                style={{ fontSize: OPERAND_FONT_PX }}
               >
                 {edge.operandLabel.text}
               </text>
@@ -832,8 +844,8 @@ export function GraphView(): React.ReactElement {
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={endPan}
-      onPointerCancel={endPan}
-      onLostPointerCapture={endPan}
+      onPointerCancel={() => endPan()}
+      onLostPointerCapture={() => endPan()}
     >
       <div
         className="graph-inner"
@@ -855,6 +867,7 @@ export function GraphView(): React.ReactElement {
                 style={{
                   left: p.x, top: p.y, width: p.w, height: p.h,
                   "--view-scale": tf.k,
+                  "--label-scale": overviewTextScale(tf.k),
                 } as React.CSSProperties}
                 /* The registry name stays in the tooltip beside the attributes:
                    the card says what was written, the title says what runs. The
