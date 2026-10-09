@@ -619,7 +619,7 @@ textarea.source.error-state { border-color: var(--err); }
 .card-slot.blocked .tc-canvas-wrap canvas { outline: calc(2px / var(--view-scale, 1)) solid var(--warn-ink); }
 .tc-tooltip {
   position: absolute; right: 0; top: calc(100% + 4px); font-size: var(--t-micro); color: var(--muted);
-  transform: scale(calc(1 / var(--view-scale, 1))); transform-origin: top right;
+  transform: scale(calc(1 / var(--label-scale, 1))); transform-origin: top right;
   background: var(--card); padding: 0 3px; border-radius: var(--r); pointer-events: none;
 }
 
@@ -905,7 +905,9 @@ textarea.source.error-state { border-color: var(--err); }
   text-align: center;
 }
 .overview .tc-approx { position: absolute; right: 0; bottom: 3px; }
-.overview .tc-info { transform: translateX(-50%) scale(calc(1 / var(--view-scale))); transform-origin: top center; }
+/* Popovers hold their screen size like the overview labels do, down to the same
+   floor, so a hover readout never outgrows the card it describes. */
+.overview .tc-info { transform: translateX(-50%) scale(calc(1 / var(--label-scale))); transform-origin: top center; }
 
 .ent-list, .reuse-list { list-style: none; margin: 4px 0 0; padding: 0; }
 .ent-list li, .reuse-list li {

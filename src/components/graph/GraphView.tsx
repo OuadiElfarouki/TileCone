@@ -19,6 +19,7 @@ import type { NodeOffset } from "../../view/graph/node-layout";
 import { MIN_SIDE_PX, settledTiles } from "../../view/tensor/tiling";
 import {
   OPERAND_FONT_PX,
+  OVERVIEW_SCALE,
   operandLabelsLegible,
   overviewLabels,
   overviewTextScale,
@@ -336,6 +337,7 @@ export function GraphView(): React.ReactElement {
      bucketing the canvas already trusts for its own redraws, and a 2% change in
      scale cannot flip a collision that was close enough to matter. */
   const labelScale = paintScale(tf.k);
+  const zoomedOut = labelScale < OVERVIEW_SCALE;
   const overview = useMemo(() => overviewLabels(
     scene?.nodes ?? [], labelScale,
     {
@@ -913,9 +915,16 @@ export function GraphView(): React.ReactElement {
                 }}
                 {...dragFollow}
               >
-                <span style={label ? { width: label.w, top: label.dy } : undefined}>
-                  {opLabel(node)}
-                </span>
+                {/* Below the overview scale a label the solver could not place
+                    is left out rather than drawn at its 100% size inside the
+                    box: beside the enlarged labels it read as a different,
+                    tiny kind of text. The name stays in the tooltip and the
+                    aria label. */}
+                {(label || !zoomedOut) && (
+                  <span style={label ? { width: label.w, top: label.dy } : undefined}>
+                    {opLabel(node)}
+                  </span>
+                )}
                 {isExpandable(node.op) && (
                   <button
                     className="expand-btn"

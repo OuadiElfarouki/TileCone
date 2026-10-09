@@ -42,7 +42,7 @@ const target = (owner: "node" | "menu" | "field") => ({
 
 const key = (name: string, owner: "node" | "menu" | "field" = "node", primary = false) => ({
   key: name, target: target(owner), ctrlKey: primary, metaKey: false,
-  altKey: false, shiftKey: false, repeat: false,
+  altKey: false, shiftKey: false, repeat: false, defaultPrevented: false,
   preventDefault: vi.fn(),
 }) as unknown as KeyboardEvent;
 
@@ -83,5 +83,37 @@ describe("global shortcuts with movable node focus", () => {
     expect(undo).not.toHaveBeenCalled();
     expect(dispatchEvent).not.toHaveBeenCalled();
     expect(showShortcuts).not.toHaveBeenCalled();
+  });
+});
+
+/* Escape backs out of the innermost mode, and under the move tool the tool is
+   that mode - unless a gesture is in flight, which cancels itself and is the
+   whole of the press. */
+describe("Escape and the move tool", () => {
+  it("returns to select, including from a focused node", () => {
+    const event = key("Escape");
+    onKey(event);
+    expect(useStore.getState().canvasTool).toBe("select");
+    expect(event.preventDefault).toHaveBeenCalled();
+  });
+
+  it("only cancels a drag in flight, keeping the tool", () => {
+    useStore.getState().setDragging(true);
+    onKey(key("Escape"));
+    expect(useStore.getState().canvasTool).toBe("move");
+    useStore.getState().setDragging(false);
+
+    // A node drag cancels itself on the same press and says so by preventing it.
+    const handled = { ...key("Escape"), defaultPrevented: true } as KeyboardEvent;
+    onKey(handled);
+    expect(useStore.getState().canvasTool).toBe("move");
+
+    onKey(key("Escape"));
+    expect(useStore.getState().canvasTool).toBe("select");
+  });
+
+  it("leaves an open menu to cancel itself", () => {
+    onKey(key("Escape", "menu"));
+    expect(useStore.getState().canvasTool).toBe("move");
   });
 });
