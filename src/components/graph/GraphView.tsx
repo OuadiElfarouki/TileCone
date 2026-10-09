@@ -10,6 +10,7 @@ import {
   PlacedGraphNode,
 } from "../../view/graph/graph-scene";
 import { TensorCard } from "../card/TensorCard";
+import { carriedOffsets } from "../../view/graph/carry-placement";
 import { cardSize } from "../../view/tensor/card-size";
 import { remapped } from "../../view/tensor/tensor-view";
 import { shapeLabel, symbolicExtentLabel } from "../../view/tensor/shape-label";
@@ -369,6 +370,32 @@ export function GraphView(): React.ReactElement {
 
   const sceneRef = useRef(scene);
   sceneRef.current = scene;
+
+  /* A run that changed only sizes keeps every node where it was on screen. The
+     store flags it; the canvas, which owns placement, measures where each node
+     was last drawn against the new generated layout and installs the offsets
+     that hold it there, before the browser paints the generated one. The view
+     is kept too, so the fit that follows a new graph is skipped once. */
+  const placementCarry = useStore((s) => s.placementCarry);
+  const carryPlacement = useStore((s) => s.carryPlacement);
+  const drawnRef = useRef<Map<string, Rect>>(new Map());
+  const keepViewRef = useRef(false);
+  useLayoutEffect(() => {
+    if (!placementCarry || !baseLayout) return;
+    keepViewRef.current = true;
+    // A new layout recreates the ResizeObserver, whose initial notification
+    // would otherwise re-fit an untouched viewport after the skipped fit.
+    movedRef.current = true;
+    carryPlacement(carriedOffsets(drawnRef.current, baseLayout.nodes));
+  }, [placementCarry, baseLayout, carryPlacement]);
+  useLayoutEffect(() => {
+    // Not while a carry is pending: this commit's scene is the generated layout
+    // the carry is about to replace, and the previous one is what it reads.
+    if (!scene || placementCarry) return;
+    drawnRef.current = new Map(
+      scene.nodes.map((node) => [nodeKey(node.kind, node.id), { x: node.x, y: node.y, w: node.w, h: node.h }])
+    );
+  }, [scene, placementCarry]);
   const tfRef = useRef(tf);
   tfRef.current = tf;
 
@@ -435,6 +462,10 @@ export function GraphView(): React.ReactElement {
   }, [zoomBounds]);
 
   useEffect(() => {
+    if (keepViewRef.current) {
+      keepViewRef.current = false;
+      return;
+    }
     fit();
   }, [resolved, fit]);
 

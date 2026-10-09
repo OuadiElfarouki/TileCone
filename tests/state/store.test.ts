@@ -1660,3 +1660,51 @@ describe("the operations list tracks where the reader is working", () => {
     expect(S().selectedOp).toBeNull();
   });
 });
+
+/* A run that changes only sizes keeps the workspace the reader arranged: card
+   views here, and node placement, which the canvas carries once it has the new
+   layout. The selection is reset either way - its coordinates were the old sizes'. */
+describe("size-only runs", () => {
+  const program = (b: number, extra = "") =>
+    `B = ${b}\nN = 8\nX = Tensor(B, N, N, dtype=fp32)\nY = relu(X)\n${extra}`;
+
+  it("carries card views and flags the placement for the canvas", () => {
+    S().applyDSL(program(4));
+    S().setViewCfg("X", { projection: false, sliders: [3, 0, 0] });
+    S().applyDSL(program(2));
+    expect(S().placementCarry).toBe(true);
+    // The slice index is clamped into the smaller batch axis rather than lost.
+    expect(S().viewCfgs.X.projection).toBe(false);
+    expect(S().viewCfgs.X.sliders).toEqual([1, 0, 0]);
+    expect(S().selection).toBeNull();
+  });
+
+  it("starts fresh when the graph itself changed", () => {
+    S().applyDSL(program(4));
+    S().setViewCfg("X", { projection: false, sliders: [3, 0, 0] });
+    S().applyDSL(program(4, "Z = relu(Y)\n"));
+    expect(S().placementCarry).toBe(false);
+    expect(S().viewCfgs.X.projection).toBe(true);
+  });
+
+  it("clears the flag once the canvas has placed the nodes", () => {
+    S().applyDSL(program(4));
+    S().applyDSL(program(2));
+    S().carryPlacement({ "t:X": { dx: 5, dy: 0 } });
+    expect(S().placementCarry).toBe(false);
+    expect(S().nodeOffsets["t:X"]).toEqual({ dx: 5, dy: 0 });
+  });
+
+  it.each([
+    "X = Tensor(4, 8, dtype=fp32)\nY = softmax(X, axis=0)\n",
+    "X = Tensor(4, 8, dtype=fp16)\nY = softmax(X, axis=-1)\n",
+    "X = Tensor(2, 4, 8, dtype=fp32)\nY = softmax(X, axis=-1)\n",
+  ])("starts fresh for semantic changes despite identical wiring: %s", (next) => {
+    S().applyDSL("X = Tensor(4, 8, dtype=fp32)\nY = softmax(X, axis=-1)\n");
+    S().setViewCfg("X", { projection: false, sliders: [0, 0] });
+    S().applyDSL(next);
+    expect(S().loadError).toBeNull();
+    expect(S().placementCarry).toBe(false);
+    expect(S().viewCfgs.X.projection).toBe(true);
+  });
+});

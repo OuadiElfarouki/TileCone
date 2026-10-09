@@ -370,6 +370,37 @@ textarea.source {
   background: var(--bg); color: var(--ink); pointer-events: none;
 }
 .syntax-keyword { color: var(--syntax-keyword); font-weight: 700; }
+/* A size parameter's line points at its value box. The marker is an empty
+   inline box and the note is absolutely placed, so it takes no width: the layer
+   keeps the textarea's exact line breaks and the caret stays aligned. */
+.syntax-hint { position: relative; }
+.syntax-hint::after {
+  content: "\2195  adjustable below"; position: absolute; left: 2ch; top: 0;
+  white-space: pre; color: var(--muted); opacity: .7; font-style: italic;
+}
+/* One row per parameter: name, value box, stepper, the step it takes. A value
+   that differs from the built graph takes the accent, like the Run button it
+   has just enabled. */
+.param-controls { display: flex; flex-direction: column; gap: 3px; }
+.param-row { display: flex; align-items: center; gap: 6px; }
+.param-name { min-width: 5ch; font: var(--t-small)/1.4 var(--mono); }
+.param-field {
+  width: 9ch; padding: 1px 6px; border-radius: var(--r); text-align: right;
+  background: var(--bg); color: var(--ink);
+  font: var(--t-small)/1.5 var(--mono); font-variant-numeric: tabular-nums;
+}
+.param-field[aria-invalid="true"] { border-color: var(--err); outline-color: var(--err); }
+.param-row.pending .param-field { color: var(--accent); border-color: var(--accent); }
+.param-stepper { display: inline-flex; flex-direction: column; }
+.param-stepper button {
+  width: 18px; height: 11px; padding: 0; border-radius: 0;
+  font-size: 8px; line-height: 1; color: var(--muted); background: var(--panel);
+}
+.param-stepper button:first-child { border-radius: var(--r) var(--r) 0 0; border-bottom: 0; }
+.param-stepper button:last-child { border-radius: 0 0 var(--r) var(--r); }
+.param-stepper button:hover:not(:disabled) { color: var(--ink); }
+.param-stepper button:disabled { opacity: .4; cursor: default; }
+.param-step { min-width: 4ch; color: var(--muted); font: var(--t-micro)/1 var(--mono); }
 .syntax-comment { color: var(--syntax-comment); }
 /* Border and padding are not repeated here: they are part of the shared
    geometry above, and a second copy is a second thing to keep in step. */

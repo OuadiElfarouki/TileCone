@@ -9,7 +9,9 @@ import { opLabel } from "../../core/ops/index";
 import { useStore } from "../../state/store";
 import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
 import { seedTile } from "../../view/tensor/tile-spec";
-import { overlayTokens } from "../../view/dsl-highlight";
+import { overlayTokens, withHints } from "../../view/dsl-highlight";
+import { sourceParams } from "../../view/params";
+import { ParamControls } from "./ParamControls";
 import { involvedTensorIds } from "../../view/workspace";
 
 /**
@@ -64,7 +66,17 @@ function SourceEditor(): React.ReactElement {
   const [ranAt, setRanAt] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const highlightRef = useRef<HTMLPreElement>(null);
-  const highlighted = useMemo(() => overlayTokens(text), [text]);
+  // Each size parameter of the built program has its line marked for the note
+  // that points at its value box. The marker is empty, so the layer still
+  // matches the textarea; the lines are found in the draft, the names in the build.
+  const builtParams = useStore((s) => s.graph?.params);
+  const highlighted = useMemo(
+    () => withHints(
+      overlayTokens(text),
+      sourceParams(text).filter((param) => builtParams && param.name in builtParams).map((param) => param.lineEnd)
+    ),
+    [text, builtParams]
+  );
 
   // Two ways to owe a run: the text has moved away from what was built, or the
   // app has not installed its initial graph yet.
@@ -383,6 +395,7 @@ function ExamplePicker(): React.ReactElement {
 
 export function SidePanel(): React.ReactElement {
   const sourcePending = useStore((s) => s.draftText !== s.dslText);
+  const builtText = useStore((s) => s.dslText);
   return (
     <aside className="side-panel" aria-label="Graph source and operations">
       <div className="side-panel-scroll">
@@ -391,6 +404,9 @@ export function SidePanel(): React.ReactElement {
         </header>
         <div className="source-workspace">
           <SourceEditor />
+          {/* Keyed by the built text: the boxes belong to one build, and the
+              next run replaces them with its own values. */}
+          <ParamControls key={builtText} />
         </div>
 
         <ExamplePicker />

@@ -12,6 +12,7 @@ export const layoutActions = (set: SetState, get: GetState): Pick<
   | "setNodeOffset"
   | "commitNodeMove"
   | "resetNodeLayout"
+  | "carryPlacement"
 > => ({
   setPanelWidth: (side, w) => {
     const { panelW, panelCollapsed } = get();
@@ -65,6 +66,8 @@ export const layoutActions = (set: SetState, get: GetState): Pick<
       workspaceHistory: recordWorkspace(get(), { nodeOffsets: previousOffsets }),
     });
   },
+
+  carryPlacement: (offsets) => set({ nodeOffsets: idRecord(offsets), placementCarry: false }),
 
   resetNodeLayout: () => {
     const { nodeOffsets } = get();

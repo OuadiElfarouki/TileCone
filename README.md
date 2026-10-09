@@ -149,7 +149,10 @@ P  = softmax(Sc, axis=-1)
 ```
 
 Ctrl/Cmd+Enter runs the source. Every independent error is reported in one pass, in source order,
-each underlining the part it is about. The source panel carries built-in examples, among them
+each underlining the part it is about. Once built, each size parameter (`M = 256`) gets a value box under the editor
+that rewrites the number in the source, with a stepper that doubles a power of two, moves other even
+values by 32 and odd ones by 1; a run that only changes sizes keeps
+the cards where you placed them, their views, and the viewport. The source panel carries built-in examples, among them
 multi-head attention, KV-cache and grouped-query decode steps, a SwiGLU feed-forward block and MoE
 expert dispatch. The share button encodes the source, the tiles and the view settings in a link.
 

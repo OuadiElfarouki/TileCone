@@ -213,6 +213,12 @@ export type State = {
    * scene node key so operation nodes move on the same terms as cards. */
   nodeOffsets: NodeOffsets;
   /**
+   * Set when a run changed only sizes: the canvas should keep every node where
+   * it was on screen, measured against the new layout, rather than starting
+   * from the generated one. The canvas consumes it with `carryPlacement`.
+   */
+  placementCarry: boolean;
+  /**
    * What a press on a card or an operation does. `select` keeps the graph's
    * placement fixed while tiles are drawn and operations picked; `move` makes
    * every node furniture, dragged from anywhere on it, for laying a graph out
@@ -339,6 +345,8 @@ export type State = {
   commitNodeMove: (key: string, before: NodeOffset) => void;
   /** Restore Dagre's generated placement as one undoable workspace action. */
   resetNodeLayout: () => void;
+  /** Install offsets that keep a size-only run's nodes in place; no undo step. */
+  carryPlacement: (offsets: NodeOffsets) => void;
   /** Preview the cone of the box a click would commit, not of one element:
    * a projection gesture selects whole hidden axes, so a cell-sized preview
    * would understate the cone the same gesture goes on to produce. */

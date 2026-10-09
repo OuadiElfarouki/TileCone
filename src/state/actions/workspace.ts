@@ -70,7 +70,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
     }
     try {
       const program = result.program;
-      set(installedDSLState(text, program.graph, program.resolved));
+      set(installedDSLState(text, program.graph, program.resolved, undefined, get()));
     } catch (e) {
       // Compilation succeeded; anything failing here is a workspace-build
       // problem with no source span to attach it to.
@@ -101,7 +101,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
         graphId: result.graphId,
         layout: result.artifact.layout,
         graphPx: result.artifact.graphPx,
-      }));
+      }, get()));
       return true;
     } catch (error) {
       if (epoch !== compile.epoch) return false;

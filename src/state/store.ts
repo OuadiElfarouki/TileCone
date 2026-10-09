@@ -118,6 +118,7 @@ export const useStore = create<State>((commit, get) => {
   panelW: { left: 330, right: 300 },
   panelCollapsed: { left: false, right: false },
   nodeOffsets: idRecord<NodeOffset>(),
+  placementCarry: false,
   canvasTool: initialCanvasTool(),
   ...workspaceActions(set, get),
   ...selectionActions(set, get),

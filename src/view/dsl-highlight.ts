@@ -1,7 +1,8 @@
 import { DSL_DTYPES } from "../parse/dsl";
 import { IDENT_CONTINUE, IDENT_START, scanStringLiteral } from "../parse/lexical";
 
-export type DSLHighlightKind = "plain" | "comment" | "keyword";
+/** `hint` is an empty marker the editor decorates, never text of the program. */
+export type DSLHighlightKind = "plain" | "comment" | "keyword" | "hint";
 export type DSLHighlightToken = { kind: DSLHighlightKind; text: string };
 
 const RESERVED = new Set<string>([
@@ -82,4 +83,29 @@ export function overlayTokens(source: string): DSLHighlightToken[] {
   const last = tokens[tokens.length - 1];
   if (last?.kind === "plain") return [...tokens.slice(0, -1), { ...last, text: last.text + "\n" }];
   return [...tokens, { kind: "plain", text: "\n" }];
+}
+
+/**
+ * The tokens with an empty `hint` marker inserted at each offset, splitting
+ * whatever token the offset falls inside. The markers carry no text, so the
+ * highlight layer still holds exactly the textarea's characters and stays
+ * aligned with it; the editor draws the annotation from the marker alone.
+ */
+export function withHints(tokens: DSLHighlightToken[], offsets: number[]): DSLHighlightToken[] {
+  const pending = [...offsets].sort((a, b) => a - b);
+  const out: DSLHighlightToken[] = [];
+  let at = 0;
+  for (const token of tokens) {
+    let rest = token.text;
+    while (pending.length && pending[0] <= at + rest.length) {
+      const cut = pending.shift()! - at;
+      if (cut > 0) out.push({ kind: token.kind, text: rest.slice(0, cut) });
+      out.push({ kind: "hint", text: "" });
+      rest = rest.slice(cut);
+      at += cut;
+    }
+    if (rest) out.push({ kind: token.kind, text: rest });
+    at += rest.length;
+  }
+  return [...out, ...pending.map((): DSLHighlightToken => ({ kind: "hint", text: "" }))];
 }

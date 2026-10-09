@@ -26,7 +26,7 @@ export function loadResolvedGraph(
   | "perBox" | "focusedBox" | "pinnedBox" | "viewCfgs" | "preview" | "graphPx"
   | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "nodeOffsets"
   | "planTiles" | "planTask" | "plan" | "planSupply" | "keptPlans"
-  | "executionPlayback" | "executionScope"
+  | "executionPlayback" | "executionScope" | "placementCarry"
 > {
   const viewCfgs = Object.create(null) as Record<string, ViewCfg>;
   for (const t of Object.values(resolved.tensors)) viewCfgs[t.id] = defaultViewCfg(t.resolved!);
@@ -60,7 +60,62 @@ export function loadResolvedGraph(
     // does, and a kept plan's totals were measured on this graph alone.
     ...NO_PLAN,
     keptPlans: [],
+    placementCarry: false,
   };
+}
+
+/**
+ * Whether two graphs have the same tensors and the same operations wired the
+ * same way, so that they differ at most in sizes - the case a parameter edit
+ * produces. Node and tensor ids are what positions and views are keyed by.
+ */
+export function sameStructure(a: Graph, b: Graph): boolean {
+  const tensorsA = Object.keys(a.tensors);
+  if (tensorsA.length !== Object.keys(b.tensors).length) return false;
+  if (!tensorsA.every((id) => {
+    const tensor = a.tensors[id];
+    const other = b.tensors[id];
+    return !!other && tensor.shape.length === other.shape.length &&
+      tensor.dtype === other.dtype && tensor.role === other.role &&
+      sameData(tensor.axisNames, other.axisNames);
+  })) return false;
+  if (a.nodes.length !== b.nodes.length) return false;
+  const same = (x: string[], y: string[]) => x.length === y.length && x.every((v, i) => v === y[i]);
+  const byId = new Map(b.nodes.map((node) => [node.id, node]));
+  return a.nodes.every((node) => {
+    const other = byId.get(node.id);
+    return !!other && other.op === node.op && sameData(node.attrs, other.attrs) &&
+      same(node.inputs, other.inputs) && same(node.outputs, other.outputs);
+  });
+}
+
+/** Attribute order in the source does not change an operation's meaning. */
+function sameData(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a))
+    return Array.isArray(b) && a.length === b.length && a.every((value, i) => sameData(value, b[i]));
+  if (!a || !b || typeof a !== "object" || typeof b !== "object" || Array.isArray(b)) return false;
+  const left = a as Record<string, unknown>;
+  const right = b as Record<string, unknown>;
+  const keys = Object.keys(left);
+  return keys.length === Object.keys(right).length &&
+    keys.every((key) => Object.prototype.hasOwnProperty.call(right, key) && sameData(left[key], right[key]));
+}
+
+/**
+ * A card's view carried onto its tensor's new shape: slider positions and a
+ * tile clamped into the new extents, the chosen axes kept. A view that still
+ * does not fit falls back to the default rather than failing the install.
+ */
+export function carriedViewCfg(shape: number[], previous: ViewCfg | undefined): ViewCfg {
+  if (!previous || previous.sliders.length !== shape.length) return defaultViewCfg(shape);
+  const cfg: ViewCfg = {
+    projection: previous.projection,
+    sliders: previous.sliders.map((v, axis) => Math.min(v, Math.max(1, shape[axis]) - 1)),
+    ...(previous.tile ? { tile: previous.tile.map((v, axis) => Math.min(v, Math.max(1, shape[axis]))) } : {}),
+    ...(previous.axes ? { axes: [previous.axes[0], previous.axes[1]] as [number, number] } : {}),
+  };
+  return viewCfgFits(shape, cfg) ? cfg : defaultViewCfg(shape);
 }
 
 /** Install one successful DSL compilation. Shared by the synchronous fallback
@@ -69,9 +124,20 @@ export function installedDSLState(
   text: string,
   graph: Graph,
   resolved: ResolvedGraph,
-  worker?: { graphId: number; layout: BaseGraphLayout; graphPx: number }
+  worker?: { graphId: number; layout: BaseGraphLayout; graphPx: number },
+  previous?: Pick<State, "graph" | "viewCfgs" | "dslText">
 ): Partial<State> {
   const base = loadResolvedGraph(graph, resolved, worker);
+  /* A run that changed only sizes keeps the workspace the reader arranged:
+     each card's view here, and the placement of every node, which the canvas
+     carries over once it has the new layout to measure against. The selection
+     and the plan are still reset - their coordinates belong to the old sizes.
+     Building the very text already built is a reload, and starts fresh. */
+  if (previous?.graph && previous.dslText !== text && sameStructure(previous.graph, graph)) {
+    for (const t of Object.values(resolved.tensors))
+      base.viewCfgs[t.id] = carriedViewCfg(t.resolved!, previous.viewCfgs[t.id]);
+    base.placementCarry = true;
+  }
   const exampleIndex = EXAMPLES.findIndex((example) => example.dsl === text);
   const example = exampleIndex >= 0 ? EXAMPLES[exampleIndex] : null;
   const state: Partial<State> = {
