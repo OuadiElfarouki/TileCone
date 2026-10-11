@@ -13,7 +13,7 @@
  * tiles are listed, not an execution order.
  */
 
-import type { Box } from "../region";
+import { count, type Box, type Region } from "../region";
 
 export type TileFamily = {
   readonly tensorId: string;
@@ -126,6 +126,12 @@ export function tiles(f: TileFamily): Generator<number[]> {
  * cost is the number of tiles met rather than the size of the family.
  */
 export function tilesMeeting(f: TileFamily, box: Box): Generator<number[]> {
+  const range = tileRange(f, box);
+  return rangeCoordinates(range);
+}
+
+/** The tile-coordinate box met by an element-space box, without enumeration. */
+export function tileRange(f: TileFamily, box: Box): Box {
   if (box.length !== f.shape.length)
     throw new Error(`"${f.tensorId}" has rank ${f.shape.length}, but the box has rank ${box.length}`);
   const lo: number[] = [];
@@ -136,7 +142,41 @@ export function tilesMeeting(f: TileFamily, box: Box): Generator<number[]> {
     lo.push(Math.floor(a / f.tile[axis]));
     hi.push(b > a ? Math.ceil(b / f.tile[axis]) : lo[axis]);
   });
-  return range(lo, hi);
+  return lo.map((a, axis) => ({ lo: a, hi: hi[axis] }));
+}
+
+const rangeCoordinates = (box: Box): Generator<number[]> =>
+  range(box.map((i) => i.lo), box.map((i) => i.hi));
+
+/** A page of a union of coordinate boxes, unique and in row-major order.
+ * Whole slabs are skipped by cardinality, including when the offset is near
+ * the end of a huge range. No list of preceding coordinates is allocated. */
+export function* coordinatePage(region: Region, offset: number, limit: number): Generator<number[]> {
+  if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 0)
+    throw new PlanError("PLAN_SIZE", "coordinate pages require non-negative safe integers");
+  function* visit(boxes: readonly Box[], skip: number, take: number, prefix: number[]): Generator<number[]> {
+    if (!boxes.length || !take) return;
+    if (!boxes[0].length) { if (!skip) yield prefix; return; }
+    const ends = [...new Set(boxes.flatMap((b) => [b[0].lo, b[0].hi]))].sort((a, b) => a - b);
+    for (let i = 0; i + 1 < ends.length && take; i++) {
+      const lo = ends[i], hi = ends[i + 1];
+      const suffix = boxes.filter((b) => b[0].lo <= lo && b[0].hi >= hi).map((b) => b.slice(1));
+      const perCoordinate = count({ boxes: suffix, exact: true, reasons: [] });
+      if (!perCoordinate) continue;
+      const slab = (hi - lo) * perCoordinate;
+      if (skip >= slab) { skip -= slab; continue; }
+      const start = lo + Math.floor(skip / perCoordinate);
+      skip %= perCoordinate;
+      for (let axis = start; axis < hi && take; axis++) {
+        for (const coord of visit(suffix, skip, take, [...prefix, axis])) {
+          yield coord;
+          take--;
+        }
+        skip = 0;
+      }
+    }
+  }
+  yield* visit(region.boxes, offset, limit, []);
 }
 
 /** Every coordinate with `lo <= c < hi` on each axis, row-major; one empty coordinate at rank 0. */

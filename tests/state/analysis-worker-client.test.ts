@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hydrateResolvedGraph } from "../../src/core/graph";
 import { box } from "../../src/core/region";
-import { compileArtifact, layoutArtifact, reuseArtifact } from "../../src/worker/analysis-jobs";
+import { compileArtifact, layoutArtifact, planArtifact, reuseArtifact } from "../../src/worker/analysis-jobs";
 import type { AnalysisRequest, AnalysisResponse } from "../../src/worker/analysis-protocol";
 
 const CHAIN = `A = Tensor(256, 256, dtype=fp16)
@@ -174,4 +174,19 @@ describe("analysis worker client", () => {
       estimates: expect.arrayContaining([expect.objectContaining({ tensorId: "A" })]),
     });
   });
+});
+
+
+it("resends graph data when returning to a graph evicted by a completed query", async () => {
+  const client = await import("../../src/state/analysis-worker-client");
+  const compiled = compileArtifact(CHAIN);
+  if (!compiled.ok) throw new Error(compiled.diagnostics[0].message);
+  for (const graphId of [41, 42, 41]) {
+    const query = client.planInWorker({ graphId, graph: compiled.resolved, tiles: {} });
+    const worker = FakeWorker.instances[0];
+    const request = worker.messages[worker.messages.length - 1];
+    expect(request).toMatchObject({ graphId, graph: compiled.artifact.resolved });
+    worker.respond({ id: request.id, kind: "plan", result: planArtifact(compiled.resolved, {}) });
+    await query;
+  }
 });

@@ -1,3 +1,4 @@
+import { producerPage } from "../../../src/core/plan/interfaces";
 import { beforeEach, describe, expect, it } from "vitest";
 import { planReport } from "../../../src/core/plan/interfaces";
 import { tileFamily } from "../../../src/core/plan/tile-family";
@@ -46,7 +47,7 @@ describe("planning from the canvas", () => {
       ["W", "input"],
     ]);
     expect(S().planSupply!.computes).toEqual([]);
-    expect(S().planSupply!.producers.length).toBeGreaterThan(0);
+    expect(S().planSupply!.producerGroups.length).toBeGreaterThan(0);
   });
 
   it("fuses an operand whose tiling is cleared into the tasks that read it", () => {
@@ -59,7 +60,7 @@ describe("planning from the canvas", () => {
       ["B", "input"],
       ["W", "input"],
     ]);
-    expect(supply.producers).toEqual([]);
+    expect(supply.producerGroups).toEqual([]);
     expect(supply.computes.map((c) => [c.tensorId, c.region.boxes])).toEqual([
       ["C", [box([8, 12], [0, 16])]],
     ]);
@@ -69,7 +70,7 @@ describe("planning from the canvas", () => {
     // Tiling C again is what writes it back to memory.
     S().tilePlanTensor("C");
     expect(S().planSupply!.computes).toEqual([]);
-    expect(S().planSupply!.producers.length).toBeGreaterThan(0);
+    expect(S().planSupply!.producerGroups.length).toBeGreaterThan(0);
   });
 
   it("sets the tile a drag draws, and inspects the task it started in", () => {
@@ -145,8 +146,8 @@ describe("planning from the canvas", () => {
     S().setPlanTile("C", [4, 4]);
     const supply = S().planSupply!;
     expect(supply.computes).toEqual([]);
-    expect(supply.producers.map((p) => p.task.coord.join(","))).toEqual(["1,0", "1,1", "1,2", "1,3"]);
-    expect(supply.producers.every((p) => p.definite)).toBe(true);
+    expect(producerPage(S().plan!, supply, "C", 0, 100).map((p) => p.task.coord.join(","))).toEqual(["1,0", "1,1", "1,2", "1,3"]);
+    expect(producerPage(S().plan!, supply, "C", 0, 100).every((p) => p.definite)).toBe(true);
   });
 
   it("keeps the task on the same elements when its tensor is retiled", () => {
@@ -543,4 +544,15 @@ R = relu(Q)
     // Hidden axes get one element each: one task per batch and head index.
     expect(defaultPlanTile(S().resolved!, "R", S().tileScale, S().graphPx).slice(0, 2)).toEqual([1, 1]);
   });
+});
+
+
+it("draws large producer sets as exact tile-aligned ranges", () => {
+  S().applyDSL("X = Tensor(100000000)\nP = relu(X)\nY = sum(P, axis=0)\n");
+  S().setPlanTile("P", [1]);
+  S().setPlanTileAt("Y", [], []);
+  const { paint } = buildPlanPaint({ tensorId: "P", rowAxis: -1, colAxis: 0,
+    dark: false, plan: S().plan, supply: S().planSupply });
+  expect(paint.tiles).toEqual([{ box: [{ lo: 0, hi: 100000000 }], definite: true }]);
+  expect(paint.lattice).toMatchObject({ rows: 1, cols: 1 });
 });

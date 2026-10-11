@@ -33,10 +33,11 @@ import { elementCount } from "../shapes";
 import { TaskRef, taskDemand, TilePlan } from "./plan";
 import {
   PlanError,
+  coordinatePage,
   tileBox,
   tileOrdinal,
   tiles,
-  tilesMeeting,
+  tileRange,
   tileVolume,
 } from "./tile-family";
 
@@ -72,12 +73,29 @@ export type ProducerNeed = {
 /** An untiled tensor a task computes on the way to its tile, and how much of it. */
 export type Computed = { tensorId: string; region: Region };
 
-export type Supply = {
+/**
+ * The producer tasks a task needs on one tiled tensor, as tile coordinates.
+ * Compact however many tiles it names; `producerPage` builds the per-tile
+ * records for the coordinates on one page.
+ */
+export type ProducerGroup = {
+  tensorId: string;
+  /** Exact cover of the represented producer coordinates; no tile records. */
+  coordinates: Region;
+  /** Coordinates reached by at least one exact demand. */
+  definiteCoordinates: Region;
+  /** Producer tasks in `coordinates`, each counted once. */
+  count: number;
+  /** Producer tasks in `definiteCoordinates`. Below `count`, some producers are only possible. */
+  definiteCount: number;
+};
+
+export type TaskSupply = {
   task: TaskRef;
   /** One entry per operand slot and tensor, sorted by tensor, then node, then slot. */
   demand: Demand[];
-  /** Each producer task once, however many slots read it; sorted by tensor, then row-major. */
-  producers: ProducerNeed[];
+  /** Producer sets in tensor order, compact even for millions of tiles. */
+  producerGroups: ProducerGroup[];
   /**
    * The untiled tensors the task computes itself, sorted by tensor. Empty when
    * its operation reads only tiled tensors and graph inputs.
@@ -85,7 +103,21 @@ export type Supply = {
   computes: Computed[];
   /** FLOPs to compute the tile and everything in `computes`. */
   flops: Figure;
+  /**
+   * What the task computes of each tensor: its own tile, and each region in
+   * `computes`. The input `flops` is measured over, and the one operand reuse
+   * inside the task is counted over (`operandReads`).
+   */
+  work: ReadonlyMap<string, { region: Region }>;
 };
+
+/** Explicit producer records for headless callers that request the full join.
+ * Interactive inspection uses TaskSupply and producerPage instead. */
+export type Supply = TaskSupply & { producers: ProducerNeed[] };
+
+export function taskSupplyOf(plan: TilePlan, task: TaskRef): TaskSupply {
+  return summarizeDemand(plan, task, taskDemand(plan, task));
+}
 
 /** What one task reads, which producer tasks supply it, and what it computes. */
 export function supplyOf(plan: TilePlan, task: TaskRef): Supply {
@@ -104,6 +136,18 @@ export function joinDemand(
   task: TaskRef,
   cone: Pick<BoundedCone, "crossings" | "tensors">
 ): Supply {
+  const summary = summarizeDemand(plan, task, cone);
+  return {
+    ...summary,
+    producers: summary.producerGroups.flatMap((group) => producerPage(plan, summary, group.tensorId, 0, group.count)),
+  };
+}
+
+function summarizeDemand(
+  plan: TilePlan,
+  task: TaskRef,
+  cone: Pick<BoundedCone, "crossings" | "tensors">
+): TaskSupply {
   const demand: Demand[] = cone.crossings.map((c) => ({
     node: c.node,
     slot: c.slot,
@@ -112,41 +156,26 @@ export function joinDemand(
     supplier: plan.families.has(c.tensorId) ? "tasks" : "input",
   }));
 
-  const byTensor = new Map<string, Map<number, ProducerNeed>>();
+  const byTensor = new Map<string, Demand[]>();
   for (const d of demand) {
     if (d.supplier !== "tasks") continue;
-    const family = plan.families.get(d.tensorId)!;
-    const byTile = byTensor.get(d.tensorId) ?? new Map<number, ProducerNeed>();
-    byTensor.set(d.tensorId, byTile);
-
-    // The tiles a region meets are the union of the tiles each box meets.
-    const met = new Map<number, number[]>();
-    for (const b of d.region.boxes)
-      for (const coord of tilesMeeting(family, b)) met.set(tileOrdinal(family, coord), coord);
-
-    for (const [ordinal, coord] of met) {
-      const region = intersect(d.region, fromBox(tileBox(family, coord)));
-      const need = byTile.get(ordinal) ?? {
-        task: { tensorId: d.tensorId, coord },
-        witnesses: [],
-        used: figure(0, "exact"),
-        volume: tileVolume(family, coord),
-        definite: false,
-      };
-      need.witnesses.push({ node: d.node, slot: d.slot, region });
-      need.definite ||= region.exact;
-      byTile.set(ordinal, need);
-    }
+    const group = byTensor.get(d.tensorId) ?? [];
+    group.push(d);
+    byTensor.set(d.tensorId, group);
   }
-
-  const producers: ProducerNeed[] = [];
-  for (const tensorId of [...byTensor.keys()].sort())
-    for (const [, need] of [...byTensor.get(tensorId)!].sort(([a], [b]) => a - b)) {
-      const regions = need.witnesses.map((w) => w.region);
-      const union = unionOf(regions);
-      need.used = figure(count(union), union.exact ? "exact" : "upper", union.reasons);
-      producers.push(need);
-    }
+  const producerGroups = [...byTensor.keys()].sort().map((tensorId): ProducerGroup => {
+    const family = plan.families.get(tensorId)!;
+    const demands = byTensor.get(tensorId)!;
+    const cover = (rows: Demand[]): Region => ({
+      boxes: rows.flatMap((d) => d.region.boxes.map((b) => tileRange(family, b))),
+      exact: true, reasons: [],
+    });
+    // Preserve these boxes without coarsening: this is an exact set of tile
+    // coordinates for the represented demand, even when that demand is a bound.
+    const coordinates = cover(demands);
+    const definiteCoordinates = cover(demands.filter((d) => d.region.exact));
+    return { tensorId, coordinates, definiteCoordinates, count: count(coordinates), definiteCount: count(definiteCoordinates) };
+  });
 
   // The cone's produced tensors that are not on the frontier are the ones the
   // task computes itself. Its own tile is computed too, and is not listed.
@@ -162,10 +191,32 @@ export function joinDemand(
   return {
     task: { tensorId: task.tensorId, coord: [...task.coord] },
     demand,
-    producers,
+    producerGroups,
     computes,
     flops: flopsOver(plan.graph, work).flops,
+    work,
   };
+}
+
+/** Materialize witnesses only for the requested page of one producer set. */
+export function producerPage(plan: TilePlan, supply: TaskSupply, tensorId: string, offset: number, limit: number): ProducerNeed[] {
+  const group = supply.producerGroups.find((g) => g.tensorId === tensorId);
+  if (!group) return [];
+  const family = plan.families.get(tensorId)!;
+  const demands = supply.demand.filter((d) => d.tensorId === tensorId);
+  return [...coordinatePage(group.coordinates, offset, limit)].map((coord) => {
+    const tile = fromBox(tileBox(family, coord));
+    const witnesses = demands.flatMap((d) => {
+      const region = intersect(d.region, tile);
+      return region.boxes.length ? [{ node: d.node, slot: d.slot, region }] : [];
+    });
+    const used = unionOf(witnesses.map((w) => w.region));
+    return {
+      task: { tensorId, coord }, witnesses,
+      used: figure(count(used), used.exact ? "exact" : "upper", used.reasons),
+      volume: tileVolume(family, coord), definite: witnesses.some((w) => w.region.exact),
+    };
+  });
 }
 
 /** Tasks a family may have before `interfaceOf` declines to evaluate it. */

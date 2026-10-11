@@ -32,7 +32,7 @@ describe("a read-multiplicity row in words", () => {
   const readsOf = (dsl: string, tensorId: string, region: Region, read: string) => {
     const { resolved } = compileDSL(dsl);
     const back = executeQuery(resolved, { tensorId, region, direction: "backward" }).backward!;
-    return operandReads(resolved, back).find((row) => row.tensorId === read)!;
+    return operandReads(resolved, back.tensors).find((row) => row.tensorId === read)!;
   };
   const GEMM = "A = Tensor(4, 8, dtype=fp16)\nB = Tensor(8, 6, dtype=fp16)\nC = matmul(A, B)\n";
 
@@ -55,7 +55,7 @@ describe("a read-multiplicity row in words", () => {
   it("names single-use operands by what they become, and their operations in the detail", () => {
     const { resolved } = compileDSL("X = Tensor(4, 8)\nY = transpose(X, perm=[1, 0])\nZ = relu(Y)\n");
     const back = executeQuery(resolved, { tensorId: "Z", region: fromBox(box([0, 2], [0, 2])), direction: "backward" }).backward!;
-    const line = readOnceLine(operandReads(resolved, back), (id) => id);
+    const line = readOnceLine(operandReads(resolved, back.tensors), (id) => id);
     expect(line.text).toBe("X → Y, Y → Z");
     expect(line.detail).toBe("X via transpose → Y\nY via relu → Z");
   });

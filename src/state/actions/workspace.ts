@@ -1,12 +1,13 @@
 import { expandNode } from "../../core/expand";
 import { Graph, hydrateResolvedGraph, ResolvedGraph } from "../../core/graph";
+import { planRestoreArtifact } from "../../worker/analysis-jobs";
 import { compileDSL, tryCompileDSL } from "../../parse/compiler";
 import { toDSL } from "../../parse/dsl";
 import { EXAMPLES } from "../../examples/index";
 import { BaseGraphLayout } from "../../view/graph/graph-scene";
 import { InspectorTab } from "../../view/workspace";
 import { recompute } from "../analysis";
-import { analysisWorkerAvailable, compileInWorker } from "../analysis-worker-client";
+import { analysisWorkerAvailable, compileInWorker, restoreInWorker } from "../analysis-worker-client";
 import { compile } from "../compile-epoch";
 import { planEditOf, samePlanEdit, WorkspaceSnapshot } from "../history";
 import {
@@ -15,7 +16,7 @@ import {
   restoredWorkspaceState,
   validWorkspaceFields,
 } from "../load";
-import { derivePlan } from "../plan";
+import { derivePlan, validateKeptTilings } from "../plan";
 import { GetState, SetState, State } from "../types";
 
 /** Loading sources and examples, restoring shared links, undo, and composite expansion. */
@@ -119,7 +120,13 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
     try {
       if (!validWorkspaceFields(workspace)) return false;
       const program = compileDSL(workspace.dsl);
-      set(restoredWorkspaceState(workspace, program.graph, program.resolved));
+      const resolved = program.resolved;
+      validateKeptTilings(workspace.keptTilings ?? []);
+      const restored = planRestoreArtifact(resolved, {
+        tiles: workspace.planTiles ?? {}, task: workspace.planTask ?? null,
+        kept: workspace.keptTilings ?? [],
+      });
+      set(restoredWorkspaceState(workspace, program.graph, resolved, undefined, restored));
       return true;
     } catch {
       return false;
@@ -132,7 +139,11 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
     const epoch = ++compile.epoch;
     set({ compiling: true });
     try {
-      const result = await compileInWorker(workspace.dsl);
+      validateKeptTilings(workspace.keptTilings ?? []);
+      const result = await restoreInWorker(workspace.dsl, {
+        tiles: workspace.planTiles ?? {}, task: workspace.planTask ?? null,
+        kept: workspace.keptTilings ?? [],
+      });
       if (epoch !== compile.epoch) return false;
       if (!result.ok) {
         set({ compiling: false });
@@ -143,7 +154,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
         graphId: result.graphId,
         layout: result.artifact.layout,
         graphPx: result.artifact.graphPx,
-      }));
+      }, result.restoredPlan));
       return true;
     } catch {
       if (epoch === compile.epoch) set({ compiling: false });

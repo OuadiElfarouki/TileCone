@@ -11,6 +11,8 @@ import type {
   AnalysisRequest,
   AnalysisResponse,
   CompileJobResult,
+  PlanRestoreRequest,
+  RestoreJobResult,
 } from "../worker/analysis-protocol";
 
 type Pending = {
@@ -27,6 +29,7 @@ type WorkerLane = {
 
 type AnalysisRequestBody =
   | Omit<Extract<AnalysisRequest, { kind: "compile" }>, "id">
+  | Omit<Extract<AnalysisRequest, { kind: "restore" }>, "id">
   | Omit<Extract<AnalysisRequest, { kind: "layout" }>, "id">
   | Omit<Extract<AnalysisRequest, { kind: "plan" }>, "id">
   | Omit<Extract<AnalysisRequest, { kind: "reuse" }>, "id">;
@@ -147,7 +150,11 @@ function graphForLane(
   graph: ResolvedGraph,
 ): { graphId: number | null; graph?: ReturnType<typeof resolvedGraphData> } {
   if (graphId !== null && lane.graphIds.has(graphId)) return { graphId };
-  if (graphId !== null) lane.graphIds.add(graphId);
+  if (graphId !== null) {
+    // The worker replaces its single cached graph when it receives graph data.
+    lane.graphIds.clear();
+    lane.graphIds.add(graphId);
+  }
   return { graphId, graph: resolvedGraphData(graph) };
 }
 
@@ -189,6 +196,16 @@ export async function compileInWorker(source: string): Promise<CompileJobResult>
   if (response.result.ok) {
     registerQueryGraph(response.result.graphId, response.result.artifact.resolved);
   }
+  return response.result;
+}
+
+/** A restore is one latest-wins compile-lane transaction. Inspector retries
+ * remain on the query lane and cannot interrupt its kept-plan measurements. */
+export async function restoreInWorker(source: string, plan: PlanRestoreRequest): Promise<RestoreJobResult> {
+  cancelPending(compileLane, "workspace restore");
+  const response = await send(compileLane, { kind: "restore", source, plan });
+  if (response.kind !== "restore") throw new Error("analysis worker returned the wrong response");
+  if (response.result.ok) registerQueryGraph(response.result.graphId, response.result.artifact.resolved);
   return response.result;
 }
 

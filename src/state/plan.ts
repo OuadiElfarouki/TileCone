@@ -1,13 +1,13 @@
 /** Plan derivation shared by the plan actions and graph loading. */
 
 import { producerNode, ResolvedGraph } from "../core/graph";
-import { supplyOf } from "../core/plan/interfaces";
+import { PlanReport, taskSupplyOf } from "../core/plan/interfaces";
 import { TaskRef, tilePlan } from "../core/plan/plan";
 import { isTile } from "../core/plan/tile-family";
 import { defaultPlanTile } from "../view/tensor/seeds";
 import { idRecord, operationForTensor } from "../view/workspace";
 import { recordWorkspace, sameNumbers, sameTask, sameTiles } from "./history";
-import { State } from "./types";
+import { KeptPlan, State } from "./types";
 
 /**
  * How many plans can be kept for comparison. Two kept and the current one make
@@ -58,7 +58,7 @@ export function derivePlan(
       planTiles: previous.planTiles,
       planTask: kept,
       plan: previous.plan,
-      planSupply: kept ? supplyOf(previous.plan, kept) : null,
+      planSupply: kept ? taskSupplyOf(previous.plan, kept) : null,
     };
   }
   const valid = Object.create(null) as Record<string, number[]>;
@@ -74,7 +74,41 @@ export function derivePlan(
   const plan = tilePlan(resolved, valid);
   const family = task ? plan.families.get(task.tensorId) : undefined;
   const kept = task && family && isTile(family, task.coord) ? task : null;
-  return { planTiles: valid, planTask: kept, plan, planSupply: kept ? supplyOf(plan, kept) : null };
+  return { planTiles: valid, planTask: kept, plan, planSupply: kept ? taskSupplyOf(plan, kept) : null };
+}
+
+/**
+ * A kept plan from a tiling and its evaluation on the graph it is kept beside.
+ *
+ * Restoring a shared workspace builds its kept plans this way: the link names
+ * tilings, and the figures are measured again rather than read from it. A
+ * tiling the graph cannot total is refused, as `keepPlan` refuses to keep one,
+ * and a tiling repeated in the list is refused, as `keepPlan` will not keep a
+ * tiling twice.
+ */
+export function restoredKeptPlans(
+  tilings: readonly Record<string, number[]>[],
+  reports: readonly PlanReport[]
+): KeptPlan[] {
+  validateKeptTilings(tilings);
+  return tilings.map((tiles, i) => {
+    const { total, unwritten } = reports[i];
+    if (!total) throw new Error("a kept tiling has no whole-plan figures on this graph");
+    return { id: i + 1, tiles: idRecord(tiles), total, unwritten };
+  });
+}
+
+/**
+ * The checks a list of kept tilings needs before any of them is evaluated: no
+ * more than are kept, and none listed twice, as `keepPlan` enforces when
+ * keeping. Whether each tiling fits the graph is checked where it is evaluated.
+ */
+export function validateKeptTilings(tilings: readonly Record<string, number[]>[]): void {
+  if (tilings.length > MAX_KEPT_PLANS) throw new Error(`at most ${MAX_KEPT_PLANS} plans are kept`);
+  tilings.forEach((tiles, i) => {
+    if (tilings.slice(0, i).some((earlier) => sameTiles(earlier, tiles)))
+      throw new Error("a kept tiling is listed twice");
+  });
 }
 
 /**

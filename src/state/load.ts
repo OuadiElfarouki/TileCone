@@ -2,6 +2,7 @@
 
 import { validateSelection } from "../core/executor";
 import { Graph, ResolvedGraph } from "../core/graph";
+import { familyOf, tilePlan } from "../core/plan/plan";
 import { fromBox } from "../core/region";
 import { EXAMPLES } from "../examples/index";
 import { BaseGraphLayout, readNodeKey } from "../view/graph/graph-scene";
@@ -9,9 +10,11 @@ import { NodeOffset, NodeOffsets } from "../view/graph/node-layout";
 import { planesOf } from "../view/tensor/seeds";
 import { defaultViewCfg, remapped, ViewCfg, viewCfgFits } from "../view/tensor/tensor-view";
 import { graphScale, TILE_SCALE_MAX, TILE_SCALE_MIN } from "../view/tensor/tiling";
-import { idRecord, MAX_NODE_OFFSET } from "../view/workspace";
+import { idRecord, MAX_NODE_OFFSET, operationForTensor } from "../view/workspace";
+import { planRestoreArtifact } from "../worker/analysis-jobs";
+import type { PlanRestoreArtifact } from "../worker/analysis-protocol";
 import { recompute } from "./analysis";
-import { NO_PLAN } from "./plan";
+import { restoredKeptPlans, NO_PLAN } from "./plan";
 import { State, WorkspaceRestore } from "./types";
 
 export function loadResolvedGraph(
@@ -172,12 +175,14 @@ export const validWorkspaceFields = (workspace: WorkspaceRestore): boolean =>
   ["symbolic", "numeric"].includes(workspace.axisMode);
 
 /** Validate the graph-relative pieces of a shared workspace and install them
- * over a freshly loaded graph. Compilation itself may happen in either realm. */
+ * over a freshly loaded graph. Compilation itself may happen in either realm.
+ * The browser passes measurements computed in its restore Worker transaction. */
 export function restoredWorkspaceState(
   workspace: WorkspaceRestore,
   graph: Graph,
   resolved: ResolvedGraph,
-  worker?: { graphId: number | null; layout: BaseGraphLayout; graphPx: number }
+  worker?: { graphId: number | null; layout: BaseGraphLayout; graphPx: number },
+  restoredPlan?: PlanRestoreArtifact
 ): Partial<State> {
   const base = loadResolvedGraph(graph, resolved, worker);
   for (const [id, cfg] of Object.entries(workspace.viewCfgs ?? {})) {
@@ -213,8 +218,26 @@ export function restoredWorkspaceState(
     if (Math.abs(offset.dx) >= 1e-6 || Math.abs(offset.dy) >= 1e-6)
       checkedOffsets[key] = { dx: offset.dx, dy: offset.dy };
   }
+  const planTiles = idRecord(workspace.planTiles);
+  const task = workspace.planTask ?? null;
+  // A task that names no tile of the plan is refused rather than dropped: the
+  // link's task is what its Plan view describes.
+  const checkedPlan = tilePlan(resolved, planTiles);
+  if (task) familyOf(checkedPlan, task);
+  const restored = restoredPlan ?? planRestoreArtifact(resolved, {
+    tiles: planTiles, task, kept: workspace.keptTilings ?? [],
+  });
+  const plan = {
+    planTiles, planTask: task,
+    plan: Object.keys(planTiles).length ? checkedPlan : null,
+    planSupply: restored.supply,
+  };
   return {
     ...base,
+    ...plan,
+    keptPlans: restoredKeptPlans(workspace.keptTilings ?? [], restored.reports),
+    ...(plan.planTask ? { selectedOp: operationForTensor(resolved, plan.planTask.tensorId) } : {}),
+    ...(workspace.planView ? { inspectorTab: "plan" as const } : {}),
     dslText: workspace.dsl,
     draftText: workspace.dsl,
     exampleIndex: -1,

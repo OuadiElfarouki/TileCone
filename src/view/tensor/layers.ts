@@ -4,7 +4,7 @@
  * `components/card/draw-grid.ts` rasterises it.
  */
 
-import { Supply } from "../../core/plan/interfaces";
+import { producerPage, TaskSupply } from "../../core/plan/interfaces";
 import { TilePlan } from "../../core/plan/plan";
 import { tileBox } from "../../core/plan/tile-family";
 import { Box, fromBox, intersect, isEmpty, Region, subtract, unionOf } from "../../core/region";
@@ -301,7 +301,7 @@ export function buildPlanPaint({
   colAxis: number;
   dark: boolean;
   plan: TilePlan | null;
-  supply: Supply | null;
+  supply: TaskSupply | null;
   /** Extents a click would divide this tensor at, while the plan does not tile it. */
   proposed?: number[] | null;
   /** The tile under the pointer, or the band being dragged out. */
@@ -332,10 +332,21 @@ export function buildPlanPaint({
       seed: true,
     });
 
-  const tiles = family
-    ? (supply?.producers ?? [])
-        .filter((p) => p.task.tensorId === tensorId)
-        .map((p) => ({ box: tileBox(family, p.task.coord), definite: p.definite }))
+  const group = supply?.producerGroups.find((g) => g.tensorId === tensorId);
+  // Detailed outlines are a visual policy, independent of the exact producer
+  // set. Large sets outline their tile-aligned ranges over the existing lattice.
+  const MAX_PRODUCER_OUTLINES = 64;
+  const tiles = family && group && plan && supply
+    ? group.count <= MAX_PRODUCER_OUTLINES
+      ? producerPage(plan, supply, tensorId, 0, group.count)
+          .map((p) => ({ box: tileBox(family, p.task.coord), definite: p.definite }))
+      : [
+          ...group.coordinates.boxes.map((box) => ({ box, definite: group.count === group.definiteCount })),
+          ...(group.count === group.definiteCount ? [] : group.definiteCoordinates.boxes.map((box) => ({ box, definite: true }))),
+        ].map(({ box, definite }) => ({
+          box: box.map(({ lo, hi }, axis) => ({ lo: lo * family.tile[axis], hi: Math.min(hi * family.tile[axis], family.shape[axis]) })),
+          definite,
+        }))
     : [];
   // What the gesture would take, outlined in the task hue: it is about to
   // become the inspected tile, not a producer of one.

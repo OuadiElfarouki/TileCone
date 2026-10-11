@@ -2,7 +2,9 @@ import { Box } from "../core/region";
 import { AxisMode } from "../view/tensor/shape-label";
 import { isViewCfg, type ViewCfg } from "../view/tensor/tensor-view";
 import { nodeKey, readNodeKey } from "../view/graph/graph-scene";
-import { Direction, MAX_NODE_OFFSET } from "../view/workspace";
+import { Direction, InspectorTab, MAX_NODE_OFFSET } from "../view/workspace";
+import type { TaskRef } from "../core/plan/plan";
+import { MAX_KEPT_PLANS } from "./plan";
 
 /**
  * Shareable workspace state.
@@ -38,6 +40,21 @@ export type WorkspaceLink = {
    * `{ t, boxes }` object; `decodeWorkspace` accepts both.
    */
   sel: { t: string; box: [number, number][] }[] | null;
+  /**
+   * Optional: the tile plan, as extents per tiled tensor. Links written before
+   * plans could be shared carry none and open with nothing tiled.
+   */
+  plan?: Record<string, number[]>;
+  /** Optional: the inspected task, as its tensor and tile coordinate. */
+  task?: { t: string; at: number[] };
+  /**
+   * Optional: the tilings kept for comparison, oldest first. Only the tilings
+   * travel. Their figures are measured again when the link is opened, so a
+   * link cannot assert figures the graph does not produce.
+   */
+  kept?: Record<string, number[]>[];
+  /** Optional: present only when the link was made in the Plan view. */
+  tab?: "plan";
 };
 
 type LegacySel = { t: string; boxes: [number, number][][] };
@@ -52,6 +69,17 @@ const isBox = (box: unknown): box is [number, number][] =>
       interval.every((v) => Number.isSafeInteger(v)) &&
       interval[0] < interval[1]
   );
+
+/** Tile extents: one positive whole number per axis. */
+const isExtents = (value: unknown): value is number[] =>
+  Array.isArray(value) && value.every((v) => Number.isSafeInteger(v) && v > 0);
+
+/** A tiling: at least one tensor, each with extents. Whether the extents fit
+ *  the tensor is a question about the graph, answered on restore. */
+const isTiling = (value: unknown): value is Record<string, number[]> =>
+  !!value && typeof value === "object" && !Array.isArray(value) &&
+  Object.keys(value).length > 0 &&
+  Object.entries(value).every(([id, extents]) => !!id && isExtents(extents));
 
 const DIRECTIONS: Direction[] = ["none", "backward", "forward", "both"];
 const AXIS_MODES: AxisMode[] = ["symbolic", "numeric"];
@@ -144,6 +172,21 @@ export function decodeWorkspace(hash: string): WorkspaceLink | null {
         if (parts.length) sel = parts;
       } else return null;
     } else if (candidate !== undefined && candidate !== null) return null;
+
+    if (raw.plan !== undefined && !isTiling(raw.plan)) return null;
+    if (raw.task !== undefined) {
+      const task = raw.task as Partial<{ t: unknown; at: unknown }> | null;
+      if (
+        !task || typeof task !== "object" || typeof task.t !== "string" ||
+        !Array.isArray(task.at) || !task.at.every((v) => Number.isSafeInteger(v) && v >= 0)
+      ) return null;
+      // A task is a tile of the plan, so there is no task without one.
+      if (raw.plan === undefined) return null;
+    }
+    if (raw.kept !== undefined && (
+      !Array.isArray(raw.kept) || raw.kept.length > MAX_KEPT_PLANS || !raw.kept.every(isTiling)
+    )) return null;
+    if (raw.tab !== undefined && raw.tab !== "plan") return null;
     return {
       dsl: raw.dsl,
       dir,
@@ -154,6 +197,10 @@ export function decodeWorkspace(hash: string): WorkspaceLink | null {
       ...(pos ? { pos } : {}),
       ...(views ? { views } : {}),
       sel,
+      ...(raw.plan ? { plan: raw.plan } : {}),
+      ...(raw.task ? { task: raw.task } : {}),
+      ...(raw.kept?.length ? { kept: raw.kept } : {}),
+      ...(raw.tab ? { tab: raw.tab } : {}),
     };
   } catch {
     return null;
@@ -169,6 +216,26 @@ export function selectionToLink(
     t: p.tensorId,
     box: p.box.map((interval) => [interval.lo, interval.hi]) as [number, number][],
   }));
+}
+
+/** The plan, the inspected task, the kept tilings and the Plan view, in link
+ *  form. Each is left out when there is none, so a link without a plan reads
+ *  exactly as one written before plans could be shared. */
+export function planToLink(state: {
+  planTiles: Record<string, number[]>;
+  planTask: TaskRef | null;
+  keptPlans: readonly { tiles: Record<string, number[]> }[];
+  inspectorTab: InspectorTab;
+}): Pick<WorkspaceLink, "plan" | "task" | "kept" | "tab"> {
+  const tiled = Object.keys(state.planTiles).length > 0;
+  return {
+    ...(tiled ? { plan: { ...state.planTiles } } : {}),
+    ...(tiled && state.planTask
+      ? { task: { t: state.planTask.tensorId, at: [...state.planTask.coord] } }
+      : {}),
+    ...(state.keptPlans.length ? { kept: state.keptPlans.map((k) => ({ ...k.tiles })) } : {}),
+    ...(state.inspectorTab === "plan" ? { tab: "plan" as const } : {}),
+  };
 }
 
 /** A shareable URL, or the raw payload when it is too long to live in one. */

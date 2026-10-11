@@ -4,8 +4,8 @@ import { resolveGraph } from "../../../src/core/graph";
 import { DEFAULT_LIMITS, Limits } from "../../../src/core/ops/limits";
 import { getOp } from "../../../src/core/ops/index";
 import { propagateWithin } from "../../../src/core/propagate";
-import { interfaceOf, joinDemand, planReport, supplyOf, Supply, Work } from "../../../src/core/plan/interfaces";
-import { TaskRef, tilePlan, TilePlan } from "../../../src/core/plan/plan";
+import { interfaceOf, taskSupplyOf, producerPage, joinDemand, planReport, supplyOf, Supply, Work } from "../../../src/core/plan/interfaces";
+import { TaskRef, taskDemand, tilePlan, TilePlan } from "../../../src/core/plan/plan";
 import { PlanError, tileBox, tileOrdinal, tiles } from "../../../src/core/plan/tile-family";
 import { Box, fromBox, points, Region } from "../../../src/core/region";
 import { compileDSL } from "../../../src/parse/compiler";
@@ -620,4 +620,49 @@ describe("plans against a task oracle", () => {
     // Some plans must have had an untiled tensor that two families compute.
     expect(shared).toBeGreaterThan(0);
   });
+});
+
+
+describe("compact task supply", () => {
+  it("pages a hundred million producers without expanding the join", () => {
+    const graph = compileDSL("X = Tensor(100000000)\nP = relu(X)\nY = sum(P, axis=0)\n").resolved;
+    const plan = tilePlan(graph, { P: [1], Y: [] });
+    const supply = taskSupplyOf(plan, { tensorId: "Y", coord: [] });
+    expect(supply.producerGroups).toHaveLength(1);
+    expect(supply.producerGroups[0]).toMatchObject({ count: 100000000, definiteCount: 100000000,
+      coordinates: { boxes: [[{ lo: 0, hi: 100000000 }]] } });
+    expect(supply).not.toHaveProperty("producers");
+    expect(JSON.stringify(supply).length).toBeLessThan(5000);
+    const page = producerPage(plan, supply, "P", 99999998, 8);
+    expect(page.map((p) => p.task.coord)).toEqual([[99999998], [99999999]]);
+    expect(page.every((p) => p.definite && p.used.value === 1 && p.witnesses.length === 1)).toBe(true);
+    expect(structuredClone(supply)).toEqual(supply);
+  });
+
+  it("deduplicates repeated operand slots while preserving their witnesses", () => {
+    const graph = compileDSL("X = Tensor(8, 8)\nP = relu(X)\nY = matmul(P, P)\n").resolved;
+    const plan = tilePlan(graph, { P: [2, 2], Y: [2, 2] });
+    const task = { tensorId: "Y", coord: [0, 0] };
+    const supply = taskSupplyOf(plan, task);
+    expect(supply.producerGroups[0].count).toBe(7);
+    const paged = [0, 3, 6].flatMap((offset) => producerPage(plan, supply, "P", offset, 3));
+    expect(paged).toEqual(supplyOf(plan, task).producers);
+    expect(paged[0].witnesses.map((w) => w.slot)).toEqual([0, 1]);
+    expect(paged[0].used.value).toBe(4);
+  });
+});
+
+
+it("keeps definite producer counts separate from widened demands", () => {
+  const plan = tilePlan(chain(), { C: [64, 64], Y: [64, 64] });
+  const task = { tensorId: "Y", coord: [0, 0] };
+  const cone = taskDemand(plan, task);
+  const crossing = cone.crossings.find((c) => c.tensorId === "C")!;
+  const supply = joinDemand(plan, task, { ...cone, crossings: [
+    { ...crossing, region: { ...crossing.region, exact: false, reasons: ["test bound"] } },
+    { ...crossing, slot: 1, region: fromBox([{ lo: 0, hi: 64 }, { lo: 0, hi: 64 }]) },
+  ] });
+  expect(supply.producerGroups[0]).toMatchObject({ count: 4, definiteCount: 1 });
+  expect(supply.producers.map((p) => p.definite)).toEqual([true, false, false, false]);
+  expect(supply.producers.map((p) => p.witnesses.length)).toEqual([2, 1, 1, 1]);
 });

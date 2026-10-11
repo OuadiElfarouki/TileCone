@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { Box, count } from "../../../src/core/region";
+import { Box, count, points } from "../../../src/core/region";
 import {
+  coordinatePage,
   isTile,
   PlanError,
   tileBox,
@@ -123,5 +124,33 @@ describe("tile validation", () => {
   it("refuses a family whose tile count is past the safe integer range", () => {
     const huge = 2 ** 30;
     expect(code(() => tileFamily("T", [huge, huge], [1, 1]))).toBe("PLAN_SIZE");
+  });
+});
+
+
+describe("coordinate pages", () => {
+  it("matches exhaustive union ordering for overlapping boxes, empty axes and scalars", () => {
+    const r = rng(72);
+    for (let rank = 0; rank <= 3; rank++) {
+      for (let trial = 0; trial < 30; trial++) {
+        const boxes = Array.from({ length: 5 }, () => Array.from({ length: rank }, () => {
+          const lo = randInt(r, 0, 4);
+          return { lo, hi: lo + randInt(r, 0, 4) };
+        }));
+        const region = { boxes, exact: true, reasons: [] };
+        const expected = [...points(region)].sort((a, b) => {
+          for (let axis = 0; axis < rank; axis++) if (a[axis] !== b[axis]) return a[axis] - b[axis];
+          return 0;
+        });
+        for (const offset of [0, 1, Math.floor(expected.length / 2), expected.length, expected.length + 1])
+          for (const limit of [0, 1, 8, expected.length + 1])
+            expect([...coordinatePage(region, offset, limit)]).toEqual(expected.slice(offset, offset + limit));
+      }
+    }
+  });
+
+  it("skips a trillion coordinates arithmetically", () => {
+    const region = { boxes: [[{ lo: 0, hi: 1000000 }, { lo: 0, hi: 1000000 }]], exact: true, reasons: [] };
+    expect([...coordinatePage(region, 999999999998, 8)]).toEqual([[999999, 999998], [999999, 999999]]);
   });
 });

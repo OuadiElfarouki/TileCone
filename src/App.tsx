@@ -66,6 +66,10 @@ export default function App(): React.ReactElement {
               tensorId: p.t,
               box: p.box.map(([lo, hi]) => ({ lo, hi })),
             })) ?? null,
+          planTiles: link.plan,
+          planTask: link.task ? { tensorId: link.task.t, coord: link.task.at } : null,
+          keptTilings: link.kept,
+          planView: link.tab === "plan",
         });
         if (!live || restored) return;
       }

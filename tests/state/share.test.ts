@@ -3,6 +3,7 @@ import {
   decodeWorkspace,
   encodeWorkspace,
   MAX_HASH_LENGTH,
+  planToLink,
   selectionToLink,
   shareTarget,
   WorkspaceLink,
@@ -225,5 +226,57 @@ describe("the shape view travels with the link", () => {
   it("refuses a link whose shape view is not a known reading", () => {
     const bad = { dsl: "X = Tensor(2, dtype=fp32)\n", dir: "both", tile: 0, axes: "hieroglyphs", sel: null };
     expect(decodeWorkspace(`#s=${encodeWorkspace(bad as never)}`)).toBeNull();
+  });
+});
+
+describe("a tile plan in a link", () => {
+  const PLANNED: WorkspaceLink = {
+    ...LINK,
+    plan: { B: [2, 4] },
+    task: { t: "B", at: [1, 0] },
+    kept: [{ B: [4, 4] }, { B: [1, 2] }],
+    tab: "plan",
+  };
+  const decoded = (raw: unknown) => decodeWorkspace(`#s=${encodeWorkspace(raw as WorkspaceLink)}`);
+
+  it("round-trips the tiling, the inspected task, the kept tilings and the Plan view", () => {
+    expect(decoded(PLANNED)).toEqual(PLANNED);
+  });
+
+  it("reads a link without a plan exactly as before", () => {
+    const link = decoded(LINK)!;
+    expect("plan" in link || "task" in link || "kept" in link || "tab" in link).toBe(false);
+  });
+
+  it("is written only for what there is", () => {
+    expect(planToLink({ planTiles: {}, planTask: null, keptPlans: [], inspectorTab: "dependencies" })).toEqual({});
+    expect(planToLink({
+      planTiles: { B: [2, 4] },
+      planTask: { tensorId: "B", coord: [1, 0] },
+      keptPlans: [{ tiles: { B: [4, 4] } }],
+      inspectorTab: "plan",
+    })).toEqual({ plan: { B: [2, 4] }, task: { t: "B", at: [1, 0] }, kept: [{ B: [4, 4] }], tab: "plan" });
+    // A task with nothing tiled is not a task of any plan, and Cost model is not carried.
+    expect(planToLink({
+      planTiles: {},
+      planTask: { tensorId: "B", coord: [0, 0] },
+      keptPlans: [],
+      inspectorTab: "execution",
+    })).toEqual({});
+  });
+
+  it.each([
+    ["a plan that is not a tiling", { plan: [[2, 4]] }],
+    ["an empty plan", { plan: {} }],
+    ["a zero extent", { plan: { B: [0, 4] } }],
+    ["a fractional extent", { plan: { B: [1.5, 4] } }],
+    ["a task without a plan", { plan: undefined, task: { t: "B", at: [0, 0] } }],
+    ["a negative task coordinate", { task: { t: "B", at: [-1, 0] } }],
+    ["a task with no tensor", { task: { at: [0, 0] } }],
+    ["more kept plans than are kept", { kept: [{ B: [1, 1] }, { B: [2, 2] }, { B: [4, 4] }] }],
+    ["a kept plan that is not a tiling", { kept: [{ B: "2x4" }] }],
+    ["a view other than Plan", { tab: "execution" }],
+  ])("refuses %s", (_name, patch) => {
+    expect(decoded({ ...PLANNED, ...patch })).toBeNull();
   });
 });

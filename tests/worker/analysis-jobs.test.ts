@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hydrateResolvedGraph } from "../../src/core/graph";
-import { compileArtifact, layoutArtifact, planArtifact, reuseArtifact } from "../../src/worker/analysis-jobs";
+import { compileArtifact, layoutArtifact, planArtifact, planRestoreArtifact, reuseArtifact } from "../../src/worker/analysis-jobs";
 import { box } from "../../src/core/region";
 
 const CHAIN = `A = Tensor(256, 256, dtype=fp16)
@@ -79,4 +79,18 @@ describe("analysis worker jobs", () => {
     expect(sweep.frames).toHaveLength(8);
     expect(sweep.frames[0].box).toEqual(box([0, 64], [0, 64]));
   });
+});
+
+
+it("validates every restored plan and task before returning cloneable measurements", () => {
+  const compiled = compileArtifact(CHAIN);
+  if (!compiled.ok) throw new Error(compiled.diagnostics[0].message);
+  const request = { tiles: { C: [64, 64], Y: [64, 64] },
+    task: { tensorId: "Y", coord: [0, 0] }, kept: [{ Y: [128, 128] }] };
+  const restored = planRestoreArtifact(compiled.resolved, request);
+  expect(structuredClone(restored)).toEqual(restored);
+  expect(restored.reports[0]).toEqual(planArtifact(compiled.resolved, request.kept[0]));
+  expect(() => planRestoreArtifact(compiled.resolved, { ...request, kept: [{ Missing: [1] }] })).toThrow();
+  expect(() => planRestoreArtifact(compiled.resolved, { ...request, task: { tensorId: "Y", coord: [99, 0] } })).toThrow();
+  expect(() => planRestoreArtifact(compiled.resolved, { ...request, tiles: { Y: [0, 64] } })).toThrow();
 });

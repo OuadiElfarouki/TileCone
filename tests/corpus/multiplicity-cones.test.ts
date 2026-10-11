@@ -86,7 +86,7 @@ function checkCones(seeds: number, nodes: number, limits?: Limits): { exact: num
     const merged = mergeProps(cones)!;
     const union: Region = { boxes, exact: true, reasons: [] };
     const truth = trueReads(g, oracle, target.id, union);
-    const rows = operandReads(g, merged);
+    const rows = operandReads(g, merged.tensors);
     const label = `seed ${seed} on ${target.id} ${JSON.stringify(boxes)}`;
 
     const shown = new Set(rows.map((row) => `${row.nodeId}:${row.tensorId}`));
@@ -144,7 +144,7 @@ describe("read multiplicity over merged cones on random graphs", () => {
     ]));
     const region: Region = { boxes: [[iv(1, 3), iv(1, 3)]], exact: true, reasons: [] };
     const back = propagateBackward(g, { tensorId: "T", region }, { stridedEnum: 2, diagEnum: 2, reshapeRuns: 1, maxBoxes: 2, tallyPieces: 2 });
-    const rows = operandReads(g, back);
+    const rows = operandReads(g, back.tensors);
     const truth = trueReads(g, computeOracle(g), "T", region);
     const viaFirst = rows.find((row) => row.nodeId === "r")!;
     expect(back.tensors.get("R")!.region.exact).toBe(false);

@@ -3,7 +3,7 @@ import { useDismiss } from "../hooks/useDismiss";
 import { fromBox } from "../../core/region";
 import { EXAMPLES } from "../../examples";
 import { tileOf } from "../../view/tensor/grid";
-import { selectionToLink, shareTarget } from "../../state/share";
+import { planToLink, selectionToLink, shareTarget } from "../../state/share";
 import { CopyButton } from "./CopyButton";
 import { opLabel } from "../../core/ops/index";
 import { useStore } from "../../state/store";
@@ -15,12 +15,12 @@ import { ParamControls } from "./ParamControls";
 import { involvedTensorIds } from "../../view/workspace";
 
 /**
- * Copies a link that restores this workspace - source, selection, analysis views
- * and tile detail. It sits with the source actions rather than in the header
+ * Copies a link that restores this workspace - source, selection, analysis views,
+ * tile detail and the tile plan. It sits with the source actions rather than in the header
  * because the source is most of what it encodes.
  */
 function ShareButton(): React.ReactElement {
-  // Read at click time rather than subscribing: the link is built from nine
+  // Read at click time rather than subscribing: the link is built from a dozen
   // pieces of state and none of them change how this button looks.
   const link = () => {
     const s = useStore.getState();
@@ -40,13 +40,14 @@ function ShareButton(): React.ReactElement {
         Object.entries(s.nodeOffsets).map(([key, { dx, dy }]) => [key, [dx, dy]])
       ),
       sel: selectionToLink(s.selection),
+      ...planToLink(s),
     });
   };
 
   return (
     <CopyButton
       className="mini share-btn"
-      title="copy a link that restores this source, selection, graph layout, and analysis views"
+      title="copy a link that restores this source, selection, graph layout, analysis views, and tile plans"
       label="share"
       text={link}
     />

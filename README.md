@@ -123,8 +123,11 @@ band of `H`. Full-width `Y` tiles compute each band once.
 up to two kept plans read beside the current one. Each kept plan can be restored as the current
 tiling, which undoes like any other plan edit.
 
-Split reductions, working sets and execution order are not modelled. A plan is not included in
-share links.
+Share links include the current tiling, inspected task, kept tilings and Plan view. Kept
+figures are recomputed when the link is opened. Producer details are paged, with total counts
+shown even for large sets.
+
+Split reductions, working sets and execution order are not modelled.
 
 ## Writing a graph
 

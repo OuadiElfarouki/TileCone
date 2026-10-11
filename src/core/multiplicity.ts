@@ -26,7 +26,6 @@ import { ResolvedGraph, Tensor } from "./graph";
 import { Figure, figure, ratioFigure } from "./metrics";
 import { getOp, opLabel } from "./ops/index";
 import { boxElements, OpCtx, OpSpec } from "./ops/types";
-import { PropResult } from "./propagate";
 import { Region, disjointify } from "./region";
 import { Tally, addTallies, markTallyInexact, measureTally, uniformTally } from "./tally";
 
@@ -129,15 +128,22 @@ function readsOf(t: Tally): Pick<OperandReads, "reads" | "elements" | "once" | "
 }
 
 /**
- * Every operation in a backward cone, with how many of the outputs the cone
- * needs read each element of each tensor it reads. In graph order, then
- * operand order; an operation reading one tensor twice gives one row for it.
+ * Every operation computing a tensor in `regions`, with how many of the outputs
+ * it computes there read each element of each tensor it reads. In graph order,
+ * then operand order; an operation reading one tensor twice gives one row for it.
+ *
+ * `regions` holds what is computed of each tensor, the input `flopsOver` takes:
+ * a backward cone's tensors, or the tile and untiled tensors of a plan task.
+ * A tensor without a producer is read, never computed, and names no operation.
  */
-export function operandReads(graph: ResolvedGraph, back: PropResult): OperandReads[] {
+export function operandReads(
+  graph: ResolvedGraph,
+  regions: ReadonlyMap<string, { region: Region }>
+): OperandReads[] {
   const rows: OperandReads[] = [];
   for (const node of graph.topo) {
     const needed = node.outputs.flatMap((id, slot) => {
-      const region = back.tensors.get(id)?.region;
+      const region = regions.get(id)?.region;
       return region ? [{ slot, region }] : [];
     });
     if (!needed.length) continue;

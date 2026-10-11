@@ -1053,3 +1053,5 @@ textarea.source.error-state { border-color: var(--err); }
 .plan-matrix-row { fill: transparent; }
 .plan-matrix g:hover .plan-matrix-row { fill: color-mix(in srgb, var(--accent) 12%, transparent); }
 .plan-matrix-row.current { fill: color-mix(in srgb, var(--accent) 18%, transparent); }
+
+.plan-producer-pages { display: flex; align-items: center; gap: 8px; }

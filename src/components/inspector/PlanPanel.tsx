@@ -12,9 +12,11 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { nodeById, producerNode, type Node } from "../../core/graph";
 import { byteFigure, regionSliceExprs, type Figure } from "../../core/metrics";
+import { operandReads } from "../../core/multiplicity";
 import { opLabel } from "../../core/ops/index";
 import {
   planReport,
+  producerPage,
   supplyOf,
   type BoundaryDemand,
   type Computed,
@@ -22,6 +24,7 @@ import {
   type InterfaceReport,
   type PlanReport,
   type ProducerNeed,
+  type TaskSupply,
   type Work,
 } from "../../core/plan/interfaces";
 import type { TaskRef, TilePlan } from "../../core/plan/plan";
@@ -33,6 +36,7 @@ import { describeTiling, WORK_ROWS, workCell, workCellTitle } from "../../view/p
 import { boxColor, rgbCss } from "../../view/palette";
 import { useDark, useStore } from "../../state/store";
 import { DraftField } from "../chrome/DraftField";
+import { OperandReuse } from "./operand-reuse";
 import { sameTiles } from "../../state/history";
 import { MAX_KEPT_PLANS } from "../../state/plan";
 import {
@@ -466,7 +470,7 @@ function ProducerRow({
   );
 }
 
-/** Producer tasks listed before the rest are folded behind a control. */
+/** Producer details per page; the compact set and totals are never truncated. */
 export const PRODUCERS_SHOWN = 8;
 
 /**
@@ -481,21 +485,27 @@ function DemandGroup({
   demands,
   node,
   plan,
-  producers,
+  supply,
   onSelect,
 }: {
   tensorId: string;
   demands: Demand[];
   node: Node;
   plan: TilePlan;
-  producers: ProducerNeed[];
+  supply: TaskSupply;
   onSelect: (task: TaskRef) => void;
 }): React.ReactElement {
   const tensor = plan.graph.tensors[tensorId];
-  const [all, setAll] = useState(false);
+  const [paging, setPaging] = useState({ supply, page: 0 });
+  const page = paging.supply === supply ? paging.page : 0;
+  const setPage = (page: number) => setPaging({ supply, page });
   const family = plan.families.get(tensorId);
-  const mine = producers.filter((p) => p.task.tensorId === tensorId);
-  const shown = all ? mine : mine.slice(0, PRODUCERS_SHOWN);
+  const group = supply.producerGroups.find((g) => g.tensorId === tensorId);
+  const total = group?.count ?? 0;
+  const lastPage = Math.max(0, Math.ceil(total / PRODUCERS_SHOWN) - 1);
+  const currentPage = Math.min(page, lastPage);
+  const shown = useMemo(() => producerPage(plan, supply, tensorId, currentPage * PRODUCERS_SHOWN, PRODUCERS_SHOWN),
+    [plan, supply, tensorId, currentPage]);
   // A task that computes an untiled tensor reads through that tensor's
   // operation, and such a slot is named by the tensor it computes: two matmuls
   // are both `matmul`, and the tensor is what the reader can find on the graph.
@@ -534,7 +544,7 @@ function DemandGroup({
         family && (
           <>
             <p className="plan-need">
-              needs {mine.length} of {family.count} {tensor.name} task{family.count === 1 ? "" : "s"}
+              needs {group && group.definiteCount < total ? FIGURE_MARK.upper : ""}{total} of {family.count} {tensor.name} task{family.count === 1 ? "" : "s"}
             </p>
             <ul className="plan-list">
               {shown.map((need) => (
@@ -547,10 +557,12 @@ function DemandGroup({
                 />
               ))}
             </ul>
-            {mine.length > PRODUCERS_SHOWN && (
-              <button className="mini" onClick={() => setAll(!all)}>
-                {all ? "show fewer" : `show all ${mine.length}`}
-              </button>
+            {total > PRODUCERS_SHOWN && (
+              <div className="plan-producer-pages">
+                <button className="mini" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>previous</button>
+                <span className="muted">{currentPage * PRODUCERS_SHOWN + 1}–{Math.min((currentPage + 1) * PRODUCERS_SHOWN, total)} of {total}</span>
+                <button className="mini" disabled={currentPage === lastPage} onClick={() => setPage(currentPage + 1)}>next</button>
+              </div>
             )}
           </>
         )
@@ -788,6 +800,12 @@ export function PlanPanel(): React.ReactElement {
   const setFocusNode = useStore((s) => s.setFocusNode);
   const dark = useDark();
   const run = usePlanRun(plan);
+  /* Counted for the inspected task only, over what it computes: one task's
+     operations, where a family evaluation would be every task's. */
+  const reads = useMemo(
+    () => (plan && supply ? operandReads(plan.graph, supply.work) : null),
+    [plan, supply]
+  );
 
   /** Following a producer makes it the task, and brings its tensor into view. */
   const follow = (next: TaskRef) => {
@@ -836,13 +854,21 @@ export function PlanPanel(): React.ReactElement {
                   demands={supply.demand.filter((d) => d.tensorId === tensorId)}
                   node={node}
                   plan={plan}
-                  producers={supply.producers}
+                  supply={supply}
                   onSelect={follow}
                 />
               ))
             )}
           </section>
           {supply.computes.length > 0 && <ComputedSection plan={plan} computes={supply.computes} />}
+          {reads && (
+            <OperandReuse
+              reads={reads}
+              title="Operand reuse in this task"
+              empty="The operations this task computes read nothing for its tile."
+              nameOf={(tensorId) => resolved.tensors[tensorId]?.name ?? tensorId}
+            />
+          )}
           <FamilySection plan={plan} task={task} run={run} />
         </>
       ) : (

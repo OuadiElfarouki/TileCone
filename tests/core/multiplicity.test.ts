@@ -14,13 +14,15 @@ import { DEFAULT_LIMITS } from "../../src/core/ops/limits";
 import { tallyAt } from "../../src/core/tally";
 import { Region, box, fromBox } from "../../src/core/region";
 import { compileDSL } from "../../src/parse/compiler";
+import { supplyOf } from "../../src/core/plan/interfaces";
+import { tilePlan } from "../../src/core/plan/plan";
 
 const GEMM = "M = 4\nN = 6\nK = 8\nA = Tensor(M, K, dtype=fp16)\nB = Tensor(K, N, dtype=fp16)\nC = matmul(A, B)\n";
 
 function readsFor(dsl: string, tensorId: string, region: Region): { graph: ResolvedGraph; rows: OperandReads[] } {
   const { resolved } = compileDSL(dsl);
   const back = executeQuery(resolved, { tensorId, region, direction: "backward" }).backward!;
-  return { graph: resolved, rows: operandReads(resolved, back) };
+  return { graph: resolved, rows: operandReads(resolved, back.tensors) };
 }
 
 const row = (rows: OperandReads[], tensorId: string) => rows.find((r) => r.tensorId === tensorId)!;
@@ -172,5 +174,36 @@ describe("read multiplicity along a cone", () => {
     // The index tensor is still counted exactly: each position is read by its row.
     expect(row(rows, "Idx")).toMatchObject({ exact: true });
     expect(values(row(rows, "Idx"))).toMatchObject({ elements: 2, min: 4, max: 4 });
+  });
+});
+
+/* Inside a plan task the counts are over what the task computes - its tile and
+   the untiled tensors it computes on the way - so fusing an operand into the
+   task brings that operand's own operation, and its reuse, into the count. */
+describe("operand reuse inside a plan task", () => {
+  const CHAIN = "A = Tensor(32, 32, dtype=fp16)\nB = Tensor(32, 32, dtype=fp16)\n" +
+    "W = Tensor(32, 16, dtype=fp16)\nC = matmul(A, B)\nY = matmul(C, W)\n";
+  const { resolved } = compileDSL(CHAIN);
+  const taskReads = (tiles: Record<string, number[]>) => {
+    const supply = supplyOf(tilePlan(resolved, tiles), { tensorId: "Y", coord: [1, 1] });
+    return operandReads(resolved, supply.work);
+  };
+
+  it("counts only the task's own operation when its operand is tiled", () => {
+    const rows = taskReads({ C: [8, 8], Y: [8, 4] });
+    expect(rows.map((r) => [r.outputIds, r.tensorId])).toEqual([[["Y"], "C"], [["Y"], "W"]]);
+    // An 8 x 4 tile of Y: a row of C is read by the tile's 4 columns, a column of W by its 8 rows.
+    expect(values(row(rows, "C"))).toMatchObject({ elements: 8 * 32, min: 4, max: 4 });
+    expect(values(row(rows, "W"))).toMatchObject({ elements: 32 * 4, min: 8, max: 8 });
+  });
+
+  it("brings a fused operand's operation into the count, over the band the task computes", () => {
+    const rows = taskReads({ Y: [8, 4] });
+    expect(rows.map((r) => [r.outputIds, r.tensorId])).toEqual([[["C"], "A"], [["C"], "B"], [["Y"], "C"], [["Y"], "W"]]);
+    // The task computes C[8:16, :] itself: each of A's rows there is read by all
+    // 32 columns of that band, and each element of B by its 8 rows.
+    expect(values(row(rows, "A"))).toMatchObject({ elements: 8 * 32, min: 32, max: 32 });
+    expect(values(row(rows, "B"))).toMatchObject({ elements: 32 * 32, min: 8, max: 8 });
+    expect(values(row(rows, "C"))).toMatchObject({ elements: 8 * 32, min: 4, max: 4 });
   });
 });

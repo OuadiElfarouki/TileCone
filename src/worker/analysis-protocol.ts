@@ -1,5 +1,6 @@
 import type { Graph, ResolvedGraphData } from "../core/graph";
-import type { PlanReport } from "../core/plan/interfaces";
+import type { PlanReport, TaskSupply } from "../core/plan/interfaces";
+import type { TaskRef } from "../core/plan/plan";
 import type { ReuseSurface, ReuseSweep } from "../core/reuse";
 import type { Box } from "../core/region";
 import type { CompilerDiagnostic } from "../parse/compiler";
@@ -16,8 +17,20 @@ export type CompileJobResult =
   | { ok: true; graphId: number; artifact: CompileArtifact }
   | { ok: false; diagnostics: CompilerDiagnostic[] };
 
+export type PlanRestoreRequest = {
+  tiles: Record<string, number[]>;
+  task: TaskRef | null;
+  kept: Record<string, number[]>[];
+};
+
+export type PlanRestoreArtifact = { supply: TaskSupply | null; reports: PlanReport[] };
+export type RestoreJobResult =
+  | { ok: true; graphId: number; artifact: CompileArtifact; restoredPlan: PlanRestoreArtifact }
+  | { ok: false; diagnostics: CompilerDiagnostic[] };
+
 export type AnalysisRequest =
   | { id: number; kind: "compile"; source: string }
+  | { id: number; kind: "restore"; source: string; plan: PlanRestoreRequest }
   | { id: number; kind: "register"; graphId: number; graph: ResolvedGraphData }
   | {
       id: number;
@@ -47,6 +60,7 @@ export type AnalysisRequest =
 
 export type AnalysisResponse =
   | { id: number; kind: "compile"; result: CompileJobResult }
+  | { id: number; kind: "restore"; result: RestoreJobResult }
   | { id: number; kind: "registered"; graphId: number }
   | { id: number; kind: "layout"; result: BaseGraphLayout }
   | { id: number; kind: "plan"; result: PlanReport }

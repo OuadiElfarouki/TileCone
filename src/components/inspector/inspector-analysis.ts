@@ -231,7 +231,7 @@ export function useInspectorAnalysis({
 
   /** How many outputs of each operation in the cone read each operand element. */
   const reads = useMemo(
-    () => (dependencies && resolved && scopedBack ? operandReads(resolved, scopedBack) : null),
+    () => (dependencies && resolved && scopedBack ? operandReads(resolved, scopedBack.tensors) : null),
     [dependencies, resolved, scopedBack]
   );
 

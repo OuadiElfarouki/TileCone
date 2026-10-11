@@ -1,7 +1,7 @@
 import { StoreApi } from "zustand";
 import { Entanglement } from "../core/entangle";
 import { Graph, ResolvedGraph } from "../core/graph";
-import { PlanReport, Supply, Work } from "../core/plan/interfaces";
+import { PlanReport, TaskSupply, Work } from "../core/plan/interfaces";
 import { TaskRef, TilePlan } from "../core/plan/plan";
 import { PropResult } from "../core/propagate";
 import { Box, Region } from "../core/region";
@@ -48,6 +48,17 @@ export type WorkspaceRestore = {
   nodeOffsets?: NodeOffsets;
   viewCfgs?: Record<string, ViewCfg>;
   parts: SelPart[] | null;
+  /** Tile extents per planned tensor; absent restores nothing tiled. */
+  planTiles?: Record<string, number[]>;
+  /** The inspected task, which must be a tile of `planTiles`. */
+  planTask?: TaskRef | null;
+  /**
+   * Tilings kept for comparison, oldest first. Restoring evaluates each one
+   * again, so the caller supplies tilings and never figures.
+   */
+  keptTilings?: Record<string, number[]>[];
+  /** Open on the Plan view rather than whichever view is current. */
+  planView?: boolean;
 };
 
 /** Direct canvas gestures add by default; Alt subtracts. "replace" is internal
@@ -238,7 +249,7 @@ export type State = {
   /** Derived from `planTiles` against `resolved`; null when nothing is tiled. */
   plan: TilePlan | null;
   /** Derived: what `planTask` reads and which producer tasks supply it. */
-  planSupply: Supply | null;
+  planSupply: TaskSupply | null;
   /**
    * Plans kept for comparison with the current one, oldest first, at most
    * `MAX_KEPT_PLANS`. Each holds the totals it was evaluated to; the graph

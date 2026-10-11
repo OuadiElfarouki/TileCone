@@ -3,6 +3,8 @@ import { canonicalize, count, fromBox, box } from "../../src/core/region";
 import { computeMetrics } from "../../src/core/metrics";
 import { EXAMPLES } from "../../src/examples";
 import { useStore } from "../../src/state/store";
+import { planToLink } from "../../src/state/share";
+import { planReport } from "../../src/core/plan/interfaces";
 import { cardPx, graphScale, MAX_ELEM_PX, planeExtents, TILE_SCALE_NONE } from "../../src/view/tensor/tiling";
 import { nudgeDelta, nudgeUnit, snapSpan, tileOf } from "../../src/view/tensor/grid";
 import { viewAxes } from "../../src/view/tensor/tensor-view";
@@ -337,6 +339,78 @@ describe("transactional workspace restore", () => {
     });
     expect(restored).toBe(true);
     expect(S().nodeOffsets).toEqual({ "n:elementwise_Y": { dx: 15, dy: -40 } });
+  });
+});
+
+/* A plan names tensors and tile coordinates in one graph, so it travels in a
+   link as tilings and is checked against the graph the link compiles to. Kept
+   plans travel as tilings too, and their figures are measured again. */
+describe("restoring a shared tile plan", () => {
+  const CHAIN = "A = Tensor(16, 16, dtype=fp16)\nB = Tensor(16, 16, dtype=fp16)\n" +
+    "W = Tensor(16, 8, dtype=fp16)\nC = matmul(A, B)\nY = matmul(C, W)\n";
+  const restore = (patch: Partial<Parameters<ReturnType<typeof S>["restoreWorkspace"]>[0]>) =>
+    S().restoreWorkspace({
+      dsl: CHAIN,
+      direction: "backward",
+      tileScale: 0,
+      snapToGrid: true,
+      axisMode: "symbolic",
+      parts: null,
+      ...patch,
+    });
+
+  beforeEach(() => S().loadExample(0));
+
+  it("restores the plan, its task, its kept comparisons and the Plan view from a link", () => {
+    S().applyDSL(CHAIN);
+    S().setPlanTileAt("Y", [4, 4], [0, 0]);
+    S().keepPlan(planReport(S().plan!));
+    S().setPlanTile("C", [8, 8]);
+    S().selectPlanTask({ tensorId: "Y", coord: [2, 1] });
+    S().setInspectorTab("plan");
+    const shared = { planTiles: { ...S().planTiles }, task: S().planTask, kept: S().keptPlans };
+    const link = planToLink(S());
+    expect(shared.kept).toHaveLength(1);
+    expect(shared.planTiles).toEqual({ C: [8, 8], Y: [4, 4] });
+
+    S().loadExample(0);
+    S().setInspectorTab("dependencies");
+    expect(restore({
+      planTiles: link.plan,
+      planTask: link.task ? { tensorId: link.task.t, coord: link.task.at } : null,
+      keptTilings: link.kept,
+      planView: link.tab === "plan",
+    })).toBe(true);
+
+    expect({ ...S().planTiles }).toEqual(shared.planTiles);
+    expect(S().planTask).toEqual(shared.task);
+    expect(S().planSupply).not.toBeNull();
+    expect(S().keptPlans.map((k) => ({ ...k.tiles }))).toEqual(shared.kept.map((k) => ({ ...k.tiles })));
+    // Measured again on the restored graph, and the same as when they were kept.
+    expect(S().keptPlans.map((k) => k.total)).toEqual(shared.kept.map((k) => k.total));
+    expect(S().inspectorTab).toBe("plan");
+    expect(S().selectedOp).toBe(operationForTensor(S().resolved!, "Y"));
+    expect(S().workspaceHistory).toEqual([]);
+  });
+
+  it("opens with nothing tiled when the link has no plan", () => {
+    expect(restore({})).toBe(true);
+    expect(S().plan).toBeNull();
+    expect(S().keptPlans).toEqual([]);
+  });
+
+  it.each([
+    ["a graph input", { planTiles: { A: [4, 4] } }],
+    ["extents of the wrong rank", { planTiles: { Y: [4] } }],
+    ["a tensor the graph does not have", { planTiles: { Z: [4, 4] } }],
+    ["a task outside the grid", { planTiles: { Y: [4, 4] }, planTask: { tensorId: "Y", coord: [4, 0] } }],
+    ["a task on an untiled tensor", { planTiles: { Y: [4, 4] }, planTask: { tensorId: "C", coord: [0, 0] } }],
+    ["an invalid kept tiling", { keptTilings: [{ C: [0, 4] }] }],
+    ["a kept tiling listed twice", { keptTilings: [{ Y: [4, 4] }, { Y: [4, 4] }] }],
+  ])("refuses %s and leaves the workspace as it was", (_name, patch) => {
+    const before = S();
+    expect(restore(patch)).toBe(false);
+    expect(S()).toBe(before);
   });
 });
 
