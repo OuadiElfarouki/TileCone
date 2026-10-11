@@ -189,10 +189,9 @@ export function useKeyboard({
       };
       /* Moving a tile is an edit to the selection, and the selection is the
          Dependencies view's subject: its list is what shows which tile the
-         arrows are about to move. Under Cost model that list is not on screen,
-         and the panel is a readout of an assumed schedule rather than a place
-         to redraw the thing being scheduled - so the keys do nothing there
-         instead of editing something the reader cannot see. */
+         arrows are about to move. Under Plan that list is not on screen and
+         the arrows step the inspected task instead, rather than editing a tile
+         the reader cannot see. */
       const editsTiles = s.inspectorTab === "dependencies";
       const hit = editsTiles && matchesShortcut(e, SHORTCUTS.move) ? arrows[e.key] : undefined;
       if (hit) {

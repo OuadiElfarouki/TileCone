@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Inspector } from "../../../src/components/inspector/Inspector";
 import { useStore } from "../../../src/state/store";
+import { familyReplay } from "../../../src/core/plan/replay";
 
 // Static-render tests read the live test store rather than Zustand's initial
 // server snapshot. Actions and all derivation logic remain the real implementation.
@@ -58,5 +59,36 @@ describe("producer paging in the Plan view", () => {
     expect(html).toContain("previous");
     expect(html).toContain("next");
     expect(html).not.toContain("show all");
+  });
+});
+
+describe("family replay in the Plan view", () => {
+  beforeEach(() => {
+    S().applyDSL(CHAIN);
+    S().setInspectorTab("plan");
+    S().setPlanTileAt("Y", [8, 4], [8, 4]);
+  });
+
+  it("offers a replay beside the family figures", () => {
+    const html = render();
+    expect(html).toMatch(/Across all 16 Y tasks<button[^>]*>replay<\/button>/);
+  });
+
+  it("says where the replay is, and that listing order is not an execution order", () => {
+    const replay = familyReplay(S().plan!, S().planTask!);
+    S().setReplayPlayback({ replay, plan: S().plan!, visited: 3, phase: "playing", exiting: false, opacity: 1 });
+    const html = render();
+    expect(html).toContain("Task Y (0, 2) · 3 of 16");
+    expect(html).toContain("All 16 tasks in");
+    expect(html).toContain("listing order, which is not an execution order");
+    S().setReplayPlayback(null);
+  });
+
+  it("drops a replay that belongs to another task", () => {
+    const replay = familyReplay(S().plan!, S().planTask!);
+    S().setReplayPlayback({ replay, plan: S().plan!, visited: 3, phase: "playing", exiting: false, opacity: 1 });
+    S().selectPlanTask({ tensorId: "Y", coord: [0, 0] });
+    expect(render()).not.toContain("listing order");
+    S().setReplayPlayback(null);
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { box, count, fromBox, type Region } from "../../../src/core/region";
-import { playbackDifference } from "../../../src/view/tensor/execution-paint";
+import { playbackDifference } from "../../../src/view/tensor/replay-paint";
 
 describe("bounded playback differences", () => {
   it("subtracts exact overlap and reuses geometry on subsequent paints", () => {

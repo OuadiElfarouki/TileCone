@@ -37,6 +37,8 @@ import { boxColor, rgbCss } from "../../view/palette";
 import { useDark, useStore } from "../../state/store";
 import { DraftField } from "../chrome/DraftField";
 import { OperandReuse } from "./operand-reuse";
+import type { PlanReplayControl } from "./usePlanReplay";
+import type { ReplayPlayback } from "../../view/workspace";
 import { sameTiles } from "../../state/history";
 import { MAX_KEPT_PLANS } from "../../state/plan";
 import {
@@ -139,9 +141,9 @@ function usePlanRun(plan: TilePlan | null): PlanRun {
   /* A cancellation is the lane dropping this work, not an answer about it, and
      the question is unchanged - so ask again rather than leaving `evaluating`
      true with no dependency left that could retry it. This terminates: only
-     one query holds the lane at a time, and the reuse sweep that shares it
-     lives on a mutually exclusive inspector tab, so what cancels a plan run
-     is a build finishing, once per build. */
+     one query holds the lane at a time, a build cancels a plan run once per
+     build, and the family replay that shares the lane is not offered while a
+     run is evaluating and gives way after one retry when a run interrupts it. */
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
@@ -682,10 +684,12 @@ function FamilySection({
   plan,
   task,
   run,
+  replay,
 }: {
   plan: TilePlan;
   task: TaskRef;
   run: PlanRun;
+  replay: PlanReplayControl;
 }): React.ReactElement {
   const selectPlanTask = useStore((s) => s.selectPlanTask);
   const family = plan.families.get(task.tensorId)!;
@@ -705,9 +709,19 @@ function FamilySection({
 
   return (
     <div className="ins-section">
-      <div className="ins-title">
+      <div className="ins-title with-action">
         Across all {family.count} {name} task{family.count === 1 ? "" : "s"}
+        <button
+          className="mini"
+          onClick={replay.run}
+          disabled={replay.pending || run.evaluating}
+          title={`replay this family's tasks on the cards: what each one reads, and what it shares with task ${taskName(name, task.coord)}`}
+        >
+          {replay.pending ? "preparing…" : "replay"}
+        </button>
       </div>
+      {replay.error && <p className="hint overlap">Replay failed: {replay.error}</p>}
+      {replay.playback && <ReplayStatus playback={replay.playback} name={name} />}
       {run.error ? (
         <p className="hint overlap">Plan analysis failed: {run.error}</p>
       ) : run.evaluating ? (
@@ -791,7 +805,31 @@ function ComputedSection({ plan, computes }: { plan: TilePlan; computes: Compute
   );
 }
 
-export function PlanPanel(): React.ReactElement {
+/**
+ * Where a family replay is, and what it shows. The listing order is said every
+ * time: a replay walks the grid row by row, and read as an execution order it
+ * would claim a schedule nobody declared.
+ */
+function ReplayStatus({ playback, name }: { playback: ReplayPlayback; name: string }): React.ReactElement {
+  const { frames, tasks } = playback.replay;
+  const current = frames[playback.visited - 1];
+  return (
+    <>
+      {playback.phase === "playing" && current && (
+        <p className="hint">
+          Task {taskName(name, current.task.coord)} · {playback.visited} of {frames.length}
+        </p>
+      )}
+      <p className="hint">
+        {frames.length < tasks ? `${frames.length} of ${tasks} tasks, evenly spaced,` : `All ${tasks} tasks`} in
+        listing order, which is not an execution order. Full strength marks what each one shares
+        with this task.
+      </p>
+    </>
+  );
+}
+
+export function PlanPanel({ replay }: { replay: PlanReplayControl }): React.ReactElement {
   const resolved = useStore((s) => s.resolved)!;
   const plan = useStore((s) => s.plan);
   const task = useStore((s) => s.planTask);
@@ -869,7 +907,7 @@ export function PlanPanel(): React.ReactElement {
               nameOf={(tensorId) => resolved.tensors[tensorId]?.name ?? tensorId}
             />
           )}
-          <FamilySection plan={plan} task={task} run={run} />
+          <FamilySection plan={plan} task={task} run={run} replay={replay} />
         </>
       ) : (
         plan && <p className="hint">Click a tile of a tiled tensor to inspect its task.</p>

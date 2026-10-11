@@ -1,12 +1,10 @@
 import React, { useMemo } from "react";
-import { axisName } from "../../view/tensor/shape-label";
 import { MAX_CONTRIBUTION_PROBES } from "../../core/contribution";
-import { ratioFigure, sumFigures } from "../../core/metrics";
+import { sumFigures } from "../../core/metrics";
 import { formatBoxIndices } from "../../core/region";
-import { fmt, formatBytes, formatFigure, formatIntensity } from "../../view/format";
+import { fmt, formatBytes, formatFigure } from "../../view/format";
 import { demandDetail, demandSummary } from "../../view/demand";
 import { aggregateColors, boxColor, rgbCss } from "../../view/palette";
-import { neighbourShares, reuseFigures } from "../../view/reuse-rows";
 import { SHORTCUTS } from "../../view/shortcuts";
 import { MAX_PER_BOX_PROPS, partsOn } from "../../view/workspace";
 import { useDark, useStore } from "../../state/store";
@@ -15,7 +13,6 @@ import { PlanPanel } from "./PlanPanel";
 import { ConeSection, MERGED_AT_CAP, NO_ENABLED_TILES, sliceLines, TileAttribution } from "./cones";
 import {
   analysisTensorId,
-  type ConeCost,
   groupAttribution,
   groupFocus,
   useInspectorAnalysis,
@@ -24,7 +21,7 @@ import { DependencyNotes } from "./notes";
 import { OperandReuse } from "./operand-reuse";
 import { EmptyPanel, InspectorTabs } from "./tabs";
 import { RegionEditor, TileIdentity } from "./tiles";
-import { useReuseSweep } from "./useReuseSweep";
+import { usePlanReplay } from "./usePlanReplay";
 
 export function Inspector(): React.ReactElement {
   const resolved = useStore((s) => s.resolved);
@@ -67,12 +64,12 @@ export function Inspector(): React.ReactElement {
     ? parts.reduce<number | null>((last, part, i) => part.tensorId === activeTensorId ? i : last, null)
     : null);
 
-  const { reuseProbe, reuse, reusePending, reuseError, visiblePlayback, computeReuse } =
-    useReuseSweep({ resolved, selection, selectedGroup, rawFocus, hiddenBoxes, direction, showEntangled, tab });
+  const plan = useStore((s) => s.plan);
+  const planTask = useStore((s) => s.planTask);
+  const replay = usePlanReplay({ plan, task: planTask, tab });
 
   const {
     metrics,
-    bounds,
     sharing,
     reads,
     findings,
@@ -183,22 +180,6 @@ export function Inspector(): React.ReactElement {
      bound in that direction or any other. `formatFigure` writes what each one
      has earned, including the word `unknown` where there is no number. */
 
-  /**
-   * A scenario's intensity, or the reason there isn't one.
-   *
-   * Built through `ratioFigure` so the quotient inherits what its parts know:
-   * `~` where both moved over a widened region, and `unknown` where the
-   * numerator crossed an operation nobody described - a ratio of an unknown
-   * quantity is not a looser ratio, it is not a ratio.
-   */
-  const intensityOf = (cost: ConeCost | null | undefined): string => {
-    if (!cost) return "—";
-    const ratio = ratioFigure(cost.flops, cost.bytes);
-    if (ratio.value === null) return "unknown";
-    if (cost.bytes.value === 0) return "—";
-    return formatIntensity(ratio);
-  };
-
   /* Summed through the figure algebra rather than by adding three numbers, so
      the total inherits the weakest of the three claims instead of presenting
      itself as whatever the last one was. */
@@ -208,9 +189,7 @@ export function Inspector(): React.ReactElement {
 
   const nameOf = (tensorId: string) => resolved.tensors[tensorId]?.name ?? tensorId;
 
-  /** Reuse neighbours step along the anchor tensor's axes, so it names them. */
   const activeTensor = activeTensorId ? resolved.tensors[activeTensorId] : undefined;
-  const axisLabelOf = (axis: number) => axisName(activeTensor ?? {}, axis);
 
   return (
     <aside className="inspector" aria-label="Tile inspector">
@@ -221,7 +200,7 @@ export function Inspector(): React.ReactElement {
         {tab === "plan" ? (
           <>
             <InspectorTabs />
-            <PlanPanel />
+            <PlanPanel replay={replay} />
           </>
         ) : !selection ? (
           <>
@@ -241,7 +220,7 @@ export function Inspector(): React.ReactElement {
                 are about the same tile, and it is the tiles list below that
                 picks which one. */}
             <InspectorTabs />
-            {tab === "dependencies" ? (
+            {tab === "dependencies" && (
               <div
                 className="ins-tabpanel"
                 role="region"
@@ -389,8 +368,7 @@ export function Inspector(): React.ReactElement {
                 {/* A function of the tiles on screen: duplicate element demand
                     at graph inputs. It is a shareable footprint, not a claim
                     about cache hits, transactions, or bytes actually loaded.
-                    The sweep that asks the same question of tiles nobody drew
-                    is modelled, and lives under Cost model. */}
+                    Demand across a declared family belongs under Plan. */}
                 <div className="ins-section">
                   <div className="ins-title">Shared graph-input demand</div>
                   {sharing && sharing.length > 0 ? (
@@ -445,126 +423,6 @@ export function Inspector(): React.ReactElement {
               focusedBox={focusedBox}
               attributed={!!perBox}
             />
-              </div>
-            ) : (
-              <div
-                className="ins-tabpanel"
-                role="region"
-                id="ins-panel-execution"
-                aria-labelledby="ins-tab-execution"
-              >
-                <p className="tab-note">
-                  Everything here assumes an execution the graph does not fix: a tiling of the
-                  whole tensor, an order to run it in, what fuses with what. These are models,
-                  not bounds - a wrong assumption moves them in either direction.
-                </p>
-                {/* Both scenarios assume a fusion decision the graph does not
-                    make, which is what moved them off the cost table: the
-                    counts there are measured, these are argued. */}
-                <div className="ins-section">
-                  <div className="ins-title">Arithmetic intensity</div>
-                  <div className="kv">
-                    <span title={
-                      bounds
-                        ? `one kernel over every op and every tile: intermediates never reach memory and a shared operand band is fetched once - ${formatFigure(bounds.fused.flops, fmt)} FLOP / ${formatFigure(bounds.fused.bytes, formatBytes)}`
-                        : undefined
-                    }>
-                      fused
-                    </span>
-                    <span>{intensityOf(bounds?.fused)}</span>
-                    <span title={
-                      bounds?.unfused
-                        ? `every op of every tile as its own job: separate input reads and output writes, and no cross-op cache reuse; reshape, transpose, slice and expand are views that move nothing where the layout allows - ${formatFigure(bounds.unfused.flops, fmt)} FLOP / ${formatFigure(bounds.unfused.bytes, formatBytes)}`
-                        : `per-tile cones are not traced past ${MAX_PER_BOX_PROPS} tiles, and the merged result cannot be taken apart again`
-                    }>
-                      unfused
-                    </span>
-                    <span>{intensityOf(bounds?.unfused)}</span>
-                  </div>
-                  {metrics?.flops.status === "unknown" ? (
-                    <p className="hint overlap">
-                      Unavailable: the numerator is a FLOP total across an operation whose
-                      arithmetic is not modelled. A ratio of an unknown quantity is not a
-                      looser ratio, it is not one.
-                    </p>
-                  ) : metrics && !metrics.exact ? (
-                    <p className="hint overlap">
-                      Both are ratios of figures measured over a widened region, which moves
-                      the numerator and the denominator at once: ~ says disturbed in an
-                      unknown direction, where ≤ would claim a side.
-                    </p>
-                  ) : null}
-                </div>
-                <div className="ins-section">
-                  <div className="ins-title with-action">
-                    Reuse sweep
-                    <button
-                      className="mini"
-                      onClick={computeReuse}
-                      disabled={!reuseProbe || reusePending}
-                      title="sample tiles of the selection's size across the anchor tensor and estimate how many demand part of each graph-input footprint"
-                    >
-                      {reusePending ? "estimating…" : reuse ? "replay" : "estimate"}
-                    </button>
-                  </div>
-                  <p className="hint">
-                    Tiles of this tile's size, laid over the whole tensor: how many of them demand
-                    part of the same graph-input footprint.
-                  </p>
-                  {visiblePlayback?.phase === "playing" && (
-                    <p className="hint">
-                      Probe {visiblePlayback.visited} of {visiblePlayback.frames.length}
-                    </p>
-                  )}
-                  {reuseError ? (
-                    <p className="hint overlap">Reuse estimate failed: {reuseError}</p>
-                  ) : reusePending ? (
-                    <p className="hint">Evaluating sampled tiles off the UI thread…</p>
-                  ) : !reuse ? (
-                    <p className="hint">sampled sweep · run on demand</p>
-                  ) : reuse.length === 0 ? (
-                    <p className="hint">This tile has no graph-input demand.</p>
-                  ) : (
-                    <ul className="reuse-list">
-                      {reuse.map((estimate) => {
-                        const neighbours = neighbourShares(estimate.neighbors, axisLabelOf);
-                        const figures = reuseFigures(estimate);
-                        return (
-                          <li key={estimate.tensorId}>
-                            <code>{resolved.tensors[estimate.tensorId].name}</code>
-                            <span
-                              className="muted"
-                              title={
-                                estimate.exhaustive
-                                  ? "every tile of this size was probed"
-                                  : `${estimate.probes} of ${estimate.totalTiles} tiles probed, one per stratum`
-                              }
-                            >
-                              {formatFigure(figures.tiles, String)} of {estimate.totalTiles} tiles
-                              {figures.sharedFraction &&
-                                ` · ${formatFigure(figures.sharedFraction, (v) => `${Math.round(v * 100)}%`)} of the footprint each`}
-                            </span>
-                            {!estimate.geometryExact && (
-                              <span className="badge approx" title={estimate.reasons.join("; ")}>≈</span>
-                            )}
-                            {(!estimate.exhaustive || neighbours.text) && (
-                              <span
-                                className="reuse-detail"
-                                title={neighbours.reasons.length
-                                  ? `approximate neighbours: ${neighbours.reasons.join("; ")}`
-                                  : undefined}
-                              >
-                                {!estimate.exhaustive && `${estimate.probes} sampled`}
-                                {!estimate.exhaustive && neighbours.text && " · "}
-                                {neighbours.text && `neighbouring tile shares ${neighbours.text}`}
-                              </span>
-                            )}
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
-                </div>
               </div>
             )}
           </>

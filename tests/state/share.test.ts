@@ -256,12 +256,13 @@ describe("a tile plan in a link", () => {
       keptPlans: [{ tiles: { B: [4, 4] } }],
       inspectorTab: "plan",
     })).toEqual({ plan: { B: [2, 4] }, task: { t: "B", at: [1, 0] }, kept: [{ B: [4, 4] }], tab: "plan" });
-    // A task with nothing tiled is not a task of any plan, and Cost model is not carried.
+    // A task with nothing tiled is not a task of any plan, and Dependencies is
+    // the view a link opens on without saying so.
     expect(planToLink({
       planTiles: {},
       planTask: { tensorId: "B", coord: [0, 0] },
       keptPlans: [],
-      inspectorTab: "execution",
+      inspectorTab: "dependencies",
     })).toEqual({});
   });
 

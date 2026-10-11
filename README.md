@@ -30,16 +30,17 @@ npm run build    # typecheck + production bundle
 
 Press `?` in the app for the shortcut sheet.
 
-## The three views
+## The two views
 
-The inspector is split by what a figure rests on, because the three kinds of figure can be wrong in
-different ways.
+The inspector is split by what a figure rests on.
 
 | View | Question | What its figures are |
 |---|---|---|
 | **Dependencies** | What do the drawn tiles need, feed and share? | Facts about the graph: exact, or a bound with its reason named. |
-| **Cost model** | What would an assumed execution do with them? | Modelled: idealised scenarios, not bounds. |
 | **Plan** | How does a declared tiling divide the work? | Exact for that tiling, or a bound with its reason named. |
+
+Neither view assumes an execution you did not state. Which tensors are written to memory and which
+are computed where they are needed is a choice a plan makes, and the Plan view is where it is made.
 
 ### Dependencies
 
@@ -66,19 +67,6 @@ does not assume. It is exact for `einsum`
 (so `matmul`, `bmm`, `linear`), elementwise operations, `conv`, `concat` and `gather`; `normalize`
 falls back to a marked bound.
 
-### Cost model
-
-The arithmetic intensity of the tile under two scenarios: **fused** reads the cone's graph inputs
-and writes its output once; **unfused** charges each operation's distinct reads and writes, with
-transpose, slice, expand and row-major reshape treated as views that move nothing. Neither is a
-hardware prediction.
-
-The **reuse estimate** walks tiles of the same size across the tensor, with a fixed seed, and
-estimates how many touch each input region the tile reads. Running it replays its actual sampled
-tiles on the graph: each probe lights up wherever it lands across the relations switched on, with
-the part it shares with the drawn tile drawn on top. The Cost model view narrows to that one tile
-while it is open and restores the other tiles on leaving.
-
 ### Plan
 
 A plan divides produced tensors into regular tiles. Each tile is a **task**: it computes one
@@ -92,7 +80,8 @@ starts with one operation per task. Clearing a tensor's tiling (×) fuses it int
 **tile** under "Computed in this task" writes it back.
 
 For the inspected task, the panel shows its FLOPs, what it reads from each tensor, which producer
-tasks supply that, and the untiled tensors it computes. A producer found only through an
+tasks supply that, the untiled tensors it computes, and how many of its outputs read each operand
+element. A producer found only through an
 over-approximated region is marked as a possible dependency rather than a definite one. For each
 tiled tensor and for the whole plan it reports:
 
@@ -122,6 +111,11 @@ band of `H`. Full-width `Y` tiles compute each band once.
 **keep** saves the current plan with its figures, and the whole-plan rows gain a column for it, so
 up to two kept plans read beside the current one. Each kept plan can be restored as the current
 tiling, which undoes like any other plan edit.
+
+**replay** walks the inspected task's family on the graph, one task at a time: what each task reads
+and computes, with the part it shares with the inspected task drawn on top. The tasks follow
+listing order, row by row, which is not an execution order; a family of more than 48 tasks is shown
+through an even spread of them.
 
 Share links include the current tiling, inspected task, kept tilings and Plan view. Kept
 figures are recomputed when the link is opened. Producer details are paged, with total counts

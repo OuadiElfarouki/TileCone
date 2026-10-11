@@ -5,13 +5,8 @@ import {
   type ResolvedGraphData,
 } from "../core/graph";
 import { planReport, taskSupplyOf, type PlanReport } from "../core/plan/interfaces";
-import { familyOf, tilePlan } from "../core/plan/plan";
-import {
-  estimateInputReuseSweep,
-  type ReuseSurface,
-  type ReuseSweep,
-} from "../core/reuse";
-import { fromBox, type Box } from "../core/region";
+import { familyOf, tilePlan, type TaskRef } from "../core/plan/plan";
+import { familyReplay, type FamilyReplay } from "../core/plan/replay";
 import { tryCompileDSL, type CompilerDiagnostic } from "../parse/compiler";
 import type { CompileArtifact, PlanRestoreArtifact, PlanRestoreRequest } from "./analysis-protocol";
 import { cardSize } from "../view/tensor/card-size";
@@ -78,12 +73,12 @@ export function planRestoreArtifact(graph: ResolvedGraph, request: PlanRestoreRe
   };
 }
 
-export function reuseArtifact(
+/** The replay of the family `task` belongs to, under the plan `tiles` declares. */
+export function replayArtifact(
   graph: ResolvedGraph | ResolvedGraphData,
-  tensorId: string,
-  box: Box,
-  surfaces?: ReuseSurface[]
-): ReuseSweep {
+  tiles: Record<string, number[]>,
+  task: TaskRef
+): FamilyReplay {
   const resolved = "shapesOf" in graph ? graph : hydrateResolvedGraph(graph);
-  return estimateInputReuseSweep(resolved, { tensorId, region: fromBox(box) }, { surfaces });
+  return familyReplay(tilePlan(resolved, tiles), task);
 }

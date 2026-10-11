@@ -1,8 +1,7 @@
 import type { Graph, ResolvedGraphData } from "../core/graph";
 import type { PlanReport, TaskSupply } from "../core/plan/interfaces";
 import type { TaskRef } from "../core/plan/plan";
-import type { ReuseSurface, ReuseSweep } from "../core/reuse";
-import type { Box } from "../core/region";
+import type { FamilyReplay } from "../core/plan/replay";
 import type { CompilerDiagnostic } from "../parse/compiler";
 import type { BaseGraphLayout } from "../view/graph/graph-scene";
 
@@ -49,13 +48,11 @@ export type AnalysisRequest =
     }
   | {
       id: number;
-      kind: "reuse";
+      kind: "replay";
       graphId: number | null;
       graph?: ResolvedGraphData;
-      tensorId: string;
-      box: Box;
-      /** The relations to report per probe; see `ReuseSurface`. */
-      surfaces: ReuseSurface[];
+      tiles: Record<string, number[]>;
+      task: TaskRef;
     };
 
 export type AnalysisResponse =
@@ -64,5 +61,5 @@ export type AnalysisResponse =
   | { id: number; kind: "registered"; graphId: number }
   | { id: number; kind: "layout"; result: BaseGraphLayout }
   | { id: number; kind: "plan"; result: PlanReport }
-  | { id: number; kind: "reuse"; result: ReuseSweep }
+  | { id: number; kind: "replay"; result: FamilyReplay }
   | { id: number; kind: "error"; message: string };

@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hydrateResolvedGraph } from "../../src/core/graph";
-import { box } from "../../src/core/region";
-import { compileArtifact, layoutArtifact, planArtifact, reuseArtifact } from "../../src/worker/analysis-jobs";
+import { compileArtifact, layoutArtifact, planArtifact, replayArtifact } from "../../src/worker/analysis-jobs";
 import type { AnalysisRequest, AnalysisResponse } from "../../src/worker/analysis-protocol";
 
 const CHAIN = `A = Tensor(256, 256, dtype=fp16)
@@ -53,7 +52,9 @@ describe("analysis worker client", () => {
     const compiled = compileArtifact(CHAIN);
     if (!compiled.ok) throw new Error(compiled.diagnostics[0].message);
     const graph = compiled.resolved;
-    const query = client.reuseInWorker({ graphId: 42, graph, tensorId: "Y", box: box([0, 64], [0, 64]), surfaces: ["backward"] });
+    const tiles = { Y: [64, 64] };
+    const task = { tensorId: "Y", coord: [0, 0] };
+    const query = client.replayInWorker({ graphId: 42, graph, tiles, task });
     const queryWorker = FakeWorker.instances[0];
     const first = client.layoutInWorker({ graphId: 42, graph, graphPx: 1, axes: {} }).catch((error: unknown) => error);
     const oldLayout = FakeWorker.instances[1];
@@ -74,7 +75,7 @@ describe("analysis worker client", () => {
     expect(layoutWorker.terminated).toBe(true);
     expect(client.isAnalysisCancelled(await cached)).toBe(true);
     expect(queryWorker.terminated).toBe(false);
-    queryWorker.respond({ id: queryWorker.messages[0].id, kind: "reuse", result: reuseArtifact(graph, "Y", box([0, 64], [0, 64])) });
+    queryWorker.respond({ id: queryWorker.messages[0].id, kind: "replay", result: replayArtifact(graph, tiles, task) });
     await expect(query).resolves.toHaveProperty("frames");
   });
 
@@ -154,25 +155,24 @@ describe("analysis worker client", () => {
       tiles: { Y: [64, 64] },
     }).catch((error: unknown) => error);
     const first = FakeWorker.instances[0];
-    const region = box([0, 64], [0, 64]);
-    const reuse = client.reuseInWorker({
-      graphId: null, graph, tensorId: "Y", box: region, surfaces: ["backward"],
-    });
+    const tiles = { Y: [64, 64] };
+    const task = { tensorId: "Y", coord: [0, 0] };
+    const replay = client.replayInWorker({ graphId: null, graph, tiles, task });
     const second = FakeWorker.instances[1];
 
     expect(first.terminated).toBe(true);
     expect(client.isAnalysisCancelled(await family)).toBe(true);
-    expect(second.messages[0].kind).toBe("reuse");
+    expect(second.messages[0].kind).toBe("replay");
 
     const request = second.messages[0];
     second.respond({
       id: request.id,
-      kind: "reuse",
-      result: reuseArtifact(graph, "Y", region),
+      kind: "replay",
+      result: replayArtifact(graph, tiles, task),
     });
-    await expect(reuse).resolves.toMatchObject({
-      estimates: expect.arrayContaining([expect.objectContaining({ tensorId: "A" })]),
-    });
+    // Sixteen tasks of Y, all under the frame cap, so every one is a frame.
+    await expect(replay).resolves.toMatchObject({ tasks: 16 });
+    expect((await replay).frames).toHaveLength(16);
   });
 });
 

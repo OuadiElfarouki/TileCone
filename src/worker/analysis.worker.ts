@@ -1,5 +1,5 @@
 import { hydrateResolvedGraph, type ResolvedGraph } from "../core/graph";
-import { compileArtifact, layoutArtifact, planArtifact, planRestoreArtifact, reuseArtifact } from "./analysis-jobs";
+import { compileArtifact, layoutArtifact, planArtifact, planRestoreArtifact, replayArtifact } from "./analysis-jobs";
 import type { AnalysisRequest, AnalysisResponse } from "./analysis-protocol";
 
 type WorkerHost = {
@@ -54,8 +54,8 @@ host.onmessage = ({ data }) => {
     } else {
       host.postMessage({
         id: data.id,
-        kind: "reuse",
-        result: reuseArtifact(graph, data.tensorId, data.box, data.surfaces),
+        kind: "replay",
+        result: replayArtifact(graph, data.tiles, data.task),
       });
     }
   } catch (error) {

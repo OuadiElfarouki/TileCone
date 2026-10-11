@@ -40,7 +40,7 @@ export type Attrs = Record<string, unknown>;
 export type Cardinality = number | { min: number; max?: number };
 
 /**
- * A tensor's storage as the unfused traffic model sees it.
+ * A tensor's storage, as `viewLayouts` derives it.
  *
  * `{ order }` is a dense buffer whose axes are stored in that order, outermost
  * first, named by this tensor's own axis indices: row-major is `[0, 1, ...]`,
@@ -264,7 +264,7 @@ export interface OpSpec {
   unknownWork?: boolean;
 
   /**
-   * How the output's storage relates to the input's, for traffic estimates.
+   * How the output's storage relates to the input's.
    *
    * A logical reshape or transpose does not by itself move data: a runtime can
    * express it as new strides over the same buffer, and the consumer then reads
@@ -274,8 +274,8 @@ export interface OpSpec {
    * is the usual case - so the output is written, row-major, like any other.
    * Omitted means the operation computes its output, which is always written.
    *
-   * This is the idealized unfused scenario's assumption, not a claim about any
-   * particular runtime, which may still choose to copy.
+   * This is what a view could be, not a claim about any particular runtime,
+   * which may still choose to copy.
    */
   layout?(ctx: OpCtx, input: Layout): Layout | "copy";
 

@@ -4,38 +4,33 @@ import { box, fromBox, type Box } from "../../../src/core/region";
 import { gridGeometry } from "../../../src/view/tensor/grid";
 import { graphScale } from "../../../src/view/tensor/tiling";
 
-describe("execution sweep paint", () => {
-  /* Two probes on Y. Each reads a band of X wider than the part the anchor
-     also reads, so `region` and `shared` are genuinely different sets. */
+describe("plan replay paint", () => {
+  /* Two tasks of Y. Each reads a band of X wider than the part the inspected
+     task also reads, so `region` and `shared` are genuinely different sets. */
   const reach = (region: Box, shared: Box | null) => ({
     region: fromBox(region),
     shared: shared ? fromBox(shared) : null,
   });
-  const playback = (phase: ExecutionPlayback["phase"] = "playing"): ExecutionPlayback => ({
-    tensorId: "Y",
-    anchorBox: box([0, 2], [0, 2]),
-    tile: [2, 2],
-    colorIndex: 0,
-    frames: [
-      {
-        box: box([0, 2], [0, 2]),
-        weight: 1,
-        surfaces: { backward: { X: reach(box([0, 4], [0, 4]), box([0, 2], [0, 4])) } },
-      },
-      {
-        box: box([0, 2], [2, 4]),
-        weight: 1,
-        surfaces: { backward: { X: reach(box([0, 4], [0, 4]), box([0, 2], [0, 4])) } },
-      },
-    ],
+  const frame = (coord: number[], tile: Box) => ({
+    task: { tensorId: "Y", coord },
+    box: tile,
+    reach: new Map([["X", reach(box([0, 4], [0, 4]), box([0, 2], [0, 4]))]]),
+  });
+  const playback = (phase: ReplayPlayback["phase"] = "playing"): ReplayPlayback => ({
+    replay: {
+      task: { tensorId: "Y", coord: [0, 0] },
+      frames: [frame([0, 0], box([0, 2], [0, 2])), frame([0, 1], box([0, 2], [2, 4]))],
+      tasks: 2,
+    },
+    plan: {} as ReplayPlayback["plan"],
     visited: 2,
     phase,
     exiting: false,
     opacity: 1,
   });
 
-  it("shows the visited probes, the last one active", () => {
-    const paint = buildExecutionPaint({ tensorId: "Y", dark: false, playback: playback() });
+  it("shows the visited tasks on the family's tensor, the last one active", () => {
+    const paint = buildReplayPaint({ tensorId: "Y", dark: false, playback: playback() });
     expect(paint.layers.map((layer) => layer.region.boxes[0])).toEqual([
       box([0, 2], [0, 2]),
       box([0, 2], [2, 4]),
@@ -43,10 +38,11 @@ describe("execution sweep paint", () => {
     expect(paint.layers[1].seed).toBe(true);
   });
 
-  /* A probe paints where it lands as well as where it meets the anchor: a
-     sweep whose probes mostly share nothing would otherwise paint nothing. */
-  it("paints a probe's whole reach, with the part the anchor meets on top", () => {
-    const active = buildExecutionPaint({ tensorId: "X", dark: false, playback: playback() });
+  /* A task paints where its demand lands as well as where it meets the
+     inspected task's: a family whose tasks mostly share nothing would
+     otherwise paint nothing. */
+  it("paints a task's whole reach, with the part the inspected task shares on top", () => {
+    const active = buildReplayPaint({ tensorId: "X", dark: false, playback: playback() });
     const [rest, shared] = active.layers;
     expect(rest.region.boxes).toEqual([box([2, 4], [0, 4])]); // reach minus the meeting
     expect(rest.alpha).toBe(0.26);
@@ -57,44 +53,33 @@ describe("execution sweep paint", () => {
   });
 
   it("settles both readings into a quieter union", () => {
-    const settled = buildExecutionPaint({
-      tensorId: "X", dark: false, playback: playback("settled"),
-    });
+    const settled = buildReplayPaint({ tensorId: "X", dark: false, playback: playback("settled") });
     expect(settled.layers.map((layer) => layer.alpha)).toEqual([0.09, 0.22]);
     expect(settled.layers.every((layer) => !layer.seed)).toBe(true);
   });
 
-  /* Each relation keeps the mark it owns on the canvas, so a probe's upstream
-     reach cannot be read as its downstream reach. */
-  it("paints each relation in its own mark", () => {
-    const base = playback();
-    const frame = base.frames[1];
-    frame.surfaces.forward = { Z: reach(box([0, 4], [0, 4]), null) };
-    frame.surfaces.entangled = { W: reach(box([0, 4], [0, 4]), null) };
-    const feeds = buildExecutionPaint({ tensorId: "Z", dark: false, playback: base });
-    const met = buildExecutionPaint({ tensorId: "W", dark: false, playback: base });
-    const needs = buildExecutionPaint({ tensorId: "X", dark: false, playback: base });
-    expect(needs.layers[0].pattern).toBeUndefined();
-    expect(feeds.layers[0].pattern?.kind).toBe("stripe");
-    expect(met.layers[0].pattern?.kind).toBe("stipple");
+  /* What a task reads is the Plan view's solid fill: a ruling or a stipple
+     would read as a cone the plan does not draw. */
+  it("paints what a task reads in the plan's solid fill", () => {
+    const needs = buildReplayPaint({ tensorId: "X", dark: false, playback: playback() });
+    expect(needs.layers.every((layer) => layer.pattern === undefined)).toBe(true);
   });
 
-  /* The sweep's cover would read as a lattice, and a lattice line that no
-     gesture snaps to is the one thing §9 does not allow the grid to draw. */
-  it("leaves the card's own lattice alone, on the studied tensor and its inputs", () => {
-    const studied = buildExecutionPaint({ tensorId: "Y", dark: false, playback: playback() });
-    const input = buildExecutionPaint({ tensorId: "X", dark: false, playback: playback() });
+  /* The plan's own lattice is already on every tiled card. */
+  it("draws no lattice of its own", () => {
+    const studied = buildReplayPaint({ tensorId: "Y", dark: false, playback: playback() });
+    const input = buildReplayPaint({ tensorId: "X", dark: false, playback: playback() });
     expect(studied).not.toHaveProperty("lattice");
     expect(input).not.toHaveProperty("lattice");
   });
 
-  /* The settled summary is the union of every probe's share, and any widened
-     probe has to carry its hatch into that union. */
-  it("marks the settled union approximate when one probe was", () => {
+  /* The settled summary is the union of every task's share, and any widened
+     task has to carry its hatch into that union. */
+  it("marks the settled union approximate when one task's demand was widened", () => {
     const widened = playback("settled");
-    const reached = widened.frames[1].surfaces.backward!.X;
+    const reached = widened.replay.frames[1].reach.get("X")!;
     reached.shared = { ...reached.shared!, exact: false, reasons: ["strided fallback"] };
-    const settled = buildExecutionPaint({ tensorId: "X", dark: false, playback: widened });
+    const settled = buildReplayPaint({ tensorId: "X", dark: false, playback: widened });
     const shared = settled.layers[1];
     expect(shared.hatch).toBe(true);
     expect(shared.region.reasons).toEqual(["strided fallback"]);
@@ -180,8 +165,8 @@ describe("the box a single-cell gesture commits", () => {
 
 /* ---------------- what the canvas paints ---------------- */
 
-import { ExecutionPlayback, MAX_PER_BOX_PROPS, BoxProp } from "../../../src/view/workspace";
-import { buildExecutionPaint } from "../../../src/view/tensor/execution-paint";
+import { ReplayPlayback, MAX_PER_BOX_PROPS, BoxProp } from "../../../src/view/workspace";
+import { buildReplayPaint } from "../../../src/view/tensor/replay-paint";
 import { DEFAULT_DOWNSTREAM_DENSITY, stripeAngleDeg, buildLayers, LayerInputs } from "../../../src/view/tensor/layers";
 import { selectionBoxFromDrag, visibleApproximation } from "../../../src/view/tensor/gesture";
 

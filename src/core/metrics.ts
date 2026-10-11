@@ -135,28 +135,6 @@ export type AggregateReadout = {
   inputBytes: Figure;
   intermediateBytes: Figure;
   outputBytes: Figure;
-  /** Ideal op-by-op traffic: distinct reads per operation plus its writes.
-   * No cross-operation cache reuse. An operation that can be a view of its
-   * input (`OpSpec.layout`) moves nothing; its consumer reads the input's
-   * elements through it, and is charged for them there. */
-  unfusedBytes: Figure;
-  /**
-   * FLOPs per byte of memory traffic, under the two fusion assumptions a
-   * kernel author actually chooses between.
-   *
-   * `fused` charges the cone's graph inputs and its output: one kernel, with
-   * every intermediate held in registers or shared memory and never written
-   * out. `unfused` sums distinct input reads and output writes per operation,
-   * with no cross-operation cache reuse. Reshape, transpose, slice and expand
-   * are views where the input's layout allows one, and cost no traffic.
-   * These are idealized scenarios, not bounds on measured hardware traffic.
-   *
-   * Both denominators include `outputBytes`. The tile has to be written
-   * somewhere in either world, and leaving it out overstated the ratio on
-   * producer-output query.
-   */
-  fusedIntensity: Figure;
-  unfusedIntensity: Figure;
   tensors: TensorReadout[];
   /**
    * Whether every figure above is exact.
@@ -235,7 +213,10 @@ export function coneReadout(graph: ResolvedGraph, prop: PropResult): TensorReado
 }
 
 /**
- * Which nodes the unfused scenario treats as views, and each tensor's layout.
+ * Which nodes can be views of their input, and each tensor's layout.
+ *
+ * `flopsOver` passes over views, which compute nothing. A plan still charges a
+ * tiled view as a written copy; this is what would let it charge nothing.
  *
  * Graph inputs and computed tensors are row-major. A node whose operation
  * declares `layout` is a view when that returns a layout for its input's, and
@@ -355,47 +336,6 @@ export function flopsOver(
 }
 
 export function computeMetrics(graph: ResolvedGraph, back: PropResult): AggregateReadout {
-  let unfusedFigure = figure(0, "exact");
-  const layouts = layoutsOf(graph);
-  for (const node of graph.topo) {
-    const spec = getOp(node.op)!;
-    // A view writes nothing and reads nothing: the consumer reads the viewed
-    // elements, and its own reads below are what charge for them.
-    if (layouts.views.has(node.id)) continue;
-    const ctx: OpCtx = {
-      inShapes: graph.shapesOf(node.inputs),
-      outShapes: graph.shapesOf(node.outputs),
-      attrs: node.attrs,
-    };
-    // Keep reads separate across consumers, but deduplicate repeated operand
-    // slots and overlapping output dependencies within a single operation.
-    const reads = new Map<string, Region>();
-    node.outputs.forEach((tid, slot) => {
-      const tr = back.tensors.get(tid);
-      if (!tr) return;
-      const outputTensor = graph.tensors[tid];
-      unfusedFigure = addFigures(
-        unfusedFigure,
-        byteFigure(outputTensor, count(tr.region), tr.region)
-      );
-      for (const b of tr.region.boxes) {
-        spec.backward(slot, b, ctx).forEach((region, inputSlot) => {
-          const inputId = node.inputs[inputSlot];
-          const prev = reads.get(inputId);
-          reads.set(inputId, prev ? {
-            boxes: [...prev.boxes, ...region.boxes],
-            exact: prev.exact && region.exact,
-            reasons: [...prev.reasons, ...region.reasons],
-          } : region);
-        });
-      }
-    });
-    for (const [tid, region] of reads)
-      unfusedFigure = addFigures(
-        unfusedFigure,
-        byteFigure(graph.tensors[tid], count(region), region)
-      );
-  }
   const { flops: flopsFigure, unknownOperations } = flopsOver(graph, back.tensors);
 
   const tensors = coneReadout(graph, back);
@@ -413,24 +353,13 @@ export function computeMetrics(graph: ResolvedGraph, back: PropResult): Aggregat
   const intermediateBytes = bytesIn("intermediate");
   const outputBytes = bytesIn("output");
 
-  // Traffic, not just what is read: the tile is written in both worlds.
-  const fusedBytes = addFigures(inputBytes, outputBytes);
-  const figures = [
-    flopsFigure,
-    inputBytes,
-    intermediateBytes,
-    outputBytes,
-    unfusedFigure,
-  ];
+  const figures = [flopsFigure, inputBytes, intermediateBytes, outputBytes];
   return {
     flops: flopsFigure,
     unknownOperations,
     inputBytes,
     intermediateBytes,
     outputBytes,
-    unfusedBytes: unfusedFigure,
-    fusedIntensity: ratioFigure(flopsFigure, fusedBytes),
-    unfusedIntensity: ratioFigure(flopsFigure, unfusedFigure),
     tensors,
     exact: figures.every((f) => f.status === "exact"),
     reasons: [...new Set(figures.flatMap((f) => f.reasons))].sort(),

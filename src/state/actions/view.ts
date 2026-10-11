@@ -1,8 +1,6 @@
 import { remapped, ViewCfg, viewCfgFits } from "../../view/tensor/tensor-view";
 import { TILE_SCALE_MAX, TILE_SCALE_MIN } from "../../view/tensor/tiling";
 import { Direction, idRecord, viewAnchorIndex } from "../../view/workspace";
-import { executionScoping } from "../execution-scope";
-import { inspectTask } from "../plan";
 import { revealHidden } from "../selection-edit";
 import { GetState, SetState, State } from "../types";
 
@@ -21,8 +19,8 @@ export const viewActions = (set: SetState, get: GetState): Pick<
   | "setSnapToGrid"
   | "setAxisMode"
   | "setInspectorTab"
-  | "setExecutionPlayback"
-  | "updateExecutionPlayback"
+  | "setReplayPlayback"
+  | "updateReplayPlayback"
   | "setTileScale"
   | "setFocusNode"
   | "setSelectedOp"
@@ -89,33 +87,13 @@ export const viewActions = (set: SetState, get: GetState): Pick<
 
   setAxisMode: (v) => set({ axisMode: v }),
 
-  setInspectorTab: (tab) => {
-    const state = get();
-    /* Leaving a reuse playback for Plan reveals a real task underneath it. An
-       existing inspected task wins; otherwise the studied produced tensor is
-       opened at coordinate zero using the sweep's tile extents. This is a
-       plan edit, not animation state, so it goes through the ordinary checked
-       action and remains undoable. Dependencies need no corresponding work:
-       the playback never replaced their original selection. */
-    if (
-      tab === "plan" &&
-      state.inspectorTab === "execution" &&
-      !state.planTask &&
-      state.executionPlayback &&
-      state.resolved?.tensors[state.executionPlayback.tensorId]?.producer
-    ) {
-      const tensorId = state.executionPlayback.tensorId;
-      const tile = state.plan?.families.get(tensorId)?.tile ?? state.executionPlayback.tile;
-      inspectTask(state, set, tensorId, [...tile], new Array(tile.length).fill(0));
-    }
-    set({ inspectorTab: tab, ...executionScoping(get(), tab) });
-  },
+  setInspectorTab: (tab) => set({ inspectorTab: tab }),
 
-  setExecutionPlayback: (executionPlayback) => set({ executionPlayback }),
+  setReplayPlayback: (replayPlayback) => set({ replayPlayback }),
 
-  updateExecutionPlayback: (patch) => set((state) => ({
-    executionPlayback: state.executionPlayback
-      ? { ...state.executionPlayback, ...patch }
+  updateReplayPlayback: (patch) => set((state) => ({
+    replayPlayback: state.replayPlayback
+      ? { ...state.replayPlayback, ...patch }
       : null,
   })),
 

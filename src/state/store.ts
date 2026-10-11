@@ -3,14 +3,12 @@ import { EXAMPLES } from "../examples/index";
 import { NodeOffset } from "../view/graph/node-layout";
 import { ViewCfg } from "../view/tensor/tensor-view";
 import { MAX_ELEM_PX } from "../view/tensor/tiling";
-import { CanvasTool, idRecord, MAX_PER_BOX_PROPS, Theme } from "../view/workspace";
+import { CanvasTool, idRecord, Theme } from "../view/workspace";
 import { layoutActions } from "./actions/layout";
 import { planActions } from "./actions/plan";
 import { selectionActions } from "./actions/selection";
 import { viewActions } from "./actions/view";
 import { workspaceActions } from "./actions/workspace";
-import { recompute } from "./analysis";
-import { executionScoping } from "./execution-scope";
 import { NO_PLAN } from "./plan";
 import { State } from "./types";
 
@@ -38,41 +36,7 @@ function initialCanvasTool(): CanvasTool {
   }
 }
 
-export const useStore = create<State>((commit, get) => {
-  // Keep scope transactional with edits, including undo and the first draw in
-  // an empty Cost model view. Playback ticks must never trigger propagation.
-  const set: typeof commit = (update, replace) => commit((previous) => {
-    const patch = typeof update === "function" ? update(previous) : update;
-    let next = { ...previous, ...patch };
-    const changed = next.selection !== previous.selection ||
-      next.resolved !== previous.resolved || next.inspectorTab !== previous.inspectorTab;
-    if (!changed) return patch;
-    if (next.inspectorTab === "execution") {
-      next = { ...next, ...executionScoping(next, "execution") };
-      const anchor = next.focusedBox;
-      if (next.selection && next.resolved && anchor !== null &&
-          next.selection.parts.length > MAX_PER_BOX_PROPS) {
-        // One extra query, regardless of selection size. Empty entries preserve
-        // global tile indices/colors without computing every tile's cone.
-        const part = next.selection.parts[anchor];
-        const one = recompute(next.resolved, { parts: [part] });
-        next = {
-          ...next,
-          ...one,
-          perBox: next.selection.parts.map((_, index) => index === anchor
-            ? one.perBox![0] : { backward: null, forward: null }),
-          entangled: null,
-        };
-      }
-    } else {
-      next = { ...next, ...executionScoping(next, next.inspectorTab) };
-      if (previous.inspectorTab === "execution" &&
-          previous.selection && previous.selection.parts.length > MAX_PER_BOX_PROPS) {
-        Object.assign(next, recompute(next.resolved, next.selection));
-      }
-    }
-    return next;
-  }, replace);
+export const useStore = create<State>((set, get) => {
   return ({
   dslText: EXAMPLES[0].dsl,
   draftText: EXAMPLES[0].dsl,
@@ -86,8 +50,7 @@ export const useStore = create<State>((commit, get) => {
   diagnostics: [],
   showEntangled: false,
   inspectorTab: "dependencies",
-  executionPlayback: null,
-  executionScope: null,
+  replayPlayback: null,
   ...NO_PLAN,
   keptPlans: [],
   entangled: null,

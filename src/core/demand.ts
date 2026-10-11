@@ -8,9 +8,10 @@
  * computation keeps the figures, their statuses and their wording the same.
  */
 
-import { Tensor } from "./graph";
+import { ResolvedGraph, Tensor } from "./graph";
 import { byteFigure, figure, Figure, ratioFigure, sumFigures } from "./metrics";
-import { count, Region, unionOf } from "./region";
+import { PropResult } from "./propagate";
+import { count, isEmpty, Region, unionOf } from "./region";
 
 export type SharedDemand = {
   tensorId: string;
@@ -61,4 +62,26 @@ function duplicateFigure(summed: Figure, distinct: Figure): Figure {
   if (summed.value === null || distinct.value === null) return figure(0, "unknown", reasons);
   const exact = summed.status === "exact" && distinct.status === "exact";
   return figure(Math.max(0, summed.value - distinct.value), exact ? "exact" : "upper", reasons);
+}
+
+/** Graph-input demand across the drawn tiles (`SharedDemand`, with the tiles as readers). */
+export type InputSharing = SharedDemand & {
+  /** Tiles analysed together; `readers` is how many of them reach this input. */
+  selectedTiles: number;
+};
+
+/** Element-granular leaf demand only; excludes memory transactions, caches,
+ * internal reads and output traffic. This is shareable footprint, not measured traffic.
+ * Count a represented union directly, without introducing a box-cap approximation. */
+export function inputSharing(graph: ResolvedGraph, cones: PropResult[]): InputSharing[] {
+  if (new Set(cones.flatMap((cone) => cone.roots)).size > 1)
+    throw new Error("input sharing requires tiles on one tensor");
+  return Object.values(graph.tensors).filter((t) => !t.producer).flatMap((input) => {
+    const regions = cones.flatMap((cone) => {
+      const region = cone.tensors.get(input.id)?.region;
+      return region && !isEmpty(region) ? [region] : [];
+    });
+    if (!regions.length) return [];
+    return [{ ...sharedDemand(input, regions), selectedTiles: cones.length }];
+  });
 }

@@ -112,33 +112,27 @@ describe("planning from the canvas", () => {
     expect(S().planTask).toBeNull();
   });
 
-  it("reveals the original selection or a zero-coordinate task after execution playback", () => {
-    const selected = box([4, 8], [0, 4]);
-    S().setSelection("Y", fromBox(selected), "replace");
-    const original = S().selection;
-    S().setInspectorTab("execution");
-    S().setExecutionPlayback({
-      tensorId: "Y",
-      anchorBox: selected,
-      tile: [4, 4],
-      colorIndex: 0,
-      frames: [{ box: selected, weight: 1, surfaces: { backward: {} } }],
-      visited: 1,
+  it("leaves the selection and the plan as they were around a replay", () => {
+    S().setSelection("Y", fromBox(box([4, 8], [0, 4])), "replace");
+    S().setPlanTileAt("Y", [4, 4], [4, 0]);
+    const selection = S().selection;
+    const tiles = { ...S().planTiles };
+    const task = S().planTask;
+    S().setInspectorTab("plan");
+    S().setReplayPlayback({
+      replay: { task: task!, frames: [], tasks: 1 },
+      plan: S().plan!,
+      visited: 0,
       phase: "settled",
       exiting: false,
       opacity: 0.72,
     });
-
     S().setInspectorTab("dependencies");
-    expect(S().selection).toBe(original); // playback never replaced the drawn tile
-
-    S().setInspectorTab("execution");
     S().setInspectorTab("plan");
-    expect(S().planTiles.Y).toEqual([4, 4]);
-    expect(S().planTask).toEqual({ tensorId: "Y", coord: [0, 0] });
-
-    S().setExecutionPlayback(null);
-    S().setInspectorTab("dependencies");
+    expect(S().selection).toBe(selection);
+    expect({ ...S().planTiles }).toEqual(tiles);
+    expect(S().planTask).toEqual(task);
+    S().setReplayPlayback(null);
   });
 
   it("names producer tasks once both sides are tiled", () => {

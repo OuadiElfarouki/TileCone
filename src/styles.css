@@ -816,8 +816,7 @@ textarea.source.error-state { border-color: var(--err); }
    comparison the feature exists to make. */
 .box-list { display: flex; flex-direction: column; gap: 2px; max-height: 252px; overflow-y: auto; margin: 4px 0; }
 /* One tensor's tiles. The container is the semantics made visible: everything
-   below the list analyses exactly one of these; multi-output execution is
-   outside this inspector's current cost model. */
+   below the list analyses exactly one of these. */
 .tile-group { display: flex; flex-direction: column; gap: 2px; }
 .tile-group + .tile-group { margin-top: 7px; }
 .tile-group-head {
@@ -949,16 +948,9 @@ textarea.source.error-state { border-color: var(--err); }
   background: var(--bg); padding: 1px 5px; border-radius: var(--r);
 }
 .reuse-list li + li { margin-top: 3px; }
-/* Sampling coverage and the neighbour probes qualify the figure above them, the
-   way a cone row's flags qualify its bar. */
-.reuse-detail { flex: 1 0 100%; color: var(--muted); font-size: var(--t-micro); line-height: 1.5; }
 /* Read-multiplicity figures sit at the row's end, as a cone row's do, so they
    form one column whether a row fits on a line or wraps. */
 .reuse-list .reads-figures { margin-left: auto; }
-/* The kicker names the scope; the button belongs to the line it opens. */
-.setup-kicker.sweep-head {
-  display: flex; align-items: center; gap: 7px; margin-top: 9px;
-}
 
 /* Releasing now would collapse the panel. The content fades and the inner edge
    lights, so the gesture reads as pushing the panel off the screen — the state

@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Tensor } from "../../core/graph";
 import { elementCount } from "../../core/shapes";
 import { DTYPE_BYTES } from "../../core/dtypes";
-import { reuseReachAt } from "../../core/reuse";
 import { useFrameThrottle } from "../hooks/useFrameThrottle";
 import { useDebounced } from "../hooks/useDebounced";
 import { Box, formatBoxIndices, fromBox, iv } from "../../core/region";
@@ -21,7 +20,7 @@ import { seedTile } from "../../view/tensor/tile-spec";
 import { partsOn } from "../../view/workspace";
 import { buildPlanPaint, buildLayers } from "../../view/tensor/layers";
 import { CellDrag, planGesture, selectionBoxFromDrag, planElementFromCell, visibleApproximation } from "../../view/tensor/gesture";
-import { buildExecutionPaint } from "../../view/tensor/execution-paint";
+import { buildReplayPaint } from "../../view/tensor/replay-paint";
 import { isPrimaryPress } from "../pointer";
 
 export { cardSize } from "../../view/tensor/card-size";
@@ -108,15 +107,15 @@ function TensorCardView({
   const entangledAll = useStore((s) => s.entangled);
   const inspectorTab = useStore((s) => s.inspectorTab);
   const planView = inspectorTab === "plan";
-  // Only the studied tensor and the ones some probe reaches repaint on each
-  // playback frame. Unrelated cards keep selecting null and React.memo can
-  // leave their canvases alone.
-  const executionPlayback = useStore((s) => {
-    const playback = s.executionPlayback;
-    return playback && (
-      playback.tensorId === tensor.id ||
-      playback.frames.some((frame) =>
-        Object.values(frame.surfaces).some((byTensor) => !!reuseReachAt(byTensor, tensor.id)))
+  // Only the family's tensor and the ones some replayed task reaches repaint
+  // on each frame. Unrelated cards keep selecting null and React.memo can
+  // leave their canvases alone. The replay belongs to the Plan view, whose
+  // paint it overlays.
+  const replayPlayback = useStore((s) => {
+    const playback = s.replayPlayback;
+    return playback && s.inspectorTab === "plan" && (
+      playback.replay.task.tensorId === tensor.id ||
+      playback.replay.frames.some((frame) => frame.reach.has(tensor.id))
     ) ? playback : null;
   });
   const plan = useStore((s) => s.plan);
@@ -234,11 +233,11 @@ function TensorCardView({
       });
     }
 
-    if (executionPlayback)
-      layers.push(...buildExecutionPaint({
+    if (replayPlayback)
+      layers.push(...buildReplayPaint({
         tensorId: tensor.id,
         dark,
-        playback: executionPlayback,
+        playback: replayPlayback,
       }).layers);
     drawGrid(canvas, shape, cfg, geom, layers, dark, paintRenderScale, drawScale, paint, rasterPixels);
   }, [
@@ -256,7 +255,7 @@ function TensorCardView({
     geom,
     hiddenBoxes,
     isSelected,
-    executionPlayback,
+    replayPlayback,
     parts,
     perBox,
     drawScale,

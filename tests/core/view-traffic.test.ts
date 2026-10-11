@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { compileDSL } from "../../src/parse/compiler";
-import { computeMetrics, viewLayouts } from "../../src/core/metrics";
+import { viewLayouts } from "../../src/core/metrics";
 import { isRowMajor } from "../../src/core/ops/types";
-import { propagateBackward } from "../../src/core/propagate";
-import { box, fromBox } from "../../src/core/region";
 
 /* The attention head split and merge. The split is a reshape of a computed,
    contiguous tensor followed by a transpose: both views. The merge reshapes a
@@ -21,7 +19,7 @@ Yt = transpose(Y, perm=[0, 2, 1, 3])
 Ym = reshape(Yt, shape=[B, S, H*D])
 `).resolved;
 
-describe("views in the unfused scenario", () => {
+describe("views a layout allows", () => {
   it("treats a reshape of contiguous data and a transpose as views, and a reshape of a transpose as a copy", () => {
     const resolved = attention();
     const { views, layouts } = viewLayouts(resolved);
@@ -33,18 +31,6 @@ describe("views in the unfused scenario", () => {
     // Qh is Q4's buffer read in head-major order, not a new buffer.
     expect(layouts.get("Qh")).toEqual({ order: [0, 2, 1, 3] });
     expect(layouts.get("Ym")).toEqual({ order: [0, 1, 2] });
-  });
-
-  it("charges only the computing op and the copy", () => {
-    const resolved = attention();
-    const back = propagateBackward(resolved, {
-      tensorId: "Ym",
-      region: fromBox(box([0, 1], [0, 8], [0, 8])),
-    });
-    const metrics = computeMetrics(resolved, back);
-    // relu reads 64 fp32 elements and writes 64; the merging reshape reads its
-    // 64 and writes 64. The split and both transposes move nothing.
-    expect(metrics.unfusedBytes.value).toBe(4 * 64 * 4);
   });
 
   it("brings a transpose followed by its inverse back to row-major", () => {

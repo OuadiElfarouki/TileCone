@@ -1,27 +1,15 @@
 import { useMemo } from "react";
 import { contributions } from "../../core/contribution";
-import { AggregateReadout, Figure, addFigures, coneReadout, computeMetrics, figure } from "../../core/metrics";
+import { coneReadout, computeMetrics } from "../../core/metrics";
 import { operandReads } from "../../core/multiplicity";
 import { coneFindings } from "../../core/notes";
-import { inputSharing } from "../../core/reuse";
+import { inputSharing } from "../../core/demand";
 import type { PropResult } from "../../core/propagate";
 import { count, fromBox, Region, union } from "../../core/region";
 import type { ResolvedGraph } from "../../core/graph";
 import { analysisTarget, groupPropResult, BoxProp, Direction, InspectorTab, SelPart } from "../../view/workspace";
 
 const EMPTY_PARTS: SelPart[] = [];
-
-/**
- * One scenario's cost, as figures rather than numbers.
- *
- * Both halves carry their own status because they are qualified differently and
- * combine: bytes over a widened region are an upper bound, while FLOPs across
- * an operation nobody described are not a bound at all. A ratio of the two is
- * only as good as its weaker half, and that is exactly what the figure algebra
- * works out.
- */
-export type ConeCost = { flops: Figure; bytes: Figure };
-export type ConeBounds = { fused: ConeCost; unfused: ConeCost | null };
 
 /**
  * Which tensor's tiles the readout below the list describes.
@@ -101,52 +89,6 @@ export function enabledBackwardProps(
   );
 }
 
-/**
- * Two idealized execution scenarios, not guaranteed hardware bounds.
- *
- * Fusion here spans two axes, and the scenarios vary both. `fused`
- * is the merged cone: one kernel over every op and every tile, so no
- * intermediate reaches memory and a shared operand band is fetched once.
- * `unfused` charges every op of every tile as its own job - each intermediate
- * written and read back, each tile fetching its own operands - and adds those
- * up. Actual traffic can lie outside these scenarios (caches, spills, repeated
- * loads, recomputation and materialization choices are not modeled).
- *
- * On a plain GEMM the whole range is the tile axis: two adjacent output tiles
- * read one shared operand band, and `fused` counts it once where `unfused`
- * pays for it twice. On a single tile of a long chain the range is the op axis
- * instead. They collapse to one number when there is neither to be had, which
- * is the honest report for that graph.
- *
- * `unfused` needs per-tile cones, so it is `null` past `MAX_PER_BOX_PROPS`
- * rather than approximated: a merged cone cannot be taken apart again, and
- * splitting it by guess would invent a bound.
- */
-export function coneBounds(
-  resolved: ResolvedGraph,
-  merged: AggregateReadout,
-  enabled: PropResult[] | null
-): ConeBounds {
-  const fused = {
-    flops: merged.flops,
-    bytes: addFigures(merged.inputBytes, merged.outputBytes),
-  };
-  if (!enabled) return { fused, unfused: null };
-  // Ratio of the sums, never the mean of the ratios: tiles differ in size, and
-  // averaging their intensities would weight a one-element tile like a full row.
-  const unfused = enabled.reduce<ConeCost>(
-    (total, prop) => {
-      const m = computeMetrics(resolved, prop);
-      return {
-        flops: addFigures(total.flops, m.flops),
-        bytes: addFigures(total.bytes, m.unfusedBytes),
-      };
-    },
-    { flops: figure(0, "exact"), bytes: figure(0, "exact") }
-  );
-  return { fused, unfused };
-}
-
 /** Contribution classification is useful only when downstream rows are shown. */
 export function contributionAnalysisEnabled(direction: Direction): boolean {
   return direction === "forward" || direction === "both";
@@ -169,8 +111,8 @@ type InspectorAnalysisArgs = {
  * Memoized analysis model consumed by the inspector view.
  *
  * Each derivation keeps its own dependency list and active-tab gate: Plan uses
- * its own model, Dependencies measures cost and demand, and only Execution
- * needs per-tile fusion scenarios. Direction gates contribution probes.
+ * its own model, and Dependencies measures cost, demand, reads and notes.
+ * Direction gates contribution probes.
  */
 export function useInspectorAnalysis({
   resolved,
@@ -186,7 +128,6 @@ export function useInspectorAnalysis({
   const parts = selection?.parts ?? EMPTY_PARTS;
   const coneAnalysis = tab !== "plan";
   const dependencies = tab === "dependencies";
-  const execution = tab === "execution";
   const scopedBack = useMemo(
     () => coneAnalysis ? groupPropResult(byTensorRes, perBox, parts, hiddenBoxes, focusedBox, activeTensorId, "backward") : null,
     [coneAnalysis, byTensorRes, perBox, parts, hiddenBoxes, focusedBox, activeTensorId]
@@ -202,9 +143,8 @@ export function useInspectorAnalysis({
   }, [resolved, scopedBack]);
 
   /**
-   * Duplicate graph-input element demand among enabled tiles, beside what a
-   * full sweep would reuse. It is unsampled and uses already propagated cones,
-   * so it needs no sweep button. Conservative regions make duplicate
+   * Duplicate graph-input element demand among enabled tiles. It is unsampled
+   * and uses already propagated cones. Conservative regions make duplicate
    * demand an upper bound, and this says nothing about actual cache traffic.
    */
   const sharing = useMemo(() => {
@@ -213,16 +153,6 @@ export function useInspectorAnalysis({
     if (!resolved || !cones || cones.length < 2) return null;
     return inputSharing(resolved, cones);
   }, [dependencies, resolved, perBox, parts, hiddenBoxes, focusedBox, activeTensorId]);
-
-  /** @see coneBounds - idealized execution scenarios. */
-  const bounds = useMemo(() => {
-    if (!execution || !resolved || !metrics) return null;
-    return coneBounds(
-      resolved,
-      metrics,
-      enabledBackwardProps(perBox, parts, hiddenBoxes, focusedBox, activeTensorId)
-    );
-  }, [execution, resolved, metrics, perBox, parts, hiddenBoxes, focusedBox, activeTensorId]);
 
   const findings = useMemo(
     () => (dependencies && resolved && scopedBack ? coneFindings(resolved, scopedBack) : null),
@@ -274,5 +204,5 @@ export function useInspectorAnalysis({
     return coneReadout(resolved, scopedFwd).filter((row) => !roots.has(row.tensorId));
   }, [resolved, scopedFwd]);
 
-  return { metrics, bounds, sharing, reads, findings, seeds, contribution, upstream, downstream };
+  return { metrics, sharing, reads, findings, seeds, contribution, upstream, downstream };
 }

@@ -15,8 +15,7 @@ import {
   CanvasTool,
   ConeDirection,
   Direction,
-  ExecutionPlayback,
-  ExecutionScope,
+  ReplayPlayback,
   InspectorTab,
   PanelSide,
   type Selection,
@@ -156,27 +155,16 @@ export type State = {
    * Which class of question the inspector is answering.
    *
    * `dependencies` is every figure that is a function of the graph and the
-   * drawn region: exact, or a bound with its reason named. `execution` is the
-   * figures that only exist once an execution is assumed - an order, a tiling
-   * of the whole tensor, a fusion decision - which are modelled rather than
-   * bounded and would be read as facts if they shared a panel with them.
+   * drawn region: exact, or a bound with its reason named. `plan` is every
+   * figure that rests on a declared tiling: exact for that tiling, or bounded.
+   * An execution the graph does not fix - which tensors are written, which are
+   * computed where they are needed - is a choice the plan states, never one
+   * the inspector assumes.
    */
   inspectorTab: InspectorTab;
-  /** A visual replay of the deterministic probes behind the reuse estimate.
-   * It never changes `selection` or `plan`; those remain underneath it. */
-  executionPlayback: ExecutionPlayback | null;
-  /**
-   * The attribution the Cost model view set aside while it scopes the panel to the one
-   * tile its sweep is about.
-   *
-   * A sweep is defined by a single tile, and the figures beside it are about
-   * that tile, so the view disables every other one on the way in and puts
-   * them back on the way out - whatever happened in between. Parts are held by
-   * identity rather than index, the same way `setSelection` remaps them, so an
-   * edit that renumbers the tiles cannot restore the wrong ones; a part that no
-   * longer exists simply drops out.
-   */
-  executionScope: ExecutionScope | null;
+  /** A replay of the inspected task's family on the cards. It never changes
+   *  `selection` or `plan`; those remain underneath it. */
+  replayPlayback: ReplayPlayback | null;
 
   viewCfgs: Record<string, ViewCfg>;
   /** Px per element for every card in this graph. A property of the resolved
@@ -317,8 +305,8 @@ export type State = {
   setSnapToGrid: (v: boolean) => void;
   setAxisMode: (v: AxisMode) => void;
   setInspectorTab: (tab: InspectorTab) => void;
-  setExecutionPlayback: (playback: ExecutionPlayback | null) => void;
-  updateExecutionPlayback: (patch: Partial<ExecutionPlayback>) => void;
+  setReplayPlayback: (playback: ReplayPlayback | null) => void;
+  updateReplayPlayback: (patch: Partial<ReplayPlayback>) => void;
   /** Tile a produced tensor with these extents, or stop tiling it with `null`. Undoable. */
   setPlanTile: (tensorId: string, tile: number[] | null) => void;
   /** Inspect one task, or none. Undoable. */

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hydrateResolvedGraph } from "../../src/core/graph";
-import { compileArtifact, layoutArtifact, planArtifact, planRestoreArtifact, reuseArtifact } from "../../src/worker/analysis-jobs";
+import { compileArtifact, layoutArtifact, planArtifact, planRestoreArtifact, replayArtifact } from "../../src/worker/analysis-jobs";
 import { box } from "../../src/core/region";
 
 const CHAIN = `A = Tensor(256, 256, dtype=fp16)
@@ -66,18 +66,19 @@ describe("analysis worker jobs", () => {
     expect(report.total?.tasks).toBe(report.families.reduce((n, family) => n + family.tasks, 0));
   });
 
-  it("returns a structured-cloneable reuse trace for canvas playback", () => {
+  it("returns a structured-cloneable family replay for canvas playback", () => {
     const result = compileArtifact(CHAIN);
     if (!result.ok) throw new Error(result.diagnostics[0].message);
 
-    const sweep = reuseArtifact(
+    const replay = replayArtifact(
       structuredClone(result.artifact.resolved),
-      "Y",
-      box([0, 64], [0, 64])
+      { C: [64, 64], Y: [64, 64] },
+      { tensorId: "Y", coord: [0, 0] }
     );
-    expect(() => structuredClone(sweep)).not.toThrow();
-    expect(sweep.frames).toHaveLength(8);
-    expect(sweep.frames[0].box).toEqual(box([0, 64], [0, 64]));
+    const cloned = structuredClone(replay);
+    expect(cloned.frames[0].reach).toBeInstanceOf(Map);
+    expect(cloned.frames.length).toBe(replay.tasks);
+    expect(cloned.frames[0].box).toEqual(box([0, 64], [0, 64]));
   });
 });
 

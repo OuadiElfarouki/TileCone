@@ -1,4 +1,4 @@
-/** The Dependencies / Cost model / Plan switch, and the panel shown with nothing drawn. */
+/** The Dependencies / Plan switch, and the panel shown with nothing drawn. */
 
 import React, { useMemo } from "react";
 import { fromBox } from "../../core/region";
@@ -12,15 +12,10 @@ export const TABS = [
     label: "Dependencies",
     hint: "what the drawn tiles need, feed and share: exact, or bounded with its reason named",
   },
-  {
-    id: "execution",
-    label: "Cost model",
-    hint: "what an assumed execution would do with them: modelled, not bounded",
-  },
-  /* A third class, and a third promise. A plan figure rests on a declared
+  /* A second class, and a second promise. A plan figure rests on a declared
      tiling rather than on the drawn region, and it is exact for that tiling or
-     bounded with its reason - so it belongs with neither the figures that need
-     no plan nor the ones that are modelled. */
+     bounded with its reason. Fusion and materialization are choices the plan
+     states, so nothing here is modelled behind the reader's back. */
   {
     id: "plan",
     label: "Plan",

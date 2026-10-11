@@ -7,7 +7,8 @@
 import { ResolvedGraph } from "../core/graph";
 import { mergeProps, PropResult } from "../core/propagate";
 import { Box } from "../core/region";
-import { ReuseSweepFrame } from "../core/reuse";
+import type { TilePlan } from "../core/plan/plan";
+import type { FamilyReplay } from "../core/plan/replay";
 
 /** Which independently toggled views are active in the workspace. `none` is
  * the explicit figures-only state: analysis remains live while paint and rows hide. */
@@ -19,18 +20,16 @@ export type Theme = "light" | "dark";
  *  an operation, `move` drags either from anywhere on it. */
 export type CanvasTool = "select" | "move";
 /** The two classes of question the inspector answers; see `inspectorTab`. */
-export type InspectorTab = "dependencies" | "execution" | "plan";
-export type ExecutionScope = {
-  hidden: SelPart[];
-  focused: SelPart | null;
-  pinned: SelPart | null;
-};
-export type ExecutionPlayback = {
-  tensorId: string;
-  anchorBox: Box;
-  tile: number[];
-  colorIndex: number;
-  frames: ReuseSweepFrame[];
+export type InspectorTab = "dependencies" | "plan";
+/**
+ * A family replay on the cards (`core/plan/replay.ts`), and how far through it
+ * the playback is. Transient view state, never an edit: it overlays the plan
+ * and leaves it unchanged.
+ */
+export type ReplayPlayback = {
+  replay: FamilyReplay;
+  /** The plan the frames were computed for. Another plan makes them stale. */
+  plan: TilePlan;
   /** Number of frames already visited; the active one is `visited - 1`. */
   visited: number;
   phase: "playing" | "settled";
@@ -38,9 +37,9 @@ export type ExecutionPlayback = {
    * The overlay is on its way out and `opacity` is being driven to zero.
    *
    * Beside `phase` rather than a third value of it, because a departure has to
-   * leave the sweep reading as whatever it was: folded into `phase`, a fade
-   * that began mid-sweep dropped the probe being walked and jumped the input
-   * cards from that one pulse to the union of every probe so far - a change of
+   * leave the replay reading as whatever it was: folded into `phase`, a fade
+   * that began mid-replay would drop the task being walked and jump the cards
+   * from that one frame to the union of every frame so far - a change of
    * subject on the way out, in the frames the reader was still watching.
    */
   exiting: boolean;
@@ -211,31 +210,6 @@ export function viewAnchorIndex(parts: SelPart[], tensorId: string, focus: numbe
   const last = parts.reduce((found, part, i) => (part.tensorId === tensorId ? i : found), -1);
   return last >= 0 ? last : null;
 }
-/**
- * The tile a reuse sweep is about: the focused one when it is in the analysis
- * group and still enabled, else the last enabled tile drawn there.
- *
- * Lives here rather than in the inspector because entering Cost model has to
- * know which tile it is scoping to before the inspector renders, and the two
- * choosing differently would scope the panel to one tile and sweep another.
- */
-export function sweepAnchorIndex(
-  parts: SelPart[],
-  group: string | null,
-  focus: number | null,
-  hidden: Set<number>
-): number | null {
-  const { tensorId } = analysisTarget(parts, group, null);
-  if (!tensorId) return null;
-  const enabled = (index: number) =>
-    parts[index]?.tensorId === tensorId && !hidden.has(index);
-  if (focus !== null && enabled(focus)) return focus;
-  return parts.reduce<number | null>(
-    (last, _part, index) => (enabled(index) ? index : last),
-    null
-  );
-}
-
 /**
  * The operation a tile on this tensor is "at", for the operations list.
  *

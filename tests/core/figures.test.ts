@@ -81,35 +81,16 @@ describe("the figure algebra", () => {
 });
 
 describe("cost figures over a real cone", () => {
-  it("marks unfused traffic as upper when the selected geometry is inexact", () => {
+  it("marks the bytes of a region the caller bounded as upper, with the reason", () => {
     const { executor } = compileDSL("X = Tensor(8, dtype=fp16)\nY = relu(X)\n");
     const metrics = executor.metrics("Y", {
       boxes: [box([0, 4])],
       exact: false,
       reasons: ["caller bound"],
     });
-    expect(metrics.unfusedBytes).toMatchObject({ value: 16, status: "upper" });
-    expect(metrics.unfusedBytes.reasons).toContain("caller bound");
-  });
-
-  it("marks unfused traffic as upper when a source dtype was widened", () => {
-    const resolved = resolveGraph(parseGraphJSON(JSON.stringify({
-      nodes: [{ id: "id", op: "identity", inputs: ["X"], outputs: ["Y"], attrs: {} }],
-      tensors: {
-        X: {
-          id: "X", name: "X", shape: [8], dtype: "i32",
-          dtypeWidening: { from: "uint16", note: "held wider than source" },
-        },
-        Y: { id: "Y", name: "Y", shape: [], dtype: "i32" },
-      },
-      params: {},
-    })));
-    const metrics = computeMetrics(
-      resolved,
-      propagateBackward(resolved, { tensorId: "Y", region: fromBox(box([0, 4])) })
-    );
-    expect(metrics.unfusedBytes).toMatchObject({ value: 32, status: "upper" });
-    expect(metrics.unfusedBytes.reasons).toContain("held wider than source");
+    expect(metrics.outputBytes).toMatchObject({ value: 8, status: "upper" });
+    expect(metrics.inputBytes).toMatchObject({ value: 8, status: "upper" });
+    expect(metrics.inputBytes.reasons).toContain("caller bound");
   });
 
   it("marks bytes held in a widened canonical dtype as an upper bound", () => {
@@ -148,11 +129,10 @@ describe("cost figures over a real cone", () => {
 
   it("calls every figure a count when nothing was widened", () => {
     const m = metricsOf(EXACT, "Z", fromBox(box([0, 4])));
-    for (const f of [m.flops, m.inputBytes, m.intermediateBytes, m.outputBytes, m.unfusedBytes])
+    for (const f of [m.flops, m.inputBytes, m.intermediateBytes, m.outputBytes])
       expect(f.status).toBe("exact");
     expect(m.exact).toBe(true);
     expect(m.reasons).toEqual([]);
-    expect(m.fusedIntensity.status).toBe("exact");
   });
 
   /* The failure this whole item exists to fix. Everything downstream of a
@@ -171,13 +151,6 @@ describe("cost figures over a real cone", () => {
     expect(m.inputBytes.value).toBe(8 * 4);
     expect(m.inputBytes.status).toBe("upper");
     expect(m.outputBytes.value).toBe(4 * 4);
-  });
-
-  it("makes both intensities unavailable rather than dividing by an unknown", () => {
-    const m = metricsOf(BARRIER, "Z", fromBox(box([0, 4])));
-    expect(m.fusedIntensity.value).toBeNull();
-    expect(m.unfusedIntensity.value).toBeNull();
-    expect(m.unfusedIntensity.status).toBe("unknown");
   });
 
   /* A figure is qualified by the regions it actually summed, not by whether

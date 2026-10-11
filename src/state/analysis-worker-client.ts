@@ -4,8 +4,8 @@ import {
   type ResolvedGraphData,
 } from "../core/graph";
 import type { PlanReport } from "../core/plan/interfaces";
-import type { ReuseSurface, ReuseSweep } from "../core/reuse";
-import type { Box } from "../core/region";
+import type { TaskRef } from "../core/plan/plan";
+import type { FamilyReplay } from "../core/plan/replay";
 import type { BaseGraphLayout } from "../view/graph/graph-scene";
 import type {
   AnalysisRequest,
@@ -32,7 +32,7 @@ type AnalysisRequestBody =
   | Omit<Extract<AnalysisRequest, { kind: "restore" }>, "id">
   | Omit<Extract<AnalysisRequest, { kind: "layout" }>, "id">
   | Omit<Extract<AnalysisRequest, { kind: "plan" }>, "id">
-  | Omit<Extract<AnalysisRequest, { kind: "reuse" }>, "id">;
+  | Omit<Extract<AnalysisRequest, { kind: "replay" }>, "id">;
 
 function createLane(createWorker: () => Worker): WorkerLane {
   return { createWorker, worker: null, pending: new Map(), graphIds: new Set() };
@@ -47,7 +47,7 @@ const compileLane = createLane(() => new Worker(new URL("../worker/analysis.work
 const queryLane = createLane(() => new Worker(new URL("../worker/analysis.worker.ts", import.meta.url), {
   type: "module", name: "tilecone-query",
 }));
-// Layout must not cancel a plan/reuse query, or wait behind it. It changes
+// Layout must not cancel a plan/replay query, or wait behind it. It changes
 // independently when a tensor's displayed axes change.
 const layoutLane = createLane(() => new Worker(new URL("../worker/analysis.worker.ts", import.meta.url), {
   type: "module", name: "tilecone-layout",
@@ -224,21 +224,19 @@ export async function planInWorker(args: {
   return response.result;
 }
 
-export async function reuseInWorker(args: {
+export async function replayInWorker(args: {
   graphId: number | null;
   graph: ResolvedGraph;
-  tensorId: string;
-  box: Box;
-  surfaces: ReuseSurface[];
-}): Promise<ReuseSweep> {
+  tiles: Record<string, number[]>;
+  task: TaskRef;
+}): Promise<FamilyReplay> {
   const request = takeQueryLane(args.graphId, args.graph);
   const response = await send(queryLane, {
-    kind: "reuse",
+    kind: "replay",
     ...request,
-    tensorId: args.tensorId,
-    box: args.box,
-    surfaces: args.surfaces,
+    tiles: args.tiles,
+    task: args.task,
   });
-  if (response.kind !== "reuse") throw new Error("analysis worker returned the wrong response");
+  if (response.kind !== "replay") throw new Error("analysis worker returned the wrong response");
   return response.result;
 }
