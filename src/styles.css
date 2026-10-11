@@ -438,6 +438,18 @@ textarea.source.error-state { border-color: var(--err); }
 .graph-canvas.panning { cursor: grabbing; }
 .canvas-empty { flex: 1; display: grid; place-items: center; color: var(--muted); }
 .graph-inner { position: absolute; transform-origin: 0 0; }
+/* The old build remains a navigable snapshot. Its nodes cannot receive pointer
+   events or keyboard focus; the viewport and zoom buttons remain outside it. */
+.graph-canvas.inactive .graph-inner { opacity: .35; filter: grayscale(1); }
+.graph-canvas.inactive .graph-inner,
+.graph-canvas.inactive .graph-inner * { pointer-events: none; }
+.graph-inactive-status {
+  position: absolute; top: 10px; left: 10px; right: 10px; z-index: 20;
+  margin: 0; padding: 6px 10px; pointer-events: none;
+  border: 1px solid var(--line); border-radius: var(--r); background: var(--panel);
+  color: var(--muted); font-size: var(--t-small);
+}
+.inactive-graph-message { padding: 16px; }
 .edges {
   position: absolute; inset: 0; overflow: visible; pointer-events: none;
 }

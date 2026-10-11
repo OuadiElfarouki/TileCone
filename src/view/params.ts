@@ -19,6 +19,27 @@ export type SourceParam = {
   lineEnd: number;
 };
 
+/** Identity of the source a build's parameter controls can edit. Ignore source
+ * positions and positive integer parameter values, but retain declarations,
+ * operations and arguments. An incomplete draft has no matching identity.
+ * This reads syntax only; typing must not compile or resolve another graph. */
+export function parameterSourceKey(text: string): string | null {
+  const { program, errors } = parseProgram(text);
+  if (errors.length) return null;
+  const statements = program.stmts.map((stmt) =>
+    stmt.kind === "param" && Number.isSafeInteger(stmt.value.value) && stmt.value.value >= 1
+      ? { kind: stmt.kind, name: stmt.name.value }
+      : stmt
+  );
+  return JSON.stringify(statements, (key, value) => {
+    if (key === "span") return undefined;
+    // Dimension expressions retain their written form in the syntax tree;
+    // spacing between their tokens does not change the parameterized source.
+    if (value?.kind === "dim") return { ...value, text: value.text.replace(/\s+/g, "") };
+    return value;
+  });
+}
+
 /** The draft's size parameters that a slider can set: positive integers. */
 export function sourceParams(text: string): SourceParam[] {
   const params: SourceParam[] = [];

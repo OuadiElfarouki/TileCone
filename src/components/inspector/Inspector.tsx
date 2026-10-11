@@ -6,7 +6,7 @@ import { fmt, formatBytes, formatFigure } from "../../view/format";
 import { demandDetail, demandSummary } from "../../view/demand";
 import { aggregateColors, boxColor, rgbCss } from "../../view/palette";
 import { SHORTCUTS } from "../../view/shortcuts";
-import { MAX_PER_BOX_PROPS, partsOn } from "../../view/workspace";
+import { graphIsInteractive, MAX_PER_BOX_PROPS, partsOn } from "../../view/workspace";
 import { useDark, useStore } from "../../state/store";
 import { AxisEditor } from "./AxisEditor";
 import { PlanPanel } from "./PlanPanel";
@@ -24,6 +24,17 @@ import { RegionEditor, TileIdentity } from "./tiles";
 import { usePlanReplay } from "./usePlanReplay";
 
 export function Inspector(): React.ReactElement {
+  const interactive = useStore(graphIsInteractive);
+  if (!interactive) return (
+    <aside className="inspector" aria-label="Tile inspector">
+      <p className="hint inactive-graph-message" role="status">Run the source to inspect the graph.</p>
+    </aside>
+  );
+  return <ActiveInspector />;
+}
+
+/** Unmounting retires pending analysis and replay timers with the active view. */
+function ActiveInspector(): React.ReactElement {
   const resolved = useStore((s) => s.resolved);
   const dark = useDark();
   const selection = useStore((s) => s.selection);

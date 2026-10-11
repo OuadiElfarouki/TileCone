@@ -31,7 +31,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-const target = (owner: "node" | "menu" | "field") => ({
+const target = (owner: "node" | "menu" | "field" | "canvas") => ({
   tagName: owner === "field" ? "TEXTAREA" : "DIV",
   closest: (selector: string) => {
     if (owner === "node" && selector.includes("[data-node-move]")) return {};
@@ -40,7 +40,7 @@ const target = (owner: "node" | "menu" | "field") => ({
   },
 }) as unknown as HTMLElement;
 
-const key = (name: string, owner: "node" | "menu" | "field" = "node", primary = false) => ({
+const key = (name: string, owner: "node" | "menu" | "field" | "canvas" = "node", primary = false) => ({
   key: name, target: target(owner), ctrlKey: primary, metaKey: false,
   altKey: false, shiftKey: false, repeat: false, defaultPrevented: false,
   preventDefault: vi.fn(),
@@ -115,5 +115,32 @@ describe("Escape and the move tool", () => {
   it("leaves an open menu to cancel itself", () => {
     onKey(key("Escape", "menu"));
     expect(useStore.getState().canvasTool).toBe("move");
+  });
+});
+
+
+describe("a graph whose source is pending", () => {
+  it.each(["draft", "building"])("blocks workspace shortcuts while %s", (reason) => {
+    const s = useStore.getState();
+    s.setSelection("Y", fromBox([{ lo: 0, hi: 2 }]), "replace");
+    const selection = useStore.getState().selection;
+    const history = useStore.getState().workspaceHistory;
+    const direction = s.direction;
+    if (reason === "draft") s.setDraftText("");
+    else useStore.setState({ compiling: true });
+    const undo = vi.spyOn(useStore.getState(), "undoWorkspace");
+    for (const name of ["ArrowRight", "Delete", "h", "u", "d", "e", "Escape"])
+      onKey(key(name, "canvas"));
+    onKey(key("z", "canvas", true));
+    expect(undo).not.toHaveBeenCalled();
+    expect(useStore.getState().selection).toBe(selection);
+    expect(useStore.getState().workspaceHistory).toBe(history);
+    expect(useStore.getState().direction).toBe(direction);
+    expect(useStore.getState().canvasTool).toBe("move");
+    onKey(key("f", "canvas"));
+    onKey(key("?", "canvas"));
+    expect(dispatchEvent.mock.calls[0][0].type).toBe(FIT_GRAPH_EVENT);
+    expect(showShortcuts).toHaveBeenCalledOnce();
+    useStore.setState({ compiling: false });
   });
 });

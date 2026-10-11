@@ -21,6 +21,17 @@ export type Theme = "light" | "dark";
 export type CanvasTool = "select" | "move";
 /** The two classes of question the inspector answers; see `inspectorTab`. */
 export type InspectorTab = "dependencies" | "plan";
+
+/** The visible build is a navigable snapshot while source is edited or built.
+ * Keep this derived from source identity so reverting a draft reactivates it. */
+export function graphIsInteractive(state: {
+  resolved: ResolvedGraph | null;
+  dslText: string;
+  draftText: string;
+  compiling: boolean;
+}): boolean {
+  return state.resolved !== null && !state.compiling && state.draftText === state.dslText;
+}
 /**
  * A family replay on the cards (`core/plan/replay.ts`), and how far through it
  * the playback is. Transient view state, never an edit: it overlays the plan

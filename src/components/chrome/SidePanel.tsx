@@ -10,9 +10,9 @@ import { useStore } from "../../state/store";
 import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
 import { seedTile } from "../../view/tensor/tile-spec";
 import { overlayTokens, withHints } from "../../view/dsl-highlight";
-import { sourceParams } from "../../view/params";
+import { parameterSourceKey, sourceParams } from "../../view/params";
 import { ParamControls } from "./ParamControls";
-import { involvedTensorIds } from "../../view/workspace";
+import { graphIsInteractive, involvedTensorIds } from "../../view/workspace";
 
 /**
  * Copies a link that restores this workspace - source, selection, analysis views,
@@ -55,7 +55,7 @@ function ShareButton(): React.ReactElement {
 }
 
 /** The graph source, editable in place. Ctrl/Cmd+Enter runs it. */
-function SourceEditor(): React.ReactElement {
+function SourceEditor({ parametersActive }: { parametersActive: boolean }): React.ReactElement {
   const dslText = useStore((s) => s.dslText);
   const text = useStore((s) => s.draftText);
   const setText = useStore((s) => s.setDraftText);
@@ -74,9 +74,11 @@ function SourceEditor(): React.ReactElement {
   const highlighted = useMemo(
     () => withHints(
       overlayTokens(text),
-      sourceParams(text).filter((param) => builtParams && param.name in builtParams).map((param) => param.lineEnd)
+      parametersActive
+        ? sourceParams(text).filter((param) => builtParams && param.name in builtParams).map((param) => param.lineEnd)
+        : []
     ),
-    [text, builtParams]
+    [text, builtParams, parametersActive]
   );
 
   // Two ways to owe a run: the text has moved away from what was built, or the
@@ -178,6 +180,7 @@ function SourceEditor(): React.ReactElement {
 
 /** Prototype-style operation list. Clicking a row probes its first output. */
 function Operations(): React.ReactElement {
+  const interactive = useStore(graphIsInteractive);
   const resolved = useStore((s) => s.resolved);
   const setFocusNode = useStore((s) => s.setFocusNode);
   const setSelectedOp = useStore((s) => s.setSelectedOp);
@@ -193,6 +196,7 @@ function Operations(): React.ReactElement {
   const graphPx = useStore((s) => s.graphPx);
 
   if (!resolved) return <p className="hint">no graph</p>;
+  if (!interactive) return <p className="hint">Run the source to load operations.</p>;
 
   /* The same set the canvas lights, so hiding a cone dims its operations here
      too rather than leaving the list on the union of both directions. */
@@ -202,6 +206,7 @@ function Operations(): React.ReactElement {
   // starter tile still lands on its first output, which is where a cone has to
   // begin - the two were the same request while only tensors could be focused.
   const probe = (nodeId: string, tensorId: string) => {
+    if (!graphIsInteractive(useStore.getState())) return;
     const shape = resolved.tensors[tensorId].resolved!;
     setFocusNode({ kind: "op", id: nodeId });
     // `setSelection` below lights the row for whatever produced the tensor it
@@ -395,8 +400,12 @@ function ExamplePicker(): React.ReactElement {
 }
 
 export function SidePanel(): React.ReactElement {
-  const sourcePending = useStore((s) => s.draftText !== s.dslText);
+  const sourcePending = useStore((s) => !graphIsInteractive(s));
   const builtText = useStore((s) => s.dslText);
+  const draft = useStore((s) => s.draftText);
+  const builtKey = useMemo(() => parameterSourceKey(builtText), [builtText]);
+  const draftKey = useMemo(() => parameterSourceKey(draft), [draft]);
+  const parametersActive = builtKey !== null && draftKey === builtKey;
   return (
     <aside className="side-panel" aria-label="Graph source and operations">
       <div className="side-panel-scroll">
@@ -404,10 +413,10 @@ export function SidePanel(): React.ReactElement {
           <h2 className="panel-title">Graph source</h2>
         </header>
         <div className="source-workspace">
-          <SourceEditor />
+          <SourceEditor parametersActive={parametersActive} />
           {/* Keyed by the built text: the boxes belong to one build, and the
               next run replaces them with its own values. */}
-          <ParamControls key={builtText} />
+          {parametersActive && <ParamControls key={builtText} />}
         </div>
 
         <ExamplePicker />

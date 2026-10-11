@@ -17,7 +17,7 @@ import { OptionsMenu, useOptionsMenu } from "../chrome/OptionsMenu";
 import type { MenuHandlers } from "../../view/menu";
 import { cardScaleFor } from "../../view/tensor/card-size";
 import { seedTile } from "../../view/tensor/tile-spec";
-import { partsOn } from "../../view/workspace";
+import { graphIsInteractive, partsOn } from "../../view/workspace";
 import { buildPlanPaint, buildLayers } from "../../view/tensor/layers";
 import { CellDrag, planGesture, selectionBoxFromDrag, planElementFromCell, visibleApproximation } from "../../view/tensor/gesture";
 import { buildReplayPaint } from "../../view/tensor/replay-paint";
@@ -59,12 +59,13 @@ function TensorCardView({
 }): React.ReactElement {
   const shape = tensor.resolved!;
   const rank = shape.length;
+  const interactive = useStore(graphIsInteractive);
   const cfg = useStore((s) => s.viewCfgs[tensor.id]);
   const setViewCfg = useStore((s) => s.setViewCfg);
   const setViewAxes = useStore((s) => s.setViewAxes);
   /** How the tensor is drawn is its own setting, so it is changed here, on the
    *  card, from a right-click rather than from the inspected tile's table. */
-  const viewMenu = useOptionsMenu();
+  const viewMenu = useOptionsMenu(interactive);
   const selection = useStore((s) => s.selection);
   const backwardRes = useStore((s) => s.backwardRes);
   const forwardRes = useStore((s) => s.forwardRes);
@@ -315,7 +316,18 @@ function TensorCardView({
      position in a frame can be seen, so only that one is computed.
      Every preview update goes through this, clears included: a clear that
      bypassed it would be overtaken by a move still pending for the frame. */
-  const requestPreview = useFrameThrottle(setPreviewBox);
+  const requestPreview = useFrameThrottle((...args: Parameters<typeof setPreviewBox>) => {
+    if (args[0] === null || graphIsInteractive(useStore.getState())) setPreviewBox(...args);
+  });
+
+  useEffect(() => {
+    if (!interactive) {
+      setDrag(null);
+      setHover(null);
+      setHoverCell(null);
+      previewKeyRef.current = null;
+    }
+  }, [interactive]);
 
   useEffect(() => {
     setHover(null);
@@ -334,6 +346,7 @@ function TensorCardView({
    * index, as a kernel grid usually assigns batch and head.
    */
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!graphIsInteractive(useStore.getState())) return;
     if (!isPrimaryPress(e)) return;
     const cell = elementFromEvent(e, canvasRef.current!, geom);
     if (!cell) return;
@@ -346,6 +359,7 @@ function TensorCardView({
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!graphIsInteractive(useStore.getState())) return;
     const cell = elementFromEvent(e, canvasRef.current!, geom);
     // Only a change of cell changes anything drawn. Pointer events outrun the
     // cells they land in by an order of magnitude on a large card, and a fresh
@@ -378,6 +392,7 @@ function TensorCardView({
   const onPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!drag) return;
     setDrag(null);
+    if (!graphIsInteractive(useStore.getState())) return;
     if (planView) return commitPlan(drag);
     commit(dragToBox(drag), e);
   };

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  parameterSourceKey,
   sourceParams,
   STRIDE,
   stepModeOf,
@@ -103,5 +104,36 @@ describe("parameter hints in the editor", () => {
       at += token.text.length;
     }
     expect(hints).toEqual(offsets);
+  });
+});
+
+
+describe("the source a build's parameter controls belong to", () => {
+  const built = "M = 8\nX = Tensor(M * 2, dtype=fp16)\nY = relu(X)\n";
+
+  it("allows several parameter edits and ignores comments and formatting", () => {
+    const draft = "# resized\n  M = 16 # next run\n\nX = Tensor( M*2 , dtype = fp16 )\nY = relu( X )\n";
+    expect(parameterSourceKey(draft)).toBe(parameterSourceKey(built));
+  });
+
+  it.each([
+    ["empty source", ""],
+    ["only parameters", "M = 8\n"],
+    ["different operation", built.replace("relu", "exp")],
+    ["different literal extent", built.replace("M * 2", "M * 3")],
+    ["different dtype", built.replace("fp16", "fp32")],
+    ["different parameter name", built.split("M").join("N")],
+    ["invalid parameter", built.replace("M = 8", "M = 0")],
+  ])("rejects %s", (_label, draft) => {
+    expect(parameterSourceKey(draft)).not.toBe(parameterSourceKey(built));
+  });
+
+  it("rejects incomplete drafts rather than trusting recovered statements", () => {
+    expect(parameterSourceKey(built + "Z = relu(\n")).toBeNull();
+  });
+
+  it("keeps string contents significant", () => {
+    const a = 'N = 4\nX = Tensor(N, N)\nY = einsum("ij->ij", X)\n';
+    expect(parameterSourceKey(a.replace("ij->ij", "ij->ji"))).not.toBe(parameterSourceKey(a));
   });
 });

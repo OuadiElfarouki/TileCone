@@ -35,17 +35,24 @@ export type OptionsMenuState = {
   close: (refocus: boolean) => void;
 };
 
-export function useOptionsMenu(): OptionsMenuState {
+export function useOptionsMenu(enabled = true): OptionsMenuState {
   const [anchor, setAnchor] = useState<Anchor | null>(null);
   // Focus goes back where it came from, whichever way the menu was opened.
   const returnTo = useRef<HTMLElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!enabled) {
+      setAnchor(null);
+      returnTo.current = null;
+    }
+  }, [enabled]);
   const open = (next: Anchor) => {
+    if (!enabled) return;
     returnTo.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setAnchor(next);
   };
   return {
-    anchor,
+    anchor: enabled ? anchor : null,
     triggerRef,
     openBelow: (element) => {
       const r = element.getBoundingClientRect();

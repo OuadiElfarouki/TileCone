@@ -3,7 +3,7 @@ import { useStore } from "../../state/store";
 import { nudgeDelta, nudgeUnit } from "../../view/tensor/grid";
 import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
 import { hiddenAxisPositioned, viewAxes } from "../../view/tensor/tensor-view";
-import { analysisTarget, InspectorTab } from "../../view/workspace";
+import { analysisTarget, graphIsInteractive, InspectorTab } from "../../view/workspace";
 
 const isTyping = (el: EventTarget | null) => {
   const t = el as HTMLElement | null;
@@ -84,6 +84,7 @@ export function useKeyboard({
         // A rubber-band or a node drag cancels itself, and that is the whole of
         // the press - it must not also leave the move tool the drag was made in.
         if (s.dragging || e.defaultPrevented) return;
+        if (!graphIsInteractive(s)) return;
         if (s.canvasTool === "move") {
           // The tool is the mode the canvas is in, so it goes before anything
           // the canvas is pointing at: one press puts it back to drawing.
@@ -136,6 +137,9 @@ export function useKeyboard({
         window.dispatchEvent(new Event(FIT_GRAPH_EVENT));
         return;
       }
+      // Navigation and panel controls remain available for an old build;
+      // selection, plan edits and workspace undo require the current source.
+      if (!graphIsInteractive(s)) return;
       // The same group/focus policy as the inspector and movement action.
       const target = analysisTarget(s.selection?.parts ?? [], s.analysisGroup, s.perBox ? s.focusedBox : null);
       const anchor = target.tensorId;

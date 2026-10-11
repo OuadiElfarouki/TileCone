@@ -17,7 +17,9 @@ const parsed = (text: string): number | null => {
  * panel remounts this per build, which also drops anything entered here. An
  * edit rewrites that parameter's number in the draft, found by name, which
  * enables Run exactly as typing it would; text typed in the editor meanwhile
- * does not reach the boxes.
+ * does not reach the boxes. The source panel hides them when the draft changes
+ * anything beyond parameter values, so a new graph cannot use the old build's
+ * controls. They reappear after a successful build or restoring that source.
  *
  * The ▴/▾ steppers and the arrow keys move by the value's step mode (see
  * `stepModeOf`), read when a run of steps begins and held until it ends: the

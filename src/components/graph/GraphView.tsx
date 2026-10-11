@@ -27,7 +27,7 @@ import { FIT_GRAPH_EVENT } from "../hooks/useKeyboard";
 import { GridControls } from "../chrome/GridControls";
 import { LayoutControls } from "../chrome/LayoutControls";
 import { useFrameThrottle } from "../hooks/useFrameThrottle";
-import { involvedTensorIds, PANEL_RAIL } from "../../view/workspace";
+import { graphIsInteractive, involvedTensorIds, PANEL_RAIL } from "../../view/workspace";
 import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
 import { planesOf } from "../../view/tensor/seeds";
 import { isPrimaryPress } from "../pointer";
@@ -204,6 +204,7 @@ export function visibleEntangledTensorIds(
 }
 
 export function GraphView(): React.ReactElement {
+  const interactive = useStore(graphIsInteractive);
   const resolved = useStore((s) => s.resolved);
   const workerBaseLayout = useStore((s) => s.baseLayout);
   const workerGraphId = useStore((s) => s.workerGraphId);
@@ -633,7 +634,7 @@ export function GraphView(): React.ReactElement {
     // Apply the last coalesced position before the gesture's state is cleared,
     // or a pending frame would find nothing to apply and drop the final move.
     applyPan();
-    if (release && isBackgroundClick(p, release) && useStore.getState().selectedOp !== null)
+    if (graphIsInteractive(useStore.getState()) && release && isBackgroundClick(p, release) && useStore.getState().selectedOp !== null)
       setSelectedOp(null);
     panRef.current = null;
     panPointRef.current = null;
@@ -653,6 +654,7 @@ export function GraphView(): React.ReactElement {
     kind: GraphNodeKind,
     id: string
   ): boolean => {
+    if (!graphIsInteractive(useStore.getState())) return false;
     if (!isPrimaryPress(e)) return false;
     // Portal events follow the React tree, but the card's menu lives outside
     // this DOM node and must keep its own pointer gestures.
@@ -695,6 +697,7 @@ export function GraphView(): React.ReactElement {
 
   const cardPointRef = useRef<{ x: number; y: number } | null>(null);
   const applyCardMove = useCallback(() => {
+    if (!graphIsInteractive(useStore.getState())) return;
     const drag = nodeDragRef.current;
     const point = cardPointRef.current;
     if (!drag || !point) return;
@@ -732,6 +735,7 @@ export function GraphView(): React.ReactElement {
   }, [requestCardMove]);
 
   const finishCardDrag = useCallback((commit: boolean) => {
+    commit = commit && graphIsInteractive(useStore.getState());
     // The last coalesced position is part of the gesture, so it is applied
     // before the gesture is read: a drag released inside the same frame as its
     // final move must commit where the pointer left it.
@@ -750,6 +754,13 @@ export function GraphView(): React.ReactElement {
     setDragging(false);
   }, [applyCardMove, commitNodeMove, setDragging, setNodeOffset]);
 
+  useEffect(() => {
+    if (!interactive) {
+      finishCardDrag(false);
+      useStore.getState().setPreviewBox(null);
+    }
+  }, [interactive, finishCardDrag]);
+
   /**
    * Move a node by keyboard, one press at a time.
    *
@@ -763,6 +774,7 @@ export function GraphView(): React.ReactElement {
     kind: GraphNodeKind,
     id: string
   ) => {
+    if (!graphIsInteractive(useStore.getState())) return;
     const step = ARROW_DELTAS[e.key];
     if (!step || e.ctrlKey || e.metaKey || e.altKey) return;
     if (useStore.getState().canvasTool !== "move") return;
@@ -866,7 +878,7 @@ export function GraphView(): React.ReactElement {
   return (
     <div
       ref={containerRef}
-      className={`graph-canvas${panning ? " panning" : ""}${moveTool || moveHeld ? " move-tool" : ""}`}
+      className={`graph-canvas${interactive ? "" : " inactive"}${panning ? " panning" : ""}${interactive && (moveTool || moveHeld) ? " move-tool" : ""}`}
       onWheel={onWheel}
       /* On macOS a Ctrl press is also a right-click, so a borrowed move would
          open the card's menu over the node being dragged. */
@@ -883,6 +895,8 @@ export function GraphView(): React.ReactElement {
     >
       <div
         className="graph-inner"
+        {...(!interactive ? { inert: "" } : {})}
+        aria-disabled={!interactive || undefined}
         style={{ transform: `translate(${tf.x}px, ${tf.y}px) scale(${tf.k})`, width: scene.width, height: scene.height }}
       >
         {renderEdges("behind")}
@@ -921,6 +935,7 @@ export function GraphView(): React.ReactElement {
                 aria-label={`${opLabel(node)} operation${selectedOp === p.id ? ", selected" : ""}`}
                 aria-keyshortcuts={moveTool ? "Enter Space ArrowUp ArrowDown ArrowLeft ArrowRight" : "Enter Space"}
                 onKeyDown={(e) => {
+                  if (!graphIsInteractive(useStore.getState())) return;
                   if (e.target !== e.currentTarget) return;
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
@@ -930,6 +945,7 @@ export function GraphView(): React.ReactElement {
                 }}
                 onBlur={() => clearBlocked(key)}
                 onClick={(e) => {
+                  if (!graphIsInteractive(useStore.getState())) return;
                   if (!canSelectOperation(e.target)) return;
                   e.stopPropagation();
                   setSelectedOp(p.id);
@@ -940,6 +956,7 @@ export function GraphView(): React.ReactElement {
                   if (startNodeDrag(e, "op", p.id)) setSelectedOp(p.id);
                 }}
                 onPointerDown={(e) => {
+                  if (!graphIsInteractive(useStore.getState())) return;
                   if (!isPrimaryPress(e) || !canSelectOperation(e.target)) return;
                   e.preventDefault();
                   e.stopPropagation();
@@ -968,6 +985,7 @@ export function GraphView(): React.ReactElement {
                     aria-label={`substitute ${node.op} with its primitive subgraph`}
                     onClick={(ev) => {
                       ev.stopPropagation();
+                      if (!graphIsInteractive(useStore.getState())) return;
                       expandNodeInPlace(p.id);
                     }}
                   >
@@ -1025,6 +1043,11 @@ export function GraphView(): React.ReactElement {
         })}
         {renderEdges("front")}
       </div>
+      {!interactive && (
+        <p className="graph-inactive-status" role="status">
+          Run the source to render the graph · Current is outdated.
+        </p>
+      )}
       {/* Everything that changes the canvas, on the canvas: the viewport on the
           left, the lattice a tile is cut against on the right, where the strip
           that used to carry it sat. */}
@@ -1047,9 +1070,9 @@ export function GraphView(): React.ReactElement {
             {Math.abs(tf.k - lowZoom()) < ZOOM_EPSILON ? "fit" : `${Math.round(tf.k * 100)}%`}
           </span>
         </div>
-          <LayoutControls onResetLayout={resetLayout} />
+          {interactive && <LayoutControls onResetLayout={resetLayout} />}
         </div>
-        <GridControls />
+        {interactive && <GridControls />}
       </div>
     </div>
   );
