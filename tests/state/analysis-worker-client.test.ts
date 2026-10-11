@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hydrateResolvedGraph } from "../../src/core/graph";
 import { box } from "../../src/core/region";
-import { compileArtifact, reuseArtifact } from "../../src/worker/analysis-jobs";
+import { compileArtifact, layoutArtifact, reuseArtifact } from "../../src/worker/analysis-jobs";
 import type { AnalysisRequest, AnalysisResponse } from "../../src/worker/analysis-protocol";
 
 const CHAIN = `A = Tensor(256, 256, dtype=fp16)
@@ -48,6 +48,50 @@ afterEach(() => {
 });
 
 describe("analysis worker client", () => {
+  it("isolates layout from queries and resends graph data when a layout is superseded", async () => {
+    const client = await import("../../src/state/analysis-worker-client");
+    const compiled = compileArtifact(CHAIN);
+    if (!compiled.ok) throw new Error(compiled.diagnostics[0].message);
+    const graph = compiled.resolved;
+    const query = client.reuseInWorker({ graphId: 42, graph, tensorId: "Y", box: box([0, 64], [0, 64]), surfaces: ["backward"] });
+    const queryWorker = FakeWorker.instances[0];
+    const first = client.layoutInWorker({ graphId: 42, graph, graphPx: 1, axes: {} }).catch((error: unknown) => error);
+    const oldLayout = FakeWorker.instances[1];
+    const second = client.layoutInWorker({ graphId: 42, graph, graphPx: 2, axes: {} });
+    const layoutWorker = FakeWorker.instances[2];
+    expect(oldLayout.terminated).toBe(true);
+    expect(client.isAnalysisCancelled(await first)).toBe(true);
+    expect(queryWorker.terminated).toBe(false);
+    expect(layoutWorker.name).toBe("tilecone-layout");
+    expect(layoutWorker.messages[0]).toMatchObject({ kind: "layout", graphId: 42, graph: compiled.artifact.resolved, graphPx: 2 });
+
+    const layout = layoutArtifact(graph, 2);
+    layoutWorker.respond({ id: layoutWorker.messages[0].id, kind: "layout", result: layout });
+    await expect(second).resolves.toEqual(layout);
+    const cached = client.layoutInWorker({ graphId: 42, graph, graphPx: 3, axes: {} }).catch((error: unknown) => error);
+    expect(layoutWorker.messages[1]).not.toHaveProperty("graph");
+    client.cancelLayout();
+    expect(layoutWorker.terminated).toBe(true);
+    expect(client.isAnalysisCancelled(await cached)).toBe(true);
+    expect(queryWorker.terminated).toBe(false);
+    queryWorker.respond({ id: queryWorker.messages[0].id, kind: "reuse", result: reuseArtifact(graph, "Y", box([0, 64], [0, 64])) });
+    await expect(query).resolves.toHaveProperty("frames");
+  });
+
+  it("retires a stale layout when compilation replaces the graph", async () => {
+    const client = await import("../../src/state/analysis-worker-client");
+    const compiled = compileArtifact(CHAIN);
+    if (!compiled.ok) throw new Error(compiled.diagnostics[0].message);
+    const layout = client.layoutInWorker({ graphId: 41, graph: compiled.resolved, graphPx: 1, axes: {} }).catch((error: unknown) => error);
+    const layoutWorker = FakeWorker.instances[0];
+    const compilation = client.compileInWorker(CHAIN);
+    const compileWorker = FakeWorker.instances[1];
+    compileWorker.respond({ id: compileWorker.messages[0].id, kind: "compile", result: { ok: true, graphId: 42, artifact: compiled.artifact } });
+    await compilation;
+    expect(layoutWorker.terminated).toBe(true);
+    expect(client.isAnalysisCancelled(await layout)).toBe(true);
+  });
+
   it("terminates an obsolete compile when a newer build starts", async () => {
     const client = await import("../../src/state/analysis-worker-client");
     const obsolete = client.compileInWorker("Y = relu(A)\n").catch((error: unknown) => error);

@@ -21,6 +21,14 @@ export type AnalysisRequest =
   | { id: number; kind: "register"; graphId: number; graph: ResolvedGraphData }
   | {
       id: number;
+      kind: "layout";
+      graphId: number | null;
+      graph?: ResolvedGraphData;
+      graphPx: number;
+      axes: Record<string, [number, number]>;
+    }
+  | {
+      id: number;
       kind: "plan";
       graphId: number | null;
       graph?: ResolvedGraphData;
@@ -40,6 +48,7 @@ export type AnalysisRequest =
 export type AnalysisResponse =
   | { id: number; kind: "compile"; result: CompileJobResult }
   | { id: number; kind: "registered"; graphId: number }
+  | { id: number; kind: "layout"; result: BaseGraphLayout }
   | { id: number; kind: "plan"; result: PlanReport }
   | { id: number; kind: "reuse"; result: ReuseSweep }
   | { id: number; kind: "error"; message: string };

@@ -1,5 +1,5 @@
 import { hydrateResolvedGraph, type ResolvedGraph } from "../core/graph";
-import { compileArtifact, planArtifact, reuseArtifact } from "./analysis-jobs";
+import { compileArtifact, layoutArtifact, planArtifact, reuseArtifact } from "./analysis-jobs";
 import type { AnalysisRequest, AnalysisResponse } from "./analysis-protocol";
 
 type WorkerHost = {
@@ -42,7 +42,9 @@ host.onmessage = ({ data }) => {
       }
     }
     if (!graph) throw new Error("the graph is no longer available to the analysis worker");
-    if (data.kind === "plan") {
+    if (data.kind === "layout") {
+      host.postMessage({ id: data.id, kind: "layout", result: layoutArtifact(graph, data.graphPx, data.axes) });
+    } else if (data.kind === "plan") {
       host.postMessage({
         id: data.id,
         kind: "plan",

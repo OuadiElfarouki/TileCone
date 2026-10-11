@@ -47,12 +47,16 @@ function TensorCardView({
   viewScale = 1,
   overviewWidth,
   uniformTile = null,
+  rasterize = true,
+  rasterPixels,
 }: {
   tensor: Tensor;
   renderScale?: number;
   viewScale?: number;
   overviewWidth?: number;
   uniformTile?: number | null;
+  rasterize?: boolean;
+  rasterPixels?: number;
 }): React.ReactElement {
   const shape = tensor.resolved!;
   const rank = shape.length;
@@ -187,6 +191,13 @@ function TensorCardView({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    if (!rasterize) {
+      // Setting dimensions releases the previous backing store. Keep the DOM
+      // canvas and its CSS geometry for focus, gestures, and graph placement.
+      if (canvas.width !== 0) canvas.width = 0;
+      if (canvas.height !== 0) canvas.height = 0;
+      return;
+    }
     let layers: Layer[];
     let paint: PlanPaint | undefined;
     if (planView) {
@@ -229,9 +240,11 @@ function TensorCardView({
         dark,
         playback: executionPlayback,
       }).layers);
-    drawGrid(canvas, shape, cfg, geom, layers, dark, paintRenderScale, drawScale, paint);
+    drawGrid(canvas, shape, cfg, geom, layers, dark, paintRenderScale, drawScale, paint, rasterPixels);
   }, [
     back,
+    rasterize,
+    rasterPixels,
     cfg,
     dark,
     direction,

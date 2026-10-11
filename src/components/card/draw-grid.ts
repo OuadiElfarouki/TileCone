@@ -15,6 +15,7 @@ import {
   regionRects,
 } from "../../view/tensor/grid";
 import { type ViewCfg } from "../../view/tensor/tensor-view";
+import { MAX_CARD_RASTER_PIXELS, rasterSize } from "../../view/tensor/raster";
 
 /** Width of a needed producer tile's outline, in screen px. */
 const PLAN_TILE_LINE_PX = 1.5;
@@ -34,9 +35,6 @@ export function seedCornerSegments(rect: Pick<RegionRect, "x" | "y" | "w" | "h">
     ];
   }));
 }
-
-/** Conservative cross-browser ceiling on a canvas backing-store side. */
-const MAX_CANVAS_DIM = 8192;
 
 /** Weight of the hairline that delimits a ruled region, in screen CSS px. */
 const PATTERN_EDGE_PX = 0.75;
@@ -277,26 +275,21 @@ export function drawGrid(
   dark: boolean,
   renderScale = 1,
   viewScale = 1,
-  plan?: PlanPaint
+  plan?: PlanPaint,
+  maxPixels = MAX_CARD_RASTER_PIXELS
 ): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
-  // Supersample by the current graph zoom so cards stay sharp when zoomed in,
-  // but never past the backing-store limit: since the card scale became a
-  // property of the graph, a very wide tensor can exceed what the old per-card
-  // cap used to make impossible, and a canvas over the limit renders blank
-  // rather than clipped. Softening is the acceptable failure here.
-  const res = Math.min(
-    (window.devicePixelRatio || 1) * renderScale,
-    MAX_CANVAS_DIM / Math.max(1, geom.canvasW),
-    MAX_CANVAS_DIM / Math.max(1, geom.canvasH)
+  const { width, height } = rasterSize(
+    geom.canvasW, geom.canvasH, (window.devicePixelRatio || 1) * renderScale, maxPixels
   );
-  const width = Math.ceil(geom.canvasW * res);
-  const height = Math.ceil(geom.canvasH * res);
   // Reuse the backing store when only the paint changes.
-  if (canvas.width !== width) canvas.width = width;
+  // Shrink width before growing height; otherwise change height first. A plane
+  // remap from tall to wide must not briefly allocate both long dimensions.
+  if (canvas.width > width) canvas.width = width;
   if (canvas.height !== height) canvas.height = height;
-  ctx.setTransform(res, 0, 0, res, 0, 0);
+  if (canvas.width !== width) canvas.width = width;
+  ctx.setTransform(width / geom.canvasW, 0, 0, height / geom.canvasH, 0, 0);
   ctx.clearRect(0, 0, geom.canvasW, geom.canvasH);
 
   ctx.fillStyle = dark ? CARD_SURFACE.dark : CARD_SURFACE.light;

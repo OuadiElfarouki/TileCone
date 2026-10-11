@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { isExpandable } from "../../core/expand";
 import { constrainRectMotion, Rect } from "../../view/graph/graph-geometry";
 import {
-  buildBaseGraphLayout,
   buildGraphScene,
   GraphNodeKind,
   GraphScene,
@@ -11,9 +10,7 @@ import {
 } from "../../view/graph/graph-scene";
 import { TensorCard } from "../card/TensorCard";
 import { carriedOffsets } from "../../view/graph/carry-placement";
-import { cardSize } from "../../view/tensor/card-size";
 import { remapped } from "../../view/tensor/tensor-view";
-import { shapeLabel, symbolicExtentLabel } from "../../view/tensor/shape-label";
 import { opLabel } from "../../core/ops/index";
 import { useStore } from "../../state/store";
 import type { NodeOffset } from "../../view/graph/node-layout";
@@ -35,6 +32,8 @@ import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
 import { planesOf } from "../../view/tensor/seeds";
 import { isPrimaryPress } from "../pointer";
 import { borrowsMoveTool, useMoveModifier } from "../hooks/useMoveModifier";
+import { useGraphLayout } from "../hooks/useGraphLayout";
+import { graphRasterAllocation } from "../../view/tensor/raster";
 
 type NodeDrag = {
   /** Scene key, so one gesture serves cards and operation nodes alike. */
@@ -207,6 +206,7 @@ export function visibleEntangledTensorIds(
 export function GraphView(): React.ReactElement {
   const resolved = useStore((s) => s.resolved);
   const workerBaseLayout = useStore((s) => s.baseLayout);
+  const workerGraphId = useStore((s) => s.workerGraphId);
   const graphPx = useStore((s) => s.graphPx);
   const tileScale = useStore((s) => s.tileScale);
   const backwardRes = useStore((s) => s.backwardRes);
@@ -231,6 +231,7 @@ export function GraphView(): React.ReactElement {
   const resetNodeLayout = useStore((s) => s.resetNodeLayout);
 
   const [tf, setTf] = useState({ x: 20, y: 20, k: 1 });
+  const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [movingNode, setMovingNode] = useState<string | null>(null);
   const [blockedNode, setBlockedNode] = useState<string | null>(null);
   const [panning, setPanning] = useState(false);
@@ -290,28 +291,14 @@ export function GraphView(): React.ReactElement {
       .sort()
       .join("|");
   });
-  /**
-   * Dagre placement depends only on graph structure and tensor footprints.
-   *
-   * The Worker lays out the default footprints. A card drawing a chosen pair
-   * has another footprint, so the graph is placed again here, synchronously:
-   * choosing axes is an occasional deliberate act, and a card overlapping its
-   * neighbours until a round trip completed would be worse than the wait.
-   */
-  const fallbackBaseLayout = useMemo(
-    () => {
-      if (!resolved || (workerBaseLayout && !remapKey)) return null;
-      const viewCfgs = useStore.getState().viewCfgs;
-      return buildBaseGraphLayout(resolved, (tensor) =>
-        cardSize(tensor.resolved!, graphPx, tensor.name, [
-          shapeLabel(tensor, "symbolic"),
-          symbolicExtentLabel(tensor),
-        ], viewCfgs[tensor.id], tensor.axisNames)
-      );
-    },
-    [resolved, graphPx, workerBaseLayout, remapKey]
+  const layoutAxes = useMemo(() => Object.fromEntries(
+    Object.entries(useStore.getState().viewCfgs)
+      .filter(([id, cfg]) => resolved?.tensors[id] && remapped(resolved.tensors[id].resolved!, cfg))
+      .map(([id, cfg]) => [id, cfg.axes!])
+  ), [resolved, remapKey]);
+  const { layout: baseLayout, pending: layoutPending, error: layoutError } = useGraphLayout(
+    resolved, workerBaseLayout, workerGraphId, graphPx, layoutAxes,
   );
-  const baseLayout = fallbackBaseLayout ?? workerBaseLayout;
 
   /**
    * The tile every tensor settled on, or `null` when the fit rule coarsened
@@ -331,6 +318,10 @@ export function GraphView(): React.ReactElement {
         ? buildGraphScene(baseLayout, nodeOffsets)
         : null,
     [baseLayout, nodeOffsets]
+  );
+  const raster = useMemo(
+    () => graphRasterAllocation(scene?.nodes ?? [], tf, viewport),
+    [scene, tf, viewport],
   );
   /* Bucketed, not raw: the label solver is an all-pairs collision pass over
      every node, and keyed to `tf.k` it re-ran on every wheel event at the zoom
@@ -381,13 +372,13 @@ export function GraphView(): React.ReactElement {
   const drawnRef = useRef<Map<string, Rect>>(new Map());
   const keepViewRef = useRef(false);
   useLayoutEffect(() => {
-    if (!placementCarry || !baseLayout) return;
+    if (!placementCarry || !baseLayout || layoutPending) return;
     keepViewRef.current = true;
     // A new layout recreates the ResizeObserver, whose initial notification
     // would otherwise re-fit an untouched viewport after the skipped fit.
     movedRef.current = true;
     carryPlacement(carriedOffsets(drawnRef.current, baseLayout.nodes));
-  }, [placementCarry, baseLayout, carryPlacement]);
+  }, [placementCarry, baseLayout, layoutPending, carryPlacement]);
   useLayoutEffect(() => {
     // Not while a carry is pending: this commit's scene is the generated layout
     // the carry is about to replace, and the previous one is what it reads.
@@ -449,6 +440,8 @@ export function GraphView(): React.ReactElement {
 
   const fit = useCallback(() => {
     cancelGlide();
+    // A size-only rebuild must carry against the final remapped layout first.
+    if (useStore.getState().placementCarry) return;
     const el = containerRef.current;
     if (!el || el.clientWidth <= 0 || el.clientHeight <= 0) return;
     const current = sceneRef.current;
@@ -462,12 +455,13 @@ export function GraphView(): React.ReactElement {
   }, [zoomBounds]);
 
   useEffect(() => {
+    if (layoutPending) return;
     if (keepViewRef.current) {
       keepViewRef.current = false;
       return;
     }
     fit();
-  }, [resolved, fit]);
+  }, [resolved, fit, layoutPending]);
 
   /**
    * Hold the world still when the left panel opens, closes, or is dragged.
@@ -510,13 +504,19 @@ export function GraphView(): React.ReactElement {
    */
   useEffect(() => {
     const el = containerRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
+    if (!el) return;
+    const measure = () => setViewport((current) =>
+      current.width === el.clientWidth && current.height === el.clientHeight
+        ? current : { width: el.clientWidth, height: el.clientHeight });
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
     const panelSignature = () => {
       const { panelW, panelCollapsed } = useStore.getState();
       return `${panelCollapsed.left}:${panelW.left}:${panelCollapsed.right}:${panelW.right}`;
     };
     let lastPanels = panelSignature();
     const ro = new ResizeObserver(() => {
+      measure();
       const panels = panelSignature();
       const panelDriven = panels !== lastPanels;
       lastPanels = panels;
@@ -524,7 +524,7 @@ export function GraphView(): React.ReactElement {
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [fit]);
+  }, [fit, resolved, !!scene]);
 
   useEffect(() => {
     const onFit = () => fit();
@@ -829,7 +829,8 @@ export function GraphView(): React.ReactElement {
     resetNodeLayout();
   };
 
-  if (!resolved || !scene) return <div className="canvas-empty">no graph loaded</div>;
+  if (!resolved) return <div className="canvas-empty">no graph loaded</div>;
+  if (!scene) return <div className="canvas-empty" role="status">{layoutError ? "Unable to arrange graph." : "Arranging graph…"}</div>;
 
   const operandsShown = operandLabelsLegible(tf.k);
   const renderEdges = (layer: EdgePresentation["layer"]) => (
@@ -1016,6 +1017,8 @@ export function GraphView(): React.ReactElement {
                 renderScale={renderScale}
                 viewScale={tf.k}
                 overviewWidth={overview.tensors.get(t.id)}
+                rasterize={raster.visible.has(t.id)}
+                rasterPixels={raster.pixelsPerCard}
               />
             </div>
           );
@@ -1027,6 +1030,11 @@ export function GraphView(): React.ReactElement {
           that used to carry it sat. */}
       <div className="graph-hud">
         <div className="hud-left">
+        {(layoutPending || layoutError) && (
+          <span className="hint" role="status" title={layoutError ?? undefined}>
+            {layoutError ? "Unable to arrange graph." : "Arranging graph…"}
+          </span>
+        )}
         <div className="zoom-controls">
           <button onClick={() => zoomBy(1 / 1.25)} title="zoom out">−</button>
           <button onClick={() => zoomBy(1.25)} title="zoom in">+</button>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hydrateResolvedGraph } from "../../src/core/graph";
-import { compileArtifact, planArtifact, reuseArtifact } from "../../src/worker/analysis-jobs";
+import { compileArtifact, layoutArtifact, planArtifact, reuseArtifact } from "../../src/worker/analysis-jobs";
 import { box } from "../../src/core/region";
 
 const CHAIN = `A = Tensor(256, 256, dtype=fp16)
@@ -11,6 +11,20 @@ Y = matmul(C, W)
 `;
 
 describe("analysis worker jobs", () => {
+  it("lays out remapped planes identically from live and serialized graph data", () => {
+    const compiled = compileArtifact("X = Tensor(4, 32, 256)\nY = relu(X)\n");
+    if (!compiled.ok) throw new Error(compiled.diagnostics[0].message);
+    const tensorId = Object.values(compiled.resolved.tensors).find((tensor) => tensor.name === "X")!.id;
+    const axes: Record<string, [number, number]> = { [tensorId]: [0, 1] };
+    const layout = layoutArtifact(compiled.resolved, compiled.artifact.graphPx, axes);
+    expect(layoutArtifact(structuredClone(compiled.artifact.resolved), compiled.artifact.graphPx, axes)).toEqual(layout);
+    expect(structuredClone(layout)).toEqual(layout);
+    const remapped = layout.nodes.find((node) => node.kind === "tensor" && node.id === tensorId)!;
+    const original = compiled.artifact.layout.nodes.find((node) => node.kind === "tensor" && node.id === tensorId)!;
+    expect([remapped.w, remapped.h]).not.toEqual([original.w, original.h]);
+    expect(layoutArtifact(compiled.resolved, compiled.artifact.graphPx)).toEqual(compiled.artifact.layout);
+  });
+
   it("returns a structured-cloneable resolved graph and structural layout", () => {
     const result = compileArtifact(CHAIN);
     if (!result.ok) throw new Error(result.diagnostics[0].message);

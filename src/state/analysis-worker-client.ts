@@ -6,6 +6,7 @@ import {
 import type { PlanReport } from "../core/plan/interfaces";
 import type { ReuseSurface, ReuseSweep } from "../core/reuse";
 import type { Box } from "../core/region";
+import type { BaseGraphLayout } from "../view/graph/graph-scene";
 import type {
   AnalysisRequest,
   AnalysisResponse,
@@ -18,6 +19,7 @@ type Pending = {
 };
 
 type WorkerLane = {
+  createWorker: () => Worker;
   worker: Worker | null;
   pending: Map<number, Pending>;
   graphIds: Set<number>;
@@ -25,20 +27,28 @@ type WorkerLane = {
 
 type AnalysisRequestBody =
   | Omit<Extract<AnalysisRequest, { kind: "compile" }>, "id">
+  | Omit<Extract<AnalysisRequest, { kind: "layout" }>, "id">
   | Omit<Extract<AnalysisRequest, { kind: "plan" }>, "id">
   | Omit<Extract<AnalysisRequest, { kind: "reuse" }>, "id">;
 
+function createLane(createWorker: () => Worker): WorkerLane {
+  return { createWorker, worker: null, pending: new Map(), graphIds: new Set() };
+}
+
 let nextRequestId = 1;
-const compileLane: WorkerLane = {
-  worker: null,
-  pending: new Map(),
-  graphIds: new Set(),
-};
-const queryLane: WorkerLane = {
-  worker: null,
-  pending: new Map(),
-  graphIds: new Set(),
-};
+// Vite requires static Worker URLs and options. The factories differ only in
+// their debugging names; caching, cancellation, and messaging stay shared.
+const compileLane = createLane(() => new Worker(new URL("../worker/analysis.worker.ts", import.meta.url), {
+  type: "module", name: "tilecone-compile",
+}));
+const queryLane = createLane(() => new Worker(new URL("../worker/analysis.worker.ts", import.meta.url), {
+  type: "module", name: "tilecone-query",
+}));
+// Layout must not cancel a plan/reuse query, or wait behind it. It changes
+// independently when a tensor's displayed axes change.
+const layoutLane = createLane(() => new Worker(new URL("../worker/analysis.worker.ts", import.meta.url), {
+  type: "module", name: "tilecone-layout",
+}));
 
 export const analysisWorkerAvailable = (): boolean => typeof Worker !== "undefined";
 
@@ -62,23 +72,9 @@ function discardLane(lane: WorkerLane, error: Error): void {
   current?.terminate();
 }
 
-function createCompileWorker(): Worker {
-  return new Worker(new URL("../worker/analysis.worker.ts", import.meta.url), {
-    type: "module",
-    name: "tilecone-compile",
-  });
-}
-
-function createQueryWorker(): Worker {
-  return new Worker(new URL("../worker/analysis.worker.ts", import.meta.url), {
-    type: "module",
-    name: "tilecone-query",
-  });
-}
-
 function workerFor(lane: WorkerLane): Worker {
   if (lane.worker) return lane.worker;
-  const created = lane === compileLane ? createCompileWorker() : createQueryWorker();
+  const created = lane.createWorker();
   lane.worker = created;
   created.onmessage = ({ data }: MessageEvent<AnalysisResponse>) => {
     if (lane.worker !== created) return;
@@ -117,6 +113,7 @@ function cancelPending(lane: WorkerLane, task: string): void {
 }
 
 function registerQueryGraph(graphId: number, graph: ResolvedGraphData): void {
+  discardLane(layoutLane, new AnalysisCancelledError("the compiled graph changed"));
   discardLane(queryLane, new AnalysisCancelledError("the compiled graph changed"));
   const id = nextRequestId++;
   try {
@@ -136,21 +133,43 @@ function registerQueryGraph(graphId: number, graph: ResolvedGraphData): void {
 }
 
 /**
- * The graph fields of one query: the id alone when this lane's worker is known
+ * The graph fields of one job: the id alone when this lane's worker is known
  * to hold that graph, and the whole graph otherwise.
  *
- * Only correct after the lane has been cleared for this query. Superseding the
+ * Only correct after pending work in the lane has been cancelled. Superseding the
  * lane discards its worker, and with it every graph that worker had cached, so
  * reading the cache first would claim a graph nobody holds and the worker
- * would refuse the query. `takeQueryLane` does both in that order.
+ * would refuse the job. Both layout and query requests cancel before calling.
  */
-function graphForQuery(
+function graphForLane(
+  lane: WorkerLane,
   graphId: number | null,
   graph: ResolvedGraph,
 ): { graphId: number | null; graph?: ReturnType<typeof resolvedGraphData> } {
-  if (graphId !== null && queryLane.graphIds.has(graphId)) return { graphId };
-  if (graphId !== null) queryLane.graphIds.add(graphId);
+  if (graphId !== null && lane.graphIds.has(graphId)) return { graphId };
+  if (graphId !== null) lane.graphIds.add(graphId);
   return { graphId, graph: resolvedGraphData(graph) };
+}
+
+export async function layoutInWorker(args: {
+  graphId: number | null;
+  graph: ResolvedGraph;
+  graphPx: number;
+  axes: Record<string, [number, number]>;
+}): Promise<BaseGraphLayout> {
+  cancelPending(layoutLane, "graph layout");
+  const response = await send(layoutLane, {
+    kind: "layout", ...graphForLane(layoutLane, args.graphId, args.graph),
+    graphPx: args.graphPx, axes: args.axes,
+  });
+  if (response.kind !== "layout") throw new Error("analysis worker returned the wrong response");
+  return response.result;
+}
+
+/** Retiring a remap also cancels its work, including when the default layout
+ * is already available and no replacement request will be sent. */
+export function cancelLayout(): void {
+  cancelPending(layoutLane, "graph layout");
 }
 
 /** Supersede whatever the query lane was doing and describe the graph the
@@ -160,7 +179,7 @@ function takeQueryLane(
   graph: ResolvedGraph,
 ): { graphId: number | null; graph?: ReturnType<typeof resolvedGraphData> } {
   cancelPending(queryLane, "graph analysis");
-  return graphForQuery(graphId, graph);
+  return graphForLane(queryLane, graphId, graph);
 }
 
 export async function compileInWorker(source: string): Promise<CompileJobResult> {

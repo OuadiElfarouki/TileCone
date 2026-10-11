@@ -7,7 +7,9 @@ import { inputSharing } from "../../core/reuse";
 import type { PropResult } from "../../core/propagate";
 import { count, fromBox, Region, union } from "../../core/region";
 import type { ResolvedGraph } from "../../core/graph";
-import { analysisTarget, groupPropResult, BoxProp, Direction, SelPart } from "../../view/workspace";
+import { analysisTarget, groupPropResult, BoxProp, Direction, InspectorTab, SelPart } from "../../view/workspace";
+
+const EMPTY_PARTS: SelPart[] = [];
 
 /**
  * One scenario's cost, as figures rather than numbers.
@@ -160,14 +162,15 @@ type InspectorAnalysisArgs = {
   /** The tensor whose tiles this readout describes. Analysis never mixes two. */
   activeTensorId: string | null;
   direction: Direction;
+  tab: InspectorTab;
 };
 
 /**
  * Memoized analysis model consumed by the inspector view.
  *
- * Each derivation keeps its own dependency list: changing only the direction
- * runs the contribution probes precisely when downstream rows become visible,
- * and the per-tile pass behind `bounds` reruns only when the enabled set moves.
+ * Each derivation keeps its own dependency list and active-tab gate: Plan uses
+ * its own model, Dependencies measures cost and demand, and only Execution
+ * needs per-tile fusion scenarios. Direction gates contribution probes.
  */
 export function useInspectorAnalysis({
   resolved,
@@ -178,15 +181,19 @@ export function useInspectorAnalysis({
   focusedBox,
   activeTensorId,
   direction,
+  tab,
 }: InspectorAnalysisArgs) {
-  const parts = selection?.parts ?? [];
+  const parts = selection?.parts ?? EMPTY_PARTS;
+  const coneAnalysis = tab !== "plan";
+  const dependencies = tab === "dependencies";
+  const execution = tab === "execution";
   const scopedBack = useMemo(
-    () => groupPropResult(byTensorRes, perBox, parts, hiddenBoxes, focusedBox, activeTensorId, "backward"),
-    [byTensorRes, perBox, parts, hiddenBoxes, focusedBox, activeTensorId]
+    () => coneAnalysis ? groupPropResult(byTensorRes, perBox, parts, hiddenBoxes, focusedBox, activeTensorId, "backward") : null,
+    [coneAnalysis, byTensorRes, perBox, parts, hiddenBoxes, focusedBox, activeTensorId]
   );
   const scopedFwd = useMemo(
-    () => groupPropResult(byTensorRes, perBox, parts, hiddenBoxes, focusedBox, activeTensorId, "forward"),
-    [byTensorRes, perBox, parts, hiddenBoxes, focusedBox, activeTensorId]
+    () => coneAnalysis ? groupPropResult(byTensorRes, perBox, parts, hiddenBoxes, focusedBox, activeTensorId, "forward") : null,
+    [coneAnalysis, byTensorRes, perBox, parts, hiddenBoxes, focusedBox, activeTensorId]
   );
 
   const metrics = useMemo(() => {
@@ -196,56 +203,57 @@ export function useInspectorAnalysis({
 
   /**
    * Duplicate graph-input element demand among enabled tiles, beside what a
-   * full sweep would reuse. It is unsampled and already propagated, so it costs
-   * nothing to show and needs no button. Conservative regions make duplicate
+   * full sweep would reuse. It is unsampled and uses already propagated cones,
+   * so it needs no sweep button. Conservative regions make duplicate
    * demand an upper bound, and this says nothing about actual cache traffic.
    */
   const sharing = useMemo(() => {
+    if (!dependencies) return null;
     const cones = enabledBackwardProps(perBox, parts, hiddenBoxes, focusedBox, activeTensorId);
     if (!resolved || !cones || cones.length < 2) return null;
     return inputSharing(resolved, cones);
-  }, [resolved, perBox, parts, hiddenBoxes, focusedBox, activeTensorId]);
+  }, [dependencies, resolved, perBox, parts, hiddenBoxes, focusedBox, activeTensorId]);
 
   /** @see coneBounds - idealized execution scenarios. */
   const bounds = useMemo(() => {
-    if (!resolved || !metrics) return null;
+    if (!execution || !resolved || !metrics) return null;
     return coneBounds(
       resolved,
       metrics,
       enabledBackwardProps(perBox, parts, hiddenBoxes, focusedBox, activeTensorId)
     );
-  }, [resolved, metrics, perBox, parts, hiddenBoxes, focusedBox, activeTensorId]);
+  }, [execution, resolved, metrics, perBox, parts, hiddenBoxes, focusedBox, activeTensorId]);
 
   const findings = useMemo(
-    () => (resolved && scopedBack ? coneFindings(resolved, scopedBack) : null),
-    [resolved, scopedBack]
+    () => (dependencies && resolved && scopedBack ? coneFindings(resolved, scopedBack) : null),
+    [dependencies, resolved, scopedBack]
   );
 
   /** How many outputs of each operation in the cone read each operand element. */
   const reads = useMemo(
-    () => (resolved && scopedBack ? operandReads(resolved, scopedBack) : null),
-    [resolved, scopedBack]
+    () => (dependencies && resolved && scopedBack ? operandReads(resolved, scopedBack) : null),
+    [dependencies, resolved, scopedBack]
   );
 
   /** The tile's own region per tensor, scoped the same way as its cones. */
   const seeds = useMemo(() => {
     const map = new Map<string, Region>();
-    if (!selection) return map;
-    const onTensor = selection.parts.filter((part) => part.tensorId === activeTensorId);
+    if (!coneAnalysis || !selection) return map;
+    const onTensor = selection.parts.filter((part, index) => part.tensorId === activeTensorId && !hiddenBoxes.has(index));
     const scoped =
       focusedBox !== null &&
       !hiddenBoxes.has(focusedBox) &&
       selection.parts[focusedBox]?.tensorId === activeTensorId
         ? [selection.parts[focusedBox]]
-        : onTensor.filter((part) => !hiddenBoxes.has(selection.parts.indexOf(part)));
+        : onTensor;
     for (const part of scoped) {
       const prev = map.get(part.tensorId);
       map.set(part.tensorId, prev ? union(prev, fromBox(part.box)) : fromBox(part.box));
     }
     return map;
-  }, [selection, focusedBox, hiddenBoxes, activeTensorId]);
+  }, [coneAnalysis, selection, focusedBox, hiddenBoxes, activeTensorId]);
 
-  const contributionEnabled = contributionAnalysisEnabled(direction);
+  const contributionEnabled = dependencies && contributionAnalysisEnabled(direction);
   const contribution = useMemo(
     () =>
       contributionEnabled && resolved && scopedFwd

@@ -3,10 +3,13 @@ import { box, count, fromBox, union } from "../../../src/core/region";
 import { gridGeometry, latticeStride, MIN_LATTICE_PX, paintScale, type Layer } from "../../../src/view/tensor/grid";
 import { drawGrid } from "../../../src/components/card/draw-grid";
 import { CARD_SURFACE } from "../../../src/view/palette";
+import { MAX_CARD_RASTER_PIXELS } from "../../../src/view/tensor/raster";
 
 // Record the canvas commands at the browser boundary, including state restored
 // after a hatch. No DOM rasterizer is needed to check screen-space contracts.
 function recordingCanvas() {
+  const transforms: number[][] = [];
+  const rectangles: number[][] = [];
   const strokes: { color: string; width: number; dash: number[]; path: number[][] }[] = [];
   const borders: number[] = [];
   // Stipple dots, so the entanglement texture can be checked for where it drew
@@ -20,7 +23,8 @@ function recordingCanvas() {
   const stack: { color: string; width: number; alpha: number; dash: number[] }[] = [];
   const ctx = {
     strokeStyle: "", fillStyle: "", lineWidth: 1, globalAlpha: 1,
-    setTransform() {}, clearRect() {}, fillRect() {},
+    setTransform(...values: number[]) { transforms.push(values); }, clearRect() {},
+    fillRect(...values: number[]) { rectangles.push(values); },
     beginPath() { path = []; },
     arc(x: number, y: number, r: number) { arcs.push({ x, y, r }); },
     fill() { fills.push({ color: this.fillStyle, count: arcs.length }); },
@@ -38,7 +42,7 @@ function recordingCanvas() {
     strokeRect() { borders.push(this.lineWidth); },
   };
   const canvas = { width: 0, height: 0, getContext: () => ctx };
-  return { canvas: canvas as unknown as HTMLCanvasElement, strokes, borders, arcs, fills };
+  return { canvas: canvas as unknown as HTMLCanvasElement, strokes, borders, arcs, fills, transforms, rectangles };
 }
 const cfg = { sliders: [], projection: true };
 const shape = [16, 16];
@@ -46,6 +50,39 @@ const geom = gridGeometry(shape, cfg, 0, 4);
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("canvas screen-space rendering", () => {
+  it("stays within the allocation limit while resizing between tall and wide planes", () => {
+    vi.stubGlobal("window", { devicePixelRatio: 1 });
+    for (const [w, h] of [[8192, 512], [512, 8192]]) {
+      const { canvas } = recordingCanvas();
+      let width = h, height = w;
+      const allocations: number[] = [];
+      Object.defineProperty(canvas, "width", {
+        get: () => width,
+        set: (next: number) => { width = next; allocations.push(width * height); },
+      });
+      Object.defineProperty(canvas, "height", {
+        get: () => height,
+        set: (next: number) => { height = next; allocations.push(width * height); },
+      });
+      const geometry = gridGeometry([h, w], cfg, 0, 1);
+      drawGrid(canvas, [h, w], cfg, geometry, [], true, 1, 0.01);
+      expect(canvas.width).toBe(w);
+      expect(canvas.height).toBe(h);
+      expect(allocations.every((pixels) => pixels <= MAX_CARD_RASTER_PIXELS)).toBe(true);
+    }
+  });
+
+  it("reduces large backing stores while painting in the original element geometry", () => {
+    vi.stubGlobal("window", { devicePixelRatio: 4 });
+    const largeShape = [64000, 64000];
+    const geometry = gridGeometry(largeShape, cfg, 0, 1);
+    const { canvas, transforms, rectangles } = recordingCanvas();
+    drawGrid(canvas, largeShape, cfg, geometry, [], true, 4, 0.01);
+    expect(canvas.width * canvas.height).toBeLessThanOrEqual(MAX_CARD_RASTER_PIXELS);
+    expect(transforms[0]).toEqual([canvas.width / geometry.canvasW, 0, 0, canvas.height / geometry.canvasH, 0, 0]);
+    expect(rectangles[0]).toEqual([0, 0, geometry.canvasW, geometry.canvasH]);
+  });
+
   it("reuses backing dimensions when paint scale changes", () => {
     vi.stubGlobal("window", { devicePixelRatio: 1 });
     const { canvas } = recordingCanvas();

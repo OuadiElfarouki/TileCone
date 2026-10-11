@@ -27,6 +27,21 @@ const graphPlanes = (resolved: ResolvedGraph): { rows: number; cols: number }[] 
     return planeExtents(shape, rowAxis, colAxis);
   });
 
+/** Structural placement for a graph's chosen tensor planes. This job uses no
+ * selection or viewport state and can run independently of query analysis. */
+export function layoutArtifact(
+  graph: ResolvedGraph | ResolvedGraphData,
+  graphPx: number,
+  axes: Record<string, [number, number]> = {},
+) {
+  const resolved = "shapesOf" in graph ? graph : hydrateResolvedGraph(graph);
+  return buildBaseGraphLayout(resolved, (tensor) =>
+    cardSize(tensor.resolved!, graphPx, tensor.name, [
+      shapeLabel(tensor, "symbolic"), symbolicExtentLabel(tensor),
+    ], axes[tensor.id] ? { axes: axes[tensor.id] } : undefined, tensor.axisNames)
+  );
+}
+
 /** Compile, infer, and structurally lay out a graph. Safe to call in a Worker
  * because every returned field is structured-cloneable. */
 export function compileArtifact(source: string):
@@ -36,12 +51,7 @@ export function compileArtifact(source: string):
   if (!result.ok) return result;
   const { graph, resolved } = result.program;
   const graphPx = graphScale(graphPlanes(resolved));
-  const layout = buildBaseGraphLayout(resolved, (tensor) =>
-    cardSize(tensor.resolved!, graphPx, tensor.name, [
-      shapeLabel(tensor, "symbolic"),
-      symbolicExtentLabel(tensor),
-    ])
-  );
+  const layout = layoutArtifact(resolved, graphPx);
   return {
     ok: true,
     resolved,

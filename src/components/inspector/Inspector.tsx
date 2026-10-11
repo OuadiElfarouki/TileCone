@@ -89,6 +89,7 @@ export function Inspector(): React.ReactElement {
     focusedBox,
     activeTensorId,
     direction,
+    tab,
   });
 
   if (!resolved) return <aside className="inspector" aria-label="Tile inspector" />;
