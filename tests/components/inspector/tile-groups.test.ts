@@ -11,7 +11,7 @@ import type { ResolvedGraph } from "../../../src/core/graph";
 import { analysisTensorId, groupAttribution, groupFocus, measuredParts, measuredElements } from "../../../src/components/inspector/inspector-analysis";
 import { groupPropResult, analysisTarget, MAX_PER_BOX_PROPS, partsOn, BoxProp, SelPart } from "../../../src/view/workspace";
 import { currentReuseRows, neighbourShares, reuseFigures } from "../../../src/view/reuse-rows";
-import { FIGURE_MARK } from "../../../src/view/format";
+import { FIGURE_MARK, formatBytes } from "../../../src/view/format";
 
 // Static-render tests read the live test store rather than Zustand's initial
 // server snapshot. Actions and all derivation logic remain the real implementation.
@@ -343,6 +343,65 @@ D = matmul(CC, W)
       S().setInspectorTab("execution");
       expect(S().executionScope).toBeNull();
       expect([...S().hiddenBoxes]).toEqual([]);
+    });
+  });
+
+  it("states how many outputs read each operand element, per operation", () => {
+    const html = render();
+    expect(html).toContain("Operand reuse");
+    // Both tiles are 64 rows by 32 columns of D and share no row or column:
+    // a row of CC is read by the 32 outputs across its tile, a column of W by
+    // the 64 down it.
+    expect(html).toContain("each read 32×");
+    expect(html).toContain("each read 64×");
+  });
+
+  /* Operand reuse follows the same scope as every figure below the tiles list,
+     and its heading says which scope that is, so counts that change under a
+     hover never read as counts about something else. */
+  describe("operand reuse scope", () => {
+    const B_BYTES = formatBytes(256 * 256 * 2);
+
+    it("names the merged tiles, and each operation by what it computes", () => {
+      const html = render();
+      expect(html).toContain("Operand reuse in 2 tiles · merged");
+      expect(html).toContain("via matmul → D");
+      expect(html).toContain("via matmul → CC");
+      // B is read in full by the 128 rows of CC the two tiles need.
+      expect(html).toContain(`each read 128× · ${B_BYTES}`);
+    });
+
+    it("narrows to a hovered tile, and says so", () => {
+      S().hoverBox(0);
+      const html = render();
+      expect(html).toContain("Operand reuse in tile 1");
+      expect(html).toContain(`each read 64× · ${B_BYTES}`);
+      expect(html).not.toContain(`each read 128× · ${B_BYTES}`);
+      S().hoverBox(null);
+      expect(render()).toContain(`each read 128× · ${B_BYTES}`);
+    });
+
+    it("leaves a hidden tile out", () => {
+      S().toggleBoxHidden(1);
+      const html = render();
+      expect(html).toContain(`each read 64× · ${B_BYTES}`);
+      S().toggleBoxHidden(1);
+      expect(render()).toContain(`each read 128× · ${B_BYTES}`);
+    });
+
+    it("says when the tile is on a graph input rather than claiming single use", () => {
+      S().setSelection("A", fromBox(box([0, 8], [0, 8])), "union");
+      const html = render();
+      expect(html).toContain("No operation computes this tile: it is on a graph input.");
+      expect(html).not.toContain("is read by one output");
+    });
+
+    it("drops the old counts when the graph is rebuilt at other sizes", () => {
+      S().applyDSL(SRC.split("256").join("128"));
+      S().setSelection("D", fromBox(box([0, 64], [0, 32])));
+      const html = render();
+      expect(html).not.toContain(B_BYTES);
+      expect(html).toContain(`each read 64× · ${formatBytes(128 * 128 * 2)}`);
     });
   });
 

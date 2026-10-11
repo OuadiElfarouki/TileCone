@@ -163,6 +163,7 @@ export const reduceOp: OpSpec = {
     rec(0, []);
     return [deps];
   },
+  readsOnce: true,
   flopsFor: (_s, outBox, ctx) => {
     let vol = 1;
     for (const I of outBox) vol *= Math.max(0, I.hi - I.lo);

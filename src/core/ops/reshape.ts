@@ -316,6 +316,7 @@ export const reshapeOp: OpSpec = {
     });
     return [[idx]];
   },
+  readsOnce: true,
   // Row-major order is unchanged by a reshape, so a row-major input needs no
   // data movement. Anything else is charged as a copy: merging axes that a
   // transpose permuted has no single stride. Some splits of a permuted tensor

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { Box, Region, canonicalize, count, coversAxisFully, fromBox, iv } from "../region";
 import { normAxes } from "./reduce";
 import { DependencyNoteDraft, OpCtx, OpSpec, floatingDTypeOutputs, NoteCtx } from "./types";
+import { uniformTally } from "../tally";
 import { sameAxisNames } from "./axis-names";
 import { axisWord } from "./axis-names";
 import { sameSymShape } from "./sym-shape";
@@ -166,6 +167,17 @@ export const normalizeOp: OpSpec = {
     if (hasWeight) deps.push(paramIdx.map((p) => p.slice()));
     if (hasBias) deps.push(paramIdx.map((p) => p.slice()));
     return deps;
+  },
+  /* The data is read by every output of its group, so by the box's extent over
+     the normalized axes. A weight or bias element is read by every output at
+     its position, so by the box's extent over the axes it does not span. */
+  multiplicity: (s, outBox, inSlot, ctx) => {
+    const { axes } = cfg(ctx);
+    let readers = 1;
+    outBox.forEach((I, ax) => {
+      if (axes.includes(ax) === (inSlot === 0)) readers *= I.hi - I.lo;
+    });
+    return uniformTally(normalizeOp.backward(s, outBox, ctx)[inSlot], readers);
   },
   flopsFor: (_s, outBox, ctx) => normalizeFlops(fromBox(outBox), ctx),
   flopsForRegion: (_s, outRegion, ctx) => normalizeFlops(outRegion, ctx),

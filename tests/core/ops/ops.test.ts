@@ -279,7 +279,7 @@ describe("oracle corpus: random composed graphs with diamonds", () => {
         perTensorElementCap: 6,
         boxSelections: 1,
         seed: trial,
-        limits: { stridedEnum: 2, diagEnum: 2, reshapeRuns: 1, maxBoxes: 2 },
+        limits: { stridedEnum: 2, diagEnum: 2, reshapeRuns: 1, maxBoxes: 2, tallyPieces: 2 },
       });
     }
   });

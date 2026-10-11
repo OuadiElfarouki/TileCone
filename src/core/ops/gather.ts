@@ -3,6 +3,8 @@ import { Box, Interval, canonicalize, empty, fromBox, full, iv, markInexact } fr
 import { normAxis } from "./reduce";
 import { OpCtx, OpSpec } from "./types";
 import { productBoxes } from "./shape-ops";
+import { limitsOf } from "./limits";
+import { separableTally, type Step, uniformTally } from "../tally";
 
 type GatherAttrs = { axis: number; indexValues?: number[] };
 
@@ -145,6 +147,35 @@ export const gatherOp: OpSpec = {
     const dataIdx = outIndex.slice();
     dataIdx[axis] = indexValues[p];
     return [[dataIdx], [[p]]];
+  },
+  /* A data row is read once per position of the box whose index names it, so a
+     repeated index is a row read twice. Without the values the row is not
+     known, and the box's extent along the axis bounds every row's count. An
+     index is read by every output at its position. */
+  multiplicity: (_s, outBox, inSlot, ctx) => {
+    const { axis, indexValues } = cfg(ctx);
+    const along = outBox[axis];
+    if (inSlot === 1) {
+      let readers = 1;
+      outBox.forEach((I, ax) => {
+        if (ax !== axis) readers *= I.hi - I.lo;
+      });
+      return uniformTally(fromBox([{ ...along }]), readers);
+    }
+    const others = (ax: number): Step[] => [{ lo: outBox[ax].lo, hi: outBox[ax].hi, count: 1 }];
+    if (!indexValues) {
+      const n = ctx.inShapes[0][axis];
+      const perAxis = outBox.map((_, ax) =>
+        ax === axis ? [{ lo: 0, hi: n, count: along.hi - along.lo }] : others(ax)
+      );
+      return separableTally(perAxis, limitsOf(ctx).tallyPieces, false, ["data-dependent index"]);
+    }
+    const perAxis = outBox.map((_, ax) =>
+      ax === axis
+        ? indexValues.slice(along.lo, along.hi).map((v) => ({ lo: v, hi: v + 1, count: 1 }))
+        : others(ax)
+    );
+    return separableTally(perAxis, limitsOf(ctx).tallyPieces);
   },
   flopsFor: () => 0,
   flopsPerElement: () => 0,

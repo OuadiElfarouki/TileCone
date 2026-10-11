@@ -3,6 +3,7 @@ import { Box, Region, coversAxisFully, empty, fromBox, iv, canonicalize } from "
 import { Attrs, DependencyNoteDraft, OpCtx, OpSpec, promotingDTypeOutputs, NoteCtx } from "./types";
 import { limitsOf } from "./limits";
 import { AxisNames } from "./types";
+import { type Tally, uniformTally } from "../tally";
 import { Sym } from "../shapes";
 
 type ParsedEquation = { operands: string[][]; output: string[] };
@@ -218,6 +219,29 @@ export function einsumBackward(eq: string, outBox: Box, ctx: OpCtx): Region[] {
   pe.output.forEach((L, ax) => labelIv.set(L, outBox[ax]));
   for (const [L, e] of ext) if (!labelIv.has(L)) labelIv.set(L, iv(0, e));
   return pe.operands.map((labs) => operandRegion(labs, labelIv, diagEnum));
+}
+
+/**
+ * How many outputs of the box read each element of operand `slot`.
+ *
+ * An output element reads an operand element when the two agree on every label
+ * they share, so the output labels the operand does not carry are free: each
+ * combination of them is a different output reading the same element. For
+ * `mk,kn->mn` over an `m x n` box that is `n` for each element of `A` and `m`
+ * for each of `B`. A contracted label fixes nothing on the output side, and an
+ * output that meets the element in several terms still reads it once.
+ *
+ * The count is the same on every element read, so the region is `backward`'s,
+ * diagonal handling and its fallback included.
+ */
+function einsumMultiplicity(eq: string, outBox: Box, slot: number, ctx: OpCtx): Tally {
+  const pe = parseEquation(eq, ctx.inShapes.length);
+  const labs = pe.operands[slot];
+  let readers = 1;
+  pe.output.forEach((L, ax) => {
+    if (!labs.includes(L)) readers *= outBox[ax].hi - outBox[ax].lo;
+  });
+  return uniformTally(einsumBackward(eq, outBox, ctx)[slot], readers);
 }
 
 /**
@@ -525,6 +549,7 @@ export const einsumOp: OpSpec = {
   backward: (_slot, outBox, ctx) => einsumBackward(eqOf(ctx.attrs), outBox, ctx),
   forward: (inSlot, inBox, ctx) => einsumForward(eqOf(ctx.attrs), inSlot, inBox, ctx),
   oracleDeps: (_slot, outIndex, ctx) => einsumOracleDeps(eqOf(ctx.attrs), outIndex, ctx),
+  multiplicity: (_s, outBox, inSlot, ctx) => einsumMultiplicity(eqOf(ctx.attrs), outBox, inSlot, ctx),
   coaccess: (slot, box, otherSlot, ctx) =>
     einsumCoaccess(eqOf(ctx.attrs), slot, box, otherSlot, ctx),
   oracleTerms: (_slot, outIndex, ctx) => einsumOracleTerms(eqOf(ctx.attrs), outIndex, ctx),
@@ -553,6 +578,7 @@ function einsumSugar(
     backward: (_s, outBox, ctx) => einsumBackward(eqFor(ctx), outBox, ctx),
     forward: (inSlot, inBox, ctx) => einsumForward(eqFor(ctx), inSlot, inBox, ctx),
     oracleDeps: (_s, outIndex, ctx) => einsumOracleDeps(eqFor(ctx), outIndex, ctx),
+    multiplicity: (_s, outBox, inSlot, ctx) => einsumMultiplicity(eqFor(ctx), outBox, inSlot, ctx),
     coaccess: (slot, box, otherSlot, ctx) => einsumCoaccess(eqFor(ctx), slot, box, otherSlot, ctx),
     oracleTerms: (_s, outIndex, ctx) => einsumOracleTerms(eqFor(ctx), outIndex, ctx),
     flopsFor: (_s, outBox, ctx) => einsumFlops(eqFor(ctx), outBox, ctx),

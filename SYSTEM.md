@@ -56,6 +56,8 @@ src/
 │   ├── reuse.ts          exact tile sharing and seeded reuse sweep
 │   ├── demand.ts         summed and distinct demand on one tensor from several readers
 │   ├── contribution.ts   whether a tile completes its forward cone, or only adds to it
+│   ├── tally.ts          a count per element as weighted boxes, and its measurement
+│   ├── multiplicity.ts   how many outputs of each operation in a cone read each operand element
 │   ├── expand.ts         composite-to-primitive graph rewrites
 │   ├── notes.ts          plain-language dependency constraints
 │   ├── shapes.ts         symbolic dimensions and shape errors
@@ -97,6 +99,7 @@ src/
 │   ├── menu.ts           a menu as data: actions, choices and separators, bound by id
 │   ├── reuse-rows.ts     reading a reuse sweep: the current run and its figures
 │   ├── demand.ts         a shared-demand row in words, for both views that show one
+│   ├── multiplicity.ts   a read-multiplicity row in words
 │   ├── plan-work.ts      the whole-plan figures as rows, and a tiling in words
 │   ├── palette.ts        validated categorical hues and canvas surfaces
 │   ├── format.ts         presentation-only numeric formatting
@@ -161,8 +164,8 @@ engine's tests, `tests/view/tensor/` the tensor view model's, and so on. Many su
 topic that spans several files - `figures`, `intensity` and `view-traffic` all exercise
 `metrics.ts` - so the mirror is by folder, not file by file. `tests/corpus/` holds what exercises
 the whole engine or the whole tree rather than one module: the brute-force oracle, the op
-fixtures, the harness, the registry laws, the fallback, frontier and shared-operand suites, and
-the layering check.
+fixtures, the harness, the registry laws, the fallback, frontier, multiplicity and shared-operand
+suites, and the layering check.
 
 ## 3. Core intermediate representation
 
@@ -368,7 +371,9 @@ Every operation is described by an `OpSpec` in `src/core/ops/types.ts` and regis
 - forward region mapping from an input box to output regions;
 - optional pointwise dependency oracle used by tests;
 - FLOP estimation, optionally over a whole region when work is shared or nonlocal;
-- an optional plain-language note about the constraint it imposes on a cone (§8a).
+- an optional plain-language note about the constraint it imposes on a cone (§8a);
+- optional read multiplicity, or the `readsOnce` declaration, counting how many outputs read each
+  operand element (§8c).
 
 This is the main extensibility seam. The graph resolver and propagation engine do not switch on operation names; they dispatch through the registry.
 
@@ -581,6 +586,85 @@ Each task costs one bounded query plus one intersection per producer tile it mee
 
 Plan and task errors are `PlanError`s with stable codes: `PLAN_UNKNOWN_TENSOR`, `PLAN_GRAPH_INPUT`, `PLAN_TILE`, `PLAN_SIZE`, `PLAN_UNPLANNED` and `PLAN_TASK`.
 
+## 8c. Read multiplicity
+
+A footprint says which elements a tile needs and drops how often each one is used. For `C = A @ B`
+and an `m x n` tile of `C`, the footprint of `A` is `m x K` and each of those elements is read by
+`n` outputs. That count is the reuse inside the tile, and a region cannot hold it. A union records
+whether an element is reached, not how many times.
+
+The multiplicity of an operand element is the number of output elements of the operation that read
+it: `|{o in S : a in deps(o)}|`, the relation `oracleDeps` states, counted instead of unioned. It
+counts outputs, not terms. An output that meets an element in several terms of its own computation
+reads it once, as `oracleDeps` lists it once. Counted this way it applies to every operation:
+- a contraction reads an `A` element once per output column of the tile, and a `B` element once per
+  output row;
+- a softmax row is read once per selected output in it;
+- a reduction reads each element once;
+- a broadcast bias is read once per broadcast position;
+- a convolution's halo is read once per window that covers it;
+- a barrier is bounded by the box.
+
+`core/tally.ts` holds the representation. A `Tally` is a list of boxes with positive counts, and
+the value at an element is the **sum** of the counts of the pieces containing it. Pieces may overlap,
+and overlap is how counts add: a convolution's halo is one shifted run per kernel tap, and the
+positions two taps reach are the ones read twice. This inverts the rule in §4. There, summing box
+volumes double-counts; here, summing `count * volume` gives exactly the total number of reads. It is
+a separate type for the same reason `BoundedCone` is not a `PropResult`: `canonicalize` drops
+contained boxes and merges neighbours, which preserves a union and would lose a count.
+`measureTally` measures the distribution with the dimensional sweep `count` uses, adding up the
+active counts where `count` only asks whether any box is active. It never builds the level sets it
+measures.
+
+Operations declare their count through `OpSpec.multiplicity(outSlot, outBox, inSlot)`. Most have
+one of two forms:
+- **The same count on every element `backward` names** (`uniformTally`): einsum and its sugar
+  (the box's extent over the output labels the operand does not carry), elementwise and expand (the
+  broadcast fan-out), softmax, normalize, conv's weights, and gather's indices.
+- **A product of one count per axis** (`separableTally`): pad, conv and pool activations, gather's
+  data, and cumsum. Each axis is a list of steps that add where they overlap.
+
+An operation that reads each input element into at most one output element declares `readsOnce`
+instead of writing a hook. These are reduce, transpose, slice, concat, split, reshape, and the
+identity family.
+
+Without either, `operandTally` falls back to the box's element count on `backward`'s region, marked
+inexact. No element can be read by more outputs than the box holds. The barrier relies on this.
+
+An inexact tally is an upper bound at every element, so its support contains the true support. This
+is the region contract stated per element. It is where a widened `backward` region, a strided
+enumeration past `stridedEnum`, a gather without index values, or a count past
+`Limits.tallyPieces` lands. A separable count over that cap merges neighbouring steps at the larger
+count. The cap is separate from `maxBoxes` and larger (4096 against 256), because a tally is
+measured but never drawn or propagated, and a strided window's count alternates along each axis.
+Scans build their triangular count directly as disjoint steps. Past the cap, they group the ramp
+at each group's maximum count before allocating, so their work depends on the cap rather than
+the number of selected positions.
+
+`operandReads(graph, back)` walks a backward cone. For each operation it takes the cone's region on
+each output as the outputs the tile needs. It splits that region into disjoint boxes, since an output
+in two boxes is still one reader, and counts every operand. A tensor read through several slots gives
+one row whose counts add across them, so `matmul(A, A)` reads its shared corner from both bands.
+
+The count is per operation, and that is deliberate. An operation's output region in a backward cone
+is what the tile needs of it, so its operands' counts follow from the operation alone, exactly where
+the regions are. Composing counts along a chain is a different question. Multiplying them along paths
+counts a residual branch twice, and how often an intermediate is recomputed depends on what an
+execution stores. Neither is answered here.
+
+The figures keep the statuses of §8:
+- **Exact tally:** figures within the safe integer range are exact. Overflowing measurements
+  report `unknown`, as does a mean that depends on them; independently safe counts remain available.
+- **Inexact tally:** these move only up, and are upper bounds:
+  - reads, the sum of the counts;
+  - elements read;
+  - elements read more than once;
+  - the largest count.
+- **Inexact tally:** these move in no fixed direction, and are approximate:
+  - elements read exactly once. An element with a true count of 1 can be raised to 2, and one with a
+    true count of 0 can be raised to 1.
+  - the mean, which is a ratio.
+
 ## 9. UI architecture
 
 The React layer is a projection over the headless compiler and executor.
@@ -619,9 +703,9 @@ unaffected by this rendering fallback.
 - `GraphView.tsx` is the graph controller and React projection: it consumes the Worker's base layout, derives highlighting, manages pan/zoom/focus and node gestures, and renders the current scene. A synchronous layout fallback exists only for headless callers that installed a graph without a Worker artifact. Viewport panning starts on every background surface, including the transformed inner layout behind connectors; tensor cards, operation nodes, and the three HUD clusters - viewport, layout, grid - retain their own gestures. Every gesture - a pan, a card or operation drag, a draw on a canvas, a panel resize - starts only on a primary press (`components/pointer.ts`): a secondary press belongs to the context menu, and drawing a tile on the way to one was a bug. What a press on a node does is the canvas tool's choice (`canvasTool`). Under `select` a card's canvas draws tiles and a press on an operation picks it. Under `move`, or with Ctrl/Cmd held for one gesture (`hooks/useMoveModifier.ts`), each node starts the drag from its capture phase, so a press anywhere on a card or operation moves it before the canvas, a slider or the substitute button sees it; the node's contents also stop taking the pointer, so hover previews and popovers stay quiet, while the card plate itself keeps its right-click menu. Each node has one border - a card's grid outline, an operation's box - recoloured by state rather than doubled: accent while inspected, grey while pointed at or held by the move tool, warning when a neighbour refuses the move. `Esc` leaves the move tool once no drag is in flight. The world is unbounded, scene bounds include negative card positions, useful zoom is bounded by tensor legibility and canvas supersampling, and reset layout is an undoable recovery action, grouped with the move tool rather than with the zoom buttons, which move only the viewport. Under the move tool a focused card or operation takes the arrow keys itself - the same collision sweep as a drag, one undo entry per press - and the global selection binding stands down over `[data-node-move]` so the tile does not walk at the same time. Connector SVGs are split by meaning: dim context runs behind the plates, while ordinary and hot connectors cross above them, including during a card drag. It does not own layout or routing algorithms.
 - The operations list carries a persistent `selectedOp`, distinct from the one-shot `focusNode` glide request. It is set from either end - a row click, or any selection edit, via `operationForTensor` (a tensor's producer, else its single consumer, else nothing) - and cleared by Escape, a press outside the graph, or a click on empty canvas. Panning, zooming and fit keep it, so a selected operation survives the reader moving the view to look around it. The outside-press listener leaves the canvas background and its controls to `GraphView`, which clears only when a background press is released without travelling further than a click.
 - `TensorCard.tsx` renders an interactive tensor grid on canvas and converts pointer gestures into element-space boxes. Its paint stack is built by pure helpers: `buildLayers` owns cone encoding, `buildPlanPaint` owns declared tasks, and `buildExecutionPaint` overlays the reuse probes the estimator actually performed. During playback each sampled tile pulses once on the studied tensor, and everywhere else the probe pulses as whatever it reaches through each traced relation, in that relation's own mark - a solid fill for what it needs, a ruling for what it feeds, a stipple for what it is combined with - with the part the anchor also reaches drawn at full strength over the rest. Borrowing the marks rather than inventing new ones is what keeps a probe's upstream reach from reading as its downstream reach. Completed probes settle into a quieter summary of both readings, whose approximation carries through from any probe that was widened. The overlay draws no lattice of its own. The sweep's cover - tiles of the anchor's extents laid over the tensor - would read naturally as one, but a card still takes ordinary selection drags under Cost model and those snap to the square display tile, which the anchor's extents generally are not, so a drawn cover would put lines on the canvas that no gesture lands on (§9). The Plan view can draw its lattice because a gesture on a tiled card inspects rather than draws. The probe rectangles carry the cover instead, and carry only the tiles the sweep actually walked rather than every tile a full lattice would imply. The overlay never replaces `selection` or `plan`, and its opacity falls over 240 ms when another view is chosen, so the next view is already present underneath rather than appearing after a hard reset; returning to Cost model during that fade settles the sweep rather than letting it finish leaving. Hover probes compute both directions under the `MAX_PREVIEW_NODES` cap; the view filter paints solid needs, ruled feeds, both, or neither without re-querying. Hover previews are selected per tensor, repeated pointer frames inside one logical cell are ignored, and what survives that is coalesced to one query per animation frame by `useFrameThrottle` - pointer events outrun frames by an order of magnitude, and only the last position in a frame can be seen. Every preview update goes through the throttle, clears included, so a clear cannot be overtaken by a move still pending for the frame; the canvas effect declares its paint dependencies, so a hover does not re-rasterise unrelated cards.
-- `Inspector.tsx` is ordered by the question the product asks: the tile's identity, the tiles list, then **Backward Cone** and **Forward Cone**, followed by approximation, cost, sharing, and dependency notes. Each directional heading is also its adjacent view toggle and its fill chip is the legend for the matching canvas treatment; each tensor appears once per direction with its box count, segmented per-tile footprint, slice expressions, and copy action. The Forward Cone rollup carries completed-versus-partial counts so the product's distinguishing verdict is visible before rows are scanned. Dependency severity uses progressively heavier rules in muted, warning, and error ink; accent remains reserved for active UI. The panel is read-only apart from the tile list: the lattice, snap and axis reading changed only the canvas, so they now ride the canvas HUD and the panel keeps nothing but the readout and the tiles it is scoped to. With nothing drawn the panel names the three relations it will answer and offers a starting tile rather than rendering null sections.
+- `Inspector.tsx` is ordered by the question the product asks: the tile's identity, the tiles list, then **Backward Cone** and **Forward Cone**, followed by approximation, cost, sharing, operand reuse, and dependency notes. Operand reuse lists each operation and operand some element of which is read by more than one output, with the bytes reused, the largest count and the bytes read once. The figures sit in one right-hand column, as a cone row's do. An operation is named with the tensors it computes (`matmul → Q`), because two operations of one kind share a name and attention reads `X` through three of them. Operands read once throughout are named together on one line, by what each becomes, with the operations in its tooltip, because which elements are reused is what the section reports. It follows the analysis group and its focus like every other figure, and its heading names that scope the way the cost heading does (`in tile 2`, `in 3 tiles · merged`). A hover over a tile row therefore changes the counts and says so in the same place. With no operation in the cone, the section says why: the tile is on a graph input, or the operations computing it read nothing for it (a tile inside a constant pad). It does not claim that everything is read once. Each directional heading is also its adjacent view toggle and its fill chip is the legend for the matching canvas treatment; each tensor appears once per direction with its box count, segmented per-tile footprint, slice expressions, and copy action. The Forward Cone rollup carries completed-versus-partial counts so the product's distinguishing verdict is visible before rows are scanned. Dependency severity uses progressively heavier rules in muted, warning, and error ink; accent remains reserved for active UI. The panel is read-only apart from the tile list: the lattice, snap and axis reading changed only the canvas, so they now ride the canvas HUD and the panel keeps nothing but the readout and the tiles it is scoped to. With nothing drawn the panel names the three relations it will answer and offers a starting tile rather than rendering null sections.
 
-- The panel is split into views, and the split is by what a figure rests on rather than by subject; the Plan view (below) adds a third kind. **Dependencies** holds every figure that is a function of the graph and the drawn region: the cones, the co-access surface, footprints, FLOPs and bytes, duplicate graph-input demand across the drawn tiles, and the notes. Each is exact or carries the kind of bound its structure supports. **Cost model** holds the figures that exist only once an execution is assumed - a tiling of the whole tensor, an order, a fusion decision - which is where the fused and unfused arithmetic intensities and the sampled reuse sweep live, under a note saying so. They were separated because they fail differently: a dependence figure fails by being conservative, a modelled one by being wrong in either direction, and a model rendered beside a bound borrows its credibility. The choice is view state on the store rather than local, so it survives a redraw, and the tile header sits above the switch because both classes describe the same tile. What splits along this line is the question, not the subject: 'what duplicate demand do these drawn tiles create' is unsampled and stays under Dependencies, while 'what would every tile of this size share' assumes a tiling nobody drew and moves. A completed sweep is local state keyed by both the resolved graph and its exact probe box; changing either hides it synchronously, before an old tensor ID can be read against a new graph. Replaying does not move the real selection, but opening Cost model does narrow it: a sweep is defined by one tile and the figures beside it are about that tile, so every other tile is disabled on the way in and put back on the way out. Disabling is the existing control rather than a second kind of invisibility - each tile keeps its faint rectangle, so the reader can see they are still there. The tile swept is the focused one when it is in the group and enabled, else the last enabled one drawn there, and `sweepAnchorIndex` is shared with the inspector's own probe so the view cannot scope to one tile and sweep another. What is restored is what was set aside rather than what Cost model ended up holding, and it is held by part identity, the way `setSelection` remaps it, so an edit that renumbers the tiles cannot put the wrong ones back; a part that no longer exists drops out. Returning to Dependencies therefore reveals the original drawn tiles; moving directly to Plan preserves an existing inspected task, or creates task coordinate zero on the studied produced tensor with the sweep's tile extents when no task exists.
+- The panel is split into views, and the split is by what a figure rests on rather than by subject; the Plan view (below) adds a third kind. **Dependencies** holds every figure that is a function of the graph and the drawn region: the cones, the co-access surface, footprints, FLOPs and bytes, duplicate graph-input demand across the drawn tiles, operand reuse (§8c), and the notes. Each is exact or carries the kind of bound its structure supports. **Cost model** holds the figures that exist only once an execution is assumed - a tiling of the whole tensor, an order, a fusion decision - which is where the fused and unfused arithmetic intensities and the sampled reuse sweep live, under a note saying so. They were separated because they fail differently: a dependence figure fails by being conservative, a modelled one by being wrong in either direction, and a model rendered beside a bound borrows its credibility. The choice is view state on the store rather than local, so it survives a redraw, and the tile header sits above the switch because both classes describe the same tile. What splits along this line is the question, not the subject: 'what duplicate demand do these drawn tiles create' is unsampled and stays under Dependencies, while 'what would every tile of this size share' assumes a tiling nobody drew and moves. A completed sweep is local state keyed by both the resolved graph and its exact probe box; changing either hides it synchronously, before an old tensor ID can be read against a new graph. Replaying does not move the real selection, but opening Cost model does narrow it: a sweep is defined by one tile and the figures beside it are about that tile, so every other tile is disabled on the way in and put back on the way out. Disabling is the existing control rather than a second kind of invisibility - each tile keeps its faint rectangle, so the reader can see they are still there. The tile swept is the focused one when it is in the group and enabled, else the last enabled one drawn there, and `sweepAnchorIndex` is shared with the inspector's own probe so the view cannot scope to one tile and sweep another. What is restored is what was set aside rather than what Cost model ended up holding, and it is held by part identity, the way `setSelection` remaps it, so an edit that renumbers the tiles cannot put the wrong ones back; a part that no longer exists drops out. Returning to Dependencies therefore reveals the original drawn tiles; moving directly to Plan preserves an existing inspected task, or creates task coordinate zero on the studied produced tensor with the sweep's tile extents when no task exists.
 - `shortcuts.ts` is the single manifest for key matching and help copy. `useKeyboard.ts` dispatches global bindings, local owners such as the source editor match against the same manifest, and `ShortcutsDialog.tsx` renders its grouped inventory. The shortcut sheet traps focus, makes the workspace inert, restores the control that opened it, and suspends every global binding except Escape while open.
 - Whatever holds focus decides what a key does, so `useFocusPolicy.ts` keeps it where the reader is working. A press releases the element it lands outside of: the browser does this itself, but the workspace's gestures cancel the press to keep text from being selected, which cancelled the focus change with it - the source editor kept the keys after a tile was drawn, and a `d` meant for the Forward Cone was typed into the source. And a pointer leaves no control holding the keys: a button, slider or separator used with the pointer is released when the press ends, so the arrows move the tile rather than a detail slider dragged a moment earlier that showed no sign of holding them. A control reached with Tab keeps focus and shows its ring. Text fields keep focus, since typing is what they are for, and menus, list boxes and dialogs are exempt, since they move focus within themselves. The same rule governs focus moved in code: the example picker and the options menu return focus to their trigger only when the keyboard opened them, and a panel carries focus to its rail only when focus was inside it.
 - `inspector-analysis.ts` derives the inspector's scoped metrics, notes, rows, selection seeds, and contribution report with independent memoization. It re-merges the cached per-tile propagation using only enabled tiles, so a visibility toggle synchronizes every readout without rerunning the executor. Contribution classification can launch many checked backward probes, so it runs only while downstream rows are visible; note findings are collected once and shared by the row flags and notes section.
@@ -748,6 +832,7 @@ The test suite checks the architecture at several levels:
 - tile families: every element in exactly one tile across random shapes and extents, including shortened tails and extents wider than the axis, and the tiles a box meets agree with a scan of the whole family;
 - tile plans against a task oracle built from `oracleDeps` alone, which walks back element by element through every untiled tensor and stops at tiled tensors and graph inputs: demand per operation and slot, what each task computes, the producer set, and each family's summed and distinct bytes, readers, fan-out, dependencies and written bytes, on random graphs where some produced tensors are left untiled. Under lowered fallback thresholds the same check requires that no true producer is missed, that a producer reached only through widened demand is not called definite, and that a widened region a task computes stays a superset. Those corpora assert they produced such producers and such regions. Whole-plan totals are checked to sum their families and to measure shared reads and work no more than once;
 - the two-matmul chain as fixed cases: producer counts, row-band sharing, the effect of a taller consumer tile, partial use when tilings do not align, duplication factors on both inputs, and the work of the plan with C written and with C recomputed by narrow and full-width Y tiles;
+- read multiplicity against a brute-force count from `oracleDeps` alone, for every fixture and for the variants whose count varies by position (diagonal and extra-label einsums, a tensor read through two slots, replicate and constant pads, dilated and strided convolutions, overlapping pools, cumsum, strided slices): exact counts equal the truth at every element, zeros included, and inexact ones are at least it. The same check runs with every limit lowered, and with each operation's own count removed so `readsOnce` and the bound answer. Where both are exact, the elements a count covers are the elements `backward` names. The tally algebra is checked against pointwise sums at ranks 1 to 3, including that a capped count is never below the uncapped one;
 - randomized graph and propagation cases.
 
 Some tests deliberately import pure implementation seams: reshape decomposition, the einsum
@@ -779,6 +864,10 @@ npx tsc --noEmit
     source's own word for that axis.
 4. Implement conservative backward and forward region mappings.
 5. Add a pointwise oracle where practical and define FLOP semantics.
+5a. State how many outputs read each operand element (`multiplicity`), or declare `readsOnce` when
+    each input element reaches at most one output element. Without either, the operation's reads
+    are bounded by its box and marked inexact. The multiplicity corpus checks whichever applies
+    against the oracle.
 6. Register the spec in `src/core/ops/index.ts`.
 7. Add an entry to `tests/corpus/op-fixtures.ts`. This is not optional: `registry.test.ts` checks the
    table against `listOps()`, so a registered operation without a fixture fails the suite. The
@@ -815,6 +904,7 @@ Keep shape/index logic in the core or pure UI geometry helpers. The store should
 - A task computes its whole reduction, and its fusion is decided per tensor: an untiled tensor is recomputed by every task that reads it. Split reductions, a tensor that is both written and recomputed, worker placement and execution order do not exist yet. A tiled view (a transpose, say) is charged as a written copy.
 - A plan is workspace state, not part of a share link or the DSL. A shared link carries the source and the selection, and the recipient opens it with nothing tiled. Kept plans are workspace state on the same terms.
 - Plans are compared on whole-plan `Work` only. A per-family or per-tensor comparison, and any ranking of plans, is left to the reader.
+- Read multiplicity is counted per operation, over the outputs the cone needs of it. Counts are not composed along a chain, and the number of times an intermediate would be recomputed is not modelled. Term counts, which would charge an output once per term that meets an element, are not reported.
 - JSON graph support exists below the UI, but the main interactive authoring path is the DSL.
 
 These boundaries are useful when deciding where new work belongs: semantic truth should live in the graph, region, operation, and executor layers; orchestration belongs in the store; presentation belongs in React and the canvas helpers.

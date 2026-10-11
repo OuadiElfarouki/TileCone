@@ -146,7 +146,7 @@ describe("bounded cones against the oracle", () => {
   it("agrees on random graphs with random frontiers", () => corpus(7));
 
   it("stays a superset under tight fallback thresholds", () =>
-    corpus(8, { stridedEnum: 2, diagEnum: 2, reshapeRuns: 1, maxBoxes: 2 }));
+    corpus(8, { stridedEnum: 2, diagEnum: 2, reshapeRuns: 1, maxBoxes: 2, tallyPieces: 2 }));
 });
 
 describe("the checked boundary", () => {

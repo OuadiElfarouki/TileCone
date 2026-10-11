@@ -4,6 +4,7 @@ import { Box, Interval, Region, canonicalize, empty, fromBox, iv } from "../regi
 import { resolveShape, Shape } from "../shapes";
 import {
   broadcastBackwardBox,
+  broadcastFanOut,
   broadcastForwardBox,
   broadcastOracleIndex,
 } from "./elementwise";
@@ -13,6 +14,7 @@ import { limitsOf } from "./limits";
 import { broadcastAxisNames, firstNamedAxis, sameAxisNames } from "./axis-names";
 import { sameSymShape } from "./sym-shape";
 import { Sym } from "../shapes";
+import { separableTally, type Step, uniformTally } from "../tally";
 
 const zero = () => 0;
 
@@ -74,6 +76,7 @@ export const transposeOp: OpSpec = {
     perm.forEach((p, i) => (inIdx[p] = outIndex[i]));
     return [[inIdx]];
   },
+  readsOnce: true,
   // New strides over the same buffer: the storage order is unchanged, and
   // only the names of its axes move. Output axis `i` is input axis `perm[i]`,
   // so each stored input axis is renamed to the output axis that reads it.
@@ -167,6 +170,7 @@ export const sliceOp: OpSpec = {
     const { starts, steps } = ctx.attrs as SliceAttrs;
     return [[outIndex.map((o, ax) => starts[ax] + o * steps[ax])]];
   },
+  readsOnce: true,
   // An offset and new strides over the input's buffer.
   layout: () => "strided",
   flopsFor: zero,
@@ -275,6 +279,35 @@ export const padOp: OpSpec = {
     }
     return [[idx]];
   },
+  /* Per axis, the interior reads each element once and a padded segment reads
+     according to the mode: replicate reads the edge element once per padded
+     position, reflect reads a mirrored run once more, and constant reads
+     nothing. The axes are independent, so the counts multiply. */
+  multiplicity: (_s, outBox, _inSlot, ctx) => {
+    const { pads, mode } = ctx.attrs as PadAttrs;
+    const inShape = ctx.inShapes[0];
+    const perAxis: Step[][] = inShape.map((n, ax) => {
+      const [lo] = pads[ax];
+      const { lo: o0, hi: o1 } = outBox[ax];
+      const steps: Step[] = [];
+      const a = Math.max(o0, lo) - lo;
+      const b = Math.min(o1, lo + n) - lo;
+      if (b > a) steps.push({ lo: a, hi: b, count: 1 });
+      const l1 = Math.min(o1, lo);
+      if (l1 > o0) {
+        if (mode === "replicate") steps.push({ lo: 0, hi: 1, count: l1 - o0 });
+        else if (mode === "reflect") steps.push({ lo: lo - (l1 - 1), hi: lo - o0 + 1, count: 1 });
+      }
+      const r0 = Math.max(o0, lo + n);
+      if (o1 > r0) {
+        if (mode === "replicate") steps.push({ lo: n - 1, hi: n, count: o1 - r0 });
+        else if (mode === "reflect")
+          steps.push({ lo: 2 * n - 2 - (o1 - 1 - lo), hi: 2 * n - 2 - (r0 - lo) + 1, count: 1 });
+      }
+      return steps;
+    });
+    return separableTally(perAxis, limitsOf(ctx).tallyPieces);
+  },
   flopsFor: zero,
   flopsPerElement: zero,
 };
@@ -361,6 +394,7 @@ export const concatOp: OpSpec = {
     }
     return deps;
   },
+  readsOnce: true,
   /* Nothing is ever combined: each output element comes from exactly one
      operand, so a concat places its inputs side by side rather than mixing
      them. Empty is the answer, and a useful one - it says a kernel can write
@@ -448,6 +482,7 @@ export const splitOp: OpSpec = {
     idx[ax] += ofs;
     return [[idx]];
   },
+  readsOnce: true,
   flopsFor: zero,
   flopsPerElement: zero,
 };
@@ -483,6 +518,10 @@ export const expandOp: OpSpec = {
     fromBox(broadcastForwardBox(inBox, ctx.inShapes[0], ctx.outShapes[0])),
   ],
   oracleDeps: (_s, outIndex, ctx) => [[broadcastOracleIndex(outIndex, ctx.inShapes[0])]],
+  multiplicity: (_s, outBox, _inSlot, ctx) => {
+    const sh = ctx.inShapes[0];
+    return uniformTally(fromBox(broadcastBackwardBox(outBox, sh)), broadcastFanOut(outBox, sh));
+  },
   // A broadcast is a zero stride on each expanded axis.
   layout: () => "strided",
   flopsFor: zero,
@@ -503,6 +542,7 @@ export function identityLike(name: string): OpSpec {
     backward: (_s, outBox) => [fromBox(outBox.map((I) => ({ ...I })))],
     forward: (_s, inBox) => [fromBox(inBox.map((I) => ({ ...I })))],
     oracleDeps: (_s, outIndex) => [[outIndex.slice()]],
+    readsOnce: true,
     flopsFor: zero,
     flopsPerElement: zero,
   };

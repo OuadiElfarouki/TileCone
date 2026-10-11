@@ -4,6 +4,7 @@ import { productBoxes } from "./shape-ops";
 import { DependencyNoteDraft, floatingDTypeOutputs, NoteCtx, OpCtx, OpSpec, promotingDTypeOutputs, uniformDTypeOutputs } from "./types";
 import { limitsOf } from "./limits";
 import { sameAxisNames } from "./axis-names";
+import { separableTally, type Step, type Tally, uniformTally } from "../tally";
 
 /**
  * Layout: NC* (batch, channels, spatial...). Weight: [Cout, Cin/groups, *kernel].
@@ -86,6 +87,42 @@ function spatialBackward(
   const lo = Math.max(0, o0 * s - pLo);
   const hi = Math.min(n, (o1 - 1) * s + (K - 1) * d + 1 - pLo);
   return { list: hi > lo ? [iv(lo, hi)] : [], exact: false };
+}
+
+/**
+ * How many output positions in `[o0,o1)` read each input position of one
+ * spatial axis.
+ *
+ * One run of positions per kernel tap, counted once each: an output position
+ * and an input position meet through at most one tap, so the runs add up to
+ * the count. At stride 1 a run is an interval; at a larger stride its
+ * positions are enumerated while small, and otherwise each run is widened to
+ * its span, which bounds the count from above (IDEA §3.1).
+ */
+function spatialCounts(
+  o0: number,
+  o1: number,
+  s: number,
+  d: number,
+  K: number,
+  pLo: number,
+  n: number,
+  stridedEnum: number
+): { steps: Step[]; exact: boolean } {
+  const steps: Step[] = [];
+  const clip = (lo: number, hi: number) => {
+    const a = Math.max(0, lo);
+    const b = Math.min(n, hi);
+    if (b > a) steps.push({ lo: a, hi: b, count: 1 });
+  };
+  const enumerate = s === 1 || (o1 - o0) * K <= stridedEnum;
+  for (let k = 0; k < K; k++) {
+    const first = o0 * s - pLo + k * d;
+    const last = (o1 - 1) * s - pLo + k * d;
+    if (s > 1 && enumerate) for (let i = first; i <= last; i += s) clip(i, i + 1);
+    else clip(first, last + 1);
+  }
+  return { steps, exact: enumerate };
 }
 
 /** Image of input interval [i0,i1) on one spatial axis. */
@@ -500,6 +537,7 @@ export const convOp: OpSpec = {
     }
     return [xDeps, wDeps];
   },
+  multiplicity: (_s, outBox, inSlot, ctx) => convMultiplicity(outBox, inSlot, ctx),
   coaccess: convCoaccess,
   oracleTerms: (_s, outIndex, ctx) => convOracleTerms(outIndex, ctx),
   flopsFor: (_s, outBox, ctx) => {
@@ -509,6 +547,44 @@ export const convOp: OpSpec = {
   },
   flopsPerElement: (_slot, ctx) => convFlopsPerElement(ctx),
 };
+
+/**
+ * Activations: each position by the outputs whose window covers it, and each
+ * channel by the output channels of its own group in the box. Weights: every
+ * batch and spatial position of the box reads the whole filter of its output
+ * channel, padded taps included, as `oracleDeps` states.
+ */
+function convMultiplicity(outBox: Box, inSlot: number, ctx: OpCtx): Tally {
+  const c = convCfg(ctx);
+  if (inSlot === 1) {
+    let readers = outBox[0].hi - outBox[0].lo;
+    for (let i = 0; i < c.nSp; i++) readers *= outBox[2 + i].hi - outBox[2 + i].lo;
+    return uniformTally(convOp.backward(0, outBox, ctx)[1], readers);
+  }
+  const [c0, c1] = [outBox[1].lo, outBox[1].hi];
+  const channels: Step[] = [];
+  for (let g = Math.floor(c0 / c.cpgOut); g <= Math.floor((c1 - 1) / c.cpgOut); g++) {
+    const readers = Math.min(c1, (g + 1) * c.cpgOut) - Math.max(c0, g * c.cpgOut);
+    channels.push({ lo: g * c.cpgIn, hi: (g + 1) * c.cpgIn, count: readers });
+  }
+  let exact = true;
+  const perAxis: Step[][] = [[{ lo: outBox[0].lo, hi: outBox[0].hi, count: 1 }], channels];
+  for (let i = 0; i < c.nSp; i++) {
+    const r = spatialCounts(
+      outBox[2 + i].lo,
+      outBox[2 + i].hi,
+      c.stride[i],
+      c.dilation[i],
+      c.kernel[i],
+      c.pads[i][0],
+      c.spatialIn[i],
+      limitsOf(ctx).stridedEnum
+    );
+    exact = exact && r.exact;
+    perAxis.push(r.steps);
+  }
+  return separableTally(perAxis, limitsOf(ctx).tallyPieces, exact, exact ? [] : ["strided conv"]);
+}
 
 function convFlopsPerElement(ctx: OpCtx): number {
   const c = convCfg(ctx);
@@ -622,6 +698,32 @@ export const poolOp: OpSpec = {
     };
     rec(0);
     return [deps];
+  },
+  /* The activation half of conv's count, without the channel mixing. */
+  multiplicity: (_s, outBox, _inSlot, ctx) => {
+    const a = ctx.attrs as PoolAttrs;
+    const d = a.dilation ?? a.kernelShape.map(() => 1);
+    const inSh = ctx.inShapes[0];
+    let exact = true;
+    const perAxis: Step[][] = [
+      [{ lo: outBox[0].lo, hi: outBox[0].hi, count: 1 }],
+      [{ lo: outBox[1].lo, hi: outBox[1].hi, count: 1 }],
+    ];
+    for (let i = 0; i < inSh.length - 2; i++) {
+      const r = spatialCounts(
+        outBox[2 + i].lo,
+        outBox[2 + i].hi,
+        a.stride[i],
+        d[i],
+        a.kernelShape[i],
+        a.pads[i][0],
+        inSh[2 + i],
+        limitsOf(ctx).stridedEnum
+      );
+      exact = exact && r.exact;
+      perAxis.push(r.steps);
+    }
+    return separableTally(perAxis, limitsOf(ctx).tallyPieces, exact, exact ? [] : ["strided pool"]);
   },
   flopsFor: (_s, outBox, ctx) => {
     let vol = 1;

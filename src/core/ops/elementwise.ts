@@ -4,6 +4,7 @@ import { OpCtx, OpSpec } from "./types";
 import { DType, dtypeFamily, promoteDTypes } from "../dtypes";
 import { broadcastAxisNames } from "./axis-names";
 import { broadcastSymShape } from "./sym-shape";
+import { uniformTally } from "../tally";
 
 /**
  * The elementwise functions this graph understands, with what each one costs
@@ -89,6 +90,21 @@ export function broadcastForwardBox(inBox: Box, inShape: number[], outShape: num
   });
 }
 
+/**
+ * How many outputs of the box read each element of a broadcast input: the
+ * box's extent on every axis the input is broadcast over, either because it
+ * has no such axis or because it holds one element there. Constant across the
+ * elements read, which is why a bias or a mask is reused uniformly.
+ */
+export function broadcastFanOut(outBox: Box, inShape: number[]): number {
+  const off = outBox.length - inShape.length;
+  let readers = 1;
+  outBox.forEach((I, ax) => {
+    if (ax < off || inShape[ax - off] === 1) readers *= I.hi - I.lo;
+  });
+  return readers;
+}
+
 export function broadcastOracleIndex(outIndex: number[], inShape: number[]): number[] {
   const off = outIndex.length - inShape.length;
   return inShape.map((e, ax) => (e === 1 ? 0 : outIndex[ax + off]));
@@ -145,6 +161,10 @@ export const elementwiseOp: OpSpec = {
   ],
   oracleDeps: (_slot, outIndex, ctx) =>
     ctx.inShapes.map((sh) => [broadcastOracleIndex(outIndex, sh)]),
+  multiplicity: (_slot, outBox, inSlot, ctx) => {
+    const sh = ctx.inShapes[inSlot];
+    return uniformTally(fromBox(broadcastBackwardBox(outBox, sh)), broadcastFanOut(outBox, sh));
+  },
   /* One term per output element, so entanglement is just the same output
      position read on the other operand. A broadcast axis is where this stops
      being the identity: an operand of extent 1 there meets the whole extent. */

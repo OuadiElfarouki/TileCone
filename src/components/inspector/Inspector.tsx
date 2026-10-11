@@ -5,6 +5,7 @@ import { ratioFigure, sumFigures } from "../../core/metrics";
 import { formatBoxIndices } from "../../core/region";
 import { fmt, formatBytes, formatFigure, formatIntensity } from "../../view/format";
 import { demandDetail, demandSummary } from "../../view/demand";
+import { readOnceLine, readsDetail, readsOperation, readsSummary } from "../../view/multiplicity";
 import { aggregateColors, boxColor, rgbCss } from "../../view/palette";
 import { neighbourShares, reuseFigures } from "../../view/reuse-rows";
 import { SHORTCUTS } from "../../view/shortcuts";
@@ -73,6 +74,7 @@ export function Inspector(): React.ReactElement {
     metrics,
     bounds,
     sharing,
+    reads,
     findings,
     seeds,
     contribution: contrib,
@@ -202,6 +204,11 @@ export function Inspector(): React.ReactElement {
   const workingSet = metrics
     ? sumFigures([metrics.inputBytes, metrics.intermediateBytes, metrics.outputBytes])
     : null;
+
+  /** Operands some element of which is read by more than one output, and the rest. */
+  const reusedReads = (reads ?? []).filter((row) => row.reused.value !== 0);
+  const singleReads = (reads ?? []).filter((row) => row.reused.value === 0);
+  const nameOf = (tensorId: string) => resolved.tensors[tensorId]?.name ?? tensorId;
 
   /** Reuse neighbours step along the anchor tensor's axes, so it names them. */
   const activeTensor = activeTensorId ? resolved.tensors[activeTensorId] : undefined;
@@ -419,6 +426,48 @@ export function Inspector(): React.ReactElement {
                     </p>
                   )}
                 </div>
+                {/* Per operation rather than per tensor: how many of the
+                    outputs an operation computes for this tile read each
+                    element of its operands. What is read once and what is
+                    reused is the finding, so single-use operands are named
+                    together below rather than listed row by row. */}
+                {reads && (
+                  <div className="ins-section">
+                    {/* Scoped like the cost figures, and named the same way:
+                        a hover over a tile row narrows these counts to that
+                        tile, and the heading is what says so. */}
+                    <div className="ins-title">{`Operand reuse in ${costScope}`}</div>
+                    {reads.length === 0 ? (
+                      <p className="hint">
+                        {activeTensor?.producer
+                          ? "The operations computing this tile read nothing for it."
+                          : "No operation computes this tile: it is on a graph input."}
+                      </p>
+                    ) : reusedReads.length > 0 ? (
+                      <ul className="reuse-list">
+                        {reusedReads.map((row) => (
+                          <li key={`${row.nodeId}:${row.tensorId}`}>
+                            <code>{nameOf(row.tensorId)}</code>
+                            <span className="muted">via {readsOperation(row, nameOf)}</span>
+                            <span className="reads-figures" title={readsDetail(row)}>
+                              {readsSummary(row)}
+                            </span>
+                            {!row.exact && (
+                              <span className="badge approx" title={row.reasons.join("; ")}>≈</span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="hint">Every operand element in this cone is read by one output.</p>
+                    )}
+                    {singleReads.length > 0 && reusedReads.length > 0 && (
+                      <p className="hint" title={readOnceLine(singleReads, nameOf).detail}>
+                        Read once: {readOnceLine(singleReads, nameOf).text}
+                      </p>
+                    )}
+                  </div>
+                )}
               </>
             )}
             <DependencyNotes

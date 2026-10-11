@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { contributions } from "../../core/contribution";
 import { AggregateReadout, Figure, addFigures, coneReadout, computeMetrics, figure } from "../../core/metrics";
+import { operandReads } from "../../core/multiplicity";
 import { coneFindings } from "../../core/notes";
 import { inputSharing } from "../../core/reuse";
 import type { PropResult } from "../../core/propagate";
@@ -220,6 +221,12 @@ export function useInspectorAnalysis({
     [resolved, scopedBack]
   );
 
+  /** How many outputs of each operation in the cone read each operand element. */
+  const reads = useMemo(
+    () => (resolved && scopedBack ? operandReads(resolved, scopedBack) : null),
+    [resolved, scopedBack]
+  );
+
   /** The tile's own region per tensor, scoped the same way as its cones. */
   const seeds = useMemo(() => {
     const map = new Map<string, Region>();
@@ -259,5 +266,5 @@ export function useInspectorAnalysis({
     return coneReadout(resolved, scopedFwd).filter((row) => !roots.has(row.tensorId));
   }, [resolved, scopedFwd]);
 
-  return { metrics, bounds, sharing, findings, seeds, contribution, upstream, downstream };
+  return { metrics, bounds, sharing, reads, findings, seeds, contribution, upstream, downstream };
 }

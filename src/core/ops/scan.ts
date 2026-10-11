@@ -5,6 +5,8 @@ import { DependencyNoteDraft, NoteCtx, OpCtx, OpSpec, uniformDTypeOutputs } from
 import { sameAxisNames } from "./axis-names";
 import { axisWord } from "./axis-names";
 import { sameSymShape } from "./sym-shape";
+import { limitsOf } from "./limits";
+import { separableTally, type Step } from "../tally";
 
 type ScanAttrs = { axis: number; reverse: boolean };
 
@@ -101,6 +103,37 @@ export const cumsumOp: OpSpec = {
       deps.push(idx);
     }
     return [deps];
+  },
+  /* Triangular in counts as well as in extent: output i reads the prefix up to
+     i, so an earlier element is read by every output of the box at or after it
+     and the count falls by one per step through the box. Build disjoint steps
+     directly, grouping the ramp at its maximum count before allocating when
+     it exceeds the budget. Work then depends on the cap, not the extent. */
+  multiplicity: (_s, outBox, _inSlot, ctx) => {
+    const { axis, reverse } = cfg(ctx);
+    const n = ctx.inShapes[0][axis];
+    const budget = Math.max(1, limitsOf(ctx).tallyPieces);
+    let exact = true;
+    const perAxis: Step[][] = outBox.map((I, ax) => {
+      if (ax !== axis) return [{ lo: I.lo, hi: I.hi, count: 1 }];
+      const readers = I.hi - I.lo;
+      if (readers <= 0) return [];
+      const capped = readers > budget;
+      exact = !capped;
+      const width = Math.max(1, Math.ceil(readers / budget));
+      const steps: Step[] = [];
+      for (let lo = I.lo; lo < I.hi; lo += width) {
+        const hi = Math.min(I.hi, lo + width);
+        // Fold the constant prefix/suffix into the adjacent ramp step.
+        steps.push({
+          lo: !reverse && lo === I.lo ? 0 : lo,
+          hi: reverse && hi === I.hi ? n : hi,
+          count: reverse ? hi - I.lo : I.hi - lo,
+        });
+      }
+      return steps;
+    });
+    return separableTally(perAxis, budget, exact, exact ? [] : ["multiplicity cap"]);
   },
   flopsFor: (_s, outBox, ctx) => scanFlops(fromBox(outBox), ctx),
   flopsForRegion: (_s, outRegion, ctx) => scanFlops(outRegion, ctx),

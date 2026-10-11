@@ -1,5 +1,6 @@
 import type { ZodType } from "zod";
 import type { Box, Region } from "../region";
+import type { Tally } from "../tally";
 import type { Sym } from "../shapes";
 import { DType, dtypeFamily, promoteDTypes } from "../dtypes";
 import { DEFAULT_LIMITS, type Limits } from "./limits";
@@ -224,6 +225,32 @@ export interface OpSpec {
   oracleTerms?(outSlot: number, outIndex: number[], ctx: OpCtx): (number[] | null)[][];
 
   /**
+   * How many elements of this output box read each element of input `inSlot`:
+   * the relation `oracleDeps` states, counted per input element instead of
+   * unioned. `backward` says which elements are read; this says how many
+   * outputs read each one, which is the difference between an element used
+   * once and one a tile reuses.
+   *
+   * Counted over output elements, not over terms: an output reading an element
+   * through several terms of its own computation counts it once, as
+   * `oracleDeps` lists it once. Its support must be `backward`'s region.
+   *
+   * An operation that declares `readsOnce` needs no hook. Omitting both falls
+   * back to the box's element count on every element of `backward`'s region,
+   * marked inexact: no element can be read by more outputs than the box holds,
+   * so a missing implementation degrades to an upper bound.
+   */
+  multiplicity?(outSlot: number, outBox: Box, inSlot: number, ctx: OpCtx): Tally;
+
+  /**
+   * Each input element is read by at most one element of each output: a
+   * reduction, a permutation, a copy, a slice, a concatenation. The count is
+   * then 1 on every element `backward` names, which is a property to declare
+   * rather than a hook to write, as `unknownWork` is.
+   */
+  readsOnce?: true;
+
+  /**
    * This operation's arithmetic is not known, so no total may span it.
    *
    * Different from returning zero, which is what a data-movement operation
@@ -286,6 +313,13 @@ export interface OpSpec {
    * When absent, metrics sum `flopsFor` over the region's disjoint boxes.
    */
   flopsForRegion?(outSlot: number, outRegion: Region, ctx: OpCtx): number;
+}
+
+/** The number of elements in a box. */
+export function boxElements(b: Box): number {
+  let n = 1;
+  for (const I of b) n *= Math.max(0, I.hi - I.lo);
+  return n;
 }
 
 /** @deprecated Read `limitsOf(ctx)` instead, so a caller can lower them. */

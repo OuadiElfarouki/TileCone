@@ -22,6 +22,13 @@ export type Limits = {
   reshapeRuns: number;
   /** Boxes a region may hold before it is coarsened toward the cap. */
   maxBoxes: number;
+  /**
+   * Pieces a read-multiplicity tally may hold before its per-axis counts are
+   * coarsened to an upper bound. Larger than `maxBoxes` because a tally is only
+   * measured, never drawn or propagated, and a strided window's count
+   * alternates along each axis: 64 steps a side is 4096 pieces.
+   */
+  tallyPieces: number;
 };
 
 export const DEFAULT_LIMITS: Limits = {
@@ -29,6 +36,7 @@ export const DEFAULT_LIMITS: Limits = {
   diagEnum: 256,
   reshapeRuns: 4096,
   maxBoxes: 256,
+  tallyPieces: 4096,
 };
 
 /** The limits in force for a context, which is the defaults unless overridden. */

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { Box, Region, canonicalize, count, coversAxisFully, fromBox, iv } from "../region";
 import { normAxis } from "./reduce";
 import { DependencyNoteDraft, OpCtx, OpSpec, floatingDTypeOutputs, NoteCtx } from "./types";
+import { uniformTally } from "../tally";
 import { axisWord, sameAxisNames } from "./axis-names";
 import { sameSymShape } from "./sym-shape";
 
@@ -83,6 +84,12 @@ export const softmaxOp: OpSpec = {
       deps.push(idx);
     }
     return [deps];
+  },
+  /* Every output in the box reads its whole row, so each element of a row is
+     read by as many outputs as the box holds along the axis. */
+  multiplicity: (s, outBox, inSlot, ctx) => {
+    const I = outBox[axisOf(ctx)];
+    return uniformTally(softmaxOp.backward(s, outBox, ctx)[inSlot], I.hi - I.lo);
   },
   flopsFor: (_s, outBox, ctx) => softmaxFlops(fromBox(outBox), ctx),
   flopsForRegion: (_s, outRegion, ctx) => softmaxFlops(outRegion, ctx),
