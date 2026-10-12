@@ -19,6 +19,7 @@ import {
 import { derivePlan, validateKeptTilings } from "../plan";
 import { revealActiveTile } from "../selection-edit";
 import { GetState, SetState, State } from "../types";
+import { sameSavedWorkspace } from "../workspace-document";
 
 /** Loading sources and examples, restoring shared links, undo, and composite expansion. */
 export const workspaceActions = (set: SetState, get: GetState): Pick<
@@ -138,6 +139,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
     if (!analysisWorkerAvailable()) return get().restoreWorkspace(workspace);
     if (!validWorkspaceFields(workspace)) return false;
     const epoch = ++compile.epoch;
+    const before = get();
     set({ compiling: true });
     try {
       validateKeptTilings(workspace.keptTilings ?? []);
@@ -146,6 +148,10 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
         kept: workspace.keptTilings ?? [],
       });
       if (epoch !== compile.epoch) return false;
+      if (!sameSavedWorkspace(before, get())) {
+        set({ compiling: false });
+        return false;
+      }
       if (!result.ok) {
         set({ compiling: false });
         return false;

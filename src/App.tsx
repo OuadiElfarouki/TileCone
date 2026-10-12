@@ -9,12 +9,9 @@ import { useDragGuard } from "./components/hooks/useDragGuard";
 import { useKeyboard } from "./components/hooks/useKeyboard";
 import { useOperationSelection } from "./components/hooks/useOperationSelection";
 import { useFocusPolicy } from "./components/hooks/useFocusPolicy";
-import { decodeWorkspace } from "./state/share";
 import { ShortcutsDialog } from "./components/chrome/ShortcutsDialog";
 
 export default function App(): React.ReactElement {
-  const loadExampleAsync = useStore((s) => s.loadExampleAsync);
-  const restoreWorkspaceAsync = useStore((s) => s.restoreWorkspaceAsync);
   const resolved = useStore((s) => s.resolved);
   const theme = useStore((s) => s.theme);
   const canvasTool = useStore((s) => s.canvasTool);
@@ -44,39 +41,6 @@ export default function App(): React.ReactElement {
       // to this session.
     }
   }, [canvasTool]);
-
-  useEffect(() => {
-    let live = true;
-    void (async () => {
-      const link = decodeWorkspace(location.hash);
-      if (link) {
-        const restored = await restoreWorkspaceAsync({
-          dsl: link.dsl,
-          direction: link.dir,
-          showEntangled: link.ent === true,
-          tileScale: link.tile,
-          snapToGrid: link.snap !== false,
-          axisMode: link.axes ?? "symbolic",
-          viewCfgs: link.views,
-          nodeOffsets: Object.fromEntries(
-            Object.entries(link.pos ?? {}).map(([id, [dx, dy]]) => [id, { dx, dy }])
-          ),
-          parts:
-            link.sel?.map((p) => ({
-              tensorId: p.t,
-              box: p.box.map(([lo, hi]) => ({ lo, hi })),
-            })) ?? null,
-          planTiles: link.plan,
-          planTask: link.task ? { tensorId: link.task.t, coord: link.task.at } : null,
-          keptTilings: link.kept,
-          planView: link.tab === "plan",
-        });
-        if (!live || restored) return;
-      }
-      await loadExampleAsync(0);
-    })();
-    return () => { live = false; };
-  }, [loadExampleAsync, restoreWorkspaceAsync]);
 
   return (
     <div className="app">

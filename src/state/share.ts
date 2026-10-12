@@ -5,6 +5,7 @@ import { nodeKey, readNodeKey } from "../view/graph/graph-scene";
 import { Direction, InspectorTab, MAX_NODE_OFFSET } from "../view/workspace";
 import type { TaskRef } from "../core/plan/plan";
 import { MAX_KEPT_PLANS } from "./plan";
+import type { State, WorkspaceRestore } from "./types";
 
 /**
  * Shareable workspace state.
@@ -105,7 +106,17 @@ export function decodeWorkspace(hash: string): WorkspaceLink | null {
   // startup allocate and parse an arbitrarily large document.
   if (m[1].length > MAX_HASH_LENGTH) return null;
   try {
-    const raw = JSON.parse(decodeURIComponent(escape(atob(m[1])))) as Partial<WorkspaceLink>;
+    return parseWorkspaceLink(JSON.parse(decodeURIComponent(escape(atob(m[1])))));
+  } catch {
+    return null;
+  }
+}
+
+/** The same structural validation for URL payloads and workspace files. */
+export function parseWorkspaceLink(value: unknown): WorkspaceLink | null {
+  try {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const raw = value as Partial<WorkspaceLink>;
     if (typeof raw.dsl !== "string" || !raw.dsl) return null;
     const dir = raw.dir === undefined
       ? "backward"
@@ -235,6 +246,33 @@ export function planToLink(state: {
       : {}),
     ...(state.keptPlans.length ? { kept: state.keptPlans.map((k) => ({ ...k.tiles })) } : {}),
     ...(state.inspectorTab === "plan" ? { tab: "plan" as const } : {}),
+  };
+}
+
+/** Only semantic inputs travel; results and worker identities are rebuilt. */
+export function workspaceToLink(state: State): WorkspaceLink {
+  return {
+    dsl: state.dslText, dir: state.direction, ent: state.showEntangled,
+    tile: state.tileScale, snap: state.snapToGrid, axes: state.axisMode,
+    views: Object.fromEntries(Object.entries(state.viewCfgs).filter(([, cfg]) =>
+      !cfg.projection || !!cfg.tile || !!cfg.axes || cfg.sliders.some((v) => v !== 0))),
+    pos: Object.fromEntries(Object.entries(state.nodeOffsets).map(([id, { dx, dy }]) => [id, [dx, dy]])),
+    sel: selectionToLink(state.selection),
+    ...planToLink(state),
+  };
+}
+
+export function linkToRestore(link: WorkspaceLink): WorkspaceRestore {
+  return {
+    dsl: link.dsl, direction: link.dir, showEntangled: link.ent === true,
+    tileScale: link.tile, snapToGrid: link.snap !== false, axisMode: link.axes ?? "numeric",
+    viewCfgs: link.views,
+    nodeOffsets: Object.fromEntries(Object.entries(link.pos ?? {}).map(([id, [dx, dy]]) => [id, { dx, dy }])),
+    parts: link.sel?.map((p) => ({ tensorId: p.t, box: p.box.map(([lo, hi]) => ({ lo, hi })) })) ?? null,
+    planTiles: link.plan,
+    planTask: link.task ? { tensorId: link.task.t, coord: link.task.at } : null,
+    keptTilings: link.kept,
+    planView: link.tab === "plan",
   };
 }
 

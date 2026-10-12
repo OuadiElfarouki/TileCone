@@ -46,6 +46,8 @@ export const useStore = create<State>((set, get) => {
   baseLayout: null,
   workerGraphId: null,
   compiling: false,
+    autosaveStatus: null,
+    workspaceNotice: null,
   loadError: null,
   diagnostics: [],
   showEntangled: false,

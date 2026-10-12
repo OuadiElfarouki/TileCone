@@ -37,6 +37,11 @@ export type KeptPlan = {
 
 export type WorkspaceRestore = {
   dsl: string;
+  /** An unrun (possibly invalid) draft restored beside the last built source. */
+  draftText?: string;
+  hiddenBoxes?: number[];
+  analysisGroup?: string | null;
+  pinnedBox?: number | null;
   direction: Direction;
   /** Optional for callers restoring links written before entanglement existed. */
   showEntangled?: boolean;
@@ -78,6 +83,8 @@ export type State = {
   /** Worker-side identity of `resolved`, used by later plan analysis requests. */
   workerGraphId: number | null;
   compiling: boolean;
+  autosaveStatus: "saved" | "saving" | "unavailable" | null;
+  workspaceNotice: string | null;
   loadError: string | null;
   /**
    * Every diagnostic from the last failed compile, in source order.

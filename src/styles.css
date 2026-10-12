@@ -430,6 +430,13 @@ textarea.source.error-state { border-color: var(--err); }
    errors is harder to act on than four lines. */
 .source-status .diag { display: block; }
 .source-status .diag + .diag { margin-top: 2px; }
+.workspace-status { font-size: var(--t-small); }
+.workspace-file-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.workspace-files { display: grid; gap: 4px; }
+.workspace-file-message { font-size: var(--t-small); }
+.workspace-status:empty { display: none; }
+.workspace-notice { display: flex; align-items: start; gap: 8px; margin-top: 4px; color: var(--muted); }
+.workspace-notice > span { flex: 1; }
 
 
 /* ---------------- canvas ---------------- */

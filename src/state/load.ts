@@ -209,6 +209,21 @@ export function restoredWorkspaceState(
     return { tensorId: checked.tensorId, box: checked.region.boxes[0] };
   });
   const selection = checkedParts.length ? { parts: checkedParts } : null;
+  const hiddenBoxes = new Set(workspace.hiddenBoxes ?? []);
+  for (const index of hiddenBoxes) {
+    if (!Number.isSafeInteger(index) || index < 0 || index >= checkedParts.length)
+      throw new Error("invalid disabled tile");
+  }
+  const analysisGroup = workspace.analysisGroup ?? null;
+  if (analysisGroup !== null && !checkedParts.some((p) => p.tensorId === analysisGroup))
+    throw new Error("invalid analysis group");
+  const pinnedBox = workspace.pinnedBox ?? null;
+  if (pinnedBox !== null && (!Number.isSafeInteger(pinnedBox) || pinnedBox < 0 ||
+      pinnedBox >= checkedParts.length || hiddenBoxes.has(pinnedBox) ||
+      checkedParts[pinnedBox].tensorId !== analysisGroup))
+    throw new Error("invalid selected tile");
+  if (workspace.draftText !== undefined && typeof workspace.draftText !== "string")
+    throw new Error("invalid draft");
   const nodeIds = new Set(resolved.nodes.map((node) => node.id));
   const checkedOffsets = Object.create(null) as NodeOffsets;
   for (const [key, offset] of Object.entries(workspace.nodeOffsets ?? {})) {
@@ -243,7 +258,7 @@ export function restoredWorkspaceState(
     ...(plan.planTask ? { selectedOp: operationForTensor(resolved, plan.planTask.tensorId) } : {}),
     ...(workspace.planView ? { inspectorTab: "plan" as const } : {}),
     dslText: workspace.dsl,
-    draftText: workspace.dsl,
+    draftText: workspace.draftText ?? workspace.dsl,
     exampleIndex: -1,
     focusNode: null,
     direction: workspace.direction,
@@ -253,6 +268,10 @@ export function restoredWorkspaceState(
     axisMode: workspace.axisMode,
     nodeOffsets: checkedOffsets,
     selection,
+    hiddenBoxes,
+    analysisGroup,
+    pinnedBox,
+    focusedBox: pinnedBox,
     compiling: false,
     ...recompute(resolved, selection),
   };

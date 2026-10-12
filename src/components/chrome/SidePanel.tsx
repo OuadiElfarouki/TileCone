@@ -3,8 +3,9 @@ import { useDismiss } from "../hooks/useDismiss";
 import { fromBox } from "../../core/region";
 import { EXAMPLES } from "../../examples";
 import { tileOf } from "../../view/tensor/grid";
-import { planToLink, selectionToLink, shareTarget } from "../../state/share";
+import { workspaceToLink, shareTarget } from "../../state/share";
 import { CopyButton } from "./CopyButton";
+import { WorkspaceFiles } from "./WorkspaceFiles";
 import { opLabel } from "../../core/ops/index";
 import { useStore } from "../../state/store";
 import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
@@ -24,24 +25,7 @@ function ShareButton(): React.ReactElement {
   // pieces of state and none of them change how this button looks.
   const link = () => {
     const s = useStore.getState();
-    return shareTarget(location.origin, location.pathname, {
-      dsl: s.dslText,
-      dir: s.direction,
-      ent: s.showEntangled,
-      tile: s.tileScale,
-      snap: s.snapToGrid,
-      axes: s.axisMode,
-      views: Object.fromEntries(
-        Object.entries(s.viewCfgs).filter(
-          ([, cfg]) => !cfg.projection || !!cfg.tile || !!cfg.axes || cfg.sliders.some((v) => v !== 0)
-        )
-      ),
-      pos: Object.fromEntries(
-        Object.entries(s.nodeOffsets).map(([key, { dx, dy }]) => [key, [dx, dy]])
-      ),
-      sel: selectionToLink(s.selection),
-      ...planToLink(s),
-    });
+    return shareTarget(location.origin, location.pathname, workspaceToLink(s));
   };
 
   return (
@@ -175,6 +159,7 @@ function SourceEditor({ parametersActive }: { parametersActive: boolean }): Reac
           )}
         </span>
       </div>
+      <WorkspaceFiles />
     </>
   );
 }
