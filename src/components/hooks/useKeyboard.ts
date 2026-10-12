@@ -241,7 +241,7 @@ export function useKeyboard({
         return;
       }
 
-      // hidden-axis scrub: the first hidden axis whose slider is live
+      // hidden-axis scrub: the first hidden axis with a position (`hiddenAxisPositioned`)
       if (matchesShortcut(e, SHORTCUTS.scrub)) {
         const ax = shape.findIndex((_, axis) =>
           !visible.includes(axis) && hiddenAxisPositioned(shape, cfg, axis));

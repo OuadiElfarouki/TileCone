@@ -5,11 +5,28 @@
  */
 
 import { Box, iv, Region } from "../../core/region";
-import { GridGeom, snapSpan } from "./grid";
+import { CardCell, GridGeom, snapSpan } from "./grid";
 import { viewAxes, ViewCfg } from "./tensor-view";
 import { gestureTile, seedTile, tileSpanAt } from "./tile-spec";
 
-export type CellDrag = { r0: number; c0: number; r1: number; c1: number };
+/**
+ * A drag between two drawn elements. On an unfolded card each end also names
+ * its panel (`p0`, `p1`: hidden coordinates, full rank), so a drag can run
+ * across panels as well as within one.
+ */
+export type CellDrag = { r0: number; c0: number; r1: number; c1: number; p0?: number[]; p1?: number[] };
+
+/** A press at one element: a drag that has not moved yet. */
+export const dragAt = (cell: CardCell): CellDrag =>
+  ({ r0: cell.row, c0: cell.col, r1: cell.row, c1: cell.col, p0: cell.panel, p1: cell.panel });
+
+/** Whether a drag has left the element it started on. */
+export const dragMoved = (d: CellDrag): boolean =>
+  d.r0 !== d.r1 || d.c0 !== d.c1 || !samePanel(d.p0, d.p1);
+
+/** Whether two cells name the same panel; cards that are not unfolded have one. */
+export const samePanel = (a?: readonly number[], b?: readonly number[]): boolean =>
+  a === b || (!!a && !!b && a.length === b.length && a.every((v, i) => v === b[i]));
 
 /**
  * The exact tensor element under a card cell while inspecting a plan.
@@ -23,15 +40,9 @@ export function planElementFromCell(
   shape: number[],
   cfg: ViewCfg,
   geom: GridGeom,
-  cell: { row: number; col: number }
+  cell: CardCell
 ): number[] {
-  return selectionBoxFromDrag(
-    shape,
-    cfg,
-    geom,
-    { r0: cell.row, c0: cell.col, r1: cell.row, c1: cell.col },
-    false
-  ).map((interval) => interval.lo);
+  return selectionBoxFromDrag(shape, cfg, geom, dragAt(cell), false).map((interval) => interval.lo);
 }
 
 /** Convert a visible-plane drag to the tensor region it visually promises.
@@ -42,7 +53,13 @@ export function planElementFromCell(
  * across hidden axes, so a projection gesture selects their full extent, and
  * slice mode stays pinned to its sliders. A tile such as `H = 2` instead takes
  * the two heads containing the slider, in either mode, because the tile states
- * that extent explicitly. */
+ * that extent explicitly.
+ *
+ * An unfolded card draws every hidden index, so there a drag names them as it
+ * names rows and columns: the box spans the two ends' panels on each hidden
+ * axis, snapped to the tensor's tile like any other axis. Like every drag it
+ * is the box its corners bound - a drag from late in one panel to early in the
+ * next takes that column range in both, which is what the rubber band paints. */
 /** @internal Pure interaction seam exported for tensor-card tests. */
 export function selectionBoxFromDrag(
   shape: number[],
@@ -63,6 +80,12 @@ export function selectionBoxFromDrag(
   return shape.map((extent, ax) => {
     if (ax === geom.rowAxis) return iv(rLo, rHi);
     if (ax === geom.colAxis) return iv(cLo, cHi);
+    if (geom.fold && drag.p0 && drag.p1) {
+      const [lo, hi] = snapToGrid
+        ? snapSpan(drag.p0[ax], drag.p1[ax], tile[ax], extent)
+        : [Math.min(drag.p0[ax], drag.p1[ax]), Math.max(drag.p0[ax], drag.p1[ax]) + 1];
+      return iv(lo, hi);
+    }
     const at = tileSpanAt(cfg.sliders[ax] ?? 0, tile[ax], extent);
     return iv(at.lo, at.hi);
   });
@@ -103,14 +126,16 @@ export function planGesture(
   drag: CellDrag,
   tiled: boolean
 ): { kind: "inspect"; element: number[] } | { kind: "divide"; tile: number[]; element: number[] } {
-  const moved = drag.r0 !== drag.r1 || drag.c0 !== drag.c1;
-  if (tiled || !moved)
+  if (tiled || !dragMoved(drag))
     return {
       kind: "inspect",
-      element: planElementFromCell(shape, cfg, geom, { row: drag.r0, col: drag.c0 }),
+      element: planElementFromCell(shape, cfg, geom, { row: drag.r0, col: drag.c0, panel: drag.p0 }),
     };
   const { rowAxis, colAxis } = viewAxes(shape, cfg);
   const box = selectionBoxFromDrag(shape, cfg, geom, drag, true);
+  // An unfolded gesture names every axis, including the panels it spans.
+  if (geom.fold)
+    return { kind: "divide", tile: box.map((interval) => interval.hi - interval.lo), element: box.map((interval) => interval.lo) };
   const extentOn = (axis: number) => (axis >= 0 ? box[axis].hi - box[axis].lo : 1);
   // The drawn extents on the visible axes; the tensor's own tile, else one
   // element, on the others.

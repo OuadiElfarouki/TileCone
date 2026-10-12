@@ -10,7 +10,7 @@ import {
 } from "../../view/graph/graph-scene";
 import { TensorCard } from "../card/TensorCard";
 import { carriedOffsets } from "../../view/graph/carry-placement";
-import { remapped } from "../../view/tensor/tensor-view";
+import { cardShapeView, type CardShapeView } from "../../view/tensor/card-size";
 import { opLabel } from "../../core/ops/index";
 import { useStore } from "../../state/store";
 import type { NodeOffset } from "../../view/graph/node-layout";
@@ -287,25 +287,30 @@ export function GraphView(): React.ReactElement {
     [tf.k]
   );
   /**
-   * The cards drawing a chosen pair of axes, as a stable key. Only these change
-   * a footprint; a slider or a tile edit does not, so they must not re-run
-   * placement.
+   * The cards whose footprint is not the default, as a stable key: a chosen
+   * pair of axes, or hidden axes sliced or unfolded. Only these change a
+   * footprint, as does adding or removing a projected tile-position control.
+   * Position and tile extent edits that keep the same controls do not re-run placement.
    */
-  const remapKey = useStore((s) => {
+  const footprintKey = useStore((s) => {
     if (!s.resolved) return "";
     return Object.entries(s.viewCfgs)
-      .filter(([id, cfg]) => s.resolved!.tensors[id] && remapped(s.resolved!.tensors[id].resolved!, cfg))
-      .map(([id, cfg]) => `${id}:${cfg.axes!.join(",")}`)
+      .map(([id, cfg]) => [id, s.resolved!.tensors[id] && cardShapeView(s.resolved!.tensors[id].resolved!, cfg)] as const)
+      .filter(([, view]) => !!view)
+      .map(([id, view]) => `${id}:${JSON.stringify(view)}`)
       .sort()
       .join("|");
   });
-  const layoutAxes = useMemo(() => Object.fromEntries(
-    Object.entries(useStore.getState().viewCfgs)
-      .filter(([id, cfg]) => resolved?.tensors[id] && remapped(resolved.tensors[id].resolved!, cfg))
-      .map(([id, cfg]) => [id, cfg.axes!])
-  ), [resolved, remapKey]);
+  const layoutViews = useMemo(() => {
+    const views: Record<string, CardShapeView> = {};
+    for (const [id, cfg] of Object.entries(useStore.getState().viewCfgs)) {
+      const view = resolved?.tensors[id] && cardShapeView(resolved.tensors[id].resolved!, cfg);
+      if (view) views[id] = view;
+    }
+    return views;
+  }, [resolved, footprintKey]);
   const { layout: baseLayout, pending: layoutPending, error: layoutError } = useGraphLayout(
-    resolved, workerBaseLayout, workerGraphId, graphPx, layoutAxes,
+    resolved, workerBaseLayout, workerGraphId, graphPx, layoutViews,
   );
 
   /**

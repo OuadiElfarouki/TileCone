@@ -9,6 +9,7 @@ import {
   type GridGeom,
   latticeStride,
   type Layer,
+  panelOrigins,
   type PlanPaint,
   regionFillRects,
   type RegionRect,
@@ -292,8 +293,12 @@ export function drawGrid(
   ctx.setTransform(width / geom.canvasW, 0, 0, height / geom.canvasH, 0, 0);
   ctx.clearRect(0, 0, geom.canvasW, geom.canvasH);
 
+  // An unfolded card is a set of planes: each gets the surface, and the gaps
+  // between them stay empty so no one reads them as elements.
+  const panels = panelOrigins(geom);
+  const { panelW, panelH } = geom;
   ctx.fillStyle = dark ? CARD_SURFACE.dark : CARD_SURFACE.light;
-  ctx.fillRect(0, 0, geom.canvasW, geom.canvasH);
+  for (const o of panels) ctx.fillRect(o.x, o.y, panelW, panelH);
 
   const { tileRows, tileCols } = geom;
 
@@ -452,8 +457,8 @@ export function drawGrid(
   // the Plan view the grid is the plan's, whose cells need not be square.
   const lattice = plan
     ? plan.lattice && {
-        cellW: (plan.lattice.cols / geom.cols) * geom.canvasW,
-        cellH: (plan.lattice.rows / geom.rows) * geom.canvasH,
+        cellW: (plan.lattice.cols / geom.cols) * panelW,
+        cellH: (plan.lattice.rows / geom.rows) * panelH,
         count: {
           cols: Math.ceil(geom.cols / plan.lattice.cols),
           rows: Math.ceil(geom.rows / plan.lattice.rows),
@@ -469,15 +474,18 @@ export function drawGrid(
         : dark ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.10)";
       ctx.lineWidth = 1 / viewScale;
       ctx.beginPath();
-      for (let c = strideC; c < lattice.count.cols; c += strideC) {
-        const x = c * lattice.cellW;
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, geom.canvasH);
-      }
-      for (let r = strideR; r < lattice.count.rows; r += strideR) {
-        const y = r * lattice.cellH;
-        ctx.moveTo(0, y);
-        ctx.lineTo(geom.canvasW, y);
+      // Every panel restarts the lattice: a tile never spans two hidden indices.
+      for (const o of panels) {
+        for (let c = strideC; c < lattice.count.cols; c += strideC) {
+          const x = o.x + c * lattice.cellW;
+          ctx.moveTo(x, o.y);
+          ctx.lineTo(x, o.y + panelH);
+        }
+        for (let r = strideR; r < lattice.count.rows; r += strideR) {
+          const y = o.y + r * lattice.cellH;
+          ctx.moveTo(o.x, y);
+          ctx.lineTo(o.x + panelW, y);
+        }
       }
       ctx.stroke();
     }
@@ -500,9 +508,10 @@ export function drawGrid(
       }
 
   ctx.strokeStyle = dark ? "rgba(255,255,255,0.18)" : "rgba(0,0,0,0.18)";
-  ctx.lineWidth = Math.min(1 / viewScale, geom.canvasW, geom.canvasH);
+  ctx.lineWidth = Math.min(1 / viewScale, panelW, panelH);
   const inset = ctx.lineWidth / 2;
-  ctx.strokeRect(inset, inset, geom.canvasW - ctx.lineWidth, geom.canvasH - ctx.lineWidth);
+  for (const o of panels)
+    ctx.strokeRect(o.x + inset, o.y + inset, panelW - ctx.lineWidth, panelH - ctx.lineWidth);
 
   // Seed marks are the final annotation, so later cone fills and the lattice
   // cannot cover them. They spend geometry, not a second fill treatment.

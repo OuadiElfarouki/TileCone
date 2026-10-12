@@ -235,9 +235,10 @@ export function OptionsMenu<A extends string, C extends string = never>({
                   role="menuitemradio"
                   className={`options-value${option.checked ? " on" : ""}`}
                   aria-checked={option.checked}
+                  aria-disabled={option.disabled || undefined}
                   title={option.title}
                   onClick={() => {
-                    if (!option.checked) handlers.choice[entry.id](option.value);
+                    if (!option.checked && !option.disabled) handlers.choice[entry.id](option.value);
                   }}
                 >
                   {option.label}

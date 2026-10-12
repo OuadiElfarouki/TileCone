@@ -15,9 +15,9 @@ describe("analysis worker jobs", () => {
     const compiled = compileArtifact("X = Tensor(4, 32, 256)\nY = relu(X)\n");
     if (!compiled.ok) throw new Error(compiled.diagnostics[0].message);
     const tensorId = Object.values(compiled.resolved.tensors).find((tensor) => tensor.name === "X")!.id;
-    const axes: Record<string, [number, number]> = { [tensorId]: [0, 1] };
-    const layout = layoutArtifact(compiled.resolved, compiled.artifact.graphPx, axes);
-    expect(layoutArtifact(structuredClone(compiled.artifact.resolved), compiled.artifact.graphPx, axes)).toEqual(layout);
+    const views = { [tensorId]: { axes: [0, 1] as [number, number] } };
+    const layout = layoutArtifact(compiled.resolved, compiled.artifact.graphPx, views);
+    expect(layoutArtifact(structuredClone(compiled.artifact.resolved), compiled.artifact.graphPx, views)).toEqual(layout);
     expect(structuredClone(layout)).toEqual(layout);
     const remapped = layout.nodes.find((node) => node.kind === "tensor" && node.id === tensorId)!;
     const original = compiled.artifact.layout.nodes.find((node) => node.kind === "tensor" && node.id === tensorId)!;

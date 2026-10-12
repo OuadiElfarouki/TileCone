@@ -9,7 +9,7 @@ import { familyOf, tilePlan, type TaskRef } from "../core/plan/plan";
 import { familyReplay, type FamilyReplay } from "../core/plan/replay";
 import { tryCompileDSL, type CompilerDiagnostic } from "../parse/compiler";
 import type { CompileArtifact, PlanRestoreArtifact, PlanRestoreRequest } from "./analysis-protocol";
-import { cardSize } from "../view/tensor/card-size";
+import { cardSize, type CardShapeView } from "../view/tensor/card-size";
 import { buildBaseGraphLayout } from "../view/graph/graph-scene";
 import { shapeLabel, symbolicExtentLabel } from "../view/tensor/shape-label";
 import { graphScale, planeExtents } from "../view/tensor/tiling";
@@ -22,18 +22,20 @@ const graphPlanes = (resolved: ResolvedGraph): { rows: number; cols: number }[] 
     return planeExtents(shape, rowAxis, colAxis);
   });
 
-/** Structural placement for a graph's chosen tensor planes. This job uses no
- * selection or viewport state and can run independently of query analysis. */
+/** Structural placement for a graph's card footprints: each card's chosen
+ * plane and hidden-axis reading, keyed by tensor, default when absent. This job
+ * uses no selection or viewport state and can run independently of query
+ * analysis. */
 export function layoutArtifact(
   graph: ResolvedGraph | ResolvedGraphData,
   graphPx: number,
-  axes: Record<string, [number, number]> = {},
+  views: Record<string, CardShapeView> = {},
 ) {
   const resolved = "shapesOf" in graph ? graph : hydrateResolvedGraph(graph);
   return buildBaseGraphLayout(resolved, (tensor) =>
     cardSize(tensor.resolved!, graphPx, tensor.name, [
       shapeLabel(tensor, "symbolic"), symbolicExtentLabel(tensor),
-    ], axes[tensor.id] ? { axes: axes[tensor.id] } : undefined, tensor.axisNames)
+    ], views[tensor.id], tensor.axisNames)
   );
 }
 

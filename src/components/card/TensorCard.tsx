@@ -5,21 +5,39 @@ import { DTYPE_BYTES } from "../../core/dtypes";
 import { useFrameThrottle } from "../hooks/useFrameThrottle";
 import { useDebounced } from "../hooks/useDebounced";
 import { Box, formatBoxIndices, fromBox, iv } from "../../core/region";
-import { paintScale, elementFromEvent, gridGeometry, Layer, PlanPaint, tileOf } from "../../view/tensor/grid";
+import { CardCell, paintScale, elementFromEvent, gridGeometry, Layer, PlanPaint, tileOf } from "../../view/tensor/grid";
 import { drawGrid } from "./draw-grid";
 import { useDark, useStore } from "../../state/store";
 import { axisName, shapeLabel, shapeReadings } from "../../view/tensor/shape-label";
 import { OVERVIEW_SCALE, overviewTextScale } from "../../view/graph/overview-labels";
 import { formatBytes } from "../../view/format";
-import { axesWith, hiddenAxisPositioned, remapped, viewAxes } from "../../view/tensor/tensor-view";
-import { cardViewMenu, type CardViewAction, type CardViewChoice } from "../../view/tensor/menus";
+import {
+  axesWith,
+  hiddenAxes,
+  hiddenMode,
+  projectedTileAxes,
+  sliceOrdinal,
+  viewAxes,
+} from "../../view/tensor/tensor-view";
+import { cardViewMenu, hiddenViewCfg, type CardViewAction, type CardViewChoice } from "../../view/tensor/menus";
 import { OptionsMenu, useOptionsMenu } from "../chrome/OptionsMenu";
 import type { MenuHandlers } from "../../view/menu";
-import { cardScaleFor } from "../../view/tensor/card-size";
+import { cardScaleFor, viewTags } from "../../view/tensor/card-size";
+import { DECK_ROOM_PX, DECK_STEP_PX, deckSheets } from "../../view/tensor/deck";
+import { cancelDeal, deal, holdPicture, prefersStill } from "./deal";
 import { seedTile } from "../../view/tensor/tile-spec";
 import { graphIsInteractive, partsOn } from "../../view/workspace";
 import { buildPlanPaint, buildLayers } from "../../view/tensor/layers";
-import { CellDrag, planGesture, selectionBoxFromDrag, planElementFromCell, visibleApproximation } from "../../view/tensor/gesture";
+import {
+  CellDrag,
+  dragAt,
+  dragMoved,
+  planGesture,
+  planElementFromCell,
+  samePanel,
+  selectionBoxFromDrag,
+  visibleApproximation,
+} from "../../view/tensor/gesture";
 import { buildReplayPaint } from "../../view/tensor/replay-paint";
 import { isPrimaryPress } from "../pointer";
 
@@ -125,17 +143,26 @@ function TensorCardView({
   const setPlanTileAt = useStore((s) => s.setPlanTileAt);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  /** The picture from before a slice change, which the deal carries away. */
+  const outRef = useRef<HTMLCanvasElement>(null);
+  /** The slice last drawn, so a redraw knows whether it is a deal. */
+  const dealtRef = useRef<number | null>(null);
   const previewKeyRef = useRef<string | null>(null);
-  const [drag, setDrag] = useState<{ r0: number; c0: number; r1: number; c1: number } | null>(null);
+  const [drag, setDrag] = useState<CellDrag | null>(null);
   const [hover, setHover] = useState<string | null>(null);
   /** The element under the pointer: the Plan view outlines the tile a click takes. */
-  const [hoverCell, setHoverCell] = useState<{ row: number; col: number } | null>(null);
+  const [hoverCell, setHoverCell] = useState<CardCell | null>(null);
 
   const geom = useMemo(
     () => gridGeometry(shape, cfg, tileScale, graphPx),
     [shape, cfg, tileScale, graphPx]
   );
   const { rowAxis, colAxis } = viewAxes(shape, cfg);
+  const mode = rank > 2 ? hiddenMode(cfg) : "project";
+  /** A slice card is a deck: the slices still to come lie behind the one shown. */
+  const slicing = mode === "slice";
+  const ordinal = sliceOrdinal(shape, cfg);
+  const sheets = slicing ? deckSheets(ordinal.index, ordinal.count) : 0;
 
   const parts = useMemo(() => partsOn(selection, tensor.id), [selection, tensor.id]);
   /* One entry per (part, meeting operation) that lands on this card. A part can
@@ -172,11 +199,11 @@ function TensorCardView({
   const planPointer = useMemo(() => {
     if (!planView || !tensor.producer) return null;
     const tiled = !!plan?.families.get(tensor.id);
-    const moved = drag && (drag.r0 !== drag.r1 || drag.c0 !== drag.c1);
+    const moved = drag && dragMoved(drag);
     // The tile as it will commit. A tensor that already has a tiling cannot be
     // redrawn, so a drag over one previews the task it will inspect, not a band.
     if (drag && moved && !tiled) return fromBox(selectionBoxFromDrag(shape, cfg, geom, drag, true));
-    const cell = drag ? { row: drag.r0, col: drag.c0 } : hoverCell;
+    const cell = drag ? { row: drag.r0, col: drag.c0, panel: drag.p0 } : hoverCell;
     if (!cell) return null;
     const extents = plan?.families.get(tensor.id)?.tile ?? planProposal;
     const element = planElementFromCell(shape, cfg, geom, cell);
@@ -196,6 +223,8 @@ function TensorCardView({
       // canvas and its CSS geometry for focus, gestures, and graph placement.
       if (canvas.width !== 0) canvas.width = 0;
       if (canvas.height !== 0) canvas.height = 0;
+      cancelDeal(canvas, outRef.current);
+      dealtRef.current = null;
       return;
     }
     let layers: Layer[];
@@ -242,8 +271,20 @@ function TensorCardView({
       // the same neutral outline.
       if (paint && replayed.tiles.length) paint = { ...paint, tiles: replayed.tiles };
     }
+    // A redraw that changes the slice shown is a deal. Hold the old picture
+    // before it is painted over, so it can leave while the new one arrives.
+    const last = dealtRef.current;
+    dealtRef.current = slicing ? ordinal.index : null;
+    const way = slicing && last !== null && last !== ordinal.index && !prefersStill()
+      ? (Math.sign(ordinal.index - last) as 1 | -1)
+      : 0;
+    const out = outRef.current;
+    const held = way !== 0 && !!out && holdPicture(canvas, out);
     drawGrid(canvas, shape, cfg, geom, layers, dark, paintRenderScale, drawScale, paint, rasterPixels);
+    if (held && out) return deal(canvas, out, way as 1 | -1);
   }, [
+    slicing,
+    ordinal.index,
     back,
     rasterize,
     rasterPixels,
@@ -357,7 +398,7 @@ function TensorCardView({
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     if (previewKeyRef.current !== null) requestPreview(null);
     previewKeyRef.current = null;
-    setDrag({ r0: cell.row, c0: cell.col, r1: cell.row, c1: cell.col });
+    setDrag(dragAt(cell));
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -367,17 +408,19 @@ function TensorCardView({
     // cells they land in by an order of magnitude on a large card, and a fresh
     // object for the same cell repainted the canvas for a picture identical to
     // the one already on it.
-    if (drag && cell && (cell.row !== drag.r1 || cell.col !== drag.c1))
-      setDrag({ ...drag, r1: cell.row, c1: cell.col });
+    if (drag && cell && (cell.row !== drag.r1 || cell.col !== drag.c1 || !samePanel(cell.panel, drag.p1)))
+      setDrag({ ...drag, r1: cell.row, c1: cell.col, p1: cell.panel });
     if (cell) {
       // A hover is the click that has not happened yet. Both the readout and the
       // preview cone are therefore built from the box that click would commit,
       // by the same function the commit uses, so neither can drift from it.
-      const box = dragToBox({ r0: cell.row, c0: cell.col, r1: cell.row, c1: cell.col });
+      const box = dragToBox(dragAt(cell));
       const key = formatBoxIndices(box);
       setHover(`(${key})`);
       setHoverCell((current) =>
-        current && current.row === cell.row && current.col === cell.col ? current : cell
+        current && current.row === cell.row && current.col === cell.col && samePanel(current.panel, cell.panel)
+          ? current
+          : cell
       );
       if (planView) return; // the Plan view has no cone preview
       if (!drag && previewKeyRef.current !== key) {
@@ -413,7 +456,6 @@ function TensorCardView({
   };
 
   const totalBytes = elementCount(shape) * DTYPE_BYTES[tensor.dtype];
-  const planeRemapped = remapped(shape, cfg);
   /** How much smaller than the graph's scale this card draws; 1 for every card
    *  on the default plane. */
   const scaleRatio = graphPx / cardScaleFor(shape, cfg, graphPx);
@@ -425,10 +467,30 @@ function TensorCardView({
       default: () => setViewAxes(tensor.id, null),
     },
     choice: {
+      hidden: (value) => setViewCfg(tensor.id, hiddenViewCfg(value)),
       rows: (axis) => setViewAxes(tensor.id, axesWith(shape, cfg, axis, "rows")),
       cols: (axis) => setViewAxes(tensor.id, axesWith(shape, cfg, axis, "cols")),
     },
   };
+  const tags = viewTags(shape, cfg, nameOf);
+  const hiddenNames = hiddenAxes(shape, cfg).map(nameOf);
+  const tilePositions = projectedTileAxes(shape, cfg);
+  /** In projection, the position controls choose the tile a gesture takes. */
+  const heldTiles = mode === "project"
+    ? tilePositions
+        .map((axis) => {
+          const lo = Math.floor((cfg.sliders[axis] ?? 0) / cfg.tile![axis]) * cfg.tile![axis];
+          return `${nameOf(axis)} ${lo}:${Math.min(shape[axis], lo + cfg.tile![axis])}`;
+        })
+    : [];
+  const hiddenTitle =
+    mode === "unfold"
+      ? `unfolded: every index of ${hiddenNames.join(", ")} has a panel of its own, the slowest axis outermost, so the panels read in the order the tensor is stored. A drag can span panels. Right-click the card to project or slice instead.`
+      : mode === "slice"
+        ? `sliced: one index of ${hiddenNames.join(", ")} at a time, chosen by the sliders or [ and ]. The sheets behind are the slices still to come in row-major order. Right-click the card to project or unfold instead.`
+        : `projected: each cell stands for every index of ${hiddenNames.join(", ")}, shaded by how much of them a region covers; a drag takes them all${
+            heldTiles.length ? `, except where the tensor's tile is narrower - here it takes ${heldTiles.join(", ")}. The tile position controls choose each axis; [ and ] step the first` : ""
+          }. Right-click the card to slice or unfold instead.`;
   // Keep the compact header to one reading. The details popover preserves the
   // separate axis-label, symbolic-extent, and numeric-extent facts.
   const symbolicShape = shapeLabel(tensor, "symbolic");
@@ -528,46 +590,45 @@ function TensorCardView({
           </span>
         )}
       </div>
-      {(rank > 2 || planeRemapped) && (
+      {(tags.hidden || tags.plane) && (
         <div className="tc-axes">
-          {rank > 2 && (
-            <button
-              className={`mini ${cfg.projection ? "on" : ""}`}
-              title="this tensor only - projection unions hidden axes; slice uses the slider index"
-              onClick={() => setViewCfg(tensor.id, { projection: !cfg.projection })}
-            >
-              {cfg.projection ? "proj" : "slice"}
-            </button>
+          {/* How the card reads the axes it does not draw is always stated,
+              so a union, a slice and an unfolded strip cannot be mistaken for
+              one another. It is changed from the card's right-click menu. */}
+          {tags.hidden && (
+            <span className="tc-plane" title={hiddenTitle}>
+              {tags.hidden}
+            </span>
           )}
           {/* A chosen pair is stated on the card itself, so the canvas cannot be
               read as the default plane or as a transposed tensor. */}
-          {planeRemapped && (
+          {tags.plane && (
             <span
               className="tc-plane"
-              title={`display only: the card draws ${nameOf(rowAxis)} down and ${nameOf(colAxis)} across; the graph is unchanged${
-                scaleRatio > 1 ? `. Drawn at 1/${formatRatio(scaleRatio)} of the graph's scale to fit, so its lengths are not comparable with other cards` : ""}. Right-click the card to change it.`}
+              title={`display only: the card draws ${nameOf(rowAxis)} down and ${nameOf(colAxis)} across; the graph is unchanged. Right-click the card to change it.`}
             >
-              rows {nameOf(rowAxis)} · cols {nameOf(colAxis)}
-              {scaleRatio > 1 && <b> · scale ÷{formatRatio(scaleRatio)}</b>}
+              {tags.plane}
+            </span>
+          )}
+          {scaleRatio > 1 && (
+            <span
+              className="tc-plane"
+              title={`drawn at 1/${formatRatio(scaleRatio)} of the graph's scale to fit, so its lengths are not comparable with other cards`}
+            >
+              <b>scale ÷{formatRatio(scaleRatio)}</b>
             </span>
           )}
         </div>
       )}
-      {shape.map((e, ax) => {
+      {slicing && shape.map((e, ax) => {
         if (ax === rowAxis || ax === colAxis) return null;
-        const positioned = hiddenAxisPositioned(shape, cfg, ax);
         return (
           <div className="tc-slider" key={ax}>
             <span>{nameOf(ax)}</span>
             <input
               type="range"
-              disabled={!positioned}
-              aria-label={`${nameOf(ax)} ${cfg.projection ? "tile position" : "slice index"}`}
-              title={!positioned
-                ? "Switch to slice mode to choose an index"
-                : cfg.projection
-                  ? "Which tile a gesture takes on this axis"
-                  : "Displayed slice index"}
+              aria-label={`${nameOf(ax)} slice index`}
+              title="Displayed slice index"
               min={0}
               max={e - 1}
               step={1}
@@ -582,9 +643,66 @@ function TensorCardView({
           </div>
         );
       })}
-      <div className="tc-canvas-wrap">
+      {tilePositions.map((ax) => {
+        const tile = cfg.tile![ax];
+        const index = Math.floor((cfg.sliders[ax] ?? 0) / tile);
+        const lo = index * tile;
+        return (
+          <div className="tc-slider tc-tile-position" key={ax}>
+            <span>{nameOf(ax)} tile</span>
+            <input
+              type="number"
+              aria-label={`${nameOf(ax)} tile position`}
+              title="Which tile a gesture takes on this projected axis (zero-based)"
+              min={0}
+              max={Math.ceil(shape[ax] / tile) - 1}
+              step={1}
+              value={index}
+              onChange={(ev) => {
+                const value = ev.target.valueAsNumber;
+                if (!Number.isSafeInteger(value)) return;
+                const sliders = cfg.sliders.slice();
+                sliders[ax] = Math.max(0, Math.min(Math.ceil(shape[ax] / tile) - 1, value)) * tile;
+                setViewCfg(tensor.id, { sliders });
+              }}
+            />
+            <span className="tc-slider-val">{lo}:{Math.min(shape[ax], lo + tile)}</span>
+          </div>
+        );
+      })}
+      <div
+        className={`tc-canvas-wrap${slicing ? " deck" : ""}`}
+        style={slicing ? { paddingTop: DECK_ROOM_PX, paddingRight: DECK_ROOM_PX } : undefined}
+      >
+        {/* The deck: one sheet per slice still to come, nearest in front. They
+            hold no elements; their count is the depth behind this slice. */}
+        {Array.from({ length: sheets }, (_, i) => sheets - i).map((depth) => (
+          <div
+            key={depth}
+            className="tc-deck-sheet"
+            aria-hidden
+            style={{
+              left: depth * DECK_STEP_PX,
+              top: DECK_ROOM_PX - depth * DECK_STEP_PX,
+              width: geom.canvasW,
+              height: geom.canvasH,
+              opacity: 1 - (depth - 1) * 0.14,
+            }}
+          />
+        ))}
+        {slicing && (
+          <canvas
+            ref={outRef}
+            width={0}
+            height={0}
+            className="tc-deck-out"
+            aria-hidden
+            style={{ top: DECK_ROOM_PX, width: geom.canvasW, height: geom.canvasH }}
+          />
+        )}
         <canvas
           ref={canvasRef}
+          className="tc-front"
           style={{ width: geom.canvasW, height: geom.canvasH, cursor: "crosshair" }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}

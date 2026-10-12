@@ -44,7 +44,7 @@ host.onmessage = ({ data }) => {
     }
     if (!graph) throw new Error("the graph is no longer available to the analysis worker");
     if (data.kind === "layout") {
-      host.postMessage({ id: data.id, kind: "layout", result: layoutArtifact(graph, data.graphPx, data.axes) });
+      host.postMessage({ id: data.id, kind: "layout", result: layoutArtifact(graph, data.graphPx, data.views) });
     } else if (data.kind === "plan") {
       host.postMessage({
         id: data.id,

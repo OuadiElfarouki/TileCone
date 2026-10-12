@@ -14,7 +14,7 @@ describe("graph layout render", () => {
     vi.stubGlobal("Worker", class {});
     const layout = vi.spyOn(jobs, "layoutArtifact").mockImplementation(() => { throw new Error("layout on UI thread"); });
     function Probe() {
-      const state = useGraphLayout(resolved, artifact.layout, 42, artifact.graphPx, { X: [0, 1] });
+      const state = useGraphLayout(resolved, artifact.layout, 42, artifact.graphPx, { X: { axes: [0, 1] } });
       expect(state.layout).toBe(artifact.layout);
       expect(state.pending).toBe(true);
       return null;
@@ -28,10 +28,10 @@ describe("graph layout render", () => {
     if (!compiled.ok) throw new Error(compiled.diagnostics[0].message);
     const { resolved, artifact } = compiled;
     vi.stubGlobal("Worker", undefined);
-    const axes: Record<string, [number, number]> = { X: [0, 1] };
-    const expected = jobs.layoutArtifact(resolved, artifact.graphPx, axes);
+    const views = { X: { axes: [0, 1] as [number, number] } };
+    const expected = jobs.layoutArtifact(resolved, artifact.graphPx, views);
     function Probe() {
-      const state = useGraphLayout(resolved, null, null, artifact.graphPx, axes);
+      const state = useGraphLayout(resolved, null, null, artifact.graphPx, views);
       expect(state.layout).toEqual(expected);
       expect(state.pending).toBe(false);
       return null;

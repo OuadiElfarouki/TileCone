@@ -56,9 +56,9 @@ describe("analysis worker client", () => {
     const task = { tensorId: "Y", coord: [0, 0] };
     const query = client.replayInWorker({ graphId: 42, graph, tiles, task, depth: 1 });
     const queryWorker = FakeWorker.instances[0];
-    const first = client.layoutInWorker({ graphId: 42, graph, graphPx: 1, axes: {} }).catch((error: unknown) => error);
+    const first = client.layoutInWorker({ graphId: 42, graph, graphPx: 1, views: {} }).catch((error: unknown) => error);
     const oldLayout = FakeWorker.instances[1];
-    const second = client.layoutInWorker({ graphId: 42, graph, graphPx: 2, axes: {} });
+    const second = client.layoutInWorker({ graphId: 42, graph, graphPx: 2, views: {} });
     const layoutWorker = FakeWorker.instances[2];
     expect(oldLayout.terminated).toBe(true);
     expect(client.isAnalysisCancelled(await first)).toBe(true);
@@ -69,7 +69,7 @@ describe("analysis worker client", () => {
     const layout = layoutArtifact(graph, 2);
     layoutWorker.respond({ id: layoutWorker.messages[0].id, kind: "layout", result: layout });
     await expect(second).resolves.toEqual(layout);
-    const cached = client.layoutInWorker({ graphId: 42, graph, graphPx: 3, axes: {} }).catch((error: unknown) => error);
+    const cached = client.layoutInWorker({ graphId: 42, graph, graphPx: 3, views: {} }).catch((error: unknown) => error);
     expect(layoutWorker.messages[1]).not.toHaveProperty("graph");
     client.cancelLayout();
     expect(layoutWorker.terminated).toBe(true);
@@ -83,7 +83,7 @@ describe("analysis worker client", () => {
     const client = await import("../../src/state/analysis-worker-client");
     const compiled = compileArtifact(CHAIN);
     if (!compiled.ok) throw new Error(compiled.diagnostics[0].message);
-    const layout = client.layoutInWorker({ graphId: 41, graph: compiled.resolved, graphPx: 1, axes: {} }).catch((error: unknown) => error);
+    const layout = client.layoutInWorker({ graphId: 41, graph: compiled.resolved, graphPx: 1, views: {} }).catch((error: unknown) => error);
     const layoutWorker = FakeWorker.instances[0];
     const compilation = client.compileInWorker(CHAIN);
     const compileWorker = FakeWorker.instances[1];

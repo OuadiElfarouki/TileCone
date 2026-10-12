@@ -7,6 +7,7 @@ import type { PlanReport } from "../core/plan/interfaces";
 import type { TaskRef } from "../core/plan/plan";
 import type { FamilyReplay } from "../core/plan/replay";
 import type { BaseGraphLayout } from "../view/graph/graph-scene";
+import type { CardShapeView } from "../view/tensor/card-size";
 import type {
   AnalysisRequest,
   AnalysisResponse,
@@ -48,7 +49,8 @@ const queryLane = createLane(() => new Worker(new URL("../worker/analysis.worker
   type: "module", name: "tilecone-query",
 }));
 // Layout must not cancel a plan/replay query, or wait behind it. It changes
-// independently when a tensor's displayed axes change.
+// independently when a card's footprint changes: its displayed axes, or how it
+// shows its hidden axes.
 const layoutLane = createLane(() => new Worker(new URL("../worker/analysis.worker.ts", import.meta.url), {
   type: "module", name: "tilecone-layout",
 }));
@@ -162,12 +164,12 @@ export async function layoutInWorker(args: {
   graphId: number | null;
   graph: ResolvedGraph;
   graphPx: number;
-  axes: Record<string, [number, number]>;
+  views: Record<string, CardShapeView>;
 }): Promise<BaseGraphLayout> {
   cancelPending(layoutLane, "graph layout");
   const response = await send(layoutLane, {
     kind: "layout", ...graphForLane(layoutLane, args.graphId, args.graph),
-    graphPx: args.graphPx, axes: args.axes,
+    graphPx: args.graphPx, views: args.views,
   });
   if (response.kind !== "layout") throw new Error("analysis worker returned the wrong response");
   return response.result;

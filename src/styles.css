@@ -19,6 +19,10 @@
   --accent: #be185d;
   --card: #ffffff;
   --card-line: #c9cdd4;
+  /* A tensor plane's surface and edge, as the canvas paints them
+     (CARD_SURFACE in view/palette.ts), for the deck sheets drawn behind it. */
+  --card-surface: #f3f4f6;
+  --card-edge: rgba(0, 0, 0, 0.18);
   --hot: #be185d;
   --warn-ink: #92400e;
   --err: #dc2626;
@@ -70,6 +74,8 @@
     --accent: #e39c3d;
     --card: #1c1f24; /* == CARD_SURFACE.dark in view/palette.ts */
     --card-line: #303540;
+    --card-surface: #1c1f24;
+    --card-edge: rgba(255, 255, 255, 0.18);
     --hot: #e39c3d;
     --warn-ink: #f6c073;
     --err: #ef7a54;
@@ -643,11 +649,24 @@ textarea.source.error-state { border-color: var(--err); }
 .tc-slider { display: flex; align-items: center; gap: 5px; font-size: var(--t-small); color: var(--muted); }
 .tc-slider input { flex: 1; padding: 0; }
 .tc-slider-val { min-width: 18px; text-align: right; }
+.tc-tile-position { height: 20px; }
+.tc-tile-position input { flex: 0 1 60px; min-width: 0; width: 60px; height: 18px; font-size: var(--t-small); }
+.tc-tile-position .tc-slider-val { margin-left: auto; }
 .tc-canvas-wrap { position: relative; width: max-content; margin: 4px auto 0; }
 .tc-canvas-wrap canvas {
   display: block; image-rendering: auto;
   outline: none;
 }
+/* A slice card is a deck. The sheets behind are the slices still to come; they
+   hold no elements, so they are drawn as bare card stock in the canvas's own
+   edge colour. The front canvas sits over them, and the copy a deal carries
+   away is invisible except while it moves. */
+.tc-canvas-wrap .tc-front { position: relative; z-index: 1; }
+.tc-deck-sheet {
+  position: absolute; pointer-events: none; box-sizing: border-box;
+  background: var(--card-surface); border: 1px solid var(--card-edge);
+}
+.tc-canvas-wrap .tc-deck-out { position: absolute; left: 0; opacity: 0; pointer-events: none; }
 /* The grid's outline is the card's one border, and follows the operation
    node's colours: accent while a tile on it is inspected, grey while the card is
    being moved or pointed at to move, warning when a neighbour refuses the move.
@@ -1001,6 +1020,7 @@ textarea.source.error-state { border-color: var(--err); }
 }
 .options-value:hover, .options-value:focus-visible { background: var(--bg); outline: none; }
 .options-value.on { color: var(--accent); border-color: var(--accent); cursor: default; }
+.options-value[aria-disabled="true"] { color: var(--muted); opacity: 0.55; cursor: not-allowed; }
 .options-separator { height: 1px; margin: 3px 4px; background: var(--line); }
 
 /* ---------------- plan view ---------------- */

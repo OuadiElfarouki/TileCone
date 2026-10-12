@@ -15,6 +15,7 @@ import { cardPx, planeExtents, tileFor } from "./tiling";
 import { viewAxes, type ViewCfg } from "./tensor-view";
 import { gestureTile } from "./tile-spec";
 import { cardScaleFor } from "./card-size";
+import { foldCoord, foldGeometry, runLocate, runSpans, type Fold } from "./fold";
 
 export type GridGeom = {
   rows: number; // element extent
@@ -29,9 +30,18 @@ export type GridGeom = {
   cellH: number;
   canvasW: number; // fixed by the tensor's shape, independent of `tile`
   canvasH: number;
+  /** One plane's size in CSS px: the whole canvas, unless the card is unfolded. */
+  panelW: number;
+  panelH: number;
+  /** An unfolded card's panels, laid out by `view/tensor/fold.ts`. */
+  fold: Fold | null;
   rowAxis: number;
   colAxis: number;
 };
+
+/** A drawn element: its row and column in the plane, and on an unfolded card
+ *  the panel's hidden coordinates (full rank, zero on the drawn axes). */
+export type CardCell = { row: number; col: number; panel?: number[] };
 
 export function gridGeometry(
   shape: number[],
@@ -44,7 +54,10 @@ export function gridGeometry(
   // The card is sized by the shape and the graph's scale; the tile only sets the
   // lattice inside it. A chosen pair of axes may take a smaller scale of its own.
   const scale = cardScaleFor(shape, cfg, px);
-  const { w: canvasW, h: canvasH } = cardPx(rows, cols, scale);
+  const { w: panelW, h: panelH } = cardPx(rows, cols, scale);
+  const fold = foldGeometry(shape, cfg, rows, cols, scale);
+  const canvasW = fold ? fold.across.total : panelW;
+  const canvasH = fold ? fold.down.total : panelH;
   // A tile of the tensor's own is a quantity and is drawn as given, however
   // dense; `latticeStride` keeps the drawn boundaries apart on screen.
   const tile = gestureTile(shape, cfg, tileFor(rows, cols, tileScale, scale));
@@ -59,10 +72,13 @@ export function gridGeometry(
     colTile,
     tileRows,
     tileCols,
-    cellW: canvasW / tileCols,
-    cellH: canvasH / tileRows,
+    cellW: panelW / tileCols,
+    cellH: panelH / tileRows,
     canvasW,
     canvasH,
+    panelW,
+    panelH,
+    fold,
     rowAxis,
     colAxis,
   };
@@ -129,6 +145,8 @@ export type PlanPaint = {
 
 /** Fraction of a box's hidden-axis volume that is currently visible. */
 function hiddenFraction(box: Box, shape: number[], cfg: ViewCfg, geom: GridGeom): number {
+  // An unfolded card draws each hidden index in a panel of its own.
+  if (geom.fold) return 1;
   let frac = 1;
   for (let ax = 0; ax < shape.length; ax++) {
     if (ax === geom.rowAxis || ax === geom.colAxis) continue;
@@ -200,27 +218,29 @@ export function regionRects(
   geom: GridGeom,
   viewScale = 1
 ): RegionRect[] {
-  const { rowAxis, colAxis, rows, cols, canvasW, canvasH } = geom;
+  const { rowAxis, colAxis, rows, cols, panelW, panelH, fold } = geom;
   const rects: RegionRect[] = [];
   for (const box of region.boxes) {
     const alpha = hiddenFraction(box, shape, cfg, geom);
     if (alpha <= 0) continue;
     const rI = rowAxis >= 0 ? box[rowAxis] : { lo: 0, hi: 1 };
     const cI = colAxis >= 0 ? box[colAxis] : { lo: 0, hi: 1 };
-    const x = (Math.max(0, cI.lo) / cols) * canvasW;
-    const y = (Math.max(0, rI.lo) / rows) * canvasH;
-    const x1 = (Math.min(cols, cI.hi) / cols) * canvasW;
-    const y1 = (Math.min(rows, rI.hi) / rows) * canvasH;
+    const x = (Math.max(0, cI.lo) / cols) * panelW;
+    const y = (Math.max(0, rI.lo) / rows) * panelH;
+    const x1 = (Math.min(cols, cI.hi) / cols) * panelW;
+    const y1 = (Math.min(rows, rI.hi) / rows) * panelH;
     if (x1 <= x || y1 <= y) continue;
-    const w = Math.min(Math.max(MIN_MARK_PX / viewScale, x1 - x), canvasW);
-    const h = Math.min(Math.max(MIN_MARK_PX / viewScale, y1 - y), canvasH);
-    rects.push({
-      x: Math.min(x, canvasW - w),
-      y: Math.min(y, canvasH - h),
-      w,
-      h,
-      alpha,
-    });
+    const w = Math.min(Math.max(MIN_MARK_PX / viewScale, x1 - x), panelW);
+    const h = Math.min(Math.max(MIN_MARK_PX / viewScale, y1 - y), panelH);
+    const rect = { x: Math.min(x, panelW - w), y: Math.min(y, panelH - h), w, h, alpha };
+    if (!fold) {
+      rects.push(rect);
+      continue;
+    }
+    // One copy per panel the box reaches: its hidden intervals pick them.
+    const downs = runSpans(fold.down, box);
+    for (const ox of runSpans(fold.across, box))
+      for (const oy of downs) rects.push({ ...rect, x: rect.x + ox, y: rect.y + oy });
   }
   return rects;
 }
@@ -333,16 +353,41 @@ export function elementFromEvent(
   e: { clientX: number; clientY: number },
   canvas: HTMLCanvasElement,
   geom: GridGeom
-): { row: number; col: number } | null {
+): CardCell | null {
   const rect = canvas.getBoundingClientRect();
   const x = ((e.clientX - rect.left) / rect.width) * geom.canvasW;
   const y = ((e.clientY - rect.top) / rect.height) * geom.canvasH;
-  if (x < 0 || y < 0 || x >= geom.canvasW || y >= geom.canvasH) return null;
-  return {
-    row: Math.min(geom.rows - 1, Math.max(0, Math.floor((y / geom.canvasH) * geom.rows))),
-    col: Math.min(geom.cols - 1, Math.max(0, Math.floor((x / geom.canvasW) * geom.cols))),
-  };
+  return cellAt(geom, x, y);
 }
+
+/** Canvas px -> the element drawn there. Pure, for `elementFromEvent` and tests. */
+export function cellAt(geom: GridGeom, x: number, y: number): CardCell | null {
+  if (x < 0 || y < 0 || x >= geom.canvasW || y >= geom.canvasH) return null;
+  const { fold } = geom;
+  const across = fold ? runLocate(fold.across, x) : null;
+  const down = fold ? runLocate(fold.down, y) : null;
+  const px = across ? across.local : x;
+  const py = down ? down.local : y;
+  const cell: CardCell = {
+    row: Math.min(geom.rows - 1, Math.max(0, Math.floor((py / geom.panelH) * geom.rows))),
+    col: Math.min(geom.cols - 1, Math.max(0, Math.floor((px / geom.panelW) * geom.cols))),
+  };
+  if (fold && across && down)
+    cell.panel = foldCoord(fold, across.digits, down.digits);
+  return cell;
+}
+
+/**
+ * Where every panel of an unfolded card starts, in canvas px; the one panel at
+ * the origin otherwise. Drawing walks these to lay a lattice and an edge on
+ * each plane rather than across the gaps between them.
+ */
+export function panelOrigins(geom: GridGeom): { x: number; y: number }[] {
+  if (!geom.fold) return [{ x: 0, y: 0 }];
+  const ys = runSpans(geom.fold.down);
+  return runSpans(geom.fold.across).flatMap((x) => ys.map((y) => ({ x, y })));
+}
+
 
 /** Element range -> the interval covering it, snapped out to whole tiles. */
 export function snapSpan(e0: number, e1: number, tile: number, extent: number): [number, number] {

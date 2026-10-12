@@ -4,6 +4,7 @@ import type { TaskRef } from "../core/plan/plan";
 import type { FamilyReplay } from "../core/plan/replay";
 import type { CompilerDiagnostic } from "../parse/compiler";
 import type { BaseGraphLayout } from "../view/graph/graph-scene";
+import type { CardShapeView } from "../view/tensor/card-size";
 
 export type CompileArtifact = {
   graph: Graph;
@@ -37,7 +38,7 @@ export type AnalysisRequest =
       graphId: number | null;
       graph?: ResolvedGraphData;
       graphPx: number;
-      axes: Record<string, [number, number]>;
+      views: Record<string, CardShapeView>;
     }
   | {
       id: number;

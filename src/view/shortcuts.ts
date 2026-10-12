@@ -90,7 +90,7 @@ export const SHORTCUTS = {
   scrub: {
     id: "scrub",
     label: "[ / ]",
-    action: "scrub the first hidden axis whose slider is live",
+    action: "step the slice, or a projected tile, along the first hidden axis that has one",
     keys: ["[", "]"],
   },
   zoom: { id: "zoom", label: "Scroll", action: "zoom around the pointer" },

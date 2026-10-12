@@ -79,7 +79,9 @@ src/
 │   └── json.ts           JSON graph import/export
 ├── view/               presentation model: pure functions and data, no React, no store
 │   ├── tensor/
-│   │   ├── tensor-view.ts    visible-axis and hidden-axis view configuration
+│   │   ├── tensor-view.ts    visible-axis and hidden-axis view configuration: project, slice, unfold
+│   │   ├── fold.ts           an unfolded card's panels: stride order, gaps, hit-testing
+│   │   ├── deck.ts           a slice card's deck: how many sheets lie behind the slice
 │   │   ├── tiling.ts         tile-size policy and slider stops
 │   │   ├── tile-spec.ts      a tensor's own per-axis tile and what a gesture selects
 │   │   ├── card-size.ts      tensor-card measurement and per-card scale, usable in either realm
@@ -125,7 +127,8 @@ src/
 │   ├── graph/GraphView.tsx  graph rendering, gestures, highlighting, and viewport
 │   ├── card/
 │   │   ├── TensorCard.tsx    interactive tensor canvas and its layer builders
-│   │   └── draw-grid.ts      canvas drawing: fills, rulings, stipples, hatches, lattice, marks
+│   │   ├── draw-grid.ts      canvas drawing: fills, rulings, stipples, hatches, lattice, marks
+│   │   └── deal.ts           the slice deck's deal animation
 │   ├── inspector/
 │   │   ├── Inspector.tsx     the panel: tabs, and which sections each view shows
 │   │   ├── tiles.tsx         the tile header, the tiles list, and range editing

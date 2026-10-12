@@ -117,8 +117,11 @@ export function carriedViewCfg(shape: number[], previous: ViewCfg | undefined): 
     sliders: previous.sliders.map((v, axis) => Math.min(v, Math.max(1, shape[axis]) - 1)),
     ...(previous.tile ? { tile: previous.tile.map((v, axis) => Math.min(v, Math.max(1, shape[axis]))) } : {}),
     ...(previous.axes ? { axes: [previous.axes[0], previous.axes[1]] as [number, number] } : {}),
+    ...(previous.unfold ? { unfold: previous.unfold } : {}),
   };
-  return viewCfgFits(shape, cfg) ? cfg : defaultViewCfg(shape);
+  // A shape that grew past what unfolds keeps the rest of its view, sliced.
+  const { unfold: _unfold, ...sliced } = cfg;
+  return viewCfgFits(shape, cfg) ? cfg : viewCfgFits(shape, sliced) ? sliced : defaultViewCfg(shape);
 }
 
 /** Install one successful DSL compilation. Shared by the synchronous fallback
@@ -193,6 +196,7 @@ export function restoredWorkspaceState(
       sliders: cfg.sliders.slice(),
       ...(cfg.tile ? { tile: cfg.tile.slice() } : {}),
       ...(cfg.axes && remapped(shape, cfg) ? { axes: [cfg.axes[0], cfg.axes[1]] as [number, number] } : {}),
+      ...(cfg.unfold ? { unfold: cfg.unfold } : {}),
     };
   }
   const checkedParts = (workspace.parts ?? []).map((part) => {

@@ -25,7 +25,8 @@ export type MenuChoice<C extends string> = {
   kind: "choice";
   id: C;
   label: string;
-  options: { value: number; label: string; title: string; checked: boolean }[];
+  /** `disabled` lists an option that does not apply, with why in its title. */
+  options: { value: number; label: string; title: string; checked: boolean; disabled?: boolean }[];
 };
 
 export type MenuSeparator = { kind: "separator" };

@@ -7,8 +7,17 @@
  * tensor whatever tile is being studied, and so is reached from the card.
  */
 
-import type { MenuSpec } from "../menu";
-import { remapped, ViewCfg, viewAxes } from "./tensor-view";
+import type { MenuChoice, MenuSpec } from "../menu";
+import {
+  hiddenAxes,
+  hiddenMode,
+  remapped,
+  UNFOLD_MARK,
+  unfoldRefusal,
+  type UnfoldDir,
+  ViewCfg,
+  viewAxes,
+} from "./tensor-view";
 
 export type AxisTableAction = "own" | "reset" | "plan";
 
@@ -61,19 +70,81 @@ export function axisTableMenu({
 }
 
 export type CardViewAction = "swap" | "default";
-export type CardViewChoice = "rows" | "cols";
+export type CardViewChoice = "rows" | "cols" | "hidden";
 
 /**
- * Which axes a card draws. Display only: the graph, every selection and every
- * figure are unchanged. Empty for a tensor of rank below two, which has no
- * pair to choose.
+ * The readings a card offers for its hidden axes, in menu order. A choice's
+ * value is an index into this list.
+ */
+export const HIDDEN_VIEWS: readonly (
+  | { mode: "project" }
+  | { mode: "slice" }
+  | { mode: "unfold"; dir: UnfoldDir }
+)[] = [
+  { mode: "project" },
+  { mode: "slice" },
+  { mode: "unfold", dir: "across" },
+  { mode: "unfold", dir: "down" },
+  { mode: "unfold", dir: "grid" },
+];
+
+/** The view settings that select `HIDDEN_VIEWS[value]`. */
+export function hiddenViewCfg(value: number): Pick<ViewCfg, "projection" | "unfold"> {
+  const view = HIDDEN_VIEWS[value];
+  if (view.mode === "unfold") return { projection: false, unfold: view.dir };
+  return { projection: view.mode === "project", unfold: undefined };
+}
+
+function hiddenChoice(
+  shape: readonly number[],
+  cfg: Partial<Pick<ViewCfg, "axes" | "projection" | "unfold">> | undefined,
+  axisName: (axis: number) => string
+): MenuChoice<"hidden"> {
+  const hidden = hiddenAxes(shape, cfg);
+  const names = hidden.map(axisName).join(", ");
+  const fastest = axisName(hidden[hidden.length - 1]);
+  const slowest = hidden.slice(0, -1).map(axisName).join(", ");
+  const mode = hiddenMode(cfg);
+  const titles = {
+    project: `draw each cell as the union over ${names}; a drag takes all of them`,
+    slice: `draw one index of ${names} at a time, the rest stacked behind it; sliders pick the index`,
+    across: `lay every index of ${names} side by side across the card, slowest axis outermost`,
+    down: `stack every index of ${names} down the card, slowest axis outermost: the row-major flattening`,
+    grid: `lay ${fastest} across the card and ${slowest} down it`,
+  };
+  const options = HIDDEN_VIEWS.flatMap((view, value) => {
+    // A grid differs from across only when there are two hidden axes to split.
+    if (view.mode === "unfold" && view.dir === "grid" && hidden.length < 2) return [];
+    const key = view.mode === "unfold" ? view.dir : view.mode;
+    const checked = view.mode === mode && (view.mode !== "unfold" || view.dir === cfg?.unfold);
+    const refusal = view.mode === "unfold" ? unfoldRefusal(shape, { ...cfg, unfold: view.dir }) : null;
+    const disabled = refusal !== null;
+    return [{
+      value,
+      label: view.mode === "unfold" ? `unfold ${UNFOLD_MARK[view.dir]}` : view.mode,
+      title: disabled ? `cannot unfold: ${refusal}` : titles[key],
+      checked,
+      disabled,
+    }];
+  });
+  return { kind: "choice", id: "hidden", label: "hidden", options };
+}
+
+/**
+ * How a card draws its tensor: how it reads the axes it does not draw, for a
+ * tensor that has any, and which pair it draws. Display only: the graph, every
+ * selection and every figure are unchanged. Empty for a tensor of rank below
+ * two, which has no pair to choose.
  */
 export function cardViewMenu(
   shape: readonly number[],
-  cfg: Pick<ViewCfg, "axes"> | undefined,
+  cfg: Partial<Pick<ViewCfg, "axes" | "projection" | "unfold">> | undefined,
   axisName: (axis: number) => string
 ): MenuSpec<CardViewAction, CardViewChoice> {
   if (shape.length < 2) return [];
+  const hidden: MenuSpec<CardViewAction, CardViewChoice> = shape.length > 2
+    ? [hiddenChoice(shape, cfg, axisName), { kind: "separator" }]
+    : [];
   const { rowAxis, colAxis } = viewAxes(shape, cfg);
   const role = (id: CardViewChoice, label: string, drawn: number, way: string) => ({
     kind: "choice" as const,
@@ -90,6 +161,7 @@ export function cardViewMenu(
   });
   const plain = viewAxes(shape);
   return [
+    ...hidden,
     role("rows", "rows", rowAxis, "down the card"),
     role("cols", "columns", colAxis, "across the card"),
     { kind: "separator" },

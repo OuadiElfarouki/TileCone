@@ -1,4 +1,4 @@
-import { remapped, ViewCfg, viewCfgFits } from "../../view/tensor/tensor-view";
+import { remapped, unfoldRefusal, ViewCfg, viewCfgFits } from "../../view/tensor/tensor-view";
 import { TILE_SCALE_MAX, TILE_SCALE_MIN } from "../../view/tensor/tiling";
 import { Direction, idRecord, viewAnchorIndex } from "../../view/workspace";
 import { revealHidden } from "../selection-edit";
@@ -58,6 +58,7 @@ export const viewActions = (set: SetState, get: GetState): Pick<
     const stored: ViewCfg = { ...next, sliders: next.sliders.slice() };
     if (next.tile) stored.tile = next.tile.slice();
     else delete stored.tile;
+    if (!next.unfold) delete stored.unfold;
     if (next.axes && remapped(shape, next)) stored.axes = [next.axes[0], next.axes[1]];
     else delete stored.axes;
     set({
@@ -77,6 +78,8 @@ export const viewActions = (set: SetState, get: GetState): Pick<
     const next: ViewCfg = { ...cfg, sliders: cfg.sliders.slice() };
     if (chosen) next.axes = [chosen[0], chosen[1]];
     else delete next.axes;
+    // A pair that leaves too many hidden indices to unfold slices them instead.
+    if (next.unfold && unfoldRefusal(shape, next)) delete next.unfold;
     if (!viewCfgFits(shape, next)) return;
     set({ viewCfgs: idRecord({ ...state.viewCfgs, [tensorId]: next }), preview: null });
     const parts = state.selection?.parts ?? [];
