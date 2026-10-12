@@ -5,6 +5,7 @@ import { SidePanel } from "../../../src/components/chrome/SidePanel";
 import { EXAMPLES } from "../../../src/examples";
 import { ParamControls } from "../../../src/components/chrome/ParamControls";
 import { useStore } from "../../../src/state/store";
+import { graphIsInteractive } from "../../../src/view/workspace";
 
 vi.mock("../../../src/state/store", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../../src/state/store")>();
@@ -45,6 +46,7 @@ describe("parameter controls with user-authored names", () => {
     increase!.onClick!({} as React.MouseEvent<HTMLButtonElement>);
     expect(useStore.getState().draftText).toBe(source.replace("= 4", "= 8"));
     expect(useStore.getState().graph!.params[name]).toBe(4);
+    expect(graphIsInteractive(useStore.getState())).toBe(true);
   });
 });
 
@@ -96,5 +98,34 @@ describe("parameter controls follow the source being edited", () => {
     expect(renderPanel()).not.toContain('aria-label="size parameters"');
     useStore.getState().setDraftText(source);
     expect(renderPanel()).toContain('id="param-M"');
+  });
+});
+
+
+describe("controls for parameters used by the graph", () => {
+  it("shows M, N and K but no control or hint for the unused L declaration", () => {
+    useStore.getState().applyDSL("M = 256\nN = 128\nK = 512\nL = 32\n" +
+      "A = Tensor(M, K, dtype=fp16)\nB = Tensor(K, N, dtype=fp16)\nC = matmul(A, B)\n");
+    const html = renderToStaticMarkup(createElement(SidePanel));
+    for (const name of ["M", "N", "K"]) expect(html).toContain(`id="param-${name}"`);
+    expect(html).not.toContain('id="param-L"');
+    expect(html.match(/class="syntax-hint"/g)).toHaveLength(3);
+  });
+
+  it("hides the parameter section when all declarations are unused", () => {
+    useStore.getState().applyDSL("L = 32\n# L does not size anything\nA = Tensor(32)\nB = relu(A)\n");
+    const html = renderToStaticMarkup(createElement(SidePanel));
+    expect(html).not.toContain('aria-label="size parameters"');
+    expect(html).not.toContain('class="syntax-hint"');
+  });
+
+  it("offers controls for symbolic split sizes even when displayed extents are literal", () => {
+    useStore.getState().applyDSL("N = 2\nL = 4\nUnused = 16\nX = Tensor(6)\n" +
+      "Y, Z = split(X, axis=0, sizes=[N, L])\n");
+    const html = renderToStaticMarkup(createElement(SidePanel));
+    expect(html).toContain('id="param-N"');
+    expect(html).toContain('id="param-L"');
+    expect(html).not.toContain('id="param-Unused"');
+    expect(html.match(/class="syntax-hint"/g)).toHaveLength(2);
   });
 });

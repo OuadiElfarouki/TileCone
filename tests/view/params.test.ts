@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import * as parser from "../../src/parse/parser";
+import { describe, expect, it, vi } from "vitest";
 import {
   parameterSourceKey,
+  sameParameterizedSource,
   sourceParams,
   STRIDE,
   stepModeOf,
@@ -136,4 +138,21 @@ describe("the source a build's parameter controls belong to", () => {
     const a = 'N = 4\nX = Tensor(N, N)\nY = einsum("ij->ij", X)\n';
     expect(parameterSourceKey(a.replace("ij->ij", "ij->ji"))).not.toBe(parameterSourceKey(a));
   });
+});
+
+
+it("reuses source identities across store ticks and parses only a changed draft", () => {
+  const built = "Q = 8\nInput = Tensor(Q)\nOutput = relu(Input)\n";
+  const draft = built.replace("Q = 8", "Q = 16");
+  const parse = vi.spyOn(parser, "parseProgram");
+  try {
+    expect(sameParameterizedSource(built, draft)).toBe(true);
+    expect(parse).toHaveBeenCalledTimes(2);
+    for (let tick = 0; tick < 20; tick++) expect(sameParameterizedSource(built, draft)).toBe(true);
+    expect(parse).toHaveBeenCalledTimes(2);
+    expect(sameParameterizedSource(built, draft.replace("Q = 16", "Q = 32"))).toBe(true);
+    expect(parse).toHaveBeenCalledTimes(3);
+    expect(sameParameterizedSource(built, draft.replace("relu", "exp"))).toBe(false);
+    expect(parse).toHaveBeenCalledTimes(4);
+  } finally { parse.mockRestore(); }
 });

@@ -10,7 +10,7 @@ import { useStore } from "../../state/store";
 import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
 import { seedTile } from "../../view/tensor/tile-spec";
 import { overlayTokens, withHints } from "../../view/dsl-highlight";
-import { parameterSourceKey, sourceParams } from "../../view/params";
+import { sameParameterizedSource, sourceParams } from "../../view/params";
 import { ParamControls } from "./ParamControls";
 import { graphIsInteractive, involvedTensorIds } from "../../view/workspace";
 
@@ -67,18 +67,19 @@ function SourceEditor({ parametersActive }: { parametersActive: boolean }): Reac
   const [ranAt, setRanAt] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const highlightRef = useRef<HTMLPreElement>(null);
-  // Each size parameter of the built program has its line marked for the note
+  // Each size parameter used by the built graph has its line marked for the note
   // that points at its value box. The marker is empty, so the layer still
   // matches the textarea; the lines are found in the draft, the names in the build.
-  const builtParams = useStore((s) => s.graph?.params);
+  const shapeParameters = useStore((s) => s.resolved?.shapeParameters);
+  const usedParameters = useMemo(() => new Set(shapeParameters), [shapeParameters]);
   const highlighted = useMemo(
     () => withHints(
       overlayTokens(text),
       parametersActive
-        ? sourceParams(text).filter((param) => builtParams && param.name in builtParams).map((param) => param.lineEnd)
+        ? sourceParams(text).filter((param) => usedParameters.has(param.name)).map((param) => param.lineEnd)
         : []
     ),
-    [text, builtParams, parametersActive]
+    [text, usedParameters, parametersActive]
   );
 
   // Two ways to owe a run: the text has moved away from what was built, or the
@@ -403,9 +404,7 @@ export function SidePanel(): React.ReactElement {
   const sourcePending = useStore((s) => !graphIsInteractive(s));
   const builtText = useStore((s) => s.dslText);
   const draft = useStore((s) => s.draftText);
-  const builtKey = useMemo(() => parameterSourceKey(builtText), [builtText]);
-  const draftKey = useMemo(() => parameterSourceKey(draft), [draft]);
-  const parametersActive = builtKey !== null && draftKey === builtKey;
+  const parametersActive = useMemo(() => sameParameterizedSource(builtText, draft), [builtText, draft]);
   return (
     <aside className="side-panel" aria-label="Graph source and operations">
       <div className="side-panel-scroll">

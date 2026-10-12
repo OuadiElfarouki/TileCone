@@ -40,6 +40,22 @@ export function parameterSourceKey(text: string): string | null {
   });
 }
 
+let comparedSources: {
+  built: string; draft: string; builtKey: string | null; matches: boolean;
+} | null = null;
+
+/** Compare source structure without compiling it. Keep only the latest pair
+ * and its built identity: store selectors run on pointer and animation ticks,
+ * while parsing is needed only when source changes. */
+export function sameParameterizedSource(built: string, draft: string): boolean {
+  const previous = comparedSources;
+  if (previous?.built === built && previous.draft === draft) return previous.matches;
+  const builtKey = previous?.built === built ? previous.builtKey : parameterSourceKey(built);
+  const matches = builtKey !== null && (built === draft || builtKey === parameterSourceKey(draft));
+  comparedSources = { built, draft, builtKey, matches };
+  return matches;
+}
+
 /** The draft's size parameters that a slider can set: positive integers. */
 export function sourceParams(text: string): SourceParam[] {
   const params: SourceParam[] = [];

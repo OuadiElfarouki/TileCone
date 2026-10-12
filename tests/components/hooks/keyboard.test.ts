@@ -157,3 +157,20 @@ describe("a graph whose source is pending", () => {
     useStore.setState({ compiling: false });
   });
 });
+
+
+it.each([false, true])("keeps tile shortcuts active for parameter edits while compiling=%s", (compiling) => {
+  const source = "M = 8\nX = Tensor(M)\nY = relu(X)\n";
+  const s = useStore.getState();
+  s.applyDSL(source);
+  s.setCanvasTool("select");
+  s.setSelection("Y", fromBox([{ lo: 0, hi: 2 }]), "replace");
+  s.setDraftText(source.replace("M = 8", "M = 16"));
+  useStore.setState({ compiling });
+  const move = vi.spyOn(useStore.getState(), "moveSelection");
+  const event = key("ArrowRight", "canvas");
+  onKey(event);
+  expect(move).toHaveBeenCalledOnce();
+  expect(event.preventDefault).toHaveBeenCalled();
+  useStore.setState({ compiling: false });
+});

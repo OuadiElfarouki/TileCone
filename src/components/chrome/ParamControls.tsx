@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useStore } from "../../state/store";
 import { idRecord } from "../../view/workspace";
 import { STEP_LABEL, StepMode, stepModeOf, stepValue, withParamNamed } from "../../view/params";
@@ -10,7 +10,7 @@ const parsed = (text: string): number | null => {
 };
 
 /**
- * One value box per size parameter of the built program, under the editor.
+ * One value box per size parameter used by the built graph, under the editor.
  *
  * The boxes belong to the build, not to the draft: they appear once a program
  * has compiled, show its values, and change only when the next run does - the
@@ -26,7 +26,9 @@ const parsed = (text: string): number | null => {
  * pointer leaves the row, focus leaves the field, or a value is typed.
  */
 export function ParamControls(): React.ReactElement | null {
-  const built = useStore((s) => s.graph?.params);
+  const built = useStore((s) => s.resolved?.params);
+  const shapeParameters = useStore((s) => s.resolved?.shapeParameters);
+  const used = useMemo(() => new Set(shapeParameters), [shapeParameters]);
   const draft = useStore((s) => s.draftText);
   const setDraft = useStore((s) => s.setDraftText);
   const [fields, setFields] = useState(() => idRecord<string>());
@@ -40,7 +42,7 @@ export function ParamControls(): React.ReactElement | null {
   }, [built]);
 
   const params = Object.entries(built ?? {}).filter(
-    ([, value]) => Number.isSafeInteger(value) && value >= 1
+    ([name, value]) => used.has(name) && Number.isSafeInteger(value) && value >= 1
   );
   if (!params.length) return null;
 

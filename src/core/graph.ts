@@ -48,6 +48,10 @@ export type Graph = {
 };
 
 export type ResolvedGraph = Graph & {
+  /** Bindings read while resolving declared dimensions and inferring shapes.
+   * Includes operation shape attributes even when symbolic display falls back
+   * to literals. Declaration order, distinct, and structured-cloneable. */
+  shapeParameters: readonly string[];
   topo: Node[]; // topological order
   consumers: Record<string, { nodeId: string; slot: number }[]>;
   shapesOf: (ids: string[]) => number[][];
@@ -400,6 +404,17 @@ export function resolveGraph(source: Graph): ResolvedGraph {
         "GRAPH_SHAPE",
         { kind: "parameter", id: name }
       );
+  const usedParameters = new Set<string>();
+  // Record semantic binding reads at the shape engine's existing boundary.
+  // Operators continue resolving their own attributes; names in arbitrary
+  // labels, comments or strings are never scanned for supposed dependencies.
+  const shapeParams = new Proxy(g.params, {
+    get(bindings, key, receiver) {
+      if (typeof key === "string" && Object.prototype.hasOwnProperty.call(bindings, key))
+        usedParameters.add(key);
+      return Reflect.get(bindings, key, receiver);
+    },
+  });
   const tensorIds = new Set(Object.keys(g.tensors));
   const producers = new Map<string, { nodeId: string; slot: number }>();
   const nodeIds = new Set<string>();
@@ -541,7 +556,7 @@ export function resolveGraph(source: Graph): ResolvedGraph {
   for (const t of Object.values(g.tensors)) {
     if (t.producer) continue;
     try {
-      t.resolved = resolveShape(t.shape, g.params);
+      t.resolved = resolveShape(t.shape, shapeParams);
       validateTensorCardinality(t.resolved, t.dtype, { kind: "tensor", id: t.id });
       t.symShape = verifiedSymShape(t.shape, t.resolved, g.params);
     } catch (e) {
@@ -567,7 +582,7 @@ export function resolveGraph(source: Graph): ResolvedGraph {
     });
     let outShapes: number[][];
     try {
-      outShapes = spec.inferShapes(inShapes, n.attrs, g.params);
+      outShapes = spec.inferShapes(inShapes, n.attrs, shapeParams);
     } catch (e) {
       throw new GraphError(
         `node "${n.id}" (${n.op}): shape inference failed: ${(e as Error).message}`,
@@ -714,7 +729,7 @@ export function resolveGraph(source: Graph): ResolvedGraph {
       if (t.shape.length) {
         // If a shape was declared, check consistency where resolvable.
         try {
-          const declared = resolveShape(t.shape, g.params);
+          const declared = resolveShape(t.shape, shapeParams);
           if (declared.length !== inferred.length || declared.some((d, i) => d !== inferred[i]))
             throw new GraphError(
               `tensor "${t.id}": declared shape [${declared}] != inferred [${inferred}]`,
@@ -744,6 +759,7 @@ export function resolveGraph(source: Graph): ResolvedGraph {
 
   return {
     ...g,
+    shapeParameters: Object.keys(g.params).filter((name) => usedParameters.has(name)),
     topo,
     consumers,
     shapesOf: (ids: string[]) => ids.map((id) => g.tensors[id].resolved!),

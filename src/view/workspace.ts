@@ -9,6 +9,7 @@ import { mergeProps, PropResult } from "../core/propagate";
 import { Box } from "../core/region";
 import type { TilePlan } from "../core/plan/plan";
 import type { FamilyReplay } from "../core/plan/replay";
+import { sameParameterizedSource } from "./params";
 
 /** Which independently toggled views are active in the workspace. `none` is
  * the explicit figures-only state: analysis remains live while paint and rows hide. */
@@ -37,15 +38,18 @@ export const layoutMovable = (tab: InspectorTab): boolean => tab !== "plan";
 export const activeCanvasTool = (state: { canvasTool: CanvasTool; inspectorTab: InspectorTab }): CanvasTool =>
   layoutMovable(state.inspectorTab) ? state.canvasTool : "select";
 
-/** The visible build is a navigable snapshot while source is edited or built.
- * Keep this derived from source identity so reverting a draft reactivates it. */
+/** Parameter edits keep the built graph interactive, including while resized
+ * source builds. Other source changes leave a navigable snapshot. */
 export function graphIsInteractive(state: {
   resolved: ResolvedGraph | null;
   dslText: string;
   draftText: string;
   compiling: boolean;
 }): boolean {
-  return state.resolved !== null && !state.compiling && state.draftText === state.dslText;
+  if (state.resolved === null) return false;
+  // An unchanged-source build is also used for full reloads/restores.
+  if (state.draftText === state.dslText) return !state.compiling;
+  return sameParameterizedSource(state.dslText, state.draftText);
 }
 /**
  * A family replay on the cards (`core/plan/replay.ts`), and how far through it

@@ -38,12 +38,11 @@ beforeEach(() => {
 });
 
 describe("inactive compiled graph", () => {
-  it.each(["empty", "example", "parameter", "building", "failed"])(
+  it.each(["empty", "example", "building", "failed"])(
     "keeps navigation and disables inspection for %s source", (kind) => {
       const { resolved, selection, nodeOffsets } = useStore.getState();
       if (kind === "empty") useStore.getState().setDraftText("");
       if (kind === "example") useStore.getState().stageExample(0);
-      if (kind === "parameter") useStore.getState().setDraftText(SOURCE.replace("M = 8", "M = 16"));
       if (kind === "building") useStore.setState({ compiling: true });
       if (kind === "failed") useStore.getState().applyDSL("Z = relu(Missing)\n");
       expect(graphIsInteractive(useStore.getState())).toBe(false);
@@ -66,6 +65,26 @@ describe("inactive compiled graph", () => {
       useStore.setState({ compiling: false });
     }
   );
+
+  it.each([false, true])("keeps parameter edits interactive, including while building: %s", (compiling) => {
+    const { resolved, selection, nodeOffsets } = useStore.getState();
+    useStore.getState().setDraftText(SOURCE.replace("M = 8", "M = 16"));
+    useStore.setState({ compiling });
+    expect(graphIsInteractive(useStore.getState())).toBe(true);
+    const graph = render(GraphView);
+    expect(graph).not.toContain('class="graph-canvas inactive');
+    expect(graph).not.toContain('inert=""');
+    expect(graph).toContain('class="layout-controls"');
+    expect(graph).toContain('class="grid-controls"');
+    const source = render(SidePanel);
+    expect(source).toContain('class="operation-row');
+    expect(source).not.toContain('class="operations-section pending"');
+    expect(render(Inspector)).toContain("Cost to compute");
+    expect(useStore.getState().resolved).toBe(resolved);
+    expect(useStore.getState().selection).toBe(selection);
+    expect(useStore.getState().nodeOffsets).toBe(nodeOffsets);
+    useStore.setState({ compiling: false });
+  });
 
   it("reactivates on reverting source or successfully installing a build", () => {
     useStore.getState().setDraftText("");
