@@ -16,7 +16,7 @@ export const SHORTCUTS = {
   move: {
     id: "move",
     label: "Arrow keys",
-    action: "move the focused tile",
+    action: "move the focused tile; the stride-one axis carries across rows and panels",
     keys: ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"],
   },
   moveFast: {
@@ -62,7 +62,7 @@ export const SHORTCUTS = {
   movePlanTask: {
     id: "move-plan-task",
     label: "Arrow keys",
-    action: "step the inspected task one tile",
+    action: "step the inspected task one tile; the stride-one axis carries in row-major order",
     keys: ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"],
   },
   escape: {

@@ -48,6 +48,7 @@ The core is deliberately headless. Parsing, graph resolution, propagation, and m
 src/
 ├── core/
 │   ├── graph.ts          graph IR validation and resolution
+│   ├── coordinates.ts    exact mixed-radix stepping with row-major carry and borrow
 │   ├── executor.ts       checked public query boundary
 │   ├── propagate.ts      generic forward/backward worklist, transitive or stopped at a frontier
 │   ├── entangle.ts       what a region is combined with, per operation
@@ -91,6 +92,7 @@ src/
 │   │   ├── shape-label.ts    axis-name, symbolic, and numeric shape readings
 │   │   ├── seeds.ts          default extents: drawn planes, starter tiles, first plan divisions
 │   │   ├── gesture.ts        what a drag selects, and what a Plan-view gesture does
+│   │   ├── movement.ts       rigid tile movement through valid snapped or element origins
 │   │   ├── layers.ts         the card's paint stack as data: cones, stipples, seeds, plan paint
 │   │   ├── replay-paint.ts   family-replay paint over the plan
 │   │   └── menus.ts          the axis table's menu and a card's view menu
@@ -772,6 +774,8 @@ Shared links preserve per-tensor project/slice/unfold settings, chosen axes, til
 `selectionBoxFromDrag` defines selection and hover consistently. Without an owned tile, projection selects the full hidden-axis extents and slicing selects the slider indices. An unfolded drag names hidden coordinates through its endpoint panels and selects the N-D box between its corners; snapped gestures expand every axis to tile boundaries. Hover readouts and cone previews use the same single-cell gesture, ensuring the following click selects what they describe.
 
 **Snapping (`snapToGrid`) is a property of future gestures and movement, not stored selection geometry or analysis.** A drag is tracked in elements throughout and expanded to whole current-grid tiles only when it commits. The inspector's text range is an explicit element-space edit and is never rounded, whether snap is on or off. Toggling snap or changing detail leaves every existing box and the workspace undo depth untouched. A keyboard nudge uses the current tile while snapping and one element when not. If the box starts off the current lattice - after a typed edit or grid change - its first snapped nudge aligns its leading edge in the requested direction without changing its extent; later nudges advance by whole tiles. A boundary clamp may use a shorter final delta so the whole box lands flush without shrinking. Changing detail changes the next snapped gesture and nudge, never the current box.
+
+Along a row-major stride-one axis, `nudgeSelection` carries through valid tile origins: columns finish before rows, and rows before hidden panels. `movement.ts` treats a moved group as one rigid bounding frame, includes flush-edge and off-grid alignment stops, and preserves every part's extents and offsets. Other axes retain clamped translation. `core/coordinates.ts` shares mixed-radix stepping with Plan task movement; BigInt ordinals prevent lost steps on huge tensors. Both directions stop at the outer domain ends. Slice positions follow a carried tile or task, including on undo; unfolded cards need no position update.
 
 Every typed value in the inspector - a tile's range, a tensor's tile extents, a plan's extents - is a `DraftField`: typing changes a draft, Enter or leaving the field applies it, and Escape abandons it and leaves the field. A draft that does not parse is marked and kept for correction. Only Enter and Escape stop at the field, so the panel shortcuts reach the app from inside it, as they do from the source editor. Every edit records its undo entry through `recordWorkspace`, which snapshots the selection, the node offsets and the plan together, so no edit can record a snapshot that leaves part of the workspace out.
 

@@ -648,6 +648,32 @@ textarea.source.error-state { border-color: var(--err); }
    would put its opaque canvas back over the edge layer. */
 .tc-slider { display: flex; align-items: center; gap: 5px; font-size: var(--t-small); color: var(--muted); }
 .tc-slider input { flex: 1; padding: 0; }
+.tc-slider input[type="range"] {
+  appearance: none; -webkit-appearance: none;
+  min-width: 0; width: 0; height: 18px; margin: 0;
+  border: 0; background: transparent; cursor: pointer;
+}
+.tc-slider input[type="range"]::-webkit-slider-runnable-track {
+  height: 1px; background: var(--muted); border-radius: 1px;
+}
+.tc-slider input[type="range"]::-webkit-slider-thumb {
+  appearance: none; -webkit-appearance: none;
+  width: 9px; height: 9px; margin-top: -4px;
+  border: 0; border-radius: 50%; background: var(--muted); cursor: grab;
+}
+.tc-slider input[type="range"]::-moz-range-track,
+.tc-slider input[type="range"]::-moz-range-progress {
+  height: 1px; background: var(--muted); border-radius: 1px;
+}
+.tc-slider input[type="range"]::-moz-range-thumb {
+  width: 9px; height: 9px;
+  border: 0; border-radius: 50%; background: var(--muted); cursor: grab;
+}
+.tc-slider input[type="range"]:is(:hover, :focus-visible, :active)::-webkit-slider-thumb { background: var(--accent); }
+.tc-slider input[type="range"]:is(:hover, :focus-visible, :active)::-moz-range-thumb { background: var(--accent); }
+.tc-slider input[type="range"]:active::-webkit-slider-thumb { cursor: grabbing; }
+.tc-slider input[type="range"]:active::-moz-range-thumb { cursor: grabbing; }
+.tc-slider input[type="range"]:focus-visible { outline-width: 1px; }
 .tc-slider-val { min-width: 18px; text-align: right; }
 .tc-tile-position { height: 20px; }
 .tc-tile-position input { flex: 0 1 60px; min-width: 0; width: 60px; height: 18px; font-size: var(--t-small); }

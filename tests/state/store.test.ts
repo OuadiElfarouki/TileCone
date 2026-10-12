@@ -210,7 +210,9 @@ C = matmul(A, B)
     expect(() => S().undoWorkspace()).not.toThrow();
     expect((sel() ? selTensors()[0] : undefined)).toBe("Out");
 
-    S().moveSelection(0, 1);
+    // Out's batch axis has extent one, so establish a real edit rather than
+    // relying on a clamped movement to add a redundant undo snapshot.
+    S().setSelection("Out", fromBox(S().resolved!.tensors.Out.resolved!.map(() => ({ lo: 0, hi: 1 }))), "replace");
     expect(S().workspaceHistory.length).toBeGreaterThan(0);
     S().applyDSL("X = Tensor(2, 3, dtype=fp32)\nY = identity(X)\n");
     expect(S().workspaceHistory).toEqual([]);

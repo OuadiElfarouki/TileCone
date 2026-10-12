@@ -67,7 +67,7 @@ describe("global shortcuts with movable node focus", () => {
   it("leaves arrow keys to the node without moving a tile", () => {
     useStore.getState().setSelection("X", fromBox([{ lo: 0, hi: 1 }]), "replace");
     const selection = useStore.getState().selection;
-    const move = vi.spyOn(useStore.getState(), "moveSelection");
+    const move = vi.spyOn(useStore.getState(), "nudgeSelection");
     const event = key("ArrowRight");
     onKey(event);
     expect(move).not.toHaveBeenCalled();
@@ -167,10 +167,26 @@ it.each([false, true])("keeps tile shortcuts active for parameter edits while co
   s.setSelection("Y", fromBox([{ lo: 0, hi: 2 }]), "replace");
   s.setDraftText(source.replace("M = 8", "M = 16"));
   useStore.setState({ compiling });
-  const move = vi.spyOn(useStore.getState(), "moveSelection");
+  const move = vi.spyOn(useStore.getState(), "nudgeSelection");
   const event = key("ArrowRight", "canvas");
   onKey(event);
   expect(move).toHaveBeenCalledOnce();
   expect(event.preventDefault).toHaveBeenCalled();
   useStore.setState({ compiling: false });
+});
+
+it("carries along the actual stride-one axis when the drawn plane is remapped", () => {
+  const s = useStore.getState();
+  s.applyDSL("X = Tensor(2, 3, 4)\nY = relu(X)\n");
+  s.setCanvasTool("select");
+  s.setSnapToGrid(false);
+  s.setViewCfg("Y", { projection: false, unfold: "across", axes: [2, 1] });
+  const last = [{ lo: 0, hi: 1 }, { lo: 2, hi: 3 }, { lo: 3, hi: 4 }];
+  s.setSelection("Y", fromBox(last), "replace");
+  onKey(key("ArrowRight", "canvas")); // axis 1 has stride 4, so it clamps.
+  expect(useStore.getState().selection!.parts[0].box).toEqual(last);
+  onKey(key("ArrowDown", "canvas")); // axis 2 has stride 1, so it carries.
+  expect(useStore.getState().selection!.parts[0].box).toEqual([
+    { lo: 1, hi: 2 }, { lo: 0, hi: 1 }, { lo: 0, hi: 1 },
+  ]);
 });

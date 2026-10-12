@@ -1,8 +1,11 @@
 import { tilePlan } from "../../core/plan/plan";
+import { tileBox } from "../../core/plan/tile-family";
+import { hasUnitStride, stepCoordinate } from "../../core/coordinates";
 import { defaultPlanTile } from "../../view/tensor/seeds";
 import { idRecord, operationForTensor } from "../../view/workspace";
 import { recordWorkspace, sameNumbers, sameTask, sameTiles } from "../history";
 import { derivePlan, inspectTask, MAX_KEPT_PLANS, tileContaining } from "../plan";
+import { revealHidden } from "../selection-edit";
 import { GetState, SetState, State } from "../types";
 
 /** The declared tiling and the inspected task. */
@@ -101,16 +104,16 @@ export const planActions = (set: SetState, get: GetState): Pick<
     const { plan, planTask, resolved } = state;
     if (!plan || !planTask || !resolved) return;
     const family = plan.families.get(planTask.tensorId)!;
-    if (axis < 0 || axis >= family.grid.length) return;
-    const coord = [...planTask.coord];
-    coord[axis] = Math.max(0, Math.min(family.grid[axis] - 1, coord[axis] + delta));
-    if (coord[axis] === planTask.coord[axis]) return;
+    if (!Number.isSafeInteger(axis) || axis < 0 || axis >= family.grid.length || !Number.isSafeInteger(delta)) return;
+    const coord = stepCoordinate(planTask.coord, family.grid, axis, delta, hasUnitStride(family.shape, axis));
+    if (sameNumbers(coord, planTask.coord)) return;
     set({
       workspaceHistory: record
         ? recordWorkspace(state)
         : state.workspaceHistory,
       ...derivePlan(resolved, state.planTiles, { tensorId: planTask.tensorId, coord }, state),
     });
+    revealHidden(get, planTask.tensorId, tileBox(family, coord));
   },
 
   /* `report` is the evaluation of the current tiling, which the caller holds:

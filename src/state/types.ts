@@ -271,6 +271,8 @@ export type State = {
    * `record` false appends no undo entry : used for auto-repeat, so holding an
    * arrow key is one undo step rather than forty. */
   moveSelection: (axis: number, delta: number, record?: boolean) => void;
+  /** Nudge with the current snap unit; stride-one axes carry in row-major order. */
+  nudgeSelection: (axis: number, sign: -1 | 1, multiplier?: number, record?: boolean) => void;
   /** Replace one ordered selection part without renumbering its peers. */
   replaceBox: (index: number, box: Box) => void;
   deleteBox: (index: number) => void;
@@ -329,7 +331,7 @@ export type State = {
   setPlanTileAt: (tensorId: string, tile: number[], element: number[]) => void;
   /** Tile a produced tensor at the default extents, leaving the inspected task alone. */
   tilePlanTensor: (tensorId: string) => void;
-  /** Step the inspected task `delta` tiles along `axis`, stopping at the grid's edge. */
+  /** Step tasks, carrying along stride-one axes; clamp at the outer grid ends. */
   movePlanTask: (axis: number, delta: number, record?: boolean) => void;
   /** Keep the current tiling and its evaluation for comparison; one without a total is not kept. */
   keepPlan: (report: PlanReport) => void;

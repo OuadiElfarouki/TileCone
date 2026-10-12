@@ -1,6 +1,7 @@
 import { Box } from "../core/region";
+import { tileBox } from "../core/plan/tile-family";
 import { viewAxes } from "../view/tensor/tensor-view";
-import { anchorTensorId, operationForTensor, SelPart } from "../view/workspace";
+import { analysisTarget, anchorTensorId, operationForTensor, SelPart } from "../view/workspace";
 import { recompute } from "./analysis";
 import { recordWorkspace } from "./history";
 import { State } from "./types";
@@ -18,7 +19,7 @@ export function revealHidden(get: () => State, tensorId: string, box: Box): void
   const state = get();
   const shape = state.resolved?.tensors[tensorId]?.resolved;
   const cfg = state.viewCfgs[tensorId];
-  if (!shape || !cfg) return;
+  if (!shape || !cfg || cfg.unfold) return;
   const { rowAxis, colAxis } = viewAxes(shape, cfg);
   let changed = false;
   const sliders = cfg.sliders.slice();
@@ -30,6 +31,21 @@ export function revealHidden(get: () => State, tensorId: string, box: Box): void
     changed = true;
   });
   if (changed) state.setViewCfg(tensorId, { sliders });
+}
+
+/** Undo restores geometry rather than view settings; reveal its active tile. */
+export function revealActiveTile(get: () => State): void {
+  const state = get();
+  const task = state.inspectorTab === "plan" ? state.planTask : null;
+  const family = task && state.plan?.families.get(task.tensorId);
+  if (task && family) {
+    revealHidden(get, task.tensorId, tileBox(family, task.coord));
+    return;
+  }
+  const parts = state.selection?.parts ?? [];
+  const target = analysisTarget(parts, state.analysisGroup, state.perBox ? state.focusedBox : null);
+  const part = parts[target.index];
+  if (part) revealHidden(get, part.tensorId, part.box);
 }
 
 /**

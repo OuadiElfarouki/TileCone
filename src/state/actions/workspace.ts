@@ -17,6 +17,7 @@ import {
   validWorkspaceFields,
 } from "../load";
 import { derivePlan, validateKeptTilings } from "../plan";
+import { revealActiveTile } from "../selection-edit";
 import { GetState, SetState, State } from "../types";
 
 /** Loading sources and examples, restoring shared links, undo, and composite expansion. */
@@ -166,6 +167,9 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
     const { workspaceHistory, resolved, selection, perBox, entangled } = get();
     if (!workspaceHistory.length) return;
     const prev = workspaceHistory[workspaceHistory.length - 1];
+    // Only a step that restores tiles or the plan moves the slices to show
+    // them; undoing a node move leaves a slice the reader scrubbed where it is.
+    const geometryChanged = prev.selection !== selection || !samePlanEdit(planEditOf(get()), prev.plan);
     if (prev.source) {
       // The complete pre-expansion graph is part of this one special history
       // entry. Restoring it directly avoids recompiling and relaying out a
@@ -214,6 +218,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
         ? {}
         : { inspectorTab: "plan" as InspectorTab }),
     });
+    if (geometryChanged) revealActiveTile(get);
   },
 
   expandNodeInPlace: (nodeId) => {

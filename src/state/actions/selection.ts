@@ -1,12 +1,43 @@
 import { executeQuery } from "../../core/executor";
+import { hasUnitStride } from "../../core/coordinates";
 import { addPart, Box, Region, sameBox, subtractFromParts, translateAllParts, translatePart } from "../../core/region";
+import { nudgeDelta, tileOf } from "../../view/tensor/grid";
+import { nudgeBoxes } from "../../view/tensor/movement";
 import { viewAxes } from "../../view/tensor/tensor-view";
-import { tileFits, tileSpanAt } from "../../view/tensor/tile-spec";
+import { gestureTile, tileFits, tileSpanAt } from "../../view/tensor/tile-spec";
 import { analysisTarget, MAX_PREVIEW_NODES, operationForTensor, partsOn, SelPart } from "../../view/workspace";
 import { recompute } from "../analysis";
 import { recordWorkspace } from "../history";
 import { editSelection, revealHidden } from "../selection-edit";
 import { GetState, SetState, State } from "../types";
+
+/** Share scope, rigid group translation, metadata, and hidden-axis following. */
+function moveParts(
+  get: GetState,
+  set: SetState,
+  record: boolean,
+  move: (boxes: Box[], focused: number, shape: number[], state: State) => Box[]
+): void {
+  const state = get();
+  const parts = state.selection?.parts;
+  const target = analysisTarget(parts ?? [], state.analysisGroup, state.perBox ? state.focusedBox : null);
+  const anchor = target.tensorId;
+  const shape = anchor && state.resolved?.tensors[anchor]?.resolved;
+  if (!parts || !anchor || !shape) return;
+  const local = parts.flatMap((part, i) => part.tensorId === anchor ? [i] : []);
+  const boxes = local.map((i) => parts[i].box);
+  const focused = target.focusedBox === null ? -1 : local.indexOf(target.focusedBox);
+  const moved = move(boxes, focused, shape, state);
+  if (moved === boxes) return;
+  const next = parts.slice();
+  local.forEach((i, j) => { if (moved[j] !== boxes[j]) next[i] = { tensorId: anchor, box: moved[j] }; });
+  editSelection(get, set, () => next, true, record);
+  const oldBox = parts[target.index]?.box;
+  const movedBox = next[target.index]?.box;
+  const { rowAxis, colAxis } = viewAxes(shape, get().viewCfgs[anchor]);
+  const hiddenMoved = oldBox?.some((interval, axis) => axis !== rowAxis && axis !== colAxis && interval.lo !== movedBox[axis].lo);
+  if (hiddenMoved) revealHidden(get, anchor, movedBox);
+}
 
 /** Drawing, editing, focusing and enabling tiles, and the hover preview. */
 export const selectionActions = (set: SetState, get: GetState): Pick<
@@ -14,6 +45,7 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
   "setSelection"
   | "clearSelection"
   | "moveSelection"
+  | "nudgeSelection"
   | "replaceBox"
   | "deleteBox"
   | "hoverBox"
@@ -121,46 +153,32 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
    * applied across tensors of different rank -- parts elsewhere hold still.
    */
   moveSelection: (axis, delta, record = true) => {
-    const state = get();
-    const target = analysisTarget(state.selection?.parts ?? [], state.analysisGroup,
-      state.perBox ? state.focusedBox : null);
-    const focused = target.focusedBox;
-    editSelection(
-      get,
-      set,
-      (parts, shapeOf) => {
-        const anchor = target.tensorId;
-        if (!anchor) return parts;
-        const shape = shapeOf(anchor);
-        const local: number[] = [];
-        const boxes: Box[] = [];
-        parts.forEach((p, i) => {
-          if (p.tensorId === anchor) {
-            local.push(i);
-            boxes.push(p.box);
-          }
-        });
-        const at = focused !== null ? local.indexOf(focused) : -1;
-        const moved =
-          at >= 0
-            ? translatePart(boxes, at, axis, delta, shape)
-            : translateAllParts(boxes, axis, delta, shape);
-        if (moved === boxes) return parts;
-        const next = parts.slice();
-        local.forEach((globalIndex, j) => {
-          next[globalIndex] = { tensorId: anchor, box: moved[j] };
-        });
-        return next;
-      },
-      true,
-      record
-    );
-    // A move along a hidden axis would otherwise carry the tile out of the
-    // slice on screen; the view follows the tile the reader is studying.
-    const moved = target.tensorId && get().selection?.parts[target.index];
-    if (!moved) return;
-    const { rowAxis, colAxis } = viewAxes(moved.box.map((interval) => interval.hi), get().viewCfgs[moved.tensorId]);
-    if (axis !== rowAxis && axis !== colAxis) revealHidden(get, moved.tensorId, moved.box);
+    moveParts(get, set, record, (boxes, focused, shape) => {
+      if (!Number.isSafeInteger(axis) || axis < 0 || axis >= shape.length || !Number.isSafeInteger(delta)) return boxes;
+      return focused >= 0 ? translatePart(boxes, focused, axis, delta, shape) : translateAllParts(boxes, axis, delta, shape);
+    });
+  },
+
+  nudgeSelection: (axis, sign, multiplier = 1, record = true) => {
+    moveParts(get, set, record, (boxes, focused, shape, state) => {
+      if (!Number.isSafeInteger(axis) || axis < 0 || axis >= shape.length ||
+          (sign !== -1 && sign !== 1) || !Number.isSafeInteger(multiplier) || multiplier < 1) return boxes;
+      const target = analysisTarget(state.selection!.parts, state.analysisGroup, state.perBox ? state.focusedBox : null);
+      const cfg = state.viewCfgs[target.tensorId!];
+      const units = state.snapToGrid
+        ? gestureTile(shape, cfg, tileOf(shape, state.tileScale, state.graphPx, cfg))
+        : shape.map(() => 1);
+      // Non-contiguous axes keep the existing clamped translation policy.
+      if (!hasUnitStride(shape, axis)) {
+        const interval = state.selection!.parts[target.index].box[axis];
+        const delta = nudgeDelta(interval, sign, units[axis], state.snapToGrid, multiplier);
+        return focused >= 0 ? translatePart(boxes, focused, axis, delta, shape) : translateAllParts(boxes, axis, delta, shape);
+      }
+      const moving = focused >= 0 ? [boxes[focused]] : boxes;
+      const moved = nudgeBoxes(moving, shape, units, axis, sign, multiplier);
+      if (moved === moving) return boxes;
+      return focused >= 0 ? boxes.map((box, i) => i === focused ? moved[0] : box) : moved;
+    });
   },
 
   replaceBox: (index, box) =>

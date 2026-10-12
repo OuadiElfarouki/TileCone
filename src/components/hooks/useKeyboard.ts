@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import { useStore } from "../../state/store";
-import { nudgeDelta, nudgeUnit } from "../../view/tensor/grid";
 import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
 import { hiddenAxisPositioned, viewAxes } from "../../view/tensor/tensor-view";
 import { activeCanvasTool, analysisTarget, graphIsInteractive, InspectorTab } from "../../view/workspace";
@@ -204,21 +203,10 @@ export function useKeyboard({
         const [axis, sign] = hit;
         if (axis < 0) return;
         e.preventDefault();
-        const parts = s.selection?.parts ?? [];
-        const anchorIndex = target.index;
-        const interval = parts[anchorIndex]?.box[axis];
-        if (!interval) return;
-        const delta = nudgeDelta(
-          interval,
-          sign as -1 | 1,
-          nudgeUnit(shape, cfg, s.tileScale, s.graphPx, s.snapToGrid, axis),
-          s.snapToGrid,
-          matchesShortcut(e, SHORTCUTS.moveFast) ? 8 : 1
-        );
         // Auto-repeat records no undo entry, so holding an arrow is one step to
         // undo rather than many individual steps, which would also evict the
         // meaningful history from the store's bounded undo stack.
-        s.moveSelection(axis, delta, !e.repeat);
+        s.nudgeSelection(axis, sign as -1 | 1, matchesShortcut(e, SHORTCUTS.moveFast) ? 8 : 1, !e.repeat);
         return;
       }
 
