@@ -22,6 +22,21 @@ export type CanvasTool = "select" | "move";
 /** The two classes of question the inspector answers; see `inspectorTab`. */
 export type InspectorTab = "dependencies" | "plan";
 
+/**
+ * Whether cards and operations can be moved. The Plan view divides and inspects
+ * tasks on the arrangement as it stands, so nothing there moves a node: not the
+ * move tool, not a Ctrl/Cmd drag, not the arrow keys, not a layout reset.
+ */
+export const layoutMovable = (tab: InspectorTab): boolean => tab !== "plan";
+
+/**
+ * The tool a press on the graph uses: the remembered one, except in the Plan
+ * view, which always selects. The preference itself is kept, and returns with
+ * the Dependencies view.
+ */
+export const activeCanvasTool = (state: { canvasTool: CanvasTool; inspectorTab: InspectorTab }): CanvasTool =>
+  layoutMovable(state.inspectorTab) ? state.canvasTool : "select";
+
 /** The visible build is a navigable snapshot while source is edited or built.
  * Keep this derived from source identity so reverting a draft reactivates it. */
 export function graphIsInteractive(state: {
@@ -34,24 +49,20 @@ export function graphIsInteractive(state: {
 }
 /**
  * A family replay on the cards (`core/plan/replay.ts`), and how far through it
- * the playback is. Transient view state, never an edit: it overlays the plan
- * and leaves it unchanged.
+ * the playback is. Transient view state, never an edit: it overlays the plan,
+ * plays once, and clears, leaving the plan unchanged.
  */
 export type ReplayPlayback = {
   replay: FamilyReplay;
   /** The plan the frames were computed for. Another plan makes them stale. */
   plan: TilePlan;
-  /** Number of frames already visited; the active one is `visited - 1`. */
+  /** Runs walked so far; the last of them is the active one. */
   visited: number;
-  phase: "playing" | "settled";
   /**
    * The overlay is on its way out and `opacity` is being driven to zero.
    *
-   * Beside `phase` rather than a third value of it, because a departure has to
-   * leave the replay reading as whatever it was: folded into `phase`, a fade
-   * that began mid-replay would drop the task being walked and jump the cards
-   * from that one frame to the union of every frame so far - a change of
-   * subject on the way out, in the frames the reader was still watching.
+   * The trail fades as it stands, so a departure mid-replay reads as the
+   * same picture going away rather than a jump to some other one.
    */
   exiting: boolean;
   opacity: number;

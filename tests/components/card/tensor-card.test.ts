@@ -1,66 +1,85 @@
 import { describe, expect, it } from "vitest";
 import { cardSize } from "../../../src/components/card/TensorCard";
-import { box, fromBox, type Box } from "../../../src/core/region";
+import { box, count, fromBox, intersect, unionOf, type Box } from "../../../src/core/region";
 import { gridGeometry } from "../../../src/view/tensor/grid";
 import { graphScale } from "../../../src/view/tensor/tiling";
 
 describe("plan replay paint", () => {
-  /* Two tasks of Y. Each reads a band of X wider than the part the inspected
-     task also reads, so `region` and `shared` are genuinely different sets. */
+  /* Three runs of Y. Each reads a band of X wider than the part the inspected
+     task also reads, so `region` and `shared` are genuinely different sets.
+     The last run reads a different band, so an earlier run's reach left on the
+     card would be visible. */
   const reach = (region: Box, shared: Box | null) => ({
     region: fromBox(region),
     shared: shared ? fromBox(shared) : null,
   });
-  const frame = (coord: number[], tile: Box) => ({
-    task: { tensorId: "Y", coord },
-    box: tile,
-    reach: new Map([["X", reach(box([0, 4], [0, 4]), box([0, 2], [0, 4]))]]),
+  const frame = (coord: number[], tile: Box, read: Box) => ({
+    first: { tensorId: "Y", coord },
+    last: { tensorId: "Y", coord },
+    tasks: 1,
+    region: fromBox(tile),
+    reach: new Map([["X", reach(read, box([0, 2], [0, 4]))]]),
   });
-  const playback = (phase: ReplayPlayback["phase"] = "playing"): ReplayPlayback => ({
+  const playback = (visited = 3): ReplayPlayback => ({
     replay: {
       task: { tensorId: "Y", coord: [0, 0] },
-      frames: [frame([0, 0], box([0, 2], [0, 2])), frame([0, 1], box([0, 2], [2, 4]))],
-      tasks: 2,
+      frames: [
+        frame([0, 0], box([0, 2], [0, 2]), box([0, 4], [0, 4])),
+        frame([0, 1], box([0, 2], [2, 4]), box([0, 4], [0, 4])),
+        frame([1, 0], box([2, 4], [0, 2]), box([0, 2], [4, 8])),
+      ],
+      tasks: 3,
     },
     plan: {} as ReplayPlayback["plan"],
-    visited: 2,
-    phase,
+    visited,
     exiting: false,
     opacity: 1,
   });
 
-  it("shows the visited tasks on the family's tensor, the last one active", () => {
+  it("keeps every walked run as a trail on the family's tensor, the last one active", () => {
     const paint = buildReplayPaint({ tensorId: "Y", dark: false, playback: playback() });
     expect(paint.layers.map((layer) => layer.region.boxes[0])).toEqual([
       box([0, 2], [0, 2]),
       box([0, 2], [2, 4]),
+      box([2, 4], [0, 2]),
     ]);
-    expect(paint.layers[1].seed).toBe(true);
+    expect(paint.layers.map((layer) => layer.alpha)).toEqual([0.1, 0.1, 0.68]);
+    expect(paint.layers[2].seed).toBe(true);
+    // Not yet walked is not painted.
+    expect(buildReplayPaint({ tensorId: "Y", dark: false, playback: playback(1) }).layers).toHaveLength(1);
   });
 
-  /* A task paints where its demand lands as well as where it meets the
-     inspected task's: a family whose tasks mostly share nothing would
-     otherwise paint nothing. */
-  it("paints a task's whole reach, with the part the inspected task shares on top", () => {
-    const active = buildReplayPaint({ tensorId: "X", dark: false, playback: playback() });
+  /* A run paints where its demand lands as well as where it meets the
+     inspected task's: a family whose runs mostly share nothing would otherwise
+     paint nothing. */
+  it("paints the active run's whole reach, with the part the inspected task shares on top", () => {
+    const active = buildReplayPaint({ tensorId: "X", dark: false, playback: playback(2) });
     const [rest, shared] = active.layers;
     expect(rest.region.boxes).toEqual([box([2, 4], [0, 4])]); // reach minus the meeting
     expect(rest.alpha).toBe(0.26);
-    expect(rest.seed).toBeUndefined();
     expect(shared.region.boxes).toEqual([box([0, 2], [0, 4])]);
     expect(shared.alpha).toBe(0.62);
     expect(shared.seed).toBe(true);
   });
 
-  it("settles both readings into a quieter union", () => {
-    const settled = buildReplayPaint({ tensorId: "X", dark: false, playback: playback("settled") });
-    expect(settled.layers.map((layer) => layer.alpha)).toEqual([0.09, 0.22]);
-    expect(settled.layers.every((layer) => !layer.seed)).toBe(true);
+  /* What earlier runs read is not left behind on the other cards: only the
+     active run is drawn there, so nothing accumulates into a stale summary. */
+  it("leaves no trace of earlier runs on the cards they read", () => {
+    const paint = buildReplayPaint({ tensorId: "X", dark: false, playback: playback(3) });
+    const painted = unionOf(paint.layers.map((layer) => layer.region));
+    expect(count(painted)).toBe(count(fromBox(box([0, 2], [4, 8]))) + count(fromBox(box([0, 2], [0, 4]))));
+    expect(count(intersect(painted, fromBox(box([2, 4], [0, 4]))))).toBe(0);
   });
 
-  /* What a task reads is the Plan view's solid fill: a ruling or a stipple
+  it("fades the trail as it stands", () => {
+    const fading = { ...playback(), exiting: true, opacity: 0.5 };
+    const paint = buildReplayPaint({ tensorId: "Y", dark: false, playback: fading });
+    expect(paint.layers.map((layer) => layer.alpha)).toEqual([0.05, 0.05, 0.34]);
+  });
+
+  /* What a run reads is the Plan view's solid fill: a ruling or a stipple
      would read as a cone the plan does not draw. */
-  it("paints what a task reads in the plan's solid fill", () => {
+  it("paints what a run reads in the plan's solid fill", () => {
     const needs = buildReplayPaint({ tensorId: "X", dark: false, playback: playback() });
     expect(needs.layers.every((layer) => layer.pattern === undefined)).toBe(true);
   });
@@ -73,16 +92,13 @@ describe("plan replay paint", () => {
     expect(input).not.toHaveProperty("lattice");
   });
 
-  /* The settled summary is the union of every task's share, and any widened
-     task has to carry its hatch into that union. */
-  it("marks the settled union approximate when one task's demand was widened", () => {
-    const widened = playback("settled");
+  it("hatches a run whose demand was widened", () => {
+    const widened = playback(2);
     const reached = widened.replay.frames[1].reach.get("X")!;
     reached.shared = { ...reached.shared!, exact: false, reasons: ["strided fallback"] };
-    const settled = buildReplayPaint({ tensorId: "X", dark: false, playback: widened });
-    const shared = settled.layers[1];
-    expect(shared.hatch).toBe(true);
-    expect(shared.region.reasons).toEqual(["strided fallback"]);
+    const paint = buildReplayPaint({ tensorId: "X", dark: false, playback: widened });
+    expect(paint.layers[1].hatch).toBe(true);
+    expect(paint.layers[1].region.reasons).toEqual(["strided fallback"]);
   });
 });
 

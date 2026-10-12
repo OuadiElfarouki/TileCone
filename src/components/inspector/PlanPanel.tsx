@@ -813,17 +813,21 @@ function ComputedSection({ plan, computes }: { plan: TilePlan; computes: Compute
 function ReplayStatus({ playback, name }: { playback: ReplayPlayback; name: string }): React.ReactElement {
   const { frames, tasks } = playback.replay;
   const current = frames[playback.visited - 1];
+  const runs = frames.length < tasks;
   return (
     <>
-      {playback.phase === "playing" && current && (
+      {current && (
         <p className="hint">
-          Task {taskName(name, current.task.coord)} · {playback.visited} of {frames.length}
+          {current.tasks === 1
+            ? `Task ${taskName(name, current.first.coord)}`
+            : `Tasks ${taskName(name, current.first.coord)} to ${taskName(name, current.last.coord)}`}{" "}
+          · {playback.visited} of {frames.length}
         </p>
       )}
       <p className="hint">
-        {frames.length < tasks ? `${frames.length} of ${tasks} tasks, evenly spaced,` : `All ${tasks} tasks`} in
-        listing order, which is not an execution order. Full strength marks what each one shares
-        with this task.
+        {runs ? `All ${tasks} tasks in ${frames.length} runs,` : `All ${tasks} tasks`} in listing
+        order, which is not an execution order. Full strength marks what each {runs ? "run" : "task"}{" "}
+        shares with this task.
       </p>
     </>
   );

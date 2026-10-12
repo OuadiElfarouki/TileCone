@@ -1,5 +1,4 @@
-import { type Box, canonicalize, fromBox, isEmpty, type Region, subtractBox } from "../../core/region";
-import type { ReplayFrame } from "../../core/plan/replay";
+import { type Box, canonicalize, isEmpty, type Region, subtractBox } from "../../core/region";
 import { boxColor } from "../palette";
 import { Layer } from "./grid";
 import { ReplayPlayback } from "../workspace";
@@ -44,55 +43,16 @@ export function playbackDifference(reach: Region, shared: Region): Region {
 }
 
 /**
- * A union over the visited frames, computed once per replay rather than once
- * per repaint.
- *
- * `union` canonicalizes to a fixpoint on every call, so folding forty-eight
- * frames pairwise is forty-seven of them for one answer - inside the paint
- * effect, redone on every dependency that repaints the card. One canonicalize
- * over the concatenated boxes represents the same set, with the same exactness
- * and reasons.
- *
- * Keyed on the frames array, which a playback only replaces with a new replay,
- * so ticking `visited`, settling, and fading all reuse the entry. A `WeakMap`
- * keeps it bounded without anyone having to retire it.
- */
-const settledUnions = new WeakMap<ReplayFrame[], Map<string, Region | null>>();
-
-function unionAcrossFrames(
-  frames: ReplayFrame[],
-  all: ReplayFrame[],
-  key: string,
-  pick: (frame: ReplayFrame) => Region | null | undefined
-): Region | null {
-  const complete = frames.length === all.length;
-  const cached = complete ? settledUnions.get(all)?.get(key) : undefined;
-  if (cached !== undefined) return cached;
-
-  const parts = frames.flatMap((frame) => pick(frame) ?? []);
-  const united = parts.length === 0 ? null : canonicalize({
-    boxes: parts.flatMap((region) => region.boxes),
-    exact: parts.every((region) => region.exact),
-    reasons: [...new Set(parts.flatMap((region) => region.reasons))],
-  });
-  if (complete) {
-    const byKey = settledUnions.get(all) ?? new Map<string, Region | null>();
-    byKey.set(key, united);
-    settledUnions.set(all, byKey);
-  }
-  return united;
-}
-
-/**
  * Paint a family replay over the plan. It never substitutes for the plan's own
  * paint, and the plan is unchanged underneath it.
  *
- * On the family's tensor a frame is its task's tile. Everywhere else it is what
- * that task reads or computes, in the solid fill the Plan view gives the
- * inspected task's demand, with the part the inspected task demands too drawn
- * at full strength over the rest. Those two readings are the point: the replay
- * shows where each task's demand lands, and the emphasis shows the duplicate
- * demand the family rows count. Painting only the overlap would leave a task
+ * On the family's tensor the runs walked so far stay as a faint trail, and the
+ * active run is drawn strongly. The runs are contiguous in listing order, so
+ * the trail is one growing stretch of the grid with no gaps, and it is cleared
+ * all at once when the replay ends. Everywhere else only the active run is
+ * drawn: what it reads or computes, in the solid fill the Plan view gives the
+ * inspected task's demand, with the part the inspected task demands too at
+ * full strength over the rest. Painting only the overlap would leave a run
  * that shares nothing painting nothing.
  *
  * It draws no lattice: the plan's lattice is already on every tiled card.
@@ -107,45 +67,28 @@ export function buildReplayPaint({
   playback: ReplayPlayback;
 }): { layers: Layer[] } {
   const color = boxColor(0, dark);
-  const all = playback.replay.frames;
-  const frames = all.slice(0, playback.visited);
-  const active = playback.phase === "playing" ? frames[frames.length - 1] : null;
+  const frames = playback.replay.frames.slice(0, playback.visited);
+  const active = frames[frames.length - 1];
   const layers: Layer[] = [];
+  if (!active) return { layers };
 
   if (tensorId === playback.replay.task.tensorId) {
-    for (const frame of active ? frames.slice(0, -1) : frames)
-      layers.push({ region: fromBox(frame.box), color, alpha: 0.1 * playback.opacity, hatch: false });
-    if (active)
-      layers.push({ region: fromBox(active.box), color, alpha: 0.68 * playback.opacity, hatch: false, seed: true });
+    for (const frame of frames.slice(0, -1))
+      layers.push({ region: frame.region, color, alpha: 0.1 * playback.opacity, hatch: false });
+    layers.push({ region: active.region, color, alpha: 0.68 * playback.opacity, hatch: false, seed: true });
     return { layers };
   }
 
-  const reached = active ? active.reach.get(tensorId) ?? null : null;
-  const region = active
-    ? reached?.region ?? null
-    : unionAcrossFrames(frames, all, `${tensorId}|reach`, (frame) => frame.reach.get(tensorId)?.region);
-  if (!region) return { layers };
-  const shared = active
-    ? reached?.shared ?? null
-    : unionAcrossFrames(frames, all, `${tensorId}|shared`, (frame) => frame.reach.get(tensorId)?.shared);
+  const reached = active.reach.get(tensorId);
+  if (!reached) return { layers };
+  const { region, shared } = reached;
   /* Cache the display difference across fade ticks. Its splitting budget
      keeps fragmented geometry bounded; on exhaustion the full reach remains
      visible and overlap may darken. */
   const rest = shared ? playbackDifference(region, shared) : region;
   if (!isEmpty(rest))
-    layers.push({
-      region: rest,
-      color,
-      alpha: (active ? 0.26 : 0.09) * playback.opacity,
-      hatch: !rest.exact,
-    });
+    layers.push({ region: rest, color, alpha: 0.26 * playback.opacity, hatch: !rest.exact });
   if (shared)
-    layers.push({
-      region: shared,
-      color,
-      alpha: (active ? 0.62 : 0.22) * playback.opacity,
-      hatch: !shared.exact,
-      seed: !!active,
-    });
+    layers.push({ region: shared, color, alpha: 0.62 * playback.opacity, hatch: !shared.exact, seed: true });
   return { layers };
 }

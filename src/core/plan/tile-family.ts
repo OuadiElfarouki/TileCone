@@ -81,6 +81,14 @@ export function tileBox(f: TileFamily, coord: readonly number[]): Box {
   }));
 }
 
+/** The elements of every tile in a box of tile coordinates, shortened at the far edge. */
+export function tilesBox(f: TileFamily, coords: Box): Box {
+  return coords.map(({ lo, hi }, axis) => ({
+    lo: lo * f.tile[axis],
+    hi: Math.min(hi * f.tile[axis], f.shape[axis]),
+  }));
+}
+
 /** Elements in one tile. */
 export function tileVolume(f: TileFamily, coord: readonly number[]): number {
   return tileBox(f, coord).reduce((n, { lo, hi }) => n * (hi - lo), 1);

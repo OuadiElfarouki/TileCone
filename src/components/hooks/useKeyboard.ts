@@ -3,7 +3,7 @@ import { useStore } from "../../state/store";
 import { nudgeDelta, nudgeUnit } from "../../view/tensor/grid";
 import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
 import { hiddenAxisPositioned, viewAxes } from "../../view/tensor/tensor-view";
-import { analysisTarget, graphIsInteractive, InspectorTab } from "../../view/workspace";
+import { activeCanvasTool, analysisTarget, graphIsInteractive, InspectorTab } from "../../view/workspace";
 
 const isTyping = (el: EventTarget | null) => {
   const t = el as HTMLElement | null;
@@ -85,9 +85,11 @@ export function useKeyboard({
         // the press - it must not also leave the move tool the drag was made in.
         if (s.dragging || e.defaultPrevented) return;
         if (!graphIsInteractive(s)) return;
-        if (s.canvasTool === "move") {
+        if (activeCanvasTool(s) === "move") {
           // The tool is the mode the canvas is in, so it goes before anything
-          // the canvas is pointing at: one press puts it back to drawing.
+          // the canvas is pointing at: one press puts it back to drawing. In
+          // the Plan view no tool is in effect but select, so Escape goes on
+          // to the task.
           e.preventDefault();
           s.setCanvasTool("select");
           return;

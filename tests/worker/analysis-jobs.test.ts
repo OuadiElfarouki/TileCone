@@ -78,7 +78,7 @@ describe("analysis worker jobs", () => {
     const cloned = structuredClone(replay);
     expect(cloned.frames[0].reach).toBeInstanceOf(Map);
     expect(cloned.frames.length).toBe(replay.tasks);
-    expect(cloned.frames[0].box).toEqual(box([0, 64], [0, 64]));
+    expect(cloned.frames[0].region.boxes).toEqual([box([0, 64], [0, 64])]);
   });
 });
 

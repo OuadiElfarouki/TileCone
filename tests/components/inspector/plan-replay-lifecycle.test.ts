@@ -61,7 +61,13 @@ import { replayInWorker } from "../../../src/state/analysis-worker-client";
 import { familyReplay } from "../../../src/core/plan/replay";
 import { usePlanReplay } from "../../../src/components/inspector/usePlanReplay";
 
-const interval = vi.fn(() => 1);
+/** Interval callbacks by id, so a test can step the playback and its fade. */
+const ticks = new Map<number, () => void>();
+const interval = vi.fn((tick: () => void) => {
+  ticks.set(ticks.size + 1, tick);
+  return ticks.size;
+});
+const clear = vi.fn((id: number) => { ticks.delete(id); });
 const render = (tab: InspectorTab, commit = true) => {
   useStore.getState().setInspectorTab(tab);
   hooks.begin();
@@ -81,7 +87,8 @@ const flushResponse = async () => { await Promise.resolve(); await Promise.resol
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.stubGlobal("window", { setInterval: interval, clearInterval: vi.fn() });
+  ticks.clear();
+  vi.stubGlobal("window", { setInterval: interval, clearInterval: clear });
   useStore.getState().applyDSL("X = Tensor(8)\nY = relu(X)\n");
   useStore.getState().setPlanTileAt("Y", [2], [0]);
 });
@@ -95,7 +102,7 @@ describe("replay responses across tab changes", () => {
     resolve(response());
     await flushResponse();
     expect(render("plan").pending).toBe(false);
-    expect(useStore.getState().replayPlayback).toMatchObject({ phase: "playing", exiting: false });
+    expect(useStore.getState().replayPlayback).toMatchObject({ visited: 1, exiting: false });
     expect(interval).toHaveBeenCalledOnce();
   });
 
@@ -138,5 +145,34 @@ describe("replay responses across tab changes", () => {
     expect(render("plan").pending).toBe(false);
     expect(useStore.getState().replayPlayback).not.toBeNull();
     expect(interval).toHaveBeenCalledOnce();
+  });
+});
+
+describe("the end of a replay", () => {
+  it("walks every run, then clears the whole trail together and leaves nothing", async () => {
+    const resolve = deferred();
+    render("plan").run();
+    resolve(response());
+    await flushResponse();
+    const frames = useStore.getState().replayPlayback!.replay.frames.length;
+    expect(frames).toBe(4);
+    const step = [...ticks.values()][0];
+    for (let visited = 2; visited <= frames; visited++) {
+      step();
+      expect(useStore.getState().replayPlayback).toMatchObject({ visited, exiting: false });
+    }
+    // The last run has had its turn: the trail fades as it stands, all of it at once.
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    step();
+    expect(useStore.getState().replayPlayback).toMatchObject({ visited: frames, exiting: true });
+    const fadeTick = [...ticks.values()].pop()!;
+    now = 200;
+    fadeTick();
+    expect(useStore.getState().replayPlayback!.opacity).toBeCloseTo(0.5);
+    now = 400;
+    fadeTick();
+    expect(useStore.getState().replayPlayback).toBeNull();
+    expect(ticks.size).toBe(0);
   });
 });

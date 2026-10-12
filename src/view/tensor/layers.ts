@@ -6,7 +6,7 @@
 
 import { producerPage, TaskSupply } from "../../core/plan/interfaces";
 import { TilePlan } from "../../core/plan/plan";
-import { tileBox } from "../../core/plan/tile-family";
+import { tileBox, tilesBox } from "../../core/plan/tile-family";
 import { Box, fromBox, intersect, isEmpty, Region, subtract, unionOf } from "../../core/region";
 import { aggregateColors, boxColor } from "../palette";
 import { Layer, PlanPaint } from "./grid";
@@ -343,10 +343,7 @@ export function buildPlanPaint({
       : [
           ...group.coordinates.boxes.map((box) => ({ box, definite: group.count === group.definiteCount })),
           ...(group.count === group.definiteCount ? [] : group.definiteCoordinates.boxes.map((box) => ({ box, definite: true }))),
-        ].map(({ box, definite }) => ({
-          box: box.map(({ lo, hi }, axis) => ({ lo: lo * family.tile[axis], hi: Math.min(hi * family.tile[axis], family.shape[axis]) })),
-          definite,
-        }))
+        ].map(({ box, definite }) => ({ box: tilesBox(family, box), definite }))
     : [];
   // What the gesture would take, outlined in the task hue: it is about to
   // become the inspected tile, not a producer of one.

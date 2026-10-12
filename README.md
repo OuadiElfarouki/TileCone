@@ -112,10 +112,11 @@ band of `H`. Full-width `Y` tiles compute each band once.
 up to two kept plans read beside the current one. Each kept plan can be restored as the current
 tiling, which undoes like any other plan edit.
 
-**replay** walks the inspected task's family on the graph, one task at a time: what each task reads
-and computes, with the part it shares with the inspected task drawn on top. The tasks follow
-listing order, row by row, which is not an execution order; a family of more than 48 tasks is shown
-through an even spread of them.
+**replay** walks the inspected task's family on the graph: what each task reads and computes, with
+the part it shares with the inspected task drawn on top, and a trail of the tiles walked so far.
+The tasks follow listing order, row by row, which is not an execution order. A family of more than
+48 tasks is walked in 48 contiguous runs, so no task is skipped. When the replay ends the trail
+clears, and nothing stays on the graph.
 
 Share links include the current tiling, inspected task, kept tilings and Plan view. Kept
 figures are recomputed when the link is opened. Producer details are paged, with total counts

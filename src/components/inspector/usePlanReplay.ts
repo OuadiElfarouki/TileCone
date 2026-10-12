@@ -10,6 +10,16 @@ import { useStore } from "../../state/store";
 const tilesOf = (plan: TilePlan): Record<string, number[]> =>
   Object.fromEntries([...plan.families].map(([tensorId, family]) => [tensorId, [...family.tile]]));
 
+/** How long a whole replay takes, and the bounds on one run's turn within it. */
+const REPLAY_MS = 4200;
+const MIN_STEP_MS = 84;
+const MAX_STEP_MS = 220;
+/** How long a departure takes to fade the overlay, and the end of a replay. */
+const DEPART_FADE_MS = 240;
+const END_FADE_MS = 400;
+/** How long the whole trail is held, with reduced motion, before it clears. */
+const REDUCED_HOLD_MS = 1500;
+
 /** Whether a playback is about this plan and this task. */
 const about = (playback: ReplayPlayback | null, plan: TilePlan | null, task: TaskRef | null) =>
   !!playback && playback.plan === plan && sameTask(playback.replay.task, task);
@@ -27,9 +37,9 @@ export type PlanReplayControl = {
  * The family replay behind the Plan view: the Worker request, and the
  * playback that walks its frames on the cards.
  *
- * The playback's timers live here, so the hook also owns retiring them: on
- * leaving the Plan view, when the inspected task or the plan changes, and when
- * the panel unmounts. It lives in the inspector rather than the Plan view so
+ * The playback's timers live here, so the hook also owns retiring them: at the
+ * end of the replay, on leaving the Plan view, when the inspected task or the
+ * plan changes, and when the panel unmounts. It lives in the inspector rather than the Plan view so
  * that leaving the view fades the overlay rather than cutting it.
  */
 export function usePlanReplay({
@@ -59,29 +69,7 @@ export function usePlanReplay({
     fadeTimer.current = null;
   }, []);
 
-  const start = useCallback((replay: FamilyReplay, forPlan: TilePlan) => {
-    stopTimers();
-    const frames = replay.frames.length;
-    const reduced = typeof matchMedia === "function" &&
-      matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduced || frames <= 1) {
-      setPlayback({ replay, plan: forPlan, visited: frames, phase: "settled", exiting: false, opacity: 0.72 });
-      return;
-    }
-    setPlayback({ replay, plan: forPlan, visited: 1, phase: "playing", exiting: false, opacity: 1 });
-    let visited = 1;
-    const delay = Math.max(42, Math.min(110, Math.round(2100 / frames)));
-    playbackTimer.current = window.setInterval(() => {
-      visited++;
-      if (visited > frames) {
-        window.clearInterval(playbackTimer.current!);
-        playbackTimer.current = null;
-        updatePlayback({ visited: frames, phase: "settled", opacity: 0.72 });
-      } else updatePlayback({ visited });
-    }, delay);
-  }, [setPlayback, stopTimers, updatePlayback]);
-
-  const fade = useCallback(() => {
+  const fade = useCallback((duration = DEPART_FADE_MS) => {
     const now = useStore.getState().replayPlayback;
     if (!now || now.exiting) return;
     stopTimers();
@@ -89,7 +77,7 @@ export function usePlanReplay({
     const started = performance.now();
     updatePlayback({ exiting: true });
     fadeTimer.current = window.setInterval(() => {
-      const progress = Math.min(1, (performance.now() - started) / 240);
+      const progress = Math.min(1, (performance.now() - started) / duration);
       updatePlayback({ opacity: initial * (1 - progress) });
       if (progress >= 1) {
         window.clearInterval(fadeTimer.current!);
@@ -99,19 +87,29 @@ export function usePlanReplay({
     }, 30);
   }, [setPlayback, stopTimers, updatePlayback]);
 
-  /** Coming back interrupts a departure. Settle rather than resume from where
-   *  the fade froze it; `run` replays the whole family for a reader who wants it. */
-  const cancelFade = useCallback(() => {
-    const now = useStore.getState().replayPlayback;
-    if (!now?.exiting) return;
+  /* One run per step, the trail growing behind it; once the last run has had
+     its turn, the whole trail clears together. Nothing stays behind on the
+     cards. With reduced motion the whole trail is shown at once and held
+     rather than walked. */
+  const start = useCallback((replay: FamilyReplay, forPlan: TilePlan) => {
     stopTimers();
-    updatePlayback({ exiting: false, phase: "settled", visited: now.replay.frames.length, opacity: 0.72 });
-  }, [stopTimers, updatePlayback]);
+    const frames = replay.frames.length;
+    const reduced = typeof matchMedia === "function" &&
+      matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let visited = reduced ? frames : 1;
+    setPlayback({ replay, plan: forPlan, visited, exiting: false, opacity: 1 });
+    const step = reduced
+      ? REDUCED_HOLD_MS
+      : Math.max(MIN_STEP_MS, Math.min(MAX_STEP_MS, Math.round(REPLAY_MS / frames)));
+    playbackTimer.current = window.setInterval(() => {
+      if (visited < frames) updatePlayback({ visited: ++visited });
+      else fade(END_FADE_MS);
+    }, step);
+  }, [fade, setPlayback, stopTimers, updatePlayback]);
 
   useEffect(() => {
-    if (tab === "plan") cancelFade();
-    else fade();
-  }, [cancelFade, fade, tab]);
+    if (tab !== "plan") fade();
+  }, [fade, tab]);
 
   // A replay is about one task under one plan; another of either retires it.
   useEffect(() => {

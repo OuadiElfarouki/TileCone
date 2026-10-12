@@ -123,9 +123,8 @@ describe("planning from the canvas", () => {
       replay: { task: task!, frames: [], tasks: 1 },
       plan: S().plan!,
       visited: 0,
-      phase: "settled",
       exiting: false,
-      opacity: 0.72,
+      opacity: 1,
     });
     S().setInspectorTab("dependencies");
     S().setInspectorTab("plan");

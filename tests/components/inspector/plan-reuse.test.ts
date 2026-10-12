@@ -76,7 +76,7 @@ describe("family replay in the Plan view", () => {
 
   it("says where the replay is, and that listing order is not an execution order", () => {
     const replay = familyReplay(S().plan!, S().planTask!);
-    S().setReplayPlayback({ replay, plan: S().plan!, visited: 3, phase: "playing", exiting: false, opacity: 1 });
+    S().setReplayPlayback({ replay, plan: S().plan!, visited: 3, exiting: false, opacity: 1 });
     const html = render();
     expect(html).toContain("Task Y (0, 2) · 3 of 16");
     expect(html).toContain("All 16 tasks in");
@@ -86,7 +86,7 @@ describe("family replay in the Plan view", () => {
 
   it("drops a replay that belongs to another task", () => {
     const replay = familyReplay(S().plan!, S().planTask!);
-    S().setReplayPlayback({ replay, plan: S().plan!, visited: 3, phase: "playing", exiting: false, opacity: 1 });
+    S().setReplayPlayback({ replay, plan: S().plan!, visited: 3, exiting: false, opacity: 1 });
     S().selectPlanTask({ tensorId: "Y", coord: [0, 0] });
     expect(render()).not.toContain("listing order");
     S().setReplayPlayback(null);

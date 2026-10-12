@@ -45,6 +45,27 @@ describe("the layout group", () => {
   });
 });
 
+/* The Plan view divides and inspects tasks on the arrangement as it stands.
+   Both controls stay in place, unavailable, with the reason on each. */
+describe("the layout group in the Plan view", () => {
+  it("is unavailable, reads unpressed, and keeps the remembered tool", () => {
+    S().setCanvasTool("move");
+    S().setNodeOffset("t:X", { dx: 30, dy: 0 });
+    S().commitNodeMove("t:X", { dx: 0, dy: 0 });
+    S().setInspectorTab("plan");
+    const html = render();
+    expect(html).toContain('aria-pressed="false"');
+    expect(html).not.toContain("mini toggle on");
+    expect(html.match(/disabled=""/g)).toHaveLength(2);
+    expect(html).toContain("switch to Dependencies to move them");
+
+    S().setInspectorTab("dependencies");
+    const back = render();
+    expect(back).toContain('aria-pressed="true"');
+    expect(back).not.toContain("disabled");
+  });
+});
+
 describe("restoring generated placement", () => {
   it("offers reset only once something has been moved", () => {
     expect(render()).toContain("disabled");

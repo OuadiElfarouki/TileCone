@@ -27,7 +27,7 @@ import { FIT_GRAPH_EVENT } from "../hooks/useKeyboard";
 import { GridControls } from "../chrome/GridControls";
 import { LayoutControls } from "../chrome/LayoutControls";
 import { useFrameThrottle } from "../hooks/useFrameThrottle";
-import { graphIsInteractive, involvedTensorIds, PANEL_RAIL } from "../../view/workspace";
+import { activeCanvasTool, graphIsInteractive, involvedTensorIds, layoutMovable, PANEL_RAIL } from "../../view/workspace";
 import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
 import { planesOf } from "../../view/tensor/seeds";
 import { isPrimaryPress } from "../pointer";
@@ -225,8 +225,10 @@ export function GraphView(): React.ReactElement {
   const setFocusNode = useStore((s) => s.setFocusNode);
   const setDragging = useStore((s) => s.setDragging);
   const nodeOffsets = useStore((s) => s.nodeOffsets);
-  const moveTool = useStore((s) => s.canvasTool === "move");
-  const moveHeld = useMoveModifier();
+  const moveTool = useStore((s) => activeCanvasTool(s) === "move");
+  const movable = useStore((s) => layoutMovable(s.inspectorTab));
+  // Holding Ctrl/Cmd shows the move cursor only where a drag could follow.
+  const moveHeld = useMoveModifier() && movable;
   const setNodeOffset = useStore((s) => s.setNodeOffset);
   const commitNodeMove = useStore((s) => s.commitNodeMove);
   const resetNodeLayout = useStore((s) => s.resetNodeLayout);
@@ -660,8 +662,11 @@ export function GraphView(): React.ReactElement {
     // this DOM node and must keep its own pointer gestures.
     if (!e.currentTarget.contains(e.target as Node)) return false;
     // The tool is read here rather than captured, so switching it mid-session
-    // takes effect on the next press. The modifier comes off the press itself.
-    if (useStore.getState().canvasTool !== "move" && !borrowsMoveTool(e)) return false;
+    // takes effect on the next press. The modifier comes off the press itself,
+    // and borrows nothing where the layout cannot move.
+    const state = useStore.getState();
+    if (!layoutMovable(state.inspectorTab)) return false;
+    if (activeCanvasTool(state) !== "move" && !borrowsMoveTool(e)) return false;
     const placed = sceneRef.current?.nodes.find(
       (node) => node.kind === kind && node.id === id
     );
@@ -670,7 +675,7 @@ export function GraphView(): React.ReactElement {
     e.stopPropagation();
     // Cancelling the press also cancels native focus. Under Move, subsequent
     // arrow presses should fine-tune the node that was just dragged.
-    if (useStore.getState().canvasTool === "move") {
+    if (activeCanvasTool(useStore.getState()) === "move") {
       e.currentTarget.focus({ preventScroll: true });
     }
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -777,7 +782,7 @@ export function GraphView(): React.ReactElement {
     if (!graphIsInteractive(useStore.getState())) return;
     const step = ARROW_DELTAS[e.key];
     if (!step || e.ctrlKey || e.metaKey || e.altKey) return;
-    if (useStore.getState().canvasTool !== "move") return;
+    if (activeCanvasTool(useStore.getState()) !== "move") return;
     const placed = sceneRef.current?.nodes.find(
       (node) => node.kind === kind && node.id === id
     );
@@ -835,7 +840,7 @@ export function GraphView(): React.ReactElement {
   }, [finishCardDrag]);
 
   const resetLayout = () => {
-    if (!Object.keys(nodeOffsets).length) return;
+    if (!movable || !Object.keys(nodeOffsets).length) return;
     fitAfterResetRef.current = true;
     movedRef.current = false;
     resetNodeLayout();

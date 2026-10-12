@@ -116,6 +116,19 @@ describe("Escape and the move tool", () => {
     onKey(key("Escape", "menu"));
     expect(useStore.getState().canvasTool).toBe("move");
   });
+
+  /* The Plan view has no move tool in effect, so Escape releases the task and
+     the remembered tool is left for the Dependencies view. */
+  it("releases the inspected task in the Plan view and keeps the tool for later", () => {
+    const s = useStore.getState();
+    s.setInspectorTab("plan");
+    s.planTaskAt("Y", [0]);
+    expect(useStore.getState().planTask).not.toBeNull();
+    onKey(key("Escape"));
+    expect(useStore.getState().planTask).toBeNull();
+    expect(useStore.getState().canvasTool).toBe("move");
+    useStore.getState().setInspectorTab("dependencies");
+  });
 });
 
 

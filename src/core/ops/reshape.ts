@@ -72,7 +72,8 @@ function strides(extents: number[]): number[] {
   return s;
 }
 
-/** @internal Decompose a linear range into boxes; exported for brute-force tests. */
+/** Decompose a linear range of a row-major grid into boxes. Also lays out a
+ *  contiguous run of a plan's tiles in listing order (`core/plan/replay.ts`). */
 export function linearRangeToBoxes(a: number, b: number, ext: number[]): Box[] {
   if (a >= b) return [];
   if (ext.length === 0) return [[]];

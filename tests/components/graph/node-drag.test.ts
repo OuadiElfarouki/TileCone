@@ -197,6 +197,40 @@ describe("moving a node by pointer", () => {
   );
 });
 
+/* The Plan view keeps the arrangement as it stands: no press, borrowed
+   modifier or arrow key moves a node there, whatever the remembered tool. */
+describe("nodes in the Plan view", () => {
+  afterEach(() => { useStore.getState().setInspectorTab("dependencies"); });
+
+  it.each(["card", "operation"])("does not move a %s under the move tool", (node) => {
+    useStore.getState().setCanvasTool("move");
+    useStore.getState().setInspectorTab("plan");
+    const props = node === "card" ? cardProps() : operationProps();
+    for (const held of [{}, { ctrlKey: true }, { metaKey: true }]) {
+      const press = pointer(0, held);
+      props.onPointerDownCapture!(press);
+      expect(useStore.getState().dragging).toBe(false);
+      props.onPointerMove!(pointer(5, held));
+      props.onPointerUp!(pointer(5, held));
+    }
+    props.onKeyDown!(arrow("ArrowUp"));
+    expect(useStore.getState().nodeOffsets).toEqual({});
+    expect(useStore.getState().canvasTool).toBe("move");
+  });
+
+  it("gives a card no focus stop for nudging, and moves again back under Dependencies", () => {
+    useStore.getState().setCanvasTool("move");
+    useStore.getState().setInspectorTab("plan");
+    expect(cardProps().tabIndex).toBeUndefined();
+    useStore.getState().setInspectorTab("dependencies");
+    const props = cardProps();
+    props.onPointerDownCapture!(pointer(0));
+    props.onPointerMove!(pointer(5));
+    props.onPointerUp!(pointer(5));
+    expect(Object.keys(useStore.getState().nodeOffsets)).toEqual(["t:X"]);
+  });
+});
+
 describe("moving a node by keyboard", () => {
   beforeEach(() => useStore.getState().setCanvasTool("move"));
 

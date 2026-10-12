@@ -1,5 +1,6 @@
 import React from "react";
 import { useStore } from "../../state/store";
+import { activeCanvasTool, layoutMovable } from "../../view/workspace";
 
 /**
  * The layout group: the tool that moves nodes, and the way back.
@@ -26,9 +27,14 @@ export function LayoutControls({
 }: {
   onResetLayout: () => void;
 }): React.ReactElement {
-  const moveTool = useStore((s) => s.canvasTool === "move");
+  const moveTool = useStore((s) => activeCanvasTool(s) === "move");
+  const movable = useStore((s) => layoutMovable(s.inspectorTab));
   const setCanvasTool = useStore((s) => s.setCanvasTool);
   const moved = useStore((s) => Object.keys(s.nodeOffsets).length > 0);
+  /* The Plan view keeps the arrangement as it stands, so both controls are
+     unavailable there rather than hidden: the group keeps its place, and the
+     reason is on each control. */
+  const locked = "the Plan view keeps cards and operations where they are; switch to Dependencies to move them";
 
   return (
     <div className="layout-controls">
@@ -36,16 +42,19 @@ export function LayoutControls({
       <button
         className={`mini toggle${moveTool ? " on" : ""}`}
         aria-pressed={moveTool}
+        disabled={!movable}
         onClick={() => setCanvasTool(moveTool ? "select" : "move")}
-        title="drag cards and operations from anywhere on them; Esc or off returns to drawing tiles and selecting operations. Hold Ctrl/Cmd to move one without switching"
+        title={movable
+          ? "drag cards and operations from anywhere on them; Esc or off returns to drawing tiles and selecting operations. Hold Ctrl/Cmd to move one without switching"
+          : locked}
       >
         move
       </button>
       <button
         className="mini"
         onClick={onResetLayout}
-        disabled={!moved}
-        title="restore the generated layout, cards and operations alike (undoable)"
+        disabled={!moved || !movable}
+        title={movable ? "restore the generated layout, cards and operations alike (undoable)" : locked}
       >
         reset
       </button>

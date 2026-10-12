@@ -15,7 +15,7 @@
 import { executeBoundedQuery } from "../executor";
 import type { ResolvedGraph } from "../graph";
 import type { BoundedCone } from "../propagate";
-import { fromBox } from "../region";
+import { fromBox, type Region } from "../region";
 import { isTile, PlanError, tileBox, TileFamily, tileFamily } from "./tile-family";
 
 export type TilePlan = {
@@ -76,10 +76,14 @@ export function familyOf(plan: TilePlan, task: TaskRef): TileFamily {
  */
 export function taskDemand(plan: TilePlan, task: TaskRef): BoundedCone {
   const family = familyOf(plan, task);
-  return executeBoundedQuery(plan.graph, {
-    tensorId: task.tensorId,
-    region: fromBox(tileBox(family, task.coord)),
-    direction: "backward",
-    frontier: plan.frontier,
-  });
+  return regionDemand(plan, task.tensorId, fromBox(tileBox(family, task.coord)));
+}
+
+/**
+ * The bounded cone of any region of a tiled tensor at the plan's frontier.
+ * Over a union of tiles it is the union of those tasks' demand, since a cone
+ * relates each element on its own.
+ */
+export function regionDemand(plan: TilePlan, tensorId: string, region: Region): BoundedCone {
+  return executeBoundedQuery(plan.graph, { tensorId, region, direction: "backward", frontier: plan.frontier });
 }
