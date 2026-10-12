@@ -84,6 +84,28 @@ describe("family replay in the Plan view", () => {
     S().setReplayPlayback(null);
   });
 
+  /* C is tiled, so Y's tasks have producers upstream, and the replay can follow
+     them one level further. */
+  it("offers a depth per family, and says what the deeper levels show", () => {
+    const html = render();
+    expect(html).toContain('aria-label="replay depth"');
+    expect(html).toMatch(/aria-pressed="true"[^>]*>1<\/button>/);
+    S().setReplayDepth("Y", 2);
+    expect(render()).toMatch(/aria-pressed="true"[^>]*>2<\/button>/);
+    const replay = familyReplay(S().plan!, S().planTask!, { depth: 2 });
+    S().setReplayPlayback({ replay, plan: S().plan!, visited: 1, exiting: false, opacity: 1 });
+    expect(render()).toContain("up to 1 level upstream");
+    // A replay made at another depth is not this one.
+    S().setReplayDepth("Y", 1);
+    expect(render()).not.toContain("listing order");
+    S().setReplayPlayback(null);
+  });
+
+  it("offers no depth where nothing upstream is tiled", () => {
+    S().setPlanTile("C", null);
+    expect(render()).not.toContain('aria-label="replay depth"');
+  });
+
   it("drops a replay that belongs to another task", () => {
     const replay = familyReplay(S().plan!, S().planTask!);
     S().setReplayPlayback({ replay, plan: S().plan!, visited: 3, exiting: false, opacity: 1 });

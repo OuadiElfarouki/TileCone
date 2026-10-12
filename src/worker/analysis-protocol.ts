@@ -53,6 +53,8 @@ export type AnalysisRequest =
       graph?: ResolvedGraphData;
       tiles: Record<string, number[]>;
       task: TaskRef;
+      /** Levels of the plan's tasks to follow upstream; see `familyReplay`. */
+      depth: number;
     };
 
 export type AnalysisResponse =

@@ -1059,3 +1059,5 @@ textarea.source.error-state { border-color: var(--err); }
 .plan-matrix-row.current { fill: color-mix(in srgb, var(--accent) 18%, transparent); }
 
 .plan-producer-pages { display: flex; align-items: center; gap: 8px; }
+/* The replay depth sits under the family heading it applies to. */
+.plan-replay-depth { display: flex; align-items: center; gap: 4px; margin: 2px 0 6px; }

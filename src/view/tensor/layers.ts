@@ -38,6 +38,8 @@ export function stripeAngleDeg(boxIndex: number): number {
 }
 
 const CONE_ALPHA = 0.72;
+/** The inspected task's demand while a replay plays over it: a reference, not the subject. */
+const RECEDED_ALPHA = 0.14;
 const previewAlpha = (depth: number) =>
   (0.22 * CONE_ALPHA) / (1 + 0.35 * Math.max(0, depth - 1));
 
@@ -295,6 +297,7 @@ export function buildPlanPaint({
   supply,
   proposed,
   pointer,
+  recede = 0,
 }: {
   tensorId: string;
   rowAxis: number;
@@ -302,6 +305,14 @@ export function buildPlanPaint({
   dark: boolean;
   plan: TilePlan | null;
   supply: TaskSupply | null;
+  /**
+   * How far the plan steps back under a family replay, from 0 to 1. At 1 the
+   * inspected task's demand is a faint reference and its producer outlines
+   * step aside, so the run being replayed is the strongest thing on the card
+   * rather than the task that does not move. It follows the replay's opacity,
+   * so the plan returns as the replay fades.
+   */
+  recede?: number;
   /** Extents a click would divide this tensor at, while the plan does not tile it. */
   proposed?: number[] | null;
   /** The tile under the pointer, or the band being dragged out. */
@@ -320,7 +331,12 @@ export function buildPlanPaint({
   ];
   if (cone.length) {
     const region = unionOf(cone.map((d) => d.region));
-    layers.push({ region, color: hue, alpha: CONE_ALPHA, hatch: !region.exact });
+    layers.push({
+      region,
+      color: hue,
+      alpha: CONE_ALPHA + (RECEDED_ALPHA - CONE_ALPHA) * recede,
+      hatch: !region.exact,
+    });
   }
   if (family && supply?.task.tensorId === tensorId)
     layers.push({
@@ -336,7 +352,7 @@ export function buildPlanPaint({
   // Detailed outlines are a visual policy, independent of the exact producer
   // set. Large sets outline their tile-aligned ranges over the existing lattice.
   const MAX_PRODUCER_OUTLINES = 64;
-  const tiles = family && group && plan && supply
+  const tiles = family && group && plan && supply && recede < 1
     ? group.count <= MAX_PRODUCER_OUTLINES
       ? producerPage(plan, supply, tensorId, 0, group.count)
           .map((p) => ({ box: tileBox(family, p.task.coord), definite: p.definite }))

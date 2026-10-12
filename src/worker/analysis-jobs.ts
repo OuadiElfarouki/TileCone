@@ -77,8 +77,9 @@ export function planRestoreArtifact(graph: ResolvedGraph, request: PlanRestoreRe
 export function replayArtifact(
   graph: ResolvedGraph | ResolvedGraphData,
   tiles: Record<string, number[]>,
-  task: TaskRef
+  task: TaskRef,
+  depth = 1
 ): FamilyReplay {
   const resolved = "shapesOf" in graph ? graph : hydrateResolvedGraph(graph);
-  return familyReplay(tilePlan(resolved, tiles), task);
+  return familyReplay(tilePlan(resolved, tiles), task, { depth });
 }

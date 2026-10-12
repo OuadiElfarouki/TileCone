@@ -165,6 +165,12 @@ export type State = {
   /** A replay of the inspected task's family on the cards. It never changes
    *  `selection` or `plan`; those remain underneath it. */
   replayPlayback: ReplayPlayback | null;
+  /**
+   * How many levels of the plan's tasks a replay of each family follows
+   * upstream, by the family's tensor. Absent is 1: the family's own tasks.
+   * View state, cleared with the graph its tensor ids belong to.
+   */
+  replayDepth: Record<string, number>;
 
   viewCfgs: Record<string, ViewCfg>;
   /** Px per element for every card in this graph. A property of the resolved
@@ -306,6 +312,8 @@ export type State = {
   setAxisMode: (v: AxisMode) => void;
   setInspectorTab: (tab: InspectorTab) => void;
   setReplayPlayback: (playback: ReplayPlayback | null) => void;
+  /** Set the replay depth of one family; values below 1 are 1. */
+  setReplayDepth: (tensorId: string, depth: number) => void;
   updateReplayPlayback: (patch: Partial<ReplayPlayback>) => void;
   /** Tile a produced tensor with these extents, or stop tiling it with `null`. Undoable. */
   setPlanTile: (tensorId: string, tile: number[] | null) => void;

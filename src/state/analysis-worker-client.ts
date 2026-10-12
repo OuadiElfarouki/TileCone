@@ -229,6 +229,7 @@ export async function replayInWorker(args: {
   graph: ResolvedGraph;
   tiles: Record<string, number[]>;
   task: TaskRef;
+  depth: number;
 }): Promise<FamilyReplay> {
   const request = takeQueryLane(args.graphId, args.graph);
   const response = await send(queryLane, {
@@ -236,6 +237,7 @@ export async function replayInWorker(args: {
     ...request,
     tiles: args.tiles,
     task: args.task,
+    depth: args.depth,
   });
   if (response.kind !== "replay") throw new Error("analysis worker returned the wrong response");
   return response.result;

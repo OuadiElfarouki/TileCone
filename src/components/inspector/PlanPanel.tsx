@@ -720,6 +720,7 @@ function FamilySection({
           {replay.pending ? "preparing…" : "replay"}
         </button>
       </div>
+      {replay.depthLimit > 1 && <ReplayDepth tensorId={task.tensorId} replay={replay} />}
       {replay.error && <p className="hint overlap">Replay failed: {replay.error}</p>}
       {replay.playback && <ReplayStatus playback={replay.playback} name={name} />}
       {run.error ? (
@@ -811,7 +812,7 @@ function ComputedSection({ plan, computes }: { plan: TilePlan; computes: Compute
  * would claim a schedule nobody declared.
  */
 function ReplayStatus({ playback, name }: { playback: ReplayPlayback; name: string }): React.ReactElement {
-  const { frames, tasks } = playback.replay;
+  const { frames, tasks, depth } = playback.replay;
   const current = frames[playback.visited - 1];
   const runs = frames.length < tasks;
   return (
@@ -828,8 +829,39 @@ function ReplayStatus({ playback, name }: { playback: ReplayPlayback; name: stri
         {runs ? `All ${tasks} tasks in ${frames.length} runs,` : `All ${tasks} tasks`} in listing
         order, which is not an execution order. Full strength marks what each {runs ? "run" : "task"}{" "}
         shares with this task.
+        {depth > 1 &&
+          ` Fainter fills are reached through the tasks producing what it reads, up to ${depth - 1} ` +
+          `level${depth > 2 ? "s" : ""} upstream; outlines are the producer tiles it needs.`}
       </p>
     </>
+  );
+}
+
+/**
+ * How far upstream a replay of this family follows the plan: 1 is the
+ * family's own tasks, and each level adds the tasks producing the tiles the
+ * last one reads. Offered only where the plan has such tasks, and remembered
+ * per family.
+ */
+function ReplayDepth({ tensorId, replay }: { tensorId: string; replay: PlanReplayControl }): React.ReactElement {
+  const setReplayDepth = useStore((s) => s.setReplayDepth);
+  return (
+    <div className="plan-replay-depth" role="group" aria-label="replay depth">
+      <span className="muted">depth</span>
+      {Array.from({ length: replay.depthLimit }, (_, i) => i + 1).map((level) => (
+        <button
+          key={level}
+          className={`mini toggle${level === replay.depth ? " on" : ""}`}
+          aria-pressed={level === replay.depth}
+          onClick={() => setReplayDepth(tensorId, level)}
+          title={level === 1
+            ? "replay this family's tasks: what they read and compute"
+            : `also the tasks producing what they read, ${level - 1} level${level > 2 ? "s" : ""} upstream`}
+        >
+          {level}
+        </button>
+      ))}
+    </div>
   );
 }
 

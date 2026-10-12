@@ -29,7 +29,7 @@ export function loadResolvedGraph(
   | "perBox" | "focusedBox" | "pinnedBox" | "viewCfgs" | "preview" | "graphPx"
   | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "nodeOffsets"
   | "planTiles" | "planTask" | "plan" | "planSupply" | "keptPlans"
-  | "replayPlayback" | "placementCarry"
+  | "replayPlayback" | "replayDepth" | "placementCarry"
 > {
   const viewCfgs = Object.create(null) as Record<string, ViewCfg>;
   for (const t of Object.values(resolved.tensors)) viewCfgs[t.id] = defaultViewCfg(t.resolved!);
@@ -55,6 +55,7 @@ export function loadResolvedGraph(
     hiddenBoxes: new Set<number>(),
     analysisGroup: null,
     replayPlayback: null,
+    replayDepth: idRecord<number>(),
     preview: null,
     viewCfgs,
     graphPx: worker?.graphPx ?? graphScale(planesOf(resolved)),

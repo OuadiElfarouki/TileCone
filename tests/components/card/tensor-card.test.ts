@@ -9,9 +9,10 @@ describe("plan replay paint", () => {
      task also reads, so `region` and `shared` are genuinely different sets.
      The last run reads a different band, so an earlier run's reach left on the
      card would be visible. */
-  const reach = (region: Box, shared: Box | null) => ({
+  const reach = (region: Box, shared: Box | null, level = 1) => ({
     region: fromBox(region),
     shared: shared ? fromBox(shared) : null,
+    level,
   });
   const frame = (coord: number[], tile: Box, read: Box) => ({
     first: { tensorId: "Y", coord },
@@ -23,6 +24,7 @@ describe("plan replay paint", () => {
   const playback = (visited = 3): ReplayPlayback => ({
     replay: {
       task: { tensorId: "Y", coord: [0, 0] },
+      depth: 1,
       frames: [
         frame([0, 0], box([0, 2], [0, 2]), box([0, 4], [0, 4])),
         frame([0, 1], box([0, 2], [2, 4]), box([0, 4], [0, 4])),
@@ -90,6 +92,21 @@ describe("plan replay paint", () => {
     const input = buildReplayPaint({ tensorId: "X", dark: false, playback: playback() });
     expect(studied).not.toHaveProperty("lattice");
     expect(input).not.toHaveProperty("lattice");
+  });
+
+  /* A level reached through the plan's producers is drawn fainter, one step
+     per level, and a tiled tensor outlines the producer tiles the run needs. */
+  it("draws deeper levels fainter, and outlines the producer tiles a run needs", () => {
+    const deep = playback(2);
+    const reached = deep.replay.frames[1].reach.get("X")!;
+    Object.assign(reached, { level: 2, producers: fromBox(box([0, 4], [0, 4])) });
+    const paint = buildReplayPaint({ tensorId: "X", dark: false, playback: deep });
+    expect(paint.layers.map((layer) => layer.alpha)).toEqual([0.26 * levelStrength(2), 0.62 * levelStrength(2)]);
+    expect(paint.tiles).toEqual([{ box: box([0, 4], [0, 4]), definite: true }]);
+    // Leaving, the run's outlines go first so the plan's own can return.
+    expect(buildReplayPaint({ tensorId: "X", dark: false, playback: { ...deep, exiting: true } }).tiles).toEqual([]);
+    expect(levelStrength(1)).toBe(1);
+    expect(levelStrength(9)).toBe(0.35);
   });
 
   it("hatches a run whose demand was widened", () => {
@@ -182,7 +199,7 @@ describe("the box a single-cell gesture commits", () => {
 /* ---------------- what the canvas paints ---------------- */
 
 import { ReplayPlayback, MAX_PER_BOX_PROPS, BoxProp } from "../../../src/view/workspace";
-import { buildReplayPaint } from "../../../src/view/tensor/replay-paint";
+import { buildReplayPaint, levelStrength } from "../../../src/view/tensor/replay-paint";
 import { DEFAULT_DOWNSTREAM_DENSITY, stripeAngleDeg, buildLayers, LayerInputs } from "../../../src/view/tensor/layers";
 import { selectionBoxFromDrag, visibleApproximation } from "../../../src/view/tensor/gesture";
 

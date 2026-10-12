@@ -120,7 +120,7 @@ describe("planning from the canvas", () => {
     const task = S().planTask;
     S().setInspectorTab("plan");
     S().setReplayPlayback({
-      replay: { task: task!, frames: [], tasks: 1 },
+      replay: { task: task!, depth: 1, frames: [], tasks: 1 },
       plan: S().plan!,
       visited: 0,
       exiting: false,
@@ -404,6 +404,22 @@ describe("the plan view's paint", () => {
     expect(layers).toHaveLength(1);
     expect(layers[0]).toMatchObject({ outline: true, seed: true, hatch: false });
     expect(layers[0].region.boxes).toEqual([box([4, 8], [0, 4])]);
+  });
+
+  /* Under a replay the inspected task is the reference, not the subject: its
+     demand recedes and its producer outlines make way for the run's, and
+     both come back as the replay fades. */
+  it("recedes under a replay, and returns as it fades", () => {
+    const at = (recede: number) =>
+      buildPlanPaint({ tensorId: "C", rowAxis: 0, colAxis: 1, dark: false, plan: S().plan, supply: S().planSupply, recede });
+    const full = at(0);
+    const receded = at(1);
+    const fading = at(0.5);
+    expect(receded.layers[0].alpha).toBeLessThan(full.layers[0].alpha / 4);
+    expect(fading.layers[0].alpha).toBeGreaterThan(receded.layers[0].alpha);
+    expect(fading.layers[0].alpha).toBeLessThan(full.layers[0].alpha);
+    expect(receded.paint.tiles).toEqual([]);
+    expect(fading.paint.tiles).toEqual(full.paint.tiles);
   });
 
   it("fills what the task reads and outlines the producer tiles it needs", () => {

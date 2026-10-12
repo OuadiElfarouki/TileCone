@@ -54,7 +54,7 @@ describe("analysis worker client", () => {
     const graph = compiled.resolved;
     const tiles = { Y: [64, 64] };
     const task = { tensorId: "Y", coord: [0, 0] };
-    const query = client.replayInWorker({ graphId: 42, graph, tiles, task });
+    const query = client.replayInWorker({ graphId: 42, graph, tiles, task, depth: 1 });
     const queryWorker = FakeWorker.instances[0];
     const first = client.layoutInWorker({ graphId: 42, graph, graphPx: 1, axes: {} }).catch((error: unknown) => error);
     const oldLayout = FakeWorker.instances[1];
@@ -157,7 +157,7 @@ describe("analysis worker client", () => {
     const first = FakeWorker.instances[0];
     const tiles = { Y: [64, 64] };
     const task = { tensorId: "Y", coord: [0, 0] };
-    const replay = client.replayInWorker({ graphId: null, graph, tiles, task });
+    const replay = client.replayInWorker({ graphId: null, graph, tiles, task, depth: 1 });
     const second = FakeWorker.instances[1];
 
     expect(first.terminated).toBe(true);

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { TaskRef, TilePlan } from "../../core/plan/plan";
-import { familyReplay, type FamilyReplay } from "../../core/plan/replay";
+import { familyReplay, replayDepthLimit, type FamilyReplay } from "../../core/plan/replay";
 import type { InspectorTab, ReplayPlayback } from "../../view/workspace";
 import { analysisWorkerAvailable, isAnalysisCancelled, replayInWorker } from "../../state/analysis-worker-client";
 import { sameTask } from "../../state/history";
@@ -20,13 +20,16 @@ const END_FADE_MS = 400;
 /** How long the whole trail is held, with reduced motion, before it clears. */
 const REDUCED_HOLD_MS = 1500;
 
-/** Whether a playback is about this plan and this task. */
-const about = (playback: ReplayPlayback | null, plan: TilePlan | null, task: TaskRef | null) =>
-  !!playback && playback.plan === plan && sameTask(playback.replay.task, task);
+/** Whether a playback is about this plan and this task, at this depth. */
+const about = (playback: ReplayPlayback | null, plan: TilePlan | null, task: TaskRef | null, depth: number) =>
+  !!playback && playback.plan === plan && sameTask(playback.replay.task, task) && playback.replay.depth === depth;
 
 export type PlanReplayControl = {
   /** Replay the inspected task's family, computing the frames when needed. */
   run: () => void;
+  /** The depth a replay of this family follows, and the most it can. */
+  depth: number;
+  depthLimit: number;
   pending: boolean;
   error: string | null;
   /** The playback, while it is about the plan and task on screen. */
@@ -52,6 +55,9 @@ export function usePlanReplay({
   tab: InspectorTab;
 }): PlanReplayControl {
   const playback = useStore((s) => s.replayPlayback);
+  const depthLimit = plan && task ? replayDepthLimit(plan, task.tensorId) : 1;
+  const chosen = useStore((s) => (task ? s.replayDepth[task.tensorId] : undefined) ?? 1);
+  const depth = Math.min(chosen, depthLimit);
   const setPlayback = useStore((s) => s.setReplayPlayback);
   const updatePlayback = useStore((s) => s.updateReplayPlayback);
   const [pending, setPending] = useState(false);
@@ -59,8 +65,8 @@ export function usePlanReplay({
   const playbackTimer = useRef<number | null>(null);
   const fadeTimer = useRef<number | null>(null);
   const request = useRef(0);
-  const current = useRef({ plan, task, tab });
-  current.current = { plan, task, tab };
+  const current = useRef({ plan, task, tab, depth });
+  current.current = { plan, task, tab, depth };
 
   const stopTimers = useCallback(() => {
     if (playbackTimer.current !== null) window.clearInterval(playbackTimer.current);
@@ -111,10 +117,11 @@ export function usePlanReplay({
     if (tab !== "plan") fade();
   }, [fade, tab]);
 
-  // A replay is about one task under one plan; another of either retires it.
+  // A replay is about one task under one plan at one depth; another of any of
+  // them retires it.
   useEffect(() => {
-    if (playback && !about(playback, plan, task)) fade();
-  }, [fade, playback, plan, task]);
+    if (playback && !about(playback, plan, task, depth)) fade();
+  }, [depth, fade, playback, plan, task]);
 
   useEffect(() => {
     // Departing also invalidates work in flight: returning to the same task
@@ -122,7 +129,7 @@ export function usePlanReplay({
     request.current++;
     setPending(false);
     setError(null);
-  }, [plan, task, tab]);
+  }, [plan, task, tab, depth]);
 
   /* Collapsing the panel unmounts this hook, which would leave the overlay
      frozen on every card with nothing left able to clear it. The state goes
@@ -135,11 +142,12 @@ export function usePlanReplay({
     setPlayback(null);
   }, [setPlayback, stopTimers]);
 
-  const ask = (forPlan: TilePlan, forTask: TaskRef, id: number, retried: boolean) => {
+  const ask = (forPlan: TilePlan, forTask: TaskRef, forDepth: number, id: number, retried: boolean) => {
     const stale = () =>
       id !== request.current ||
       current.current.tab !== "plan" ||
       current.current.plan !== forPlan ||
+      current.current.depth !== forDepth ||
       !sameTask(current.current.task, forTask);
     const work = analysisWorkerAvailable()
       ? replayInWorker({
@@ -147,8 +155,9 @@ export function usePlanReplay({
           graph: forPlan.graph,
           tiles: tilesOf(forPlan),
           task: forTask,
+          depth: forDepth,
         })
-      : Promise.resolve().then(() => familyReplay(forPlan, forTask));
+      : Promise.resolve().then(() => familyReplay(forPlan, forTask, { depth: forDepth }));
     void work.then((replay) => {
       if (stale()) return;
       setPending(false);
@@ -160,7 +169,7 @@ export function usePlanReplay({
          cancellation is that evaluation holding the lane, and giving way to
          it beats a loop of each cancelling the other. */
       if (isAnalysisCancelled(reason)) {
-        if (!retried && !stale()) return ask(forPlan, forTask, id, true);
+        if (!retried && !stale()) return ask(forPlan, forTask, forDepth, id, true);
         setPending(false);
         return;
       }
@@ -171,19 +180,21 @@ export function usePlanReplay({
 
   const run = () => {
     if (tab !== "plan" || !plan || !task) return;
-    if (playback && about(playback, plan, task)) {
+    if (playback && about(playback, plan, task, depth)) {
       start(playback.replay, plan);
       return;
     }
     setPending(true);
     setError(null);
-    ask(plan, task, ++request.current, false);
+    ask(plan, task, depth, ++request.current, false);
   };
 
   return {
     run,
+    depth,
+    depthLimit,
     pending,
     error,
-    playback: tab === "plan" && about(playback, plan, task) ? playback : null,
+    playback: tab === "plan" && about(playback, plan, task, depth) ? playback : null,
   };
 }

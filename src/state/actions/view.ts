@@ -20,6 +20,7 @@ export const viewActions = (set: SetState, get: GetState): Pick<
   | "setAxisMode"
   | "setInspectorTab"
   | "setReplayPlayback"
+  | "setReplayDepth"
   | "updateReplayPlayback"
   | "setTileScale"
   | "setFocusNode"
@@ -90,6 +91,11 @@ export const viewActions = (set: SetState, get: GetState): Pick<
   setInspectorTab: (tab) => set({ inspectorTab: tab }),
 
   setReplayPlayback: (replayPlayback) => set({ replayPlayback }),
+
+  setReplayDepth: (tensorId, depth) =>
+    set((state) => ({
+      replayDepth: idRecord({ ...state.replayDepth, [tensorId]: Math.max(1, Math.floor(depth)) }),
+    })),
 
   updateReplayPlayback: (patch) => set((state) => ({
     replayPlayback: state.replayPlayback

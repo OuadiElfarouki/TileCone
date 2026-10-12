@@ -251,22 +251,27 @@ export function GraphView(): React.ReactElement {
   // always computed, and a hot edge should mean "the cone you asked for".
   const planView = useStore((s) => s.inspectorTab === "plan");
   const planSupply = useStore((s) => s.planSupply);
+  // The replay's frames, not its playback: they change once per replay rather
+  // than on every step, so the graph does not re-render with each run.
+  const replay = useStore((s) => (s.inspectorTab === "plan" ? s.replayPlayback?.replay ?? null : null));
   const contributing = useMemo(
     () =>
       // The Plan view lights the inspected task's tensor, the ones it reads and
       // the untiled ones it computes, so the graph shows what the cards show.
+      // A replay adds what its runs reach, which at depth reaches past them.
       planView
-        ? new Set(
-            planSupply
+        ? new Set([
+            ...(planSupply
               ? [
                   planSupply.task.tensorId,
                   ...planSupply.demand.map((d) => d.tensorId),
                   ...planSupply.computes.map((c) => c.tensorId),
                 ]
-              : []
-          )
+              : []),
+            ...(replay ? replay.frames.flatMap((frame) => [...frame.reach.keys()]) : []),
+          ])
         : involvedTensorIds(selection, backwardRes, forwardRes, perBox, hiddenBoxes, direction),
-    [backwardRes, direction, forwardRes, hiddenBoxes, perBox, selection, planView, planSupply]
+    [backwardRes, direction, forwardRes, hiddenBoxes, perBox, selection, planView, planSupply, replay]
   );
 
   const hasResult = contributing.size > 0;

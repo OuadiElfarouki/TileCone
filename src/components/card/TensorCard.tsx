@@ -210,6 +210,7 @@ function TensorCardView({
         supply: planSupply,
         proposed: tensor.producer ? planProposal : null,
         pointer: planPointer,
+        recede: replayPlayback?.opacity ?? 0,
       });
       layers = planned.layers;
       paint = planned.paint;
@@ -234,12 +235,13 @@ function TensorCardView({
       });
     }
 
-    if (replayPlayback)
-      layers.push(...buildReplayPaint({
-        tensorId: tensor.id,
-        dark,
-        playback: replayPlayback,
-      }).layers);
+    if (replayPlayback) {
+      const replayed = buildReplayPaint({ tensorId: tensor.id, dark, playback: replayPlayback });
+      layers.push(...replayed.layers);
+      // The run's producer tiles take the place of the inspected task's, in
+      // the same neutral outline.
+      if (paint && replayed.tiles.length) paint = { ...paint, tiles: replayed.tiles };
+    }
     drawGrid(canvas, shape, cfg, geom, layers, dark, paintRenderScale, drawScale, paint, rasterPixels);
   }, [
     back,

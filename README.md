@@ -116,7 +116,11 @@ tiling, which undoes like any other plan edit.
 the part it shares with the inspected task drawn on top, and a trail of the tiles walked so far.
 The tasks follow listing order, row by row, which is not an execution order. A family of more than
 48 tasks is walked in 48 contiguous runs, so no task is skipped. When the replay ends the trail
-clears, and nothing stays on the graph.
+clears, and nothing stays on the graph. While it plays, the inspected task's own paint steps back so
+the run is the subject. **depth** follows the plan upstream: at 2 a run also shows the tasks
+producing the tiles it reads and what they read, at 3 the tasks producing those, and so on. Those
+tasks compute whole tiles, so the deeper levels show what the plan computes, drawn fainter per
+level, with the producer tiles outlined.
 
 Share links include the current tiling, inspected task, kept tilings and Plan view. Kept
 figures are recomputed when the link is opened. Producer details are paged, with total counts

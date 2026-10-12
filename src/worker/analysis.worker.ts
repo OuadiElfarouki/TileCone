@@ -55,7 +55,7 @@ host.onmessage = ({ data }) => {
       host.postMessage({
         id: data.id,
         kind: "replay",
-        result: replayArtifact(graph, data.tiles, data.task),
+        result: replayArtifact(graph, data.tiles, data.task, data.depth),
       });
     }
   } catch (error) {
