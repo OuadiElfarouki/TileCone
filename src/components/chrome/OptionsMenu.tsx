@@ -163,6 +163,10 @@ export function OptionsMenu<A extends string, C extends string = never>({
   useDismiss(!!anchor, [listRef, triggerRef], () => close(false), { onMove: true });
 
   if (!anchor || !spec.length) return null;
+  // A menu may hold only items, so a line of information describes the menu
+  // instead: it is read out when the menu opens, and the arrows pass over it.
+  const infoId = (i: number) => `${groupId}-info-${i}`;
+  const described = spec.flatMap((entry, i) => entry.kind === "info" ? [infoId(i)] : []).join(" ");
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     const entries = [...(listRef.current?.querySelectorAll<HTMLElement>(ENTRY) ?? [])];
@@ -189,6 +193,7 @@ export function OptionsMenu<A extends string, C extends string = never>({
       className="options-menu"
       role="menu"
       aria-label={label}
+      aria-describedby={described || undefined}
       style={place ?? { left: anchor.x, top: anchor.y, visibility: "hidden" }}
       onKeyDown={(e) => {
         contain(e);
@@ -206,6 +211,8 @@ export function OptionsMenu<A extends string, C extends string = never>({
     >
       {spec.map((entry, i) => {
         if (entry.kind === "separator") return <li key={i} role="separator" className="options-separator" />;
+        if (entry.kind === "info")
+          return <li key={i} id={infoId(i)} role="none" aria-hidden="true" className="options-info" title={entry.title}>{entry.label}</li>;
         if (entry.kind === "action")
           return (
             <li key={entry.id} role="none">

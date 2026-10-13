@@ -48,7 +48,7 @@ export const viewActions = (set: SetState, get: GetState): Pick<
 
   setTheme: (theme) => set({ theme }),
 
-  setCanvasTool: (tool) => set({ canvasTool: tool }),
+  setCanvasTool: (tool) => set({ canvasTool: tool, ...(tool === "select" ? { resizingTensor: null } : {}) }),
 
   setViewCfg: (tensorId, cfg) => {
     const state = get();
@@ -59,6 +59,7 @@ export const viewActions = (set: SetState, get: GetState): Pick<
     if (next.tile) stored.tile = next.tile.slice();
     else delete stored.tile;
     if (!next.unfold) delete stored.unfold;
+    if (next.scale === undefined) delete stored.scale;
     if (next.axes && remapped(shape, next)) stored.axes = [next.axes[0], next.axes[1]];
     else delete stored.axes;
     set({
@@ -91,7 +92,7 @@ export const viewActions = (set: SetState, get: GetState): Pick<
 
   setAxisMode: (v) => set({ axisMode: v }),
 
-  setInspectorTab: (tab) => set({ inspectorTab: tab }),
+  setInspectorTab: (tab) => set({ inspectorTab: tab, resizingTensor: null }),
 
   setReplayPlayback: (replayPlayback) => set({ replayPlayback }),
 

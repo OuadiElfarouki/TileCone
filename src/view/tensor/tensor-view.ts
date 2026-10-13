@@ -12,6 +12,8 @@ export const UNFOLD_MARK: Record<UnfoldDir, string> = { across: "â†’", down: "â†
 
 /** Per-tensor controls for viewing ranks above the two-dimensional card plane. */
 export type ViewCfg = {
+  /** Manual display size, relative to the automatically fitted card. */
+  scale?: number;
   sliders: number[]; // index per hidden axis (full rank length; row/col entries ignored)
   projection: boolean; // union over hidden axes vs slice at slider
   /**
@@ -34,6 +36,9 @@ export type ViewCfg = {
    */
   axes?: [number, number];
 };
+
+export const MIN_CARD_SCALE = 0.125;
+export const MAX_CARD_SCALE = 8;
 
 /**
  * Whether a hidden axis has a position the reader can set, by its slider or
@@ -108,6 +113,8 @@ export function isViewCfg(value: unknown): value is ViewCfg {
   if (!value || typeof value !== "object") return false;
   const cfg = value as Partial<ViewCfg>;
   return typeof cfg.projection === "boolean" && Array.isArray(cfg.sliders) &&
+    (cfg.scale === undefined || (typeof cfg.scale === "number" && Number.isFinite(cfg.scale) &&
+      cfg.scale >= MIN_CARD_SCALE && cfg.scale <= MAX_CARD_SCALE)) &&
     (cfg.unfold === undefined || (UNFOLD_DIRS.includes(cfg.unfold) && cfg.projection === false)) &&
     cfg.sliders.every((v) => Number.isSafeInteger(v) && v >= 0) &&
     (cfg.tile === undefined ||

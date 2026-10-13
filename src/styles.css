@@ -628,10 +628,10 @@ textarea.source.error-state { border-color: var(--err); }
 }
 /* The tensor has a tile of its own, set in the axis table. */
 .tc-tile.own { color: var(--ink); }
-/* A chosen pair of axes, stated on the card; the scale note is ink because it
-   changes how every length on the card reads. */
+/* A chosen pair of axes, stated on the card. */
 .tc-plane { color: var(--muted); font: var(--t-micro)/1 var(--mono); white-space: nowrap; }
-.tc-plane b { color: var(--ink); font-weight: 600; }
+/* The scale note is ink because it changes how every length on the card reads. */
+.tc-scale { color: var(--ink); font: 600 var(--t-micro)/1 var(--mono); white-space: nowrap; }
 
 /* Compact details belong to the name, not the whole tensor plate. */
 .tc-info {
@@ -712,6 +712,18 @@ textarea.source.error-state { border-color: var(--err); }
   outline: calc(2px / var(--view-scale, 1)) solid var(--muted);
 }
 .card-slot.blocked .tc-canvas-wrap canvas { outline: calc(2px / var(--view-scale, 1)) solid var(--warn-ink); }
+.tc-resize-handle {
+  position: absolute; z-index: 4; width: 12px; height: 12px; padding: 0;
+  border: 1px solid var(--muted); border-radius: 2px; background: var(--card-surface);
+  transform: translate(-50%, -50%) scale(calc(1 / var(--view-scale, 1)));
+  touch-action: none; pointer-events: auto;
+}
+.tc-resize-handle.top { cursor: nesw-resize; }
+.tc-resize-handle.bottom { cursor: nwse-resize; }
+.tc-resize-handle:hover, .tc-resize-handle:focus-visible { border-color: var(--accent); background: var(--accent); }
+.graph-canvas.move-tool .tensor-card > .tc-canvas-wrap:has(.tc-resize-handle) { pointer-events: auto; }
+.graph-canvas.move-tool .tc-canvas-wrap:has(.tc-resize-handle) canvas { pointer-events: none; }
+.options-info { padding: 4px 8px; color: var(--muted); font-size: var(--t-small); }
 .tc-tooltip {
   position: absolute; right: 0; top: calc(100% + 4px); font-size: var(--t-micro); color: var(--muted);
   transform: scale(calc(1 / var(--label-scale, 1))); transform-origin: top right;
@@ -991,7 +1003,7 @@ textarea.source.error-state { border-color: var(--err); }
 
 /* The name can borrow space above its own header only after scene collision
    checks. Keep the header's height fixed so zoom never moves tensor canvases. */
-.overview .tc-shape, .overview .tc-tile, .overview .tc-role { display: none; }
+.overview .tc-shape, .overview .tc-tile, .overview .tc-role, .overview .tc-scale { display: none; }
 .overview-name { position: absolute; bottom: 3px; height: calc(12px / var(--label-scale)); }
 .overview-name .tc-name {
   display: block; width: 100%; overflow: hidden; text-overflow: ellipsis;

@@ -9,7 +9,7 @@ import { InspectorTab } from "../../view/workspace";
 import { recompute } from "../analysis";
 import { analysisWorkerAvailable, compileInWorker, restoreInWorker } from "../analysis-worker-client";
 import { compile } from "../compile-epoch";
-import { planEditOf, samePlanEdit, WorkspaceSnapshot } from "../history";
+import { cardScalesOf, planEditOf, samePlanEdit, withCardScales, WorkspaceSnapshot } from "../history";
 import {
   installedDSLState,
   loadResolvedGraph,
@@ -182,14 +182,16 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
       // potentially large graph on the UI thread during Undo.
       compile.epoch++;
       const source = prev.source;
+      const loaded = loadResolvedGraph(
+        source.graph,
+        source.resolved,
+        source.baseLayout
+          ? { graphId: null, layout: source.baseLayout, graphPx: source.graphPx }
+          : undefined
+      );
       set({
-        ...loadResolvedGraph(
-          source.graph,
-          source.resolved,
-          source.baseLayout
-            ? { graphId: null, layout: source.baseLayout, graphPx: source.graphPx }
-            : undefined
-        ),
+        ...loaded,
+        viewCfgs: withCardScales(loaded.viewCfgs, prev.cardScales),
         dslText: source.dslText,
         draftText: source.draftText,
         exampleIndex: source.exampleIndex,
@@ -206,6 +208,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
     set({
       selection: prev.selection,
       nodeOffsets: prev.nodeOffsets,
+      viewCfgs: withCardScales(get().viewCfgs, prev.cardScales),
       workspaceHistory: workspaceHistory.slice(0, -1),
       focusedBox: null,
       pinnedBox: null,
@@ -241,6 +244,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
       // survives is the one it cannot invalidate, because it is what to go back
       // *to* — recorded after the clear, for that reason.
       const restore: WorkspaceSnapshot = {
+        cardScales: cardScalesOf(state),
         selection: state.selection,
         nodeOffsets: state.nodeOffsets,
         plan: planEditOf(state),

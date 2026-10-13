@@ -238,6 +238,11 @@ export type State = {
    * without changing this.
    */
   canvasTool: CanvasTool;
+  /** Transient resize mode; the Move tool remains selected when it ends. */
+  resizingTensor: string | null;
+  setResizingTensor: (id: string | null) => void;
+  setCardScale: (id: string, scale: number, record?: boolean) => void;
+  commitCardResize: (id: string, beforeScale: number, beforeOffset: NodeOffset) => void;
 
   /**
    * Tile extents per planned tensor (see `core/plan`). Independent of the

@@ -9,9 +9,8 @@ import { familyOf, tilePlan, type TaskRef } from "../core/plan/plan";
 import { familyReplay, type FamilyReplay } from "../core/plan/replay";
 import { tryCompileDSL, type CompilerDiagnostic } from "../parse/compiler";
 import type { CompileArtifact, PlanRestoreArtifact, PlanRestoreRequest } from "./analysis-protocol";
-import { cardSize, type CardShapeView } from "../view/tensor/card-size";
+import { tensorCardSize, type CardShapeView } from "../view/tensor/card-size";
 import { buildBaseGraphLayout } from "../view/graph/graph-scene";
-import { shapeLabel, symbolicExtentLabel } from "../view/tensor/shape-label";
 import { graphScale, planeExtents } from "../view/tensor/tiling";
 import { viewAxes } from "../view/tensor/tensor-view";
 
@@ -32,11 +31,7 @@ export function layoutArtifact(
   views: Record<string, CardShapeView> = {},
 ) {
   const resolved = "shapesOf" in graph ? graph : hydrateResolvedGraph(graph);
-  return buildBaseGraphLayout(resolved, (tensor) =>
-    cardSize(tensor.resolved!, graphPx, tensor.name, [
-      shapeLabel(tensor, "symbolic"), symbolicExtentLabel(tensor),
-    ], views[tensor.id], tensor.axisNames)
-  );
+  return buildBaseGraphLayout(resolved, (tensor) => tensorCardSize(tensor, graphPx, views[tensor.id]));
 }
 
 /** Compile, infer, and structurally lay out a graph. Safe to call in a Worker

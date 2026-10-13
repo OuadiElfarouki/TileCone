@@ -4,13 +4,16 @@ import { Graph, ResolvedGraph } from "../core/graph";
 import { TaskRef } from "../core/plan/plan";
 import { BaseGraphLayout } from "../view/graph/graph-scene";
 import { NodeOffsets } from "../view/graph/node-layout";
-import { type Selection } from "../view/workspace";
+import { idRecord, type Selection } from "../view/workspace";
+import type { ViewCfg } from "../view/tensor/tensor-view";
 import { State } from "./types";
 
 /** What a plan edit changes: the tile extents per planned tensor, and the task inspected. */
 export type PlanEdit = { tiles: Record<string, number[]>; task: TaskRef | null };
 
 export type WorkspaceSnapshot = {
+  /** Display scale per resized card; a card absent here has the fitted size. */
+  cardScales: Record<string, number>;
   selection: Selection;
   nodeOffsets: NodeOffsets;
   /** Required so that no edit can record a snapshot that forgets the plan. */
@@ -75,11 +78,31 @@ export function appendWorkspaceHistory(
   return [...history, snapshot].slice(-WORKSPACE_HISTORY_LIMIT);
 }
 
-type WorkspaceState = Pick<State, "workspaceHistory" | "selection" | "nodeOffsets" | "planTiles" | "planTask">;
+type WorkspaceState = Pick<State, "workspaceHistory" | "selection" | "nodeOffsets" | "planTiles" | "planTask" | "viewCfgs">;
+
+export function cardScalesOf(state: Pick<State, "viewCfgs">): Record<string, number> {
+  return idRecord(Object.fromEntries(Object.entries(state.viewCfgs).flatMap(([id, cfg]) => cfg.scale === undefined ? [] : [[id, cfg.scale]])));
+}
+
+/** `viewCfgs` with each card's display scale as `cardScales` records it. */
+export function withCardScales(viewCfgs: Record<string, ViewCfg>, cardScales: Record<string, number>): Record<string, ViewCfg> {
+  const next = idRecord<ViewCfg>();
+  let changed = false;
+  for (const [id, cfg] of Object.entries(viewCfgs)) {
+    const scale = cardScales[id];
+    if (scale === cfg.scale) next[id] = cfg;
+    else {
+      const { scale: _scale, ...rest } = cfg;
+      next[id] = scale === undefined ? rest : { ...rest, scale };
+      changed = true;
+    }
+  }
+  return changed ? next : viewCfgs;
+}
 
 /** The workspace as it stands: what an undo restores. */
 export function workspaceSnapshot(state: Omit<WorkspaceState, "workspaceHistory">): WorkspaceSnapshot {
-  return { selection: state.selection, nodeOffsets: state.nodeOffsets, plan: planEditOf(state) };
+  return { selection: state.selection, nodeOffsets: state.nodeOffsets, plan: planEditOf(state), cardScales: cardScalesOf(state) };
 }
 
 /**

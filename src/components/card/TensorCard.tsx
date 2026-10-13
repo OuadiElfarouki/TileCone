@@ -19,14 +19,15 @@ import {
   sliceOrdinal,
   viewAxes,
 } from "../../view/tensor/tensor-view";
-import { cardViewMenu, hiddenViewCfg, type CardViewAction, type CardViewChoice } from "../../view/tensor/menus";
+import { cardDisplayMenu, cardViewMenu, hiddenViewCfg, type CardViewAction, type CardViewChoice } from "../../view/tensor/menus";
 import { OptionsMenu, useOptionsMenu } from "../chrome/OptionsMenu";
 import type { MenuHandlers } from "../../view/menu";
-import { cardScaleFor, viewTags } from "../../view/tensor/card-size";
+import { scaleRatioLabel, viewTags } from "../../view/tensor/card-size";
+import type { ResizeCorner } from "../../view/tensor/resize";
 import { DECK_ROOM_PX, DECK_STEP_PX, deckSheets } from "../../view/tensor/deck";
 import { cancelDeal, deal, holdPicture, prefersStill } from "./deal";
 import { seedTile } from "../../view/tensor/tile-spec";
-import { graphIsInteractive, partsOn } from "../../view/workspace";
+import { graphIsInteractive, layoutMovable, partsOn } from "../../view/workspace";
 import { buildPlanPaint, buildLayers } from "../../view/tensor/layers";
 import {
   CellDrag,
@@ -42,10 +43,6 @@ import { buildReplayPaint } from "../../view/tensor/replay-paint";
 import { isPrimaryPress } from "../pointer";
 
 export { cardSize } from "../../view/tensor/card-size";
-
-/** `4`, `2.5`: a scale ratio as short as it can be stated without lying. */
-const formatRatio = (ratio: number): string =>
-  Number.isInteger(Math.round(ratio * 10) / 10) ? String(Math.round(ratio)) : ratio.toFixed(1);
 
 /**
  * How long the view must hold still before a card re-rasterises, in ms.
@@ -66,6 +63,9 @@ function TensorCardView({
   uniformTile = null,
   rasterize = true,
   rasterPixels,
+  displayScale,
+  onResizeStart,
+  onResizeKeyDown,
 }: {
   tensor: Tensor;
   renderScale?: number;
@@ -74,13 +74,23 @@ function TensorCardView({
   uniformTile?: number | null;
   rasterize?: boolean;
   rasterPixels?: number;
+  /** The scale the graph has room to draw a resized card at; see `displayedCardScales`. */
+  displayScale?: number;
+  onResizeStart?: (event: React.PointerEvent<HTMLElement>, id: string, corner: ResizeCorner) => void;
+  onResizeKeyDown?: (event: React.KeyboardEvent, id: string, corner: ResizeCorner) => void;
 }): React.ReactElement {
   const shape = tensor.resolved!;
   const rank = shape.length;
   const interactive = useStore(graphIsInteractive);
-  const cfg = useStore((s) => s.viewCfgs[tensor.id]);
+  const storedCfg = useStore((s) => s.viewCfgs[tensor.id]);
+  const cfg = useMemo(
+    () => displayScale === undefined || displayScale === storedCfg.scale ? storedCfg : { ...storedCfg, scale: displayScale },
+    [storedCfg, displayScale]
+  );
   const setViewCfg = useStore((s) => s.setViewCfg);
   const setViewAxes = useStore((s) => s.setViewAxes);
+  const resizing = useStore((s) => s.resizingTensor === tensor.id);
+  const movable = useStore((s) => layoutMovable(s.inspectorTab));
   /** How the tensor is drawn is its own setting, so it is changed here, on the
    *  card, from a right-click rather than from the inspected tile's table. */
   const viewMenu = useOptionsMenu(interactive);
@@ -456,15 +466,17 @@ function TensorCardView({
   };
 
   const totalBytes = elementCount(shape) * DTYPE_BYTES[tensor.dtype];
-  /** How much smaller than the graph's scale this card draws; 1 for every card
-   *  on the default plane. */
-  const scaleRatio = graphPx / cardScaleFor(shape, cfg, graphPx);
   const nameOf = (ax: number) => axisName(tensor, ax);
-  const viewSpec = cardViewMenu(shape, cfg, nameOf);
+  const scaleNote = scaleRatioLabel(shape, cfg, graphPx);
+  const planeSpec = cardViewMenu(shape, cfg, nameOf);
+  const viewSpec = [...planeSpec, ...(planeSpec.length ? [{ kind: "separator" as const }] : []),
+    ...cardDisplayMenu(shape, cfg, graphPx, movable, resizing, storedCfg)];
   const viewHandlers: MenuHandlers<CardViewAction, CardViewChoice> = {
     action: {
       swap: () => setViewAxes(tensor.id, [colAxis, rowAxis]),
       default: () => setViewAxes(tensor.id, null),
+      resize: () => useStore.getState().setResizingTensor(resizing ? null : tensor.id),
+      resetSize: () => useStore.getState().setCardScale(tensor.id, 1),
     },
     choice: {
       hidden: (value) => setViewCfg(tensor.id, hiddenViewCfg(value)),
@@ -579,6 +591,17 @@ function TensorCardView({
             </span>
           )
         )}
+        {/* Lengths on a card off the graph's scale do not compare with other
+            cards', so the card says so wherever it is read. */}
+        {scaleNote && (
+          <span
+            className="tc-scale"
+            title={`drawn at ${scaleNote} the graph's scale, so its lengths are not comparable with other cards` +
+              (storedCfg.scale !== cfg.scale ? `; resized to ${scaleRatioLabel(shape, storedCfg, graphPx) ?? "×1"}, it is drawn smaller until its neighbours leave room` : "")}
+          >
+            scale {scaleNote}
+          </span>
+        )}
         {roleTag && <span className="tc-role">{roleTag}</span>}
         {approximation.approximate && (
           <span
@@ -608,14 +631,6 @@ function TensorCardView({
               title={`display only: the card draws ${nameOf(rowAxis)} down and ${nameOf(colAxis)} across; the graph is unchanged. Right-click the card to change it.`}
             >
               {tags.plane}
-            </span>
-          )}
-          {scaleRatio > 1 && (
-            <span
-              className="tc-plane"
-              title={`drawn at 1/${formatRatio(scaleRatio)} of the graph's scale to fit, so its lengths are not comparable with other cards`}
-            >
-              <b>scale ÷{formatRatio(scaleRatio)}</b>
             </span>
           )}
         </div>
@@ -711,6 +726,14 @@ function TensorCardView({
           onLostPointerCapture={cancelPointerDrag}
           onPointerLeave={onLeave}
         />
+        {resizing && onResizeStart && (["top", "bottom"] as const).map((corner) => (
+          <button key={corner} className={`tc-resize-handle ${corner}`} data-card-resize={corner}
+            aria-label={`resize ${tensor.name} from ${corner} right corner`}
+            title="drag to resize · Escape finishes resizing"
+            style={{ left: geom.canvasW, top: (slicing ? DECK_ROOM_PX : 0) + (corner === "bottom" ? geom.canvasH : 0) }}
+            onPointerDown={(event) => onResizeStart(event, tensor.id, corner)}
+            onKeyDown={(event) => onResizeKeyDown?.(event, tensor.id, corner)} />
+        ))}
         {hover && <div className="tc-tooltip">{hover}</div>}
       </div>
     </div>

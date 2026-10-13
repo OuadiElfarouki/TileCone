@@ -30,11 +30,13 @@ export type MenuChoice<C extends string> = {
 };
 
 export type MenuSeparator = { kind: "separator" };
+export type MenuInfo = { kind: "info"; label: string; title: string };
 
 export type MenuSpec<A extends string, C extends string = never> = (
   | MenuAction<A>
   | MenuChoice<C>
   | MenuSeparator
+  | MenuInfo
 )[];
 
 /** What a menu's entries do, by id. */

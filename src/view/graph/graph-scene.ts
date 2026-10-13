@@ -150,12 +150,14 @@ export function buildBaseGraphLayout(
  */
 export function buildGraphScene(
   base: BaseGraphLayout,
-  nodeOffsets: Readonly<NodeOffsets>
+  nodeOffsets: Readonly<NodeOffsets>,
+  nodeSizes: Readonly<Record<string, Pick<Rect, "w" | "h">>> = {}
 ): GraphScene {
   const nodes = base.nodes.map((node) => {
     const offset = nodeOffsets[graphId(node)];
-    return offset
-      ? { ...node, x: node.x + offset.dx, y: node.y + offset.dy }
+    const size = nodeSizes[graphId(node)];
+    return offset || size
+      ? { ...node, ...size, x: node.x + (offset?.dx ?? 0), y: node.y + (offset?.dy ?? 0) }
       : node;
   });
   const nodesByGraphId = new Map(nodes.map((node) => [graphId(node), node]));

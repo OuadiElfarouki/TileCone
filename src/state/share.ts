@@ -255,7 +255,7 @@ export function workspaceToLink(state: State): WorkspaceLink {
     dsl: state.dslText, dir: state.direction, ent: state.showEntangled,
     tile: state.tileScale, snap: state.snapToGrid, axes: state.axisMode,
     views: Object.fromEntries(Object.entries(state.viewCfgs).filter(([, cfg]) =>
-      !cfg.projection || !!cfg.tile || !!cfg.axes || cfg.sliders.some((v) => v !== 0))),
+      !cfg.projection || !!cfg.tile || !!cfg.axes || cfg.scale !== undefined || cfg.sliders.some((v) => v !== 0))),
     pos: Object.fromEntries(Object.entries(state.nodeOffsets).map(([id, { dx, dy }]) => [id, [dx, dy]])),
     sel: selectionToLink(state.selection),
     ...planToLink(state),

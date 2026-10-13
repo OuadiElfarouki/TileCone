@@ -29,7 +29,7 @@ export function loadResolvedGraph(
   | "perBox" | "focusedBox" | "pinnedBox" | "viewCfgs" | "preview" | "graphPx"
   | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "nodeOffsets"
   | "planTiles" | "planTask" | "plan" | "planSupply" | "keptPlans"
-  | "replayPlayback" | "replayDepth" | "placementCarry"
+  | "replayPlayback" | "replayDepth" | "placementCarry" | "resizingTensor"
 > {
   const viewCfgs = Object.create(null) as Record<string, ViewCfg>;
   for (const t of Object.values(resolved.tensors)) viewCfgs[t.id] = defaultViewCfg(t.resolved!);
@@ -64,6 +64,7 @@ export function loadResolvedGraph(
     ...NO_PLAN,
     keptPlans: [],
     placementCarry: false,
+    resizingTensor: null,
   };
 }
 
@@ -118,6 +119,7 @@ export function carriedViewCfg(shape: number[], previous: ViewCfg | undefined): 
     ...(previous.tile ? { tile: previous.tile.map((v, axis) => Math.min(v, Math.max(1, shape[axis]))) } : {}),
     ...(previous.axes ? { axes: [previous.axes[0], previous.axes[1]] as [number, number] } : {}),
     ...(previous.unfold ? { unfold: previous.unfold } : {}),
+    ...(previous.scale !== undefined ? { scale: previous.scale } : {}),
   };
   // A shape that grew past what unfolds keeps the rest of its view, sliced.
   const { unfold: _unfold, ...sliced } = cfg;
@@ -197,6 +199,7 @@ export function restoredWorkspaceState(
       ...(cfg.tile ? { tile: cfg.tile.slice() } : {}),
       ...(cfg.axes && remapped(shape, cfg) ? { axes: [cfg.axes[0], cfg.axes[1]] as [number, number] } : {}),
       ...(cfg.unfold ? { unfold: cfg.unfold } : {}),
+      ...(cfg.scale !== undefined ? { scale: cfg.scale } : {}),
     };
   }
   const checkedParts = (workspace.parts ?? []).map((part) => {

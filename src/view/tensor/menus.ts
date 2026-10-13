@@ -8,6 +8,7 @@
  */
 
 import type { MenuChoice, MenuSpec } from "../menu";
+import { scaleRatioLabel } from "./card-size";
 import {
   hiddenAxes,
   hiddenMode,
@@ -69,8 +70,25 @@ export function axisTableMenu({
   ];
 }
 
-export type CardViewAction = "swap" | "default";
+export type CardViewAction = "swap" | "default" | "resize" | "resetSize";
 export type CardViewChoice = "rows" | "cols" | "hidden";
+
+/** `cfg` is the view as drawn; `stored` is the one the card was resized to,
+ *  which differs while its neighbours leave it less room. */
+export function cardDisplayMenu(shape: readonly number[], cfg: ViewCfg, graphPx: number, movable: boolean, resizing: boolean,
+  stored: ViewCfg = cfg): MenuSpec<CardViewAction, CardViewChoice> {
+  const text = scaleRatioLabel(shape, cfg, graphPx) ?? "×1";
+  const limited = stored.scale !== cfg.scale;
+  return [
+    { kind: "info", label: `display scale ${text}${limited ? ", limited by neighbours" : ""}`,
+      title: "Relative to the graph's scale; display size changes no tensor dimensions or analysis." +
+        (limited ? ` Resized to ${scaleRatioLabel(shape, stored, graphPx) ?? "×1"}, it is drawn smaller until its neighbours leave room.` : "") },
+    { kind: "action", id: "resize", label: resizing ? "finish resizing" : "resize card", disabled: !movable,
+      title: movable ? "enter Move and drag a right corner to resize; Escape or clicking elsewhere finishes resizing" : "the Plan view keeps graph placement fixed" },
+    { kind: "action", id: "resetSize", label: "reset display size", disabled: !movable || cfg.scale === undefined,
+      title: "return to this card's automatically fitted size (undoable)" },
+  ];
+}
 
 /**
  * The readings a card offers for its hidden axes, in menu order. A choice's

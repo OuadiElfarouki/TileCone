@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { ResolvedGraph } from "../../core/graph";
 import { isExpandable } from "../../core/expand";
 import { constrainRectMotion, Rect } from "../../view/graph/graph-geometry";
 import {
@@ -10,7 +11,8 @@ import {
 } from "../../view/graph/graph-scene";
 import { TensorCard } from "../card/TensorCard";
 import { carriedOffsets } from "../../view/graph/carry-placement";
-import { cardShapeView, type CardShapeView } from "../../view/tensor/card-size";
+import { canvasSize, cardShapeView, tensorCardSize, type CardShapeView } from "../../view/tensor/card-size";
+import { constrainResize, displayedCards, resizeScale, type ResizeCorner } from "../../view/tensor/resize";
 import { opLabel } from "../../core/ops/index";
 import { useStore } from "../../state/store";
 import type { NodeOffset } from "../../view/graph/node-layout";
@@ -46,6 +48,19 @@ type NodeDrag = {
   blockers: Rect[];
   moved: boolean;
   viewportMovedBefore: boolean;
+};
+
+/** A card about to be resized from one corner. It starts from the scale it is
+ * drawn at, and an undo or cancel returns it to the scale it had stored. */
+type ResizeTarget = {
+  placed: Rect; fromScale: number; beforeScale: number; beforeOffset: NodeOffset;
+  canvas: { w: number; h: number }; measure: (scale: number) => Rect; blockers: Rect[];
+};
+
+type CardResize = ResizeTarget & {
+  graph: ResolvedGraph;
+  id: string; pointerId: number; host: HTMLElement; corner: ResizeCorner;
+  start: { x: number; y: number }; viewportMovedBefore: boolean;
 };
 
 /** How far one arrow press moves a node, in world px, and what Shift
@@ -227,6 +242,7 @@ export function GraphView(): React.ReactElement {
   const nodeOffsets = useStore((s) => s.nodeOffsets);
   const moveTool = useStore((s) => activeCanvasTool(s) === "move");
   const movable = useStore((s) => layoutMovable(s.inspectorTab));
+  const resizingTensor = useStore((s) => s.resizingTensor);
   // Holding Ctrl/Cmd shows the move cursor only where a drag could follow.
   const moveHeld = useMoveModifier() && movable;
   const setNodeOffset = useStore((s) => s.setNodeOffset);
@@ -241,6 +257,7 @@ export function GraphView(): React.ReactElement {
   const containerRef = useRef<HTMLDivElement>(null);
   const panRef = useRef<{ x0: number; y0: number; tx: number; ty: number } | null>(null);
   const nodeDragRef = useRef<NodeDrag | null>(null);
+  const resizeRef = useRef<CardResize | null>(null);
   const fitAfterResetRef = useRef(false);
   /** True once the user has panned or zoomed away from a fitted view. Resizing
    * the viewport re-fits only while this is false, so collapsing a panel keeps a
@@ -324,13 +341,25 @@ export function GraphView(): React.ReactElement {
     return min === max ? min : null;
   }, [resolved, tileScale, graphPx]);
 
-  /** Offsets and connector routes are cheap live scene projection, not layout. */
+  /** Resized cards' stored scales, as a stable key. */
+  const cardScaleKey = useStore((s) => JSON.stringify(Object.entries(s.viewCfgs).flatMap(([id, cfg]) =>
+    cfg.scale === undefined ? [] : [[id, cfg.scale]])));
+  /** Resized cards' drawn scale and size, by node key. */
+  const cardDisplay = useMemo(
+    () => baseLayout && resolved
+      ? displayedCards(baseLayout, nodeOffsets, useStore.getState().viewCfgs, resolved, graphPx)
+      : { scales: {}, sizes: {} },
+    [resolved, baseLayout, nodeOffsets, graphPx, footprintKey, cardScaleKey]
+  );
+  const displayScalesRef = useRef(cardDisplay.scales);
+  displayScalesRef.current = cardDisplay.scales;
+  /** Offsets, resized cards and connector routes are cheap live scene projection, not layout. */
   const scene = useMemo(
     () =>
       baseLayout
-        ? buildGraphScene(baseLayout, nodeOffsets)
+        ? buildGraphScene(baseLayout, nodeOffsets, cardDisplay.sizes)
         : null,
-    [baseLayout, nodeOffsets]
+    [baseLayout, nodeOffsets, cardDisplay]
   );
   const raster = useMemo(
     () => graphRasterAllocation(scene?.nodes ?? [], tf, viewport),
@@ -579,6 +608,7 @@ export function GraphView(): React.ReactElement {
 
   const onWheel = (e: React.WheelEvent) => {
     e.preventDefault();
+    if (resizeRef.current) return;
     cancelGlide();
     const el = containerRef.current!;
     const rect = el.getBoundingClientRect();
@@ -671,6 +701,7 @@ export function GraphView(): React.ReactElement {
     // Portal events follow the React tree, but the card's menu lives outside
     // this DOM node and must keep its own pointer gestures.
     if (!e.currentTarget.contains(e.target as Node)) return false;
+    if ((e.target as HTMLElement | null)?.closest?.("[data-card-resize]")) return false;
     // The tool is read here rather than captured, so switching it mid-session
     // takes effect on the next press. The modifier comes off the press itself,
     // and borrows nothing where the layout cannot move.
@@ -769,6 +800,101 @@ export function GraphView(): React.ReactElement {
     setDragging(false);
   }, [applyCardMove, commitNodeMove, setDragging, setNodeOffset]);
 
+  const resizePointRef = useRef<{ x: number; y: number } | null>(null);
+  const applyResize = useCallback(() => {
+    const drag = resizeRef.current;
+    const point = resizePointRef.current;
+    if (!drag || !point || !graphIsInteractive(useStore.getState())) return;
+    const wanted = resizeScale(drag.fromScale, drag.canvas,
+      { x: (point.x - drag.start.x) / tfRef.current.k, y: (point.y - drag.start.y) / tfRef.current.k }, drag.corner);
+    const scale = constrainResize(drag.fromScale, wanted, drag.measure, drag.blockers);
+    const rect = drag.measure(scale);
+    const state = useStore.getState();
+    state.setCardScale(drag.id, scale, false);
+    state.setNodeOffset(nodeKey("tensor", drag.id), { dx: drag.beforeOffset.dx, dy: drag.beforeOffset.dy + rect.y - drag.placed.y });
+    movedRef.current = true;
+    setBlockedNode(Math.abs(scale - wanted) > 1e-6 ? nodeKey("tensor", drag.id) : null);
+  }, []);
+  const requestResize = useFrameThrottle(applyResize);
+  const finishResize = useCallback((commit: boolean) => {
+    const drag = resizeRef.current;
+    if (!drag) return;
+    commit = commit && graphIsInteractive(useStore.getState()) && useStore.getState().resolved === drag.graph;
+    if (commit) applyResize();
+    resizeRef.current = null;
+    resizePointRef.current = null;
+    const state = useStore.getState();
+    if (commit) state.commitCardResize(drag.id, drag.beforeScale, drag.beforeOffset);
+    else if (state.resolved === drag.graph) {
+      state.setCardScale(drag.id, drag.beforeScale, false);
+      state.setNodeOffset(nodeKey("tensor", drag.id), drag.beforeOffset);
+      movedRef.current = drag.viewportMovedBefore;
+    }
+    if (drag.host.hasPointerCapture(drag.pointerId)) drag.host.releasePointerCapture(drag.pointerId);
+    setMovingNode(null); setBlockedNode(null); setDragging(false);
+  }, [applyResize, setDragging]);
+  const resizeTarget = useCallback((id: string, corner: ResizeCorner): ResizeTarget | null => {
+    const state = useStore.getState();
+    const tensor = state.resolved?.tensors[id];
+    const placed = sceneRef.current?.nodes.find((node) => node.kind === "tensor" && node.id === id);
+    if (!tensor || !placed || !graphIsInteractive(state) || state.resizingTensor !== id) return null;
+    const key = nodeKey("tensor", id), cfg = state.viewCfgs[id];
+    const fromScale = displayScalesRef.current[key] ?? cfg.scale ?? 1;
+    const measure = (scale: number): Rect => {
+      const size = tensorCardSize(tensor, state.graphPx, { ...cfg, scale });
+      return { ...size, x: placed.x, y: placed.y + (corner === "top" ? placed.h - size.h : 0) };
+    };
+    return {
+      placed, fromScale, beforeScale: cfg.scale ?? 1, beforeOffset: state.nodeOffsets[key] ?? { dx: 0, dy: 0 },
+      canvas: canvasSize(tensor.resolved!, { ...cfg, scale: fromScale }, state.graphPx), measure,
+      blockers: (sceneRef.current?.nodes ?? []).filter((node) => node !== placed),
+    };
+  }, []);
+
+  const startResize = useCallback((e: React.PointerEvent<HTMLElement>, id: string, corner: ResizeCorner) => {
+    const target = isPrimaryPress(e) ? resizeTarget(id, corner) : null;
+    if (!target) return;
+    e.preventDefault(); e.stopPropagation();
+    resizeRef.current = { ...target, id, graph: useStore.getState().resolved!, pointerId: e.pointerId,
+      host: e.currentTarget, corner, start: { x: e.clientX, y: e.clientY }, viewportMovedBefore: movedRef.current };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setMovingNode(nodeKey("tensor", id)); setDragging(true);
+  }, [resizeTarget, setDragging]);
+
+  const resizeByKey = useCallback((e: React.KeyboardEvent, id: string, corner: ResizeCorner) => {
+    const delta = ARROW_DELTAS[e.key];
+    const target = delta ? resizeTarget(id, corner) : null;
+    if (!target) return;
+    e.preventDefault(); e.stopPropagation();
+    const { fromScale, beforeScale, beforeOffset, measure, placed } = target;
+    const step = e.shiftKey ? NUDGE_PX * NUDGE_FAST : NUDGE_PX;
+    const wanted = resizeScale(fromScale, target.canvas, { x: delta.x * step, y: delta.y * step }, corner);
+    const scale = constrainResize(fromScale, wanted, measure, target.blockers);
+    const state = useStore.getState();
+    state.setCardScale(id, scale, false);
+    state.setNodeOffset(nodeKey("tensor", id), { dx: beforeOffset.dx, dy: beforeOffset.dy + measure(scale).y - placed.y });
+    if (!e.repeat) state.commitCardResize(id, beforeScale, beforeOffset);
+    movedRef.current = true;
+  }, [resizeTarget]);
+
+  useEffect(() => {
+    if (!interactive || resizeRef.current?.id !== resizingTensor) finishResize(false);
+    if (!interactive && resizingTensor !== null) useStore.getState().setResizingTensor(null);
+  }, [interactive, resizingTensor, finishResize]);
+  useEffect(() => {
+    if (resizingTensor === null) return;
+    const outside = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest("[role=menu]")) return;
+      if (target?.closest("[data-tensor]")?.getAttribute("data-tensor") === resizingTensor) return;
+      finishResize(false);
+      useStore.getState().setResizingTensor(null);
+    };
+    document.addEventListener("pointerdown", outside, true);
+    return () => document.removeEventListener("pointerdown", outside, true);
+  }, [resizingTensor, finishResize]);
+  useEffect(() => () => finishResize(false), [finishResize]);
+
   useEffect(() => {
     if (!interactive) {
       finishCardDrag(false);
@@ -831,23 +957,32 @@ export function GraphView(): React.ReactElement {
    * node holds pointer capture, so these arrive on it wherever the pointer goes. */
   const dragFollow = useMemo(
     () => ({
-      onPointerMove: moveCard,
-      onPointerUp: () => finishCardDrag(true),
-      onPointerCancel: () => finishCardDrag(false),
-      onLostPointerCapture: () => finishCardDrag(false),
+      onPointerMove: (e: React.PointerEvent<HTMLElement>) => {
+        if (!resizeRef.current) return moveCard(e);
+        if (resizeRef.current.pointerId !== e.pointerId) return;
+        e.preventDefault(); e.stopPropagation();
+        resizePointRef.current = { x: e.clientX, y: e.clientY }; requestResize();
+      },
+      onPointerUp: (e: React.PointerEvent<HTMLElement>) => {
+        if (resizeRef.current && resizeRef.current.pointerId !== e.pointerId) return;
+        finishResize(true); finishCardDrag(true);
+      },
+      onPointerCancel: () => { finishResize(false); finishCardDrag(false); },
+      onLostPointerCapture: () => { finishResize(false); finishCardDrag(false); },
     }),
-    [moveCard, finishCardDrag]
+    [moveCard, finishCardDrag, finishResize, requestResize]
   );
 
   useEffect(() => {
     const cancel = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || !nodeDragRef.current) return;
+      if (e.key !== "Escape" || (!nodeDragRef.current && !resizeRef.current)) return;
       e.preventDefault();
+      finishResize(false);
       finishCardDrag(false);
     };
     window.addEventListener("keydown", cancel);
     return () => window.removeEventListener("keydown", cancel);
-  }, [finishCardDrag]);
+  }, [finishCardDrag, finishResize]);
 
   const resetLayout = () => {
     if (!movable || !Object.keys(nodeOffsets).length) return;
@@ -1052,6 +1187,9 @@ export function GraphView(): React.ReactElement {
                 overviewWidth={overview.tensors.get(t.id)}
                 rasterize={raster.visible.has(t.id)}
                 rasterPixels={raster.pixelsPerCard}
+                displayScale={cardDisplay.scales[key]}
+                onResizeStart={startResize}
+                onResizeKeyDown={resizeByKey}
               />
             </div>
           );

@@ -80,6 +80,12 @@ export function useKeyboard({
         // An open menu cancels itself. A focused node does not: it takes the
         // arrows, not Escape, so the press still reaches the move tool below.
         if (el?.closest?.('[role="listbox"], [role="menu"]')) return;
+        // Resizing ends first; the Move tool it selected stays in effect.
+        if (s.resizingTensor !== null) {
+          e.preventDefault();
+          s.setResizingTensor(null);
+          return;
+        }
         // A rubber-band or a node drag cancels itself, and that is the whole of
         // the press - it must not also leave the move tool the drag was made in.
         if (s.dragging || e.defaultPrevented) return;
@@ -125,6 +131,7 @@ export function useKeyboard({
       }
 
       if (ownsWorkspaceKeys(e.target)) return;
+      if (s.dragging) return;
       // Movable nodes own arrows, while Undo, Fit and Help remain global.
       const el = e.target as HTMLElement | null;
       if (e.key.startsWith("Arrow") && el?.closest?.("[data-node-move]")) return;

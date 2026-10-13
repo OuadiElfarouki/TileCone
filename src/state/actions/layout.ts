@@ -1,6 +1,8 @@
+import { nodeKey } from "../../view/graph/graph-scene";
 import { NodeOffset } from "../../view/graph/node-layout";
-import { idRecord, PANEL_COLLAPSE_AT, PANEL_MAX, PANEL_MIN } from "../../view/workspace";
-import { recordWorkspace } from "../history";
+import { graphIsInteractive, idRecord, layoutMovable, PANEL_COLLAPSE_AT, PANEL_MAX, PANEL_MIN } from "../../view/workspace";
+import { MAX_CARD_SCALE, MIN_CARD_SCALE } from "../../view/tensor/tensor-view";
+import { cardScalesOf, recordWorkspace } from "../history";
 import { GetState, SetState, State } from "../types";
 
 /** Panel geometry and node placement. */
@@ -13,7 +15,36 @@ export const layoutActions = (set: SetState, get: GetState): Pick<
   | "commitNodeMove"
   | "resetNodeLayout"
   | "carryPlacement"
+  | "setResizingTensor"
+  | "setCardScale"
+  | "commitCardResize"
 > => ({
+  setResizingTensor: (id) => {
+    const state = get();
+    if (id !== null && (!graphIsInteractive(state) || !layoutMovable(state.inspectorTab) || !state.resolved?.tensors[id])) return;
+    set({ resizingTensor: id, ...(id !== null ? { canvasTool: "move" as const, preview: null } : {}) });
+  },
+
+  setCardScale: (id, scale, record = true) => {
+    const state = get();
+    const nextScale = Math.abs(scale - 1) < 1e-8 ? 1 : scale;
+    if (!state.viewCfgs[id] || !Number.isFinite(scale) || scale < MIN_CARD_SCALE || scale > MAX_CARD_SCALE ||
+        (state.viewCfgs[id].scale ?? 1) === nextScale) return;
+    if (record) set({ workspaceHistory: recordWorkspace(state) });
+    get().setViewCfg(id, { scale: nextScale === 1 ? undefined : nextScale });
+  },
+
+  commitCardResize: (id, beforeScale, beforeOffset) => {
+    const state = get();
+    const key = nodeKey("tensor", id);
+    const after = state.nodeOffsets[key] ?? { dx: 0, dy: 0 };
+    if ((state.viewCfgs[id]?.scale ?? 1) === beforeScale && after.dx === beforeOffset.dx && after.dy === beforeOffset.dy) return;
+    const cardScales = cardScalesOf(state);
+    if (beforeScale === 1) delete cardScales[id]; else cardScales[id] = beforeScale;
+    const nodeOffsets = idRecord(state.nodeOffsets);
+    if (beforeOffset.dx === 0 && beforeOffset.dy === 0) delete nodeOffsets[key]; else nodeOffsets[key] = beforeOffset;
+    set({ workspaceHistory: recordWorkspace(state, { cardScales, nodeOffsets }) });
+  },
   setPanelWidth: (side, w) => {
     const { panelW, panelCollapsed } = get();
     const clamped = Math.round(Math.max(PANEL_MIN, Math.min(PANEL_MAX, w)));

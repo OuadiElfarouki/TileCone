@@ -60,7 +60,7 @@ export function gridGeometry(
   const canvasH = fold ? fold.down.total : panelH;
   // A tile of the tensor's own is a quantity and is drawn as given, however
   // dense; `latticeStride` keeps the drawn boundaries apart on screen.
-  const tile = gestureTile(shape, cfg, tileFor(rows, cols, tileScale, scale));
+  const tile = gestureTile(shape, cfg, tileFor(rows, cols, tileScale, cardScaleFor(shape, { ...cfg, scale: undefined }, px)));
   const rowTile = rowAxis >= 0 ? tile[rowAxis] : 1;
   const colTile = colAxis >= 0 ? tile[colAxis] : 1;
   const tileRows = Math.ceil(rows / rowTile);
@@ -304,7 +304,7 @@ export function tileOf(
 ): number {
   const { rowAxis, colAxis } = viewAxes(shape, cfg);
   const { rows, cols } = planeExtents(shape, rowAxis, colAxis);
-  return tileFor(rows, cols, tileScale, cardScaleFor(shape, cfg, px));
+  return tileFor(rows, cols, tileScale, cardScaleFor(shape, { ...cfg, scale: undefined }, px));
 }
 
 /**

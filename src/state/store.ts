@@ -86,6 +86,7 @@ export const useStore = create<State>((set, get) => {
   nodeOffsets: idRecord<NodeOffset>(),
   placementCarry: false,
   canvasTool: initialCanvasTool(),
+    resizingTensor: null,
   ...workspaceActions(set, get),
   ...selectionActions(set, get),
   ...viewActions(set, get),

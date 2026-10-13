@@ -69,6 +69,15 @@ describe("live graph scene projection", () => {
     height: 110,
   };
 
+  it("resizes one card and reroutes without moving its peers or changing base placement", () => {
+    const normal = buildGraphScene(base, {});
+    const resized = buildGraphScene(base, {}, { "t:X": { w: 150, h: 90 } });
+    expect(resized.nodes[0]).toMatchObject({ x: 20, y: 30, w: 150, h: 90 });
+    expect(resized.nodes[1]).toEqual(normal.nodes[1]);
+    expect(resized.edges[0].path).not.toBe(normal.edges[0].path);
+    expect(base.nodes[0].w).toBe(100);
+  });
+
   it("moves either kind of node and reroutes their connectors", () => {
     const before = buildGraphScene(base, {});
     const after = buildGraphScene(base, {
