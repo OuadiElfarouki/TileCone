@@ -1,5 +1,5 @@
 import { cardPx, MAX_GRAPH_H, MAX_GRAPH_W, planeExtents } from "./tiling";
-import { hiddenAxes, hiddenMode, projectedTileAxes, remapped, UNFOLD_MARK, viewAxes, type ViewCfg } from "./tensor-view";
+import { hiddenAxes, hiddenMode, MAX_CARD_SCALE, MIN_CARD_SCALE, projectedTileAxes, remapped, UNFOLD_MARK, viewAxes, type ViewCfg } from "./tensor-view";
 import { foldGeometry, foldScale } from "./fold";
 import { DECK_ROOM_PX } from "./deck";
 import type { Tensor } from "../../core/graph";
@@ -79,13 +79,15 @@ export function cardScaleFor(
 }
 
 /** `×1.5`, `÷4`: how a card's scale compares with the graph's, to three
- *  significant figures, or null where it draws at the graph's scale. */
+ *  significant figures, or null where it draws at the graph's scale. A stored
+ *  scale that a fixed canvas cannot apply is left out. */
 export function scaleRatioLabel(
   shape: readonly number[],
   cfg: Pick<ViewCfg, "axes" | "unfold" | "scale"> | undefined,
   graphPx: number
 ): string | null {
-  const ratio = cardScaleFor(shape, cfg, graphPx) / graphPx;
+  const applied = cfg?.scale !== undefined && !cardCanResize(shape, cfg, graphPx) ? { ...cfg, scale: undefined } : cfg;
+  const ratio = cardScaleFor(shape, applied, graphPx) / graphPx;
   const shown = Number((ratio >= 1 ? ratio : 1 / ratio).toPrecision(3));
   return shown === 1 ? null : `${ratio >= 1 ? "×" : "÷"}${shown}`;
 }
@@ -151,4 +153,13 @@ export function cardSize(
 export function tensorCardSize(tensor: Tensor, px: number, cfg?: CardShapeView): { w: number; h: number } {
   return cardSize(tensor.resolved!, px, tensor.name,
     [shapeLabel(tensor, "symbolic"), symbolicExtentLabel(tensor)], cfg, tensor.axisNames);
+}
+
+/** Some views (including scalar and singleton planes) have a fixed canvas.
+ * Compare actual geometry so fixed sides, gaps and minimum pixels share the
+ * same rule as rendering. */
+export function cardCanResize(shape: readonly number[], cfg: CardShapeView | undefined, px: number): boolean {
+  const small = canvasSize(shape, { ...cfg, scale: MIN_CARD_SCALE }, px);
+  const large = canvasSize(shape, { ...cfg, scale: MAX_CARD_SCALE }, px);
+  return small.w !== large.w || small.h !== large.h;
 }

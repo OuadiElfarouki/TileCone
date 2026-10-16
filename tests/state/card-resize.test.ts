@@ -6,11 +6,85 @@ import { layoutArtifact } from "../../src/worker/analysis-jobs";
 import { buildGraphScene } from "../../src/view/graph/graph-scene";
 import { cardShapeView, type CardShapeView } from "../../src/view/tensor/card-size";
 import { displayedCards } from "../../src/view/tensor/resize";
+import { box, fromBox } from "../../src/core/region";
 
 const SOURCE = "X = Tensor(8, 16, dtype=fp32)\nY = relu(X)\n";
 const S = () => useStore.getState();
 beforeEach(() => { useStore.setState(useStore.getInitialState(), true); S().applyDSL(SOURCE); });
 describe("card resize workspace edits", () => {
+  it("updates and cancels live geometry atomically, without recording intermediate frames", () => {
+    const seen: [number | undefined, unknown, number][] = [];
+    const stop = useStore.subscribe((s) => seen.push([s.viewCfgs.Y.scale, s.nodeOffsets["t:Y"], s.workspaceHistory.length]));
+    S().setCardGeometry("Y", 2, { dx: 0, dy: -128 }, false);
+    S().setCardGeometry("Y", 1, { dx: 0, dy: 0 }, false);
+    stop();
+    expect(seen).toEqual([[2, { dx: 0, dy: -128 }, 0], [undefined, undefined, 0]]);
+  });
+  it("records precise size edits and their geometry in the same update", () => {
+    const seen: [number | undefined, number][] = [];
+    const stop = useStore.subscribe((s) => seen.push([s.viewCfgs.Y.scale, s.workspaceHistory.length]));
+    S().setCardScale("Y", 1.251);
+    stop(); expect(seen).toEqual([[1.251, 1]]);
+    S().undoWorkspace(); expect(S().viewCfgs.Y.scale).toBeUndefined();
+  });
+  it("rejects invalid complete geometry without changing size, position or history", () => {
+    const before = S();
+    S().setCardGeometry("Y", 2, { dx: Infinity, dy: 0 });
+    S().setCardGeometry("Y", 0, { dx: 5, dy: 0 });
+    S().setCardGeometry("Y", 2, { dx: 1e9, dy: 0 });
+    expect(S()).toBe(before);
+  });
+  it("disables ineffective singleton resizing but permits clearing a legacy stored size", () => {
+    S().applyDSL("X = Tensor(1, 1, dtype=fp32)\n");
+    const before = S();
+    S().setResizingTensor("X"); S().setCardScale("X", 2);
+    expect(S()).toBe(before);
+    S().setViewCfg("X", { scale: 2 });
+    S().setCardScale("X", 1);
+    expect(S().viewCfgs.X.scale).toBeUndefined();
+    expect(S().workspaceHistory).toHaveLength(1);
+  });
+  it("retires resize mode when the chosen plane becomes fixed", () => {
+    S().applyDSL("X = Tensor(8, 1, 1, dtype=fp32)\n");
+    S().setViewAxes("X", [0, 2]); S().setResizingTensor("X");
+    expect(S().resizingTensor).toBe("X");
+    S().setViewAxes("X", null); expect(S().resizingTensor).toBeNull();
+    S().setViewAxes("X", [0, 2]); S().setResizingTensor("X");
+    S().setViewCfg("X", { axes: undefined }); expect(S().resizingTensor).toBeNull();
+    expect(S().canvasTool).toBe("move");
+  });
+  it("makes room for requested sizes, preserves analysis and the anchor, and undoes in one step", () => {
+    S().setSelection("X", fromBox(box([0, 2], [0, 2])), "replace");
+    S().setCardScale("X", 4); S().setCardScale("Y", 1.5);
+    const base = layoutArtifact(S().resolved!, S().graphPx);
+    S().setNodeOffset("t:X", { dx: 5, dy: 10 });
+    const before = S();
+    const oldDisplay = displayedCards(base, before.nodeOffsets, before.viewCfgs, before.resolved!, before.graphPx);
+    expect(oldDisplay.scales["t:X"]).toBeLessThan(4);
+    const seen: unknown[] = [];
+    const stop = useStore.subscribe((state) => seen.push(state));
+    S().makeRoomForCard("X", base); stop();
+    expect(seen).toHaveLength(1);
+    expect(S().nodeOffsets["t:X"]).toEqual(before.nodeOffsets["t:X"]);
+    expect(S().selection).toBe(before.selection); expect(S().backwardRes).toBe(before.backwardRes);
+    const display = displayedCards(base, S().nodeOffsets, S().viewCfgs, S().resolved!, S().graphPx);
+    expect(display.scales).toMatchObject({ "t:X": 4, "t:Y": 1.5 });
+    const nodes = buildGraphScene(base, S().nodeOffsets, display.sizes).nodes;
+    for (const [i, a] of nodes.entries()) for (const b of nodes.slice(i + 1))
+      expect(Math.min(a.x + a.w, b.x + b.w) > Math.max(a.x, b.x) && Math.min(a.y + a.h, b.y + b.h) > Math.max(a.y, b.y)).toBe(false);
+    expect(S().workspaceHistory).toHaveLength(before.workspaceHistory.length + 1);
+    S().makeRoomForCard("X", base);
+    expect(S().workspaceHistory).toHaveLength(before.workspaceHistory.length + 1);
+    S().undoWorkspace(); expect(S().nodeOffsets).toEqual(before.nodeOffsets);
+    expect(S().viewCfgs.X.scale).toBe(4);
+  });
+  it("does not arrange the fixed Plan view or an outdated workspace", () => {
+    const base = layoutArtifact(S().resolved!, S().graphPx);
+    S().setCardScale("X", 4); S().setInspectorTab("plan");
+    const before = S(); S().makeRoomForCard("X", base); expect(S()).toBe(before);
+    S().setInspectorTab("dependencies"); S().setDraftText("unfinished");
+    const stale = S(); S().makeRoomForCard("X", base); expect(S()).toBe(stale);
+  });
   it("enters Move and leaves it selected when resizing ends", () => {
     S().setResizingTensor("Y"); expect(S().canvasTool).toBe("move");
     expect(S().resizingTensor).toBe("Y");

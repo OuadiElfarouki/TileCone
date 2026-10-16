@@ -1,11 +1,38 @@
 import { describe, expect, it } from "vitest";
-import { canvasSize, cardScaleFor, cardShapeView, cardSize, scaleRatioLabel } from "../../../src/view/tensor/card-size";
+import { canvasSize, cardCanResize, cardScaleFor, cardShapeView, cardSize, scaleRatioLabel } from "../../../src/view/tensor/card-size";
 import { gridGeometry, tileOf } from "../../../src/view/tensor/grid";
 import { constrainResize, displayedCardScales, resizeScale } from "../../../src/view/tensor/resize";
 import { defaultViewCfg, MAX_CARD_SCALE, MIN_CARD_SCALE, viewCfgFits } from "../../../src/view/tensor/tensor-view";
 import { cardDisplayMenu } from "../../../src/view/tensor/menus";
 
 describe("manual card sizing", () => {
+  it.each([[], [1], [1, 1], [8, 1, 1]].map((shape) => [shape]))("detects a fixed canvas for %j", (shape) => {
+    const cfg = defaultViewCfg(shape);
+    expect(cardCanResize(shape, cfg, 4)).toBe(false);
+    const spec = cardDisplayMenu(shape, cfg, 4, true, false);
+    expect(spec.find((e) => e.kind === "action" && e.id === "resize")).toMatchObject({ disabled: true, title: "this view has a fixed canvas size" });
+    expect(spec.find((e) => e.kind === "action" && e.id === "setSize")).toMatchObject({ disabled: true });
+  });
+  it("does not state a stored scale that a fixed canvas cannot apply", () => {
+    const shape = [8, 1, 1], cfg = { ...defaultViewCfg(shape), scale: 2 };
+    expect(scaleRatioLabel(shape, cfg, 4)).toBeNull();
+    expect(scaleRatioLabel(shape, { ...cfg, axes: [0, 2] }, 4)).toBe("×2");
+  });
+  it("permits sizing a line and tests the actual plane of remapped and unfolded views", () => {
+    expect(cardCanResize([1, 16], undefined, 4)).toBe(true);
+    const shape = [8, 1, 1], cfg = defaultViewCfg(shape);
+    expect(cardCanResize(shape, { ...cfg, axes: [0, 2] }, 4)).toBe(true);
+    expect(cardCanResize(shape, { ...cfg, projection: false, unfold: "across" }, 4)).toBe(false);
+  });
+  it("only offers arranging when a requested size is constrained and placement is ready", () => {
+    const stored = { ...defaultViewCfg([8, 16]), scale: 4 };
+    const shown = { ...stored, scale: 1.5 };
+    const action = (cfg: typeof stored, ready: boolean) => cardDisplayMenu([8, 16], cfg, 4, true, false, stored, ready)
+      .find((e) => e.kind === "action" && e.id === "makeRoom");
+    expect(action(shown, true)).toMatchObject({ disabled: false });
+    expect(action(shown, false)).toMatchObject({ disabled: true });
+    expect(action(stored, true)).toMatchObject({ disabled: true });
+  });
   it("uses the fitted scale as its starting point, including unfolded panels", () => {
     const shape = [16, 128, 128];
     const cfg = { ...defaultViewCfg(shape), projection: false, unfold: "across" as const };

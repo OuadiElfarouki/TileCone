@@ -11,7 +11,7 @@ import {
 } from "../../view/graph/graph-scene";
 import { TensorCard } from "../card/TensorCard";
 import { carriedOffsets } from "../../view/graph/carry-placement";
-import { canvasSize, cardShapeView, tensorCardSize, type CardShapeView } from "../../view/tensor/card-size";
+import { canvasSize, cardCanResize, cardShapeView, tensorCardSize, type CardShapeView } from "../../view/tensor/card-size";
 import { constrainResize, displayedCards, resizeScale, type ResizeCorner } from "../../view/tensor/resize";
 import { opLabel } from "../../core/ops/index";
 import { useStore } from "../../state/store";
@@ -810,8 +810,7 @@ export function GraphView(): React.ReactElement {
     const scale = constrainResize(drag.fromScale, wanted, drag.measure, drag.blockers);
     const rect = drag.measure(scale);
     const state = useStore.getState();
-    state.setCardScale(drag.id, scale, false);
-    state.setNodeOffset(nodeKey("tensor", drag.id), { dx: drag.beforeOffset.dx, dy: drag.beforeOffset.dy + rect.y - drag.placed.y });
+    state.setCardGeometry(drag.id, scale, { dx: drag.beforeOffset.dx, dy: drag.beforeOffset.dy + rect.y - drag.placed.y }, false);
     movedRef.current = true;
     setBlockedNode(Math.abs(scale - wanted) > 1e-6 ? nodeKey("tensor", drag.id) : null);
   }, []);
@@ -826,8 +825,7 @@ export function GraphView(): React.ReactElement {
     const state = useStore.getState();
     if (commit) state.commitCardResize(drag.id, drag.beforeScale, drag.beforeOffset);
     else if (state.resolved === drag.graph) {
-      state.setCardScale(drag.id, drag.beforeScale, false);
-      state.setNodeOffset(nodeKey("tensor", drag.id), drag.beforeOffset);
+      state.setCardGeometry(drag.id, drag.beforeScale, drag.beforeOffset, false);
       movedRef.current = drag.viewportMovedBefore;
     }
     if (drag.host.hasPointerCapture(drag.pointerId)) drag.host.releasePointerCapture(drag.pointerId);
@@ -839,6 +837,7 @@ export function GraphView(): React.ReactElement {
     const placed = sceneRef.current?.nodes.find((node) => node.kind === "tensor" && node.id === id);
     if (!tensor || !placed || !graphIsInteractive(state) || state.resizingTensor !== id) return null;
     const key = nodeKey("tensor", id), cfg = state.viewCfgs[id];
+    if (!cardCanResize(tensor.resolved!, cfg, state.graphPx)) return null;
     const fromScale = displayScalesRef.current[key] ?? cfg.scale ?? 1;
     const measure = (scale: number): Rect => {
       const size = tensorCardSize(tensor, state.graphPx, { ...cfg, scale });
@@ -866,14 +865,12 @@ export function GraphView(): React.ReactElement {
     const target = delta ? resizeTarget(id, corner) : null;
     if (!target) return;
     e.preventDefault(); e.stopPropagation();
-    const { fromScale, beforeScale, beforeOffset, measure, placed } = target;
+    const { fromScale, beforeOffset, measure, placed } = target;
     const step = e.shiftKey ? NUDGE_PX * NUDGE_FAST : NUDGE_PX;
     const wanted = resizeScale(fromScale, target.canvas, { x: delta.x * step, y: delta.y * step }, corner);
     const scale = constrainResize(fromScale, wanted, measure, target.blockers);
     const state = useStore.getState();
-    state.setCardScale(id, scale, false);
-    state.setNodeOffset(nodeKey("tensor", id), { dx: beforeOffset.dx, dy: beforeOffset.dy + measure(scale).y - placed.y });
-    if (!e.repeat) state.commitCardResize(id, beforeScale, beforeOffset);
+    state.setCardGeometry(id, scale, { dx: beforeOffset.dx, dy: beforeOffset.dy + measure(scale).y - placed.y }, !e.repeat);
     movedRef.current = true;
   }, [resizeTarget]);
 
@@ -983,6 +980,16 @@ export function GraphView(): React.ReactElement {
     window.addEventListener("keydown", cancel);
     return () => window.removeEventListener("keydown", cancel);
   }, [finishCardDrag, finishResize]);
+
+  const makeRoom = useCallback((id: string) => {
+    if (!baseLayout || layoutPending) return;
+    const before = useStore.getState().nodeOffsets;
+    useStore.getState().makeRoomForCard(id, baseLayout);
+    if (useStore.getState().nodeOffsets !== before) {
+      fitAfterResetRef.current = true;
+      movedRef.current = false;
+    }
+  }, [baseLayout, layoutPending]);
 
   const resetLayout = () => {
     if (!movable || !Object.keys(nodeOffsets).length) return;
@@ -1190,6 +1197,7 @@ export function GraphView(): React.ReactElement {
                 displayScale={cardDisplay.scales[key]}
                 onResizeStart={startResize}
                 onResizeKeyDown={resizeByKey}
+                onMakeRoom={layoutPending ? undefined : makeRoom}
               />
             </div>
           );

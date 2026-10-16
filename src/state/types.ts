@@ -242,6 +242,10 @@ export type State = {
   resizingTensor: string | null;
   setResizingTensor: (id: string | null) => void;
   setCardScale: (id: string, scale: number, record?: boolean) => void;
+  /** Size and position together, for live gestures and their cancellation. */
+  setCardGeometry: (id: string, scale: number, offset: NodeOffset, record?: boolean) => void;
+  /** Make room at requested sizes, keeping this tensor anchored. Undoable. */
+  makeRoomForCard: (id: string, layout: BaseGraphLayout) => void;
   commitCardResize: (id: string, beforeScale: number, beforeOffset: NodeOffset) => void;
 
   /**

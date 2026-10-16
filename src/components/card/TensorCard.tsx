@@ -41,6 +41,7 @@ import {
 } from "../../view/tensor/gesture";
 import { buildReplayPaint } from "../../view/tensor/replay-paint";
 import { isPrimaryPress } from "../pointer";
+import { CardScaleDialog } from "./CardScaleDialog";
 
 export { cardSize } from "../../view/tensor/card-size";
 
@@ -66,6 +67,7 @@ function TensorCardView({
   displayScale,
   onResizeStart,
   onResizeKeyDown,
+  onMakeRoom,
 }: {
   tensor: Tensor;
   renderScale?: number;
@@ -78,10 +80,14 @@ function TensorCardView({
   displayScale?: number;
   onResizeStart?: (event: React.PointerEvent<HTMLElement>, id: string, corner: ResizeCorner) => void;
   onResizeKeyDown?: (event: React.KeyboardEvent, id: string, corner: ResizeCorner) => void;
+  onMakeRoom?: (id: string) => void;
 }): React.ReactElement {
   const shape = tensor.resolved!;
   const rank = shape.length;
   const interactive = useStore(graphIsInteractive);
+  const graph = useStore((s) => s.resolved);
+  const [scaleEditor, setScaleEditor] = useState<number | null>(null);
+  useEffect(() => { setScaleEditor(null); }, [graph, interactive]);
   const storedCfg = useStore((s) => s.viewCfgs[tensor.id]);
   const cfg = useMemo(
     () => displayScale === undefined || displayScale === storedCfg.scale ? storedCfg : { ...storedCfg, scale: displayScale },
@@ -435,7 +441,7 @@ function TensorCardView({
       if (planView) return; // the Plan view has no cone preview
       if (!drag && previewKeyRef.current !== key) {
         previewKeyRef.current = key;
-        requestPreview(tensor.id, box, cfg);
+        requestPreview(tensor.id, box, storedCfg);
       }
     } else {
       setHover(null);
@@ -470,13 +476,18 @@ function TensorCardView({
   const scaleNote = scaleRatioLabel(shape, cfg, graphPx);
   const planeSpec = cardViewMenu(shape, cfg, nameOf);
   const viewSpec = [...planeSpec, ...(planeSpec.length ? [{ kind: "separator" as const }] : []),
-    ...cardDisplayMenu(shape, cfg, graphPx, movable, resizing, storedCfg)];
+    ...cardDisplayMenu(shape, cfg, graphPx, movable, resizing, storedCfg, !!onMakeRoom)];
   const viewHandlers: MenuHandlers<CardViewAction, CardViewChoice> = {
     action: {
       swap: () => setViewAxes(tensor.id, [colAxis, rowAxis]),
       default: () => setViewAxes(tensor.id, null),
       resize: () => useStore.getState().setResizingTensor(resizing ? null : tensor.id),
       resetSize: () => useStore.getState().setCardScale(tensor.id, 1),
+      setSize: () => {
+        useStore.getState().setResizingTensor(null);
+        setScaleEditor(storedCfg.scale ?? 1);
+      },
+      makeRoom: () => onMakeRoom?.(tensor.id),
     },
     choice: {
       hidden: (value) => setViewCfg(tensor.id, hiddenViewCfg(value)),
@@ -554,6 +565,9 @@ function TensorCardView({
       onContextMenu={viewSpec.length ? viewMenu.onContextMenu : undefined}
     >
       <OptionsMenu menu={viewMenu} label={`${tensor.name} view`} spec={viewSpec} handlers={viewHandlers} />
+      {scaleEditor !== null && interactive && <CardScaleDialog name={tensor.name} scale={scaleEditor}
+        onClose={() => setScaleEditor(null)}
+        onApply={(scale) => { useStore.getState().setCardScale(tensor.id, scale); setScaleEditor(null); }} />}
       {/* The tensor plate is deliberately frameless. Its persistent label is the
           name, the resolved numeric shape, and the two facts that change how the
           grid below should be read: where the tensor comes from, and whether its

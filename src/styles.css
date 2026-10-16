@@ -712,6 +712,15 @@ textarea.source.error-state { border-color: var(--err); }
   outline: calc(2px / var(--view-scale, 1)) solid var(--muted);
 }
 .card-slot.blocked .tc-canvas-wrap canvas { outline: calc(2px / var(--view-scale, 1)) solid var(--warn-ink); }
+/* The padding is the form's, so every press inside the box lands on the form
+   and only the backdrop is the dialog element itself. */
+.card-scale-dialog { width: 300px; max-width: calc(100vw - 40px); padding: 0; color: var(--ink); background: var(--card-surface); border: 1px solid var(--line); border-radius: 6px; }
+.card-scale-dialog::backdrop { background: rgb(0 0 0 / 25%); }
+.card-scale-dialog form { display: grid; gap: 12px; padding: 18px; }
+.card-scale-dialog label { font-size: var(--t-small); }
+.card-scale-field { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.card-scale-field input { width: 100px; }
+.card-scale-actions { display: flex; justify-content: end; gap: 8px; }
 .tc-resize-handle {
   position: absolute; z-index: 4; width: 12px; height: 12px; padding: 0;
   border: 1px solid var(--muted); border-radius: 2px; background: var(--card-surface);

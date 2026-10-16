@@ -80,3 +80,34 @@ function clear(start: Rect, placed: readonly Rect[]): Rect {
   const right = Math.max(...placed.map((other) => other.x + other.w));
   return { ...rect, x: right + NODE_GAP };
 }
+
+/** Keep the chosen node fixed and move only nodes whose reserved footprints
+ * overlap. Reserve both fitted and requested sizes: the display's collision
+ * pass uses fitted footprints even for cards currently drawn smaller.
+ *
+ * The chosen node and every node that overlaps no other footprint are placed
+ * first, exactly; they cannot overlap one another. Only the rest are cleared
+ * against them, so a node pushed aside never displaces one that was clear. */
+export function roomForNode(
+  base: readonly PlacedGraphNode[], offsets: Readonly<NodeOffsets>, anchor: string,
+  sizes: Readonly<Record<string, { w: number; h: number }>>
+): NodeOffsets {
+  if (!base.some((node) => nodeKey(node.kind, node.id) === anchor)) return offsets;
+  const entries = base.map((node) => {
+    const key = nodeKey(node.kind, node.id), offset = offsets[key], size = sizes[key];
+    const rect: Rect = { x: node.x + (offset?.dx ?? 0), y: node.y + (offset?.dy ?? 0),
+      w: Math.max(node.w, size?.w ?? 0), h: Math.max(node.h, size?.h ?? 0) };
+    return { key, node, rect };
+  });
+  const fixed = new Set(entries.filter((entry) => entry.key === anchor ||
+    !entries.some((other) => other !== entry && rectsOverlap(entry.rect, other.rect))));
+  const placed: Rect[] = [];
+  const result: NodeOffsets = Object.create(null);
+  for (const entry of [...fixed, ...entries.filter((entry) => !fixed.has(entry))]) {
+    const rect = fixed.has(entry) ? entry.rect : clear(entry.rect, placed);
+    placed.push(rect);
+    const dx = rect.x - entry.node.x, dy = rect.y - entry.node.y;
+    if (Math.abs(dx) >= 1e-6 || Math.abs(dy) >= 1e-6) result[entry.key] = { dx, dy };
+  }
+  return result;
+}

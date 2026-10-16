@@ -3,6 +3,7 @@ import { TILE_SCALE_MAX, TILE_SCALE_MIN } from "../../view/tensor/tiling";
 import { Direction, idRecord, viewAnchorIndex } from "../../view/workspace";
 import { revealHidden } from "../selection-edit";
 import { GetState, SetState, State } from "../types";
+import { cardCanResize } from "../../view/tensor/card-size";
 
 /** View settings: directions, theme, per-tensor views, detail, snapping, the
  *  canvas tool, the inspector view, playback. */
@@ -65,6 +66,7 @@ export const viewActions = (set: SetState, get: GetState): Pick<
     set({
       viewCfgs: idRecord({ ...state.viewCfgs, [tensorId]: stored }),
       preview: null,
+      ...(state.resizingTensor === tensorId && !cardCanResize(shape, stored, state.graphPx) ? { resizingTensor: null } : {}),
     });
   },
 
@@ -82,7 +84,8 @@ export const viewActions = (set: SetState, get: GetState): Pick<
     // A pair that leaves too many hidden indices to unfold slices them instead.
     if (next.unfold && unfoldRefusal(shape, next)) delete next.unfold;
     if (!viewCfgFits(shape, next)) return;
-    set({ viewCfgs: idRecord({ ...state.viewCfgs, [tensorId]: next }), preview: null });
+    set({ viewCfgs: idRecord({ ...state.viewCfgs, [tensorId]: next }), preview: null,
+      ...(state.resizingTensor === tensorId && !cardCanResize(shape, next, state.graphPx) ? { resizingTensor: null } : {}) });
     const parts = state.selection?.parts ?? [];
     const anchor = viewAnchorIndex(parts, tensorId, state.focusedBox);
     if (anchor !== null) revealHidden(get, tensorId, parts[anchor].box);
