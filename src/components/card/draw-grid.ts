@@ -7,6 +7,7 @@
 import { CARD_SURFACE } from "../../view/palette";
 import {
   type GridGeom,
+  type HeatPaint,
   latticeStride,
   type Layer,
   panelOrigins,
@@ -277,7 +278,8 @@ export function drawGrid(
   renderScale = 1,
   viewScale = 1,
   plan?: PlanPaint,
-  maxPixels = MAX_CARD_RASTER_PIXELS
+  maxPixels = MAX_CARD_RASTER_PIXELS,
+  heat?: HeatPaint
 ): void {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -299,6 +301,29 @@ export function drawGrid(
   const { panelW, panelH } = geom;
   ctx.fillStyle = dark ? CARD_SURFACE.dark : CARD_SURFACE.light;
   for (const o of panels) ctx.fillRect(o.x, o.y, panelW, panelH);
+
+  // Counts are colour, so they cannot go through the layer fills: those
+  // composite by alpha and coarsen past a box budget, either of which would
+  // show a count that is not there. Opaque, lowest first, from boxes that are
+  // already disjoint.
+  if (heat) {
+    for (const piece of heat.pieces) {
+      ctx.fillStyle = `rgb(${piece.color[0]},${piece.color[1]},${piece.color[2]})`;
+      for (const q of regionRects({ boxes: [piece.box], exact: true, reasons: [] }, shape, cfg, geom, viewScale))
+        ctx.fillRect(q.x, q.y, q.w, q.h);
+    }
+    if (heat.hatch)
+      for (const piece of heat.pieces)
+        for (const q of regionRects({ boxes: [piece.box], exact: true, reasons: [] }, shape, cfg, geom, viewScale))
+          if (patternFitsRect(q, viewScale))
+            strokeRuling(ctx, q, dark ? CARD_SURFACE.dark : CARD_SURFACE.light, {
+              angle: HATCH_ANGLE_DEG,
+              pitch: HATCH_PITCH_PX,
+              width: HATCH_WIDTH_PX,
+              alpha: 0.9,
+              dash: HATCH_DASH_PX,
+            }, viewScale);
+  }
 
   const { tileRows, tileCols } = geom;
 

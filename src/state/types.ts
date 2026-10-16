@@ -10,6 +10,7 @@ import { BaseGraphLayout } from "../view/graph/graph-scene";
 import { NodeOffset, NodeOffsets } from "../view/graph/node-layout";
 import { AxisMode } from "../view/tensor/shape-label";
 import { ViewCfg } from "../view/tensor/tensor-view";
+import type { ReuseLens } from "../view/reuse-lens";
 import {
   BoxProp,
   CanvasTool,
@@ -181,6 +182,13 @@ export type State = {
    *  `selection` or `plan`; those remain underneath it. */
   replayPlayback: ReplayPlayback | null;
   /**
+   * The operand-reuse row drawn on its operand's card (`view/reuse-lens.ts`).
+   * Transient view state, never an edit: what it draws is derived from the
+   * current scope, so a change of tile or task redraws it, and a row the
+   * scope no longer has draws nothing.
+   */
+  reuseLens: ReuseLens | null;
+  /**
    * How many levels of the plan's tasks a replay of each family follows
    * upstream, by the family's tensor. Absent is 1: the family's own tasks.
    * View state, cleared with the graph its tensor ids belong to.
@@ -340,6 +348,8 @@ export type State = {
   setAxisMode: (v: AxisMode) => void;
   setInspectorTab: (tab: InspectorTab) => void;
   setReplayPlayback: (playback: ReplayPlayback | null) => void;
+  /** Draw one reuse row on its card, or none. */
+  setReuseLens: (lens: ReuseLens | null) => void;
   /** Set the replay depth of one family; values below 1 are 1. */
   setReplayDepth: (tensorId: string, depth: number) => void;
   updateReplayPlayback: (patch: Partial<ReplayPlayback>) => void;

@@ -70,7 +70,7 @@ function ActiveInspector(): React.ReactElement {
   const focusedBox = groupFocus(parts, rawFocus, activeTensorId);
   const selectGroup = useStore((s) => s.selectAnalysisGroup);
   /** The tile the axis table describes: the focused one, else the last drawn in
-   *  the group, which is also the one the arrow keys move. */
+   *  the group. */
   const axisIndex = focusedBox ?? (activeTensorId
     ? parts.reduce<number | null>((last, part, i) => part.tensorId === activeTensorId ? i : last, null)
     : null);
@@ -424,6 +424,7 @@ function ActiveInspector(): React.ReactElement {
                       ? "The operations computing this tile read nothing for it."
                       : "No operation computes this tile: it is on a graph input."}
                     nameOf={nameOf}
+                    view="dependencies"
                   />
                 )}
               </>

@@ -1013,6 +1013,7 @@ export function PlanPanel({ replay }: { replay: PlanReplayControl }): React.Reac
               title="Operand reuse in this task"
               empty="The operations this task computes read nothing for its tile."
               nameOf={(tensorId) => resolved.tensors[tensorId]?.name ?? tensorId}
+              view="plan"
             />
           )}
           <FamilySection plan={plan} task={task} run={run} replay={replay} />

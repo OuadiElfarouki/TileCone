@@ -89,6 +89,19 @@ describe("global shortcuts with movable node focus", () => {
 /* Escape backs out of the innermost mode, and under the move tool the tool is
    that mode - unless a gesture is in flight, which cancels itself and is the
    whole of the press. */
+/* The reuse lens is an overlay on one card, so it is the innermost thing
+   Escape can take down - before the move tool, and alone. */
+describe("Escape and the reuse lens", () => {
+  it("takes the lens down first, leaving the tool", () => {
+    useStore.getState().setReuseLens({ view: "dependencies", nodeId: "n", tensorId: "X" });
+    const event = key("Escape");
+    onKey(event);
+    expect(useStore.getState().reuseLens).toBeNull();
+    expect(useStore.getState().canvasTool).toBe("move");
+    expect(event.preventDefault).toHaveBeenCalled();
+  });
+});
+
 describe("Escape and the move tool", () => {
   it("returns to select, including from a focused node", () => {
     const event = key("Escape");

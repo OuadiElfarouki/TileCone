@@ -29,7 +29,7 @@ export function loadResolvedGraph(
   | "perBox" | "focusedBox" | "pinnedBox" | "editBox" | "viewCfgs" | "preview" | "graphPx"
   | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "nodeOffsets"
   | "planTiles" | "planTask" | "plan" | "planSupply" | "keptPlans"
-  | "replayPlayback" | "replayDepth" | "placementCarry" | "resizingTensor"
+  | "replayPlayback" | "reuseLens" | "replayDepth" | "placementCarry" | "resizingTensor"
 > {
   const viewCfgs = Object.create(null) as Record<string, ViewCfg>;
   for (const t of Object.values(resolved.tensors)) viewCfgs[t.id] = defaultViewCfg(t.resolved!);
@@ -56,6 +56,7 @@ export function loadResolvedGraph(
     hiddenBoxes: new Set<number>(),
     analysisGroup: null,
     replayPlayback: null,
+    reuseLens: null,
     replayDepth: idRecord<number>(),
     preview: null,
     viewCfgs,

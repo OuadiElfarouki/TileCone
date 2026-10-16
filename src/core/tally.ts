@@ -311,3 +311,77 @@ export function measureTally(t: Tally): TallyMeasure {
     max,
   };
 }
+
+/**
+ * A tally as disjoint pieces, each holding the summed count of every piece
+ * over it: the level sets `measureTally` measures without building, built.
+ *
+ * For drawing, where each element's count has to be one colour rather than
+ * overlapping pieces composited on top of each other. The same recursive
+ * sweep, carrying the swept intervals down so each leaf can be emitted as a
+ * box. Past `maxPieces` the split stops and `complete` is false: a partial
+ * picture would show some counts and leave others blank, so the caller draws
+ * nothing rather than part. Sorted by count, lowest first.
+ */
+export function tallyLevels(t: Tally, maxPieces = 16384): { pieces: Piece[]; complete: boolean } {
+  const pieces = t.pieces.filter((p) => p.count > 0 && boxVolume(p.box) > 0);
+  const rank = pieces[0]?.box.length ?? 0;
+  const out: Piece[] = [];
+  const prefix: (Box[number] | undefined)[] = Array.from({ length: rank }, () => undefined);
+  const emit = (count: number, rest: Box | null) => {
+    if (out.length >= maxPieces) throw OVER_BUDGET;
+    out.push({ box: prefix.map((I, axis) => I ?? rest![axis]), count });
+  };
+  const build = (active: readonly Piece[], axes: number[]): void => {
+    if (active.length === 0) return;
+    if (axes.length === 0) return emit(active.reduce((n, p) => n + p.count, 0), null);
+    if (active.length === 1) return emit(active[0].count, active[0].box);
+    let sweepAxis = axes[0];
+    let fewest = Infinity;
+    for (const axis of axes) {
+      const endpoints = new Set<number>();
+      for (const p of active) {
+        endpoints.add(p.box[axis].lo);
+        endpoints.add(p.box[axis].hi);
+      }
+      if (endpoints.size < fewest) {
+        fewest = endpoints.size;
+        sweepAxis = axis;
+      }
+    }
+    const events = new Map<number, { add: Piece[]; remove: Piece[] }>();
+    const at = (c: number) => {
+      let e = events.get(c);
+      if (!e) events.set(c, (e = { add: [], remove: [] }));
+      return e;
+    };
+    for (const p of active) {
+      at(p.box[sweepAxis].lo).add.push(p);
+      at(p.box[sweepAxis].hi).remove.push(p);
+    }
+    const coordinates = [...events.keys()].sort((a, b) => a - b);
+    const remaining = axes.filter((axis) => axis !== sweepAxis);
+    const live = new Set<Piece>();
+    let previous = coordinates[0];
+    for (const c of coordinates) {
+      if (c > previous && live.size) {
+        prefix[sweepAxis] = iv(previous, c);
+        build([...live], remaining);
+        prefix[sweepAxis] = undefined;
+      }
+      const e = events.get(c)!;
+      for (const p of e.remove) live.delete(p);
+      for (const p of e.add) live.add(p);
+      previous = c;
+    }
+  };
+  try {
+    build(pieces, Array.from({ length: rank }, (_, axis) => axis));
+  } catch (error) {
+    if (error !== OVER_BUDGET) throw error;
+    return { pieces: [], complete: false };
+  }
+  return { pieces: out.sort((a, b) => a.count - b.count), complete: true };
+}
+
+const OVER_BUDGET = Symbol("tally levels over budget");

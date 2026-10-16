@@ -143,6 +143,18 @@ export type PlanPaint = {
   tiles: { box: Box; definite: boolean }[];
 };
 
+/**
+ * A per-element count drawn as colour (the reuse lens, `view/reuse-lens.ts`).
+ * Pieces are disjoint, lowest count first, each already given its colour.
+ * They are painted opaque in that order, so where a projection lays several
+ * hidden indices on one cell the highest count is the one left showing.
+ */
+export type HeatPaint = {
+  pieces: { box: Box; color: [number, number, number] }[];
+  /** The counts are upper bounds: hatched, as an inexact region is. */
+  hatch: boolean;
+};
+
 /** Fraction of a box's hidden-axis volume that is currently visible. */
 function hiddenFraction(box: Box, shape: number[], cfg: ViewCfg, geom: GridGeom): number {
   // An unfolded card draws each hidden index in a panel of its own.

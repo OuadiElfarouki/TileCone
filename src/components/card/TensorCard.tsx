@@ -5,7 +5,9 @@ import { DTYPE_BYTES } from "../../core/dtypes";
 import { useFrameThrottle } from "../hooks/useFrameThrottle";
 import { useDebounced } from "../hooks/useDebounced";
 import { Box, formatBoxIndices, fromBox, iv } from "../../core/region";
-import { CardCell, paintScale, elementFromEvent, gridGeometry, Layer, PlanPaint, tileOf } from "../../view/tensor/grid";
+import { CardCell, paintScale, elementFromEvent, gridGeometry, HeatPaint, Layer, PlanPaint, tileOf } from "../../view/tensor/grid";
+import { lensColor, lensReading, lensReadingText } from "../../view/reuse-lens";
+import { useLensPaint } from "./useLensPaint";
 import { drawGrid } from "./draw-grid";
 import { useDark, useStore } from "../../state/store";
 import { axisName, shapeLabel, shapeReadings } from "../../view/tensor/shape-label";
@@ -28,7 +30,7 @@ import { DECK_ROOM_PX, DECK_STEP_PX, deckSheets } from "../../view/tensor/deck";
 import { cancelDeal, deal, holdPicture, prefersStill } from "./deal";
 import { seedTile } from "../../view/tensor/tile-spec";
 import { graphIsInteractive, keyboardTile, layoutMovable, partsOn } from "../../view/workspace";
-import { buildPlanPaint, buildLayers } from "../../view/tensor/layers";
+import { buildPlanPaint, buildLayers, composeCardLayers } from "../../view/tensor/layers";
 import {
   CellDrag,
   dragAt,
@@ -156,6 +158,8 @@ function TensorCardView({
   });
   const plan = useStore((s) => s.plan);
   const planSupply = useStore((s) => s.planSupply);
+  /** The reuse lens, when it is on this card: counts take the place of cones. */
+  const lens = useLensPaint(tensor.id);
   const planTaskAt = useStore((s) => s.planTaskAt);
   const setPlanTileAt = useStore((s) => s.setPlanTileAt);
 
@@ -246,6 +250,7 @@ function TensorCardView({
     }
     let layers: Layer[];
     let paint: PlanPaint | undefined;
+    const dragRegion = drag ? fromBox(dragToBox(drag)) : null;
     if (planView) {
       const planned = buildPlanPaint({
         tensorId: tensor.id,
@@ -276,19 +281,29 @@ function TensorCardView({
         fwd,
         prev,
         prevForward,
-        dragRegion: drag ? fromBox(dragToBox(drag)) : null,
+        dragRegion,
         entangled,
         showEntangled,
       });
     }
 
-    if (replayPlayback) {
-      const replayed = buildReplayPaint({ tensorId: tensor.id, dark, playback: replayPlayback });
-      layers.push(...replayed.layers);
-      // The run's producer tiles take the place of the inspected task's, in
-      // the same neutral outline.
-      if (paint && replayed.tiles.length) paint = { ...paint, tiles: replayed.tiles };
-    }
+    // Under the reuse lens this card shows counts instead of cones and
+    // replay fills; its tiles keep their outlines (`composeCardLayers`).
+    const heat: HeatPaint | undefined = lens?.complete
+      ? { pieces: lens.pieces.map((p) => ({ box: p.box, color: lensColor(p.count, lens.max, dark) })), hatch: !lens.exact }
+      : undefined;
+    const replayed = replayPlayback && !lens
+      ? buildReplayPaint({ tensorId: tensor.id, dark, playback: replayPlayback })
+      : null;
+    // The run's producer tiles take the place of the inspected task's, in
+    // the same neutral outline.
+    if (paint && replayed?.tiles.length) paint = { ...paint, tiles: replayed.tiles };
+    layers = composeCardLayers({
+      layers,
+      replay: replayed?.layers ?? [],
+      lens: !!lens,
+      gesture: planView ? planPointer : dragRegion,
+    });
     // A redraw that changes the slice shown is a deal. Hold the old picture
     // before it is painted over, so it can leave while the new one arrives.
     const last = dealtRef.current;
@@ -298,7 +313,7 @@ function TensorCardView({
       : 0;
     const out = outRef.current;
     const held = way !== 0 && !!out && holdPicture(canvas, out);
-    drawGrid(canvas, shape, cfg, geom, layers, dark, paintRenderScale, drawScale, paint, rasterPixels);
+    drawGrid(canvas, shape, cfg, geom, layers, dark, paintRenderScale, drawScale, paint, rasterPixels, heat);
     if (held && out) return deal(canvas, out, way as 1 | -1);
   }, [
     slicing,
@@ -319,6 +334,7 @@ function TensorCardView({
     hiddenBoxes,
     isSelected,
     replayPlayback,
+    lens,
     parts,
     perBox,
     drawScale,
@@ -435,7 +451,14 @@ function TensorCardView({
       // by the same function the commit uses, so neither can drift from it.
       const box = dragToBox(dragAt(cell));
       const key = formatBoxIndices(box);
-      setHover(`(${key})`);
+      if (lens) {
+        // Under the lens the reading is the element's count, so the position
+        // is the element's too, not the tile a click would take.
+        const element = selectionBoxFromDrag(shape, cfg, geom, dragAt(cell), false);
+        setHover(`(${formatBoxIndices(element)}) · ${
+          lens.complete ? lensReadingText(lensReading(lens, element)) : "counts too fine to draw"
+        }`);
+      } else setHover(`(${key})`);
       setHoverCell((current) =>
         current && current.row === cell.row && current.col === cell.col && samePanel(current.panel, cell.panel)
           ? current

@@ -78,6 +78,12 @@ export function useKeyboard({
         // An open menu cancels itself. A focused node does not: it takes the
         // arrows, not Escape, so the press still reaches the move tool below.
         if (el?.closest?.('[role="listbox"], [role="menu"]')) return;
+        // The reuse lens is an overlay on one card; taking it down comes first.
+        if (s.reuseLens !== null) {
+          e.preventDefault();
+          s.setReuseLens(null);
+          return;
+        }
         // Resizing ends first; the Move tool it selected stays in effect.
         if (s.resizingTensor !== null) {
           e.preventDefault();

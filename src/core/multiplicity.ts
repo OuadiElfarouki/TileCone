@@ -128,6 +128,39 @@ function readsOf(t: Tally): Pick<OperandReads, "reads" | "elements" | "once" | "
 }
 
 /**
+ * One operation's tallies over the outputs `regions` holds of it: per tensor
+ * it reads, the slots holding it and how many of those outputs read each of
+ * its elements. Null when the operation computes nothing in `regions`.
+ */
+function operationTallies(
+  graph: ResolvedGraph,
+  node: ResolvedGraph["topo"][number],
+  regions: ReadonlyMap<string, { region: Region }>
+): { outputIds: string[]; byTensor: Map<string, { slots: number[]; tally: Tally }> } | null {
+  const needed = node.outputs.flatMap((id, slot) => {
+    const region = regions.get(id)?.region;
+    return region ? [{ slot, region }] : [];
+  });
+  if (!needed.length) return null;
+  const spec = getOp(node.op)!;
+  const ctx: OpCtx = {
+    inShapes: graph.shapesOf(node.inputs),
+    outShapes: graph.shapesOf(node.outputs),
+    attrs: node.attrs,
+  };
+  const collected = new Map<string, { slots: number[]; tallies: Tally[] }>();
+  node.inputs.forEach((tensorId, inSlot) => {
+    const entry = collected.get(tensorId) ?? { slots: [], tallies: [] };
+    entry.slots.push(inSlot);
+    for (const { slot, region } of needed) entry.tallies.push(operandTally(spec, slot, region, inSlot, ctx));
+    collected.set(tensorId, entry);
+  });
+  const byTensor = new Map<string, { slots: number[]; tally: Tally }>();
+  for (const [tensorId, { slots, tallies }] of collected) byTensor.set(tensorId, { slots, tally: addTallies(tallies) });
+  return { outputIds: needed.map(({ slot }) => node.outputs[slot]), byTensor };
+}
+
+/**
  * Every operation computing a tensor in `regions`, with how many of the outputs
  * it computes there read each element of each tensor it reads. In graph order,
  * then operand order; an operation reading one tensor twice gives one row for it.
@@ -142,33 +175,16 @@ export function operandReads(
 ): OperandReads[] {
   const rows: OperandReads[] = [];
   for (const node of graph.topo) {
-    const needed = node.outputs.flatMap((id, slot) => {
-      const region = regions.get(id)?.region;
-      return region ? [{ slot, region }] : [];
-    });
-    if (!needed.length) continue;
-    const spec = getOp(node.op)!;
-    const ctx: OpCtx = {
-      inShapes: graph.shapesOf(node.inputs),
-      outShapes: graph.shapesOf(node.outputs),
-      attrs: node.attrs,
-    };
-    const byTensor = new Map<string, { slots: number[]; tallies: Tally[] }>();
-    node.inputs.forEach((tensorId, inSlot) => {
-      const entry = byTensor.get(tensorId) ?? { slots: [], tallies: [] };
-      entry.slots.push(inSlot);
-      for (const { slot, region } of needed) entry.tallies.push(operandTally(spec, slot, region, inSlot, ctx));
-      byTensor.set(tensorId, entry);
-    });
-    for (const [tensorId, { slots, tallies }] of byTensor) {
-      const tally = addTallies(tallies);
+    const tallies = operationTallies(graph, node, regions);
+    if (!tallies) continue;
+    for (const [tensorId, { slots, tally }] of tallies.byTensor) {
       if (!tally.pieces.length) continue;
       const tensor = graph.tensors[tensorId];
       const figures = readsOf(tally);
       rows.push({
         nodeId: node.id,
         op: opLabel(node),
-        outputIds: needed.map(({ slot }) => node.outputs[slot]),
+        outputIds: tallies.outputIds,
         tensorId,
         slots,
         ...figures,
@@ -180,4 +196,21 @@ export function operandReads(
     }
   }
   return rows;
+}
+
+/**
+ * The tally behind one `operandReads` row: how many of the outputs `nodeId`
+ * computes in `regions` read each element of `tensorId`. The same count the
+ * row's figures measure, per element, for drawing it. Null when the operation
+ * computes nothing there or does not read the tensor.
+ */
+export function operandTallyOf(
+  graph: ResolvedGraph,
+  regions: ReadonlyMap<string, { region: Region }>,
+  nodeId: string,
+  tensorId: string
+): Tally | null {
+  const node = graph.topo.find((candidate) => candidate.id === nodeId);
+  const tally = node ? operationTallies(graph, node, regions)?.byTensor.get(tensorId)?.tally : undefined;
+  return tally && tally.pieces.length ? tally : null;
 }

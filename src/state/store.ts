@@ -53,6 +53,7 @@ export const useStore = create<State>((set, get) => {
   showEntangled: false,
   inspectorTab: "dependencies",
   replayPlayback: null,
+  reuseLens: null,
   replayDepth: idRecord<number>(),
   ...NO_PLAN,
   keptPlans: [],

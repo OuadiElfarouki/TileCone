@@ -5,6 +5,7 @@ import {
   measureTally,
   separableTally,
   tallyAt,
+  tallyLevels,
   type Tally,
   uniformTally,
 } from "../../src/core/tally";
@@ -129,5 +130,44 @@ describe("a tally", () => {
     expect(measureTally(separableTally([[], [{ lo: 0, hi: 2, count: 1 }]], 8))).toEqual({
       total: 0, elements: 0, once: 0, repeated: 0, min: 0, max: 0,
     });
+  });
+});
+
+/* The lens draws a tally from these pieces, so each element must land in
+   exactly one of them, holding the sum the overlapping pieces give it. */
+describe("a tally's disjoint levels", () => {
+  it("covers every counted element once, at its summed count, on random tallies", () => {
+    const r = rng(20261016);
+    for (let trial = 0; trial < 120; trial++) {
+      const shape = Array.from({ length: randInt(r, 1, 4) }, () => randInt(r, 1, 7));
+      const t: Tally = {
+        pieces: Array.from({ length: randInt(r, 1, 6) }, () => ({ box: randomBox(shape, r), count: randInt(r, 1, 5) })),
+        exact: true,
+        reasons: [],
+      };
+      const levels = tallyLevels(t);
+      expect(levels.complete).toBe(true);
+      const drawn = pointwise({ pieces: levels.pieces, exact: true, reasons: [] }, shape);
+      expect(drawn).toEqual(pointwise(t, shape));
+      // Disjoint: no element is covered by two level pieces.
+      const covered = pointwise({ pieces: levels.pieces.map((p) => ({ box: p.box, count: 1 })), exact: true, reasons: [] }, shape);
+      expect(Math.max(0, ...covered)).toBeLessThanOrEqual(1);
+      // Lowest first, so a painter drawing in order leaves the highest on top.
+      expect(levels.pieces.map((p) => p.count)).toEqual([...levels.pieces.map((p) => p.count)].sort((a, b) => a - b));
+    }
+  });
+
+  it("draws nothing rather than part of a count past its piece budget", () => {
+    const t: Tally = {
+      pieces: Array.from({ length: 8 }, (_, i) => ({ box: box([i, i + 2], [0, 4]), count: 1 + i })),
+      exact: true,
+      reasons: [],
+    };
+    expect(tallyLevels(t, 4)).toEqual({ pieces: [], complete: false });
+    expect(tallyLevels(t).complete).toBe(true);
+  });
+
+  it("returns nothing for an empty tally", () => {
+    expect(tallyLevels({ pieces: [], exact: true, reasons: [] })).toEqual({ pieces: [], complete: true });
   });
 });

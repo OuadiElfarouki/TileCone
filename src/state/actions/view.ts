@@ -21,6 +21,7 @@ export const viewActions = (set: SetState, get: GetState): Pick<
   | "setAxisMode"
   | "setInspectorTab"
   | "setReplayPlayback"
+  | "setReuseLens"
   | "setReplayDepth"
   | "updateReplayPlayback"
   | "setTileScale"
@@ -95,9 +96,17 @@ export const viewActions = (set: SetState, get: GetState): Pick<
 
   setAxisMode: (v) => set({ axisMode: v }),
 
-  setInspectorTab: (tab) => set({ inspectorTab: tab, resizingTensor: null }),
+  // The lens draws a row of the view it was opened in, so leaving the view
+  // takes it down rather than leaving a card shaded by a list not on screen.
+  setInspectorTab: (tab) => set((state) => ({
+    inspectorTab: tab,
+    resizingTensor: null,
+    ...(state.reuseLens && state.reuseLens.view !== tab ? { reuseLens: null } : {}),
+  })),
 
   setReplayPlayback: (replayPlayback) => set({ replayPlayback }),
+
+  setReuseLens: (reuseLens) => set({ reuseLens }),
 
   setReplayDepth: (tensorId, depth) =>
     set((state) => ({

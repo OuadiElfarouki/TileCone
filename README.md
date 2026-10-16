@@ -82,7 +82,12 @@ same button reads **stop writing**: untiling an output leaves it unwritten rathe
 
 For the inspected task, the panel shows its FLOPs, what it reads from each tensor, which producer
 tasks supply that, the untiled tensors it computes, and how many of its outputs use each operand
-element ("64 uses per element"). A producer found only through an
+element ("64 uses per element"). Clicking those figures, here or under Dependencies, turns on the
+**reuse lens**: the operand's card is shaded by that count per element, one violet ramp from zero
+to the largest, with a legend under the row and the count at the pointer in the card's tooltip.
+A GEMM band reads as one flat shade; a convolution's overlapping windows, a shared operand's
+crossing bands or a gather's widened counts show where elements are used more. Escape, or clicking
+the figures again, turns it off. A producer found only through an
 over-approximated region is marked as a possible dependency rather than a definite one. For each
 tiled tensor and for the whole plan it reports:
 

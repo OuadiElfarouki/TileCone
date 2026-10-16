@@ -284,6 +284,33 @@ export function buildLayers({
 }
 
 /**
+ * A card's layers, with the replay overlay, and under the reuse lens.
+ *
+ * The lens draws counts as colour (`HeatPaint`), and any fill composited over
+ * them would change the count a colour reads as. So under it the placed tiles
+ * and the gesture in progress keep only their outlines and corner marks, and
+ * the replay - whose fills reach well past the inspected task - is left to the
+ * other cards: the lens is the later, explicit act on this one.
+ */
+export function composeCardLayers({
+  layers,
+  replay,
+  lens,
+  gesture,
+}: {
+  layers: Layer[];
+  replay: Layer[];
+  lens: boolean;
+  /** The region of the drag or pointer gesture in progress, by identity. */
+  gesture: Region | null;
+}): Layer[] {
+  if (!lens) return [...layers, ...replay];
+  return layers
+    .filter((layer) => layer.seed || (gesture !== null && layer.region === gesture))
+    .map((layer) => ({ ...layer, alpha: 0, hatch: false, pattern: undefined }));
+}
+
+/**
  * The Plan view's paint for one card.
  *
  * The meanings are the ones the cards already use. The inspected task's tile
