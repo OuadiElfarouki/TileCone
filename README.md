@@ -76,12 +76,13 @@ untiled intermediate is fused into the tasks that read it and recomputed by each
 
 Dragging on an untiled tensor divides it at the extents drawn; after that, clicking inspects the
 task under the pointer. The first click also tiles the tensors its operation reads, so a plan
-starts with one operation per task. Clearing a tensor's tiling (×) fuses it into its consumers, and
-**tile** under "Computed in this task" writes it back.
+starts with one operation per task. **fuse** beside a tiled intermediate fuses it into its
+consumers, and **materialize** under "Computed in this task" writes it back. On a graph output the
+same button reads **stop writing**: untiling an output leaves it unwritten rather than fusing it.
 
 For the inspected task, the panel shows its FLOPs, what it reads from each tensor, which producer
-tasks supply that, the untiled tensors it computes, and how many of its outputs read each operand
-element. A producer found only through an
+tasks supply that, the untiled tensors it computes, and how many of its outputs use each operand
+element ("64 uses per element"). A producer found only through an
 over-approximated region is marked as a possible dependency rather than a definite one. For each
 tiled tensor and for the whole plan it reports:
 
@@ -115,9 +116,10 @@ tiling, which undoes like any other plan edit.
 **replay** walks the inspected task's family on the graph: what each task reads and computes, with
 the part it shares with the inspected task drawn on top, and a trail of the tiles walked so far.
 The tasks follow listing order, row by row, which is not an execution order. A family of more than
-48 tasks is walked in 48 contiguous runs, so no task is skipped. When the replay ends the trail
-clears, and nothing stays on the graph. While it plays, the inspected task's own paint steps back so
-the run is the subject. **depth** follows the plan upstream: at 2 a run also shows the tasks
+48 tasks is walked in 48 contiguous runs, so no task is skipped. When the replay ends it holds the
+last run on the graph. Under the heading, ‹ and › step one run, ▶ / ❚❚ play and pause, the slider
+moves to any run, and **clear** fades the overlay. While it shows, the inspected task's own paint
+steps back so the run is the subject. **depth** follows the plan upstream: at 2 a run also shows the tasks
 producing the tiles it reads and what they read, at 3 the tasks producing those, and so on. Those
 tasks compute whole tiles, so the deeper levels show what the plan computes, drawn fainter per
 level, with the producer tiles outlined.

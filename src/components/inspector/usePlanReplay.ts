@@ -14,11 +14,8 @@ const tilesOf = (plan: TilePlan): Record<string, number[]> =>
 const REPLAY_MS = 4200;
 const MIN_STEP_MS = 84;
 const MAX_STEP_MS = 220;
-/** How long a departure takes to fade the overlay, and the end of a replay. */
+/** How long a departure takes to fade the overlay. */
 const DEPART_FADE_MS = 240;
-const END_FADE_MS = 400;
-/** How long the whole trail is held, with reduced motion, before it clears. */
-const REDUCED_HOLD_MS = 1500;
 
 /** Whether a playback is about this plan and this task, at this depth. */
 const about = (playback: ReplayPlayback | null, plan: TilePlan | null, task: TaskRef | null, depth: number) =>
@@ -34,16 +31,24 @@ export type PlanReplayControl = {
   error: string | null;
   /** The playback, while it is about the plan and task on screen. */
   playback: ReplayPlayback | null;
+  /** Walk on from the current run, or from the first once the last is shown. */
+  play: () => void;
+  pause: () => void;
+  /** Stop on run `visited` (1-based, clamped), pausing the walk. */
+  seek: (visited: number) => void;
+  /** Fade the overlay out. */
+  clear: () => void;
 };
 
 /**
  * The family replay behind the Plan view: the Worker request, and the
  * playback that walks its frames on the cards.
  *
- * The playback's timers live here, so the hook also owns retiring them: at the
- * end of the replay, on leaving the Plan view, when the inspected task or the
- * plan changes, and when the panel unmounts. It lives in the inspector rather than the Plan view so
- * that leaving the view fades the overlay rather than cutting it.
+ * The playback's timers live here, so the hook also owns retiring them: on
+ * pausing, at the end of the replay, on leaving the Plan view, when the
+ * inspected task or the plan changes, and when the panel unmounts. It lives
+ * in the inspector rather than the Plan view so that leaving the view fades
+ * the overlay rather than cutting it.
  */
 export function usePlanReplay({
   plan,
@@ -93,25 +98,37 @@ export function usePlanReplay({
     }, 30);
   }, [setPlayback, stopTimers, updatePlayback]);
 
-  /* One run per step, the trail growing behind it; once the last run has had
-     its turn, the whole trail clears together. Nothing stays behind on the
-     cards. With reduced motion the whole trail is shown at once and held
-     rather than walked. */
+  /* One run per step, the trail growing behind it. The last run is held
+     rather than cleared, so what the walk showed can still be read; clearing
+     it, or departing, fades the overlay. */
+  const walk = useCallback((from: number) => {
+    stopTimers();
+    const now = useStore.getState().replayPlayback;
+    if (!now || now.exiting) return;
+    const frames = now.replay.frames.length;
+    let visited = from;
+    updatePlayback({ visited, paused: visited >= frames });
+    if (visited >= frames) return;
+    const step = Math.max(MIN_STEP_MS, Math.min(MAX_STEP_MS, Math.round(REPLAY_MS / frames)));
+    playbackTimer.current = window.setInterval(() => {
+      updatePlayback({ visited: ++visited });
+      if (visited >= frames) {
+        stopTimers();
+        updatePlayback({ paused: true });
+      }
+    }, step);
+  }, [stopTimers, updatePlayback]);
+
+  /* With reduced motion the whole trail is shown at once, held, and stepped
+     by hand rather than walked. */
   const start = useCallback((replay: FamilyReplay, forPlan: TilePlan) => {
     stopTimers();
     const frames = replay.frames.length;
     const reduced = typeof matchMedia === "function" &&
       matchMedia("(prefers-reduced-motion: reduce)").matches;
-    let visited = reduced ? frames : 1;
-    setPlayback({ replay, plan: forPlan, visited, exiting: false, opacity: 1 });
-    const step = reduced
-      ? REDUCED_HOLD_MS
-      : Math.max(MIN_STEP_MS, Math.min(MAX_STEP_MS, Math.round(REPLAY_MS / frames)));
-    playbackTimer.current = window.setInterval(() => {
-      if (visited < frames) updatePlayback({ visited: ++visited });
-      else fade(END_FADE_MS);
-    }, step);
-  }, [fade, setPlayback, stopTimers, updatePlayback]);
+    setPlayback({ replay, plan: forPlan, visited: 1, paused: false, exiting: false, opacity: 1 });
+    walk(reduced ? frames : 1);
+  }, [setPlayback, stopTimers, walk]);
 
   useEffect(() => {
     if (tab !== "plan") fade();
@@ -189,12 +206,24 @@ export function usePlanReplay({
     ask(plan, task, depth, ++request.current, false);
   };
 
-  return {
-    run,
-    depth,
-    depthLimit,
-    pending,
-    error,
-    playback: tab === "plan" && about(playback, plan, task, depth) ? playback : null,
+  const own = tab === "plan" && about(playback, plan, task, depth) ? playback : null;
+  const seek = (visited: number) => {
+    if (!own || own.exiting) return;
+    stopTimers();
+    updatePlayback({ visited: Math.max(1, Math.min(own.replay.frames.length, Math.round(visited))), paused: true });
   };
+  const play = () => {
+    if (!own || own.exiting) return;
+    walk(own.visited >= own.replay.frames.length ? 1 : own.visited);
+  };
+  const pause = () => {
+    if (!own || own.exiting) return;
+    stopTimers();
+    updatePlayback({ paused: true });
+  };
+  const clear = () => {
+    if (own) fade();
+  };
+
+  return { run, depth, depthLimit, pending, error, playback: own, play, pause, seek, clear };
 }

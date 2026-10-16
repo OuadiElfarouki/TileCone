@@ -38,17 +38,18 @@ describe("a read-multiplicity row in words", () => {
 
   it("names a uniform count, a mixed one, and a single use", () => {
     const tile = readsOf(GEMM, "C", fromBox(box([0, 2], [0, 3])), "A");
-    expect(readsSummary(tile)).toBe("each read 3× · 32 B");
-    expect(readsDetail(tile)).toBe("48 reads of 16 elements, 3.00× on average");
+    expect(readsSummary(tile)).toBe("3 uses per element · 32 B");
+    expect(readsDetail(tile)).toBe("48 uses of 16 elements, 3.00 per element on average."
+      + " A use is one output element of the operation depending on an operand element; it is not a memory load.");
     const corner = { boxes: [box([0, 1], [0, 3]), box([1, 2], [0, 1])], exact: true, reasons: [] };
-    expect(readsSummary(readsOf(GEMM, "C", corner, "A"))).toBe("16 B read up to 3× · 16 B once");
-    expect(readsSummary(readsOf(GEMM, "C", fromBox(box([1, 2], [2, 3])), "A"))).toBe("read once · 16 B");
+    expect(readsSummary(readsOf(GEMM, "C", corner, "A"))).toBe("16 B at up to 3 uses per element · 16 B used once");
+    expect(readsSummary(readsOf(GEMM, "C", fromBox(box([1, 2], [2, 3])), "A"))).toBe("used once · 16 B");
   });
 
   it("gives the range when nothing is read once but counts differ", () => {
     // The shared corner of the two bands is read by 4 outputs, the rest by 2.
     const shared = readsOf("A = Tensor(4, 4)\nC = matmul(A, A)\n", "C", fromBox(box([0, 2], [0, 2])), "A");
-    expect(readsSummary(shared)).toBe("each read 2–4× · 48 B");
+    expect(readsSummary(shared)).toBe("2–4 uses per element · 48 B");
     expect(readsOperation(shared, (id) => id)).toBe("matmul → C");
   });
 
@@ -63,9 +64,10 @@ describe("a read-multiplicity row in words", () => {
   it("marks a count over an unknown index as every figure is marked", () => {
     const dsl = "W = Tensor(10, 4)\nIdx = Tensor(3, dtype=int32)\nE = gather(W, Idx, axis=0)\n";
     const row = readsOf(dsl, "E", fromBox(box([0, 2], [0, 4])), "W");
-    expect(readsSummary(row)).toBe(`each read ${FIGURE_MARK.upper}2× · ${FIGURE_MARK.upper}160 B`);
+    expect(readsSummary(row)).toBe(`${FIGURE_MARK.upper}2 uses per element · ${FIGURE_MARK.upper}160 B`);
     expect(readsDetail(row)).toBe(
-      `${FIGURE_MARK.upper}80 reads of ${FIGURE_MARK.upper}40 elements, ${FIGURE_MARK.approximate}2.00× on average`
+      `${FIGURE_MARK.upper}80 uses of ${FIGURE_MARK.upper}40 elements, ${FIGURE_MARK.approximate}2.00 per element on average.` +
+        " A use is one output element of the operation depending on an operand element; it is not a memory load."
     );
   });
 });

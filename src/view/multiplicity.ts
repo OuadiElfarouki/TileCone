@@ -14,18 +14,22 @@ export function readsOperation(r: OperandReads, nameOf: (tensorId: string) => st
   return `${r.op} → ${r.outputIds.map(nameOf).join(", ")}`;
 }
 
-/** How the operand's elements split between read once and read by several outputs. */
+/**
+ * How the operand's elements split between used by one output and used by
+ * several. Worded as uses, not reads: "read 64×" suggests 64 memory loads,
+ * and the count is of output elements depending on an element, not traffic.
+ */
 export function readsSummary(r: OperandReads): string {
-  if (r.reused.value === 0) return `read once · ${formatFigure(r.onceBytes, formatBytes)}`;
+  if (r.reused.value === 0) return `used once · ${formatFigure(r.onceBytes, formatBytes)}`;
   if (r.once.value === 0) {
-    const times = r.min.value === r.max.value
+    const uses = r.min.value === r.max.value
       ? formatFigure(r.max, fmt)
       : `${formatFigure(r.min, fmt)}–${formatFigure(r.max, fmt)}`;
-    return `each read ${times}× · ${formatFigure(r.reusedBytes, formatBytes)}`;
+    return `${uses} uses per element · ${formatFigure(r.reusedBytes, formatBytes)}`;
   }
   return (
-    `${formatFigure(r.reusedBytes, formatBytes)} read up to ${formatFigure(r.max, fmt)}× · ` +
-    `${formatFigure(r.onceBytes, formatBytes)} once`
+    `${formatFigure(r.reusedBytes, formatBytes)} at up to ${formatFigure(r.max, fmt)} uses per element · ` +
+    `${formatFigure(r.onceBytes, formatBytes)} used once`
   );
 }
 
@@ -44,10 +48,11 @@ export function readOnceLine(
   };
 }
 
-/** The counts the summary rests on, for its tooltip. */
+/** The counts the summary rests on, and what a use is, for its tooltip. */
 export function readsDetail(r: OperandReads): string {
   return (
-    `${formatFigure(r.reads, fmt)} reads of ${formatFigure(r.elements, fmt)} elements, ` +
-    `${formatFigure(r.mean, (v) => `${formatRatio(v)}×`)} on average`
+    `${formatFigure(r.reads, fmt)} uses of ${formatFigure(r.elements, fmt)} elements, ` +
+    `${formatFigure(r.mean, formatRatio)} per element on average. A use is one output element ` +
+    `of the operation depending on an operand element; it is not a memory load.`
   );
 }

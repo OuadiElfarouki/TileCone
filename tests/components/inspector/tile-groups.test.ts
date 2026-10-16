@@ -196,8 +196,8 @@ D = matmul(CC, W)
     // Both tiles are 64 rows by 32 columns of D and share no row or column:
     // a row of CC is read by the 32 outputs across its tile, a column of W by
     // the 64 down it.
-    expect(html).toContain("each read 32×");
-    expect(html).toContain("each read 64×");
+    expect(html).toContain("32 uses per element");
+    expect(html).toContain("64 uses per element");
   });
 
   /* Operand reuse follows the same scope as every figure below the tiles list,
@@ -212,32 +212,32 @@ D = matmul(CC, W)
       expect(html).toContain("via matmul → D");
       expect(html).toContain("via matmul → CC");
       // B is read in full by the 128 rows of CC the two tiles need.
-      expect(html).toContain(`each read 128× · ${B_BYTES}`);
+      expect(html).toContain(`128 uses per element · ${B_BYTES}`);
     });
 
     it("narrows to a hovered tile, and says so", () => {
       S().hoverBox(0);
       const html = render();
       expect(html).toContain("Operand reuse in tile 1");
-      expect(html).toContain(`each read 64× · ${B_BYTES}`);
-      expect(html).not.toContain(`each read 128× · ${B_BYTES}`);
+      expect(html).toContain(`64 uses per element · ${B_BYTES}`);
+      expect(html).not.toContain(`128 uses per element · ${B_BYTES}`);
       S().hoverBox(null);
-      expect(render()).toContain(`each read 128× · ${B_BYTES}`);
+      expect(render()).toContain(`128 uses per element · ${B_BYTES}`);
     });
 
     it("leaves a hidden tile out", () => {
       S().toggleBoxHidden(1);
       const html = render();
-      expect(html).toContain(`each read 64× · ${B_BYTES}`);
+      expect(html).toContain(`64 uses per element · ${B_BYTES}`);
       S().toggleBoxHidden(1);
-      expect(render()).toContain(`each read 128× · ${B_BYTES}`);
+      expect(render()).toContain(`128 uses per element · ${B_BYTES}`);
     });
 
     it("says when the tile is on a graph input rather than claiming single use", () => {
       S().setSelection("A", fromBox(box([0, 8], [0, 8])), "union");
       const html = render();
       expect(html).toContain("No operation computes this tile: it is on a graph input.");
-      expect(html).not.toContain("is read by one output");
+      expect(html).not.toContain("is used by one output");
     });
 
     it("drops the old counts when the graph is rebuilt at other sizes", () => {
@@ -245,7 +245,7 @@ D = matmul(CC, W)
       S().setSelection("D", fromBox(box([0, 64], [0, 32])));
       const html = render();
       expect(html).not.toContain(B_BYTES);
-      expect(html).toContain(`each read 64× · ${formatBytes(128 * 128 * 2)}`);
+      expect(html).toContain(`64 uses per element · ${formatBytes(128 * 128 * 2)}`);
     });
   });
 

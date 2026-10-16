@@ -49,11 +49,11 @@ export function OperandReuse({
           ))}
         </ul>
       ) : (
-        <p className="hint">Every operand element here is read by one output.</p>
+        <p className="hint">Every operand element here is used by one output.</p>
       )}
       {once && (
         <p className="hint" title={once.detail}>
-          Read once: {once.text}
+          Used once: {once.text}
         </p>
       )}
     </div>

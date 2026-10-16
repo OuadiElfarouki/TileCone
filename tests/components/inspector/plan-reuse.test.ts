@@ -33,8 +33,8 @@ describe("operand reuse in the Plan view", () => {
     expect(html).toContain("Operand reuse in this task");
     // An 8 x 4 tile of Y reads a row of C with its 4 columns and a column of W with its 8 rows.
     expect(html).toContain("via matmul → Y");
-    expect(html).toContain("each read 4×");
-    expect(html).toContain("each read 8×");
+    expect(html).toContain("4 uses per element");
+    expect(html).toContain("8 uses per element");
     expect(html).not.toContain("via matmul → C");
   });
 
@@ -43,7 +43,7 @@ describe("operand reuse in the Plan view", () => {
     const html = render();
     expect(html).toContain("via matmul → C");
     // The task computes C's 8-row band: each of those rows of A is read by all 32 columns.
-    expect(html).toContain("each read 32×");
+    expect(html).toContain("32 uses per element");
   });
 });
 
@@ -76,7 +76,7 @@ describe("family replay in the Plan view", () => {
 
   it("says where the replay is, and that listing order is not an execution order", () => {
     const replay = familyReplay(S().plan!, S().planTask!);
-    S().setReplayPlayback({ replay, plan: S().plan!, visited: 3, exiting: false, opacity: 1 });
+    S().setReplayPlayback({ replay, plan: S().plan!, visited: 3, paused: false, exiting: false, opacity: 1 });
     const html = render();
     expect(html).toContain("Task Y (0, 2) · 3 of 16");
     expect(html).toContain("All 16 tasks in");
@@ -93,7 +93,7 @@ describe("family replay in the Plan view", () => {
     S().setReplayDepth("Y", 2);
     expect(render()).toMatch(/aria-pressed="true"[^>]*>2<\/button>/);
     const replay = familyReplay(S().plan!, S().planTask!, { depth: 2 });
-    S().setReplayPlayback({ replay, plan: S().plan!, visited: 1, exiting: false, opacity: 1 });
+    S().setReplayPlayback({ replay, plan: S().plan!, visited: 1, paused: false, exiting: false, opacity: 1 });
     expect(render()).toContain("up to 1 level upstream");
     // A replay made at another depth is not this one.
     S().setReplayDepth("Y", 1);
@@ -106,11 +106,51 @@ describe("family replay in the Plan view", () => {
     expect(render()).not.toContain('aria-label="replay depth"');
   });
 
+  it("steps a replay by hand: previous, play or pause, next, a scrubber, and clear", () => {
+    const replay = familyReplay(S().plan!, S().planTask!);
+    S().setReplayPlayback({ replay, plan: S().plan!, visited: 1, paused: false, exiting: false, opacity: 1 });
+    let html = render();
+    expect(html).toContain('aria-label="replay controls"');
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*aria-label="previous task"/);
+    expect(html).toContain('aria-label="pause"');
+    expect(html).toMatch(/<input type="range" min="1" max="16"[^>]*value="1"/);
+    expect(html).toContain('aria-label="clear replay"');
+    S().setReplayPlayback({ replay, plan: S().plan!, visited: 16, paused: true, exiting: false, opacity: 1 });
+    html = render();
+    expect(html).toContain('aria-label="play again"');
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*aria-label="next task"/);
+    S().setReplayPlayback(null);
+  });
+
   it("drops a replay that belongs to another task", () => {
     const replay = familyReplay(S().plan!, S().planTask!);
-    S().setReplayPlayback({ replay, plan: S().plan!, visited: 3, exiting: false, opacity: 1 });
+    S().setReplayPlayback({ replay, plan: S().plan!, visited: 3, paused: false, exiting: false, opacity: 1 });
     S().selectPlanTask({ tensorId: "Y", coord: [0, 0] });
     expect(render()).not.toContain("listing order");
     S().setReplayPlayback(null);
+  });
+});
+
+describe("fusing and materializing in the Plan view", () => {
+  beforeEach(() => {
+    S().applyDSL(CHAIN);
+    S().setInspectorTab("plan");
+    S().setPlanTileAt("Y", [8, 4], [8, 4]);
+  });
+
+  it("names untiling an intermediate as fusing it, and untiling an output as not writing it", () => {
+    S().setPlanTile("C", [8, 8]);
+    const html = render();
+    expect(html).toMatch(/aria-label="fuse C into its consumers"[^>]*>fuse<\/button>/);
+    expect(html).toMatch(/aria-label="stop writing Y"[^>]*>stop writing<\/button>/);
+  });
+
+  it("offers to materialize what a task computes", () => {
+    S().setPlanTile("C", null);
+    const html = render();
+    expect(html).toContain("Computed in this task");
+    expect(html).toMatch(/title="materialize C:[^"]*"[^>]*>materialize<\/button>/);
+    S().tilePlanTensor("C");
+    expect(S().planTiles.C).toBeDefined();
   });
 });

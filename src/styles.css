@@ -1135,3 +1135,5 @@ textarea.source.error-state { border-color: var(--err); }
 .plan-producer-pages { display: flex; align-items: center; gap: 8px; }
 /* The replay depth sits under the family heading it applies to. */
 .plan-replay-depth { display: flex; align-items: center; gap: 4px; margin: 2px 0 6px; }
+/* Replay stepping shares the card sliders' look (.tc-slider). */
+.plan-replay-controls { margin: 2px 0 4px; }

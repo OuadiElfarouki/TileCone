@@ -123,6 +123,7 @@ describe("planning from the canvas", () => {
       replay: { task: task!, depth: 1, frames: [], tasks: 1 },
       plan: S().plan!,
       visited: 0,
+      paused: false,
       exiting: false,
       opacity: 1,
     });

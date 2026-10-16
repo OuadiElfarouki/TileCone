@@ -34,6 +34,7 @@ describe("plan replay paint", () => {
     },
     plan: {} as ReplayPlayback["plan"],
     visited,
+    paused: false,
     exiting: false,
     opacity: 1,
   });

@@ -54,7 +54,8 @@ export function graphIsInteractive(state: {
 /**
  * A family replay on the cards (`core/plan/replay.ts`), and how far through it
  * the playback is. Transient view state, never an edit: it overlays the plan,
- * plays once, and clears, leaving the plan unchanged.
+ * plays once and holds its last run until cleared or departed from, leaving
+ * the plan unchanged.
  */
 export type ReplayPlayback = {
   replay: FamilyReplay;
@@ -62,6 +63,8 @@ export type ReplayPlayback = {
   plan: TilePlan;
   /** Runs walked so far; the last of them is the active one. */
   visited: number;
+  /** The walk is stopped at `visited`: paused, stepped, or held at its end. */
+  paused: boolean;
   /**
    * The overlay is on its way out and `opacity` is being driven to zero.
    *

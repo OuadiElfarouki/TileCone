@@ -370,13 +370,16 @@ function TiledTensors({ plan, run }: { plan: TilePlan | null; run: PlanRun }): R
         <>
         <p className="hint">
           Click a tile to inspect its task; the arrow keys step it. A tiled tensor is written to
-          memory. Clear one and the tasks that read it compute it themselves; type new extents to
+          memory. Fuse one and the tasks that read it compute it themselves; type new extents to
           divide it differently.
         </p>
         <ul className="plan-list">
           {families.map((family) => {
             const tensor = resolved.tensors[family.tensorId];
             const report = reports.get(family.tensorId);
+            // Untiling an intermediate fuses it into its readers; untiling a
+            // graph output leaves it unwritten. Different results, so different words.
+            const output = !resolved.consumers[family.tensorId]?.length;
             return (
               <li key={family.tensorId}>
                 <code>{tensor.name}</code>
@@ -390,12 +393,14 @@ function TiledTensors({ plan, run }: { plan: TilePlan | null; run: PlanRun }): R
                   {family.count} task{family.count === 1 ? "" : "s"}
                 </span>
                 <button
-                  className="mini danger"
-                  title={`stop tiling ${tensor.name}: the tasks that read it compute it instead`}
-                  aria-label={`stop tiling ${tensor.name}`}
+                  className="mini"
+                  title={output
+                    ? `stop writing ${tensor.name}: this plan no longer computes the graph output`
+                    : `fuse ${tensor.name} into its consumers: the tasks that read it compute it instead of reading it from memory`}
+                  aria-label={output ? `stop writing ${tensor.name}` : `fuse ${tensor.name} into its consumers`}
                   onClick={() => setPlanTile(family.tensorId, null)}
                 >
-                  ×
+                  {output ? "stop writing" : "fuse"}
                 </button>
                 {families.length > 1 && report?.status === "evaluated" && (
                   <WorkLine work={report.work} />
@@ -722,7 +727,7 @@ function FamilySection({
       </div>
       {replay.depthLimit > 1 && <ReplayDepth tensorId={task.tensorId} replay={replay} />}
       {replay.error && <p className="hint overlap">Replay failed: {replay.error}</p>}
-      {replay.playback && <ReplayStatus playback={replay.playback} name={name} />}
+      {replay.playback && <ReplayStatus playback={replay.playback} name={name} replay={replay} />}
       {run.error ? (
         <p className="hint overlap">Plan analysis failed: {run.error}</p>
       ) : run.evaluating ? (
@@ -792,10 +797,10 @@ function ComputedSection({ plan, computes }: { plan: TilePlan; computes: Compute
               )}
               <button
                 className="mini"
-                title={`write ${tensor.name} to memory: its tasks compute it, and this task reads it`}
+                title={`materialize ${tensor.name}: write it to memory in tiles of its own tasks, and this task reads it`}
                 onClick={() => tilePlanTensor(tensorId)}
               >
-                tile {tensor.name}
+                materialize
               </button>
             </div>
             <pre className="plan-slice">{regionSliceExprs(tensor.name, region).join("\n")}</pre>
@@ -811,12 +816,69 @@ function ComputedSection({ plan, computes }: { plan: TilePlan; computes: Compute
  * time: a replay walks the grid row by row, and read as an execution order it
  * would claim a schedule nobody declared.
  */
-function ReplayStatus({ playback, name }: { playback: ReplayPlayback; name: string }): React.ReactElement {
+function ReplayStatus({
+  playback,
+  name,
+  replay,
+}: {
+  playback: ReplayPlayback;
+  name: string;
+  replay: PlanReplayControl;
+}): React.ReactElement {
   const { frames, tasks, depth } = playback.replay;
   const current = frames[playback.visited - 1];
   const runs = frames.length < tasks;
+  const unit = runs ? "run" : "task";
+  const last = playback.visited >= frames.length;
   return (
     <>
+      <div className="plan-replay-controls tc-slider" role="group" aria-label="replay controls">
+        <button
+          className="mini"
+          onClick={() => replay.seek(playback.visited - 1)}
+          disabled={playback.visited <= 1}
+          aria-label={`previous ${unit}`}
+          title={`previous ${unit}`}
+        >
+          ‹
+        </button>
+        {playback.paused ? (
+          <button
+            className="mini"
+            onClick={replay.play}
+            aria-label={last ? "play again" : "play"}
+            title={last ? "play again from the first " + unit : "play on from here"}
+          >
+            ▶
+          </button>
+        ) : (
+          <button className="mini" onClick={replay.pause} aria-label="pause" title="pause on this run">
+            ❚❚
+          </button>
+        )}
+        <button
+          className="mini"
+          onClick={() => replay.seek(playback.visited + 1)}
+          disabled={last}
+          aria-label={`next ${unit}`}
+          title={`next ${unit}`}
+        >
+          ›
+        </button>
+        <input
+          type="range"
+          min={1}
+          max={frames.length}
+          step={1}
+          value={playback.visited}
+          onChange={(e) => replay.seek(Number(e.currentTarget.value))}
+          aria-label={`replay ${unit}`}
+          aria-valuetext={`${playback.visited} of ${frames.length}`}
+        />
+        <button className="mini" onClick={replay.clear} aria-label="clear replay" title="clear the replay from the cards">
+          clear
+        </button>
+      </div>
       {current && (
         <p className="hint">
           {current.tasks === 1

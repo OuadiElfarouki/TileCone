@@ -149,30 +149,89 @@ describe("replay responses across tab changes", () => {
 });
 
 describe("the end of a replay", () => {
-  it("walks every run, then clears the whole trail together and leaves nothing", async () => {
+  const started = async () => {
     const resolve = deferred();
     render("plan").run();
     resolve(response());
     await flushResponse();
+    return [...ticks.values()][0];
+  };
+
+  it("walks every run, then holds the last one on the cards", async () => {
+    const step = await started();
     const frames = useStore.getState().replayPlayback!.replay.frames.length;
     expect(frames).toBe(4);
-    const step = [...ticks.values()][0];
-    for (let visited = 2; visited <= frames; visited++) {
+    for (let visited = 2; visited < frames; visited++) {
       step();
-      expect(useStore.getState().replayPlayback).toMatchObject({ visited, exiting: false });
+      expect(useStore.getState().replayPlayback).toMatchObject({ visited, paused: false });
     }
-    // The last run has had its turn: the trail fades as it stands, all of it at once.
+    step();
+    expect(useStore.getState().replayPlayback).toMatchObject({ visited: frames, paused: true, exiting: false });
+    expect(ticks.size).toBe(0);
+  });
+
+  it("clears a held replay by fading the whole trail together", async () => {
+    const step = await started();
+    for (let i = 0; i < 3; i++) step();
     let now = 0;
     vi.spyOn(performance, "now").mockImplementation(() => now);
-    step();
-    expect(useStore.getState().replayPlayback).toMatchObject({ visited: frames, exiting: true });
+    render("plan").clear();
+    expect(useStore.getState().replayPlayback).toMatchObject({ visited: 4, exiting: true });
     const fadeTick = [...ticks.values()].pop()!;
-    now = 200;
+    now = 120;
     fadeTick();
     expect(useStore.getState().replayPlayback!.opacity).toBeCloseTo(0.5);
-    now = 400;
+    now = 240;
     fadeTick();
     expect(useStore.getState().replayPlayback).toBeNull();
     expect(ticks.size).toBe(0);
+  });
+});
+
+describe("stepping a replay by hand", () => {
+  const started = async () => {
+    const resolve = deferred();
+    render("plan").run();
+    resolve(response());
+    await flushResponse();
+  };
+
+  it("pauses where it is and plays on from there", async () => {
+    await started();
+    [...ticks.values()][0]();
+    render("plan").pause();
+    expect(useStore.getState().replayPlayback).toMatchObject({ visited: 2, paused: true });
+    expect(ticks.size).toBe(0);
+    render("plan").play();
+    expect(useStore.getState().replayPlayback).toMatchObject({ visited: 2, paused: false });
+    [...ticks.values()][0]();
+    expect(useStore.getState().replayPlayback).toMatchObject({ visited: 3 });
+  });
+
+  it("seeks within the runs, pausing the walk", async () => {
+    await started();
+    render("plan").seek(3);
+    expect(useStore.getState().replayPlayback).toMatchObject({ visited: 3, paused: true });
+    expect(ticks.size).toBe(0);
+    render("plan").seek(99);
+    expect(useStore.getState().replayPlayback!.visited).toBe(4);
+    render("plan").seek(0);
+    expect(useStore.getState().replayPlayback!.visited).toBe(1);
+  });
+
+  it("plays again from the first run once the last is held", async () => {
+    await started();
+    render("plan").seek(4);
+    render("plan").play();
+    expect(useStore.getState().replayPlayback).toMatchObject({ visited: 1, paused: false });
+  });
+
+  it("ignores the controls for a replay of another tab", async () => {
+    await started();
+    render("plan").seek(2);
+    const away = render("dependencies", false);
+    away.seek(3);
+    away.play();
+    expect(useStore.getState().replayPlayback).toMatchObject({ visited: 2, paused: true });
   });
 });
