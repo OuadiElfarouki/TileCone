@@ -122,6 +122,14 @@ export type State = {
   /** Sticky focus set by clicking a part; survives the pointer leaving the row. */
   pinnedBox: number | null;
   /**
+   * The part the keyboard edits: the tile just drawn, or the one last clicked
+   * in the tiles list, until a press anywhere else releases it. Separate from
+   * the pin, which narrows the analysis to one tile; selecting a tile to move
+   * it must not hide the comparison the reader drew it for. With none, the
+   * arrows, Delete and `h` act on nothing (`keyboardTile`).
+   */
+  editBox: number | null;
+  /**
    * Parts excluded from merged analysis and dependency paint. Focus is still a
    * separate transient choice, but hiding the focused part clears that focus so
    * the inspector cannot name a tile it is no longer analysing.
@@ -298,6 +306,8 @@ export type State = {
   togglePinBox: (index: number) => void;
   /** Drop both hover and pin. What Escape does. */
   clearFocus: () => void;
+  /** Release the keyboard's tile (`editBox`) without touching focus or pin. */
+  releaseEditBox: () => void;
   /** Scope every readout below the tiles list to one tensor's tiles. Releases
    * the pin, which is itself a group choice and would otherwise outrank this
    * one and block hovering the group just chosen. */

@@ -676,8 +676,10 @@ export function GraphView(): React.ReactElement {
     // Apply the last coalesced position before the gesture's state is cleared,
     // or a pending frame would find nothing to apply and drop the final move.
     applyPan();
-    if (graphIsInteractive(useStore.getState()) && release && isBackgroundClick(p, release) && useStore.getState().selectedOp !== null)
-      setSelectedOp(null);
+    if (graphIsInteractive(useStore.getState()) && release && isBackgroundClick(p, release)) {
+      if (useStore.getState().selectedOp !== null) setSelectedOp(null);
+      useStore.getState().releaseEditBox();
+    }
     panRef.current = null;
     panPointRef.current = null;
     setPanning(false);
@@ -1165,6 +1167,7 @@ export function GraphView(): React.ReactElement {
             <div
               key={`t:${p.id}`}
               className={`${hot ? "card-slot" : "card-slot dim"}${movingNode === key ? " moving" : ""}${blockedNode === key ? " blocked" : ""}`}
+              data-tensor-id={p.id}
               style={{ left: p.x, top: p.y, width: p.w, height: p.h }}
               /* Under the move tool the card itself is the keyboard target, as
                  an operation is: Tab reaches it and the arrows move it. Under

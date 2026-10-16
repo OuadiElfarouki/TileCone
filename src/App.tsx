@@ -8,6 +8,7 @@ import { useStore } from "./state/store";
 import { useDragGuard } from "./components/hooks/useDragGuard";
 import { useKeyboard } from "./components/hooks/useKeyboard";
 import { useOperationSelection } from "./components/hooks/useOperationSelection";
+import { useEditTileRelease } from "./components/hooks/useEditTileRelease";
 import { useFocusPolicy } from "./components/hooks/useFocusPolicy";
 import { ShortcutsDialog } from "./components/chrome/ShortcutsDialog";
 
@@ -22,6 +23,7 @@ export default function App(): React.ReactElement {
   useKeyboard({ shortcutsOpen, showShortcuts, closeShortcuts });
   useFocusPolicy();
   useOperationSelection();
+  useEditTileRelease();
   useDragGuard();
 
   useEffect(() => {

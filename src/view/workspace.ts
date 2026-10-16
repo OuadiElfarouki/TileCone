@@ -230,6 +230,27 @@ export function analysisTarget(parts: SelPart[], group: string | null, focus: nu
 }
 
 /**
+ * The tile the arrows, Delete and `h` act on: one hovered in the tiles list,
+ * else the keyboard's tile (`editBox`: the tile just drawn or clicked in the
+ * list), else none. A pin alone does not count: it scopes the analysis, and a
+ * press elsewhere releases the keyboard's tile while leaving the pin, so
+ * nothing moves that the reader has stopped pointing at. Nothing is a real
+ * answer - the arrows then move no tile rather than every tile on a tensor.
+ */
+export function keyboardTile(state: {
+  selection: { parts: SelPart[] } | null;
+  perBox: unknown[] | null;
+  focusedBox: number | null;
+  pinnedBox: number | null;
+  editBox: number | null;
+}): number | null {
+  const count = state.selection?.parts.length ?? 0;
+  const hovered = state.perBox && state.pinnedBox === null ? state.focusedBox : null;
+  const index = hovered ?? state.editBox;
+  return index !== null && index < count ? index : null;
+}
+
+/**
  * The tile a tensor's own view is about: the focused tile when it is on that
  * tensor, else the last tile drawn there, or null when it has none. A change to
  * how the tensor is drawn keeps this tile on screen.

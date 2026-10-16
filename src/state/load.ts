@@ -26,7 +26,7 @@ export function loadResolvedGraph(
   | "graph" | "resolved" | "baseLayout" | "workerGraphId" | "loadError" | "diagnostics" | "selection" | "backwardRes" | "forwardRes"
   | "byTensorRes"
   | "entangled"
-  | "perBox" | "focusedBox" | "pinnedBox" | "viewCfgs" | "preview" | "graphPx"
+  | "perBox" | "focusedBox" | "pinnedBox" | "editBox" | "viewCfgs" | "preview" | "graphPx"
   | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "nodeOffsets"
   | "planTiles" | "planTask" | "plan" | "planSupply" | "keptPlans"
   | "replayPlayback" | "replayDepth" | "placementCarry" | "resizingTensor"
@@ -52,6 +52,7 @@ export function loadResolvedGraph(
     perBox: null,
     focusedBox: null,
     pinnedBox: null,
+    editBox: null,
     hiddenBoxes: new Set<number>(),
     analysisGroup: null,
     replayPlayback: null,
@@ -165,6 +166,8 @@ export function installedDSLState(
     };
     state.focusedBox = null;
     state.pinnedBox = null;
+    // The starter tile is the one placed last, so the keyboard moves it.
+    state.editBox = 0;
     Object.assign(state, recompute(resolved, state.selection));
   }
   state.loadError = null;

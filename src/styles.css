@@ -598,6 +598,7 @@ textarea.source.error-state { border-color: var(--err); }
 .graph-canvas.move-tool .op-node { cursor: grab; }
 .graph-canvas.move-tool .card-slot:hover,
 .graph-canvas.move-tool .op-node:hover { opacity: 1; }
+.card-slot:has(> .tensor-card.setting-up) { opacity: 1; }
 .card-slot.moving, .op-node.moving { cursor: grabbing; }
 .graph-canvas.move-tool .tensor-card > *,
 .graph-canvas.move-tool .op-node > * { pointer-events: none; }
@@ -702,13 +703,15 @@ textarea.source.error-state { border-color: var(--err); }
 .tc-canvas-wrap .tc-deck-out { position: absolute; left: 0; opacity: 0; pointer-events: none; }
 /* The grid's outline is the card's one border, and follows the operation
    node's colours: accent while a tile on it is inspected, grey while the card is
-   being moved or pointed at to move, warning when a neighbour refuses the move.
+   being moved or pointed at to move or has its menu open, warning when a
+   neighbour refuses the move.
    It stays a hairline-plus because it competes with the cones drawn inside it.
    The rules run in that order at one specificity, so a later state recolours it. */
 .tensor-card.selected .tc-canvas-wrap canvas { outline: calc(2px / var(--view-scale, 1)) solid var(--accent); }
 :where(.graph-canvas.move-tool) .card-slot:hover .tc-canvas-wrap canvas,
 .card-slot.moving .tc-canvas-wrap canvas,
-.card-slot:focus-visible .tc-canvas-wrap canvas {
+.card-slot:focus-visible .tc-canvas-wrap canvas,
+.tensor-card.setting-up .tc-canvas-wrap canvas {
   outline: calc(2px / var(--view-scale, 1)) solid var(--muted);
 }
 .card-slot.blocked .tc-canvas-wrap canvas { outline: calc(2px / var(--view-scale, 1)) solid var(--warn-ink); }

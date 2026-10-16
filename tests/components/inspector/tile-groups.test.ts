@@ -346,7 +346,9 @@ D = matmul(CC, W)
     expect(active()).toBe("D");
   });
 
-  it("moves the selected group, ignoring hover on another tensor", () => {
+  /* The list is the selector: a hovered row is the tile the arrows move,
+     whichever group is analysed, and no group moves as a whole. */
+  it("moves the tile hovered in the list, whatever group is analysed", () => {
     S().setSelection("CC", fromBox(box([112, 144], [192, 224])), "union");
     S().selectAnalysisGroup("D");
     S().hoverBox(2);
@@ -354,9 +356,9 @@ D = matmul(CC, W)
     expect(analysisTarget(before, S().analysisGroup, S().focusedBox))
       .toEqual({ tensorId: "D", focusedBox: null, index: 1 });
     S().moveSelection(0, 1);
-    expect(S().selection!.parts[0].box[0].lo).toBe(before[0].box[0].lo + 1);
-    expect(S().selection!.parts[1].box[0].lo).toBe(before[1].box[0].lo + 1);
-    expect(S().selection!.parts[2]).toBe(before[2]);
+    expect(S().selection!.parts[0]).toBe(before[0]);
+    expect(S().selection!.parts[1]).toBe(before[1]);
+    expect(S().selection!.parts[2].box[0].lo).toBe(before[2].box[0].lo + 1);
   });
 
   it("renders ranges only in tile rows, including a single-tile workspace", () => {

@@ -78,6 +78,9 @@ export type LayerInputs = {
   perBox: BoxProp[] | null;
   hiddenBoxes: Set<number>;
   focusedBox: number | null;
+  /** The tile the keyboard edits (`keyboardTile`), outlined heavier. Optional
+   * so callers that draw no selection need not name it. */
+  keyTile?: number | null;
   back?: { region: Region; depth: number };
   fwd?: { region: Region; depth: number };
   prev?: { region: Region; depth: number };
@@ -105,6 +108,7 @@ export function buildLayers({
   perBox,
   hiddenBoxes,
   focusedBox,
+  keyTile = null,
   back,
   fwd,
   prev,
@@ -249,16 +253,19 @@ export function buildLayers({
 
   // The selection itself: each box in its own hue, dimmed when another is
   // focused. A hidden box keeps its rectangle - hiding removes the *cone*, and
-  // a probe you cannot see is a probe you cannot move back.
+  // a probe you cannot see is a probe you cannot move back. The keyboard's
+  // tile is outlined heavier, so the reader sees which one the arrows move.
   parts.forEach(({ index, box: b }) => {
     const isFocused = focusedBox === null || focusedBox === index;
+    const isKey = keyTile === index;
     const hidden = hiddenBoxes.has(index);
     layers.push({
       region: fromBox(b),
       color: boxColor(index, dark),
-      alpha: hidden ? 0.18 : isFocused ? 0.9 : 0.35,
+      alpha: hidden ? 0.18 : isFocused || isKey ? 0.9 : 0.35,
       hatch: false,
-      outline: isFocused && !hidden,
+      outline: isKey || (isFocused && !hidden),
+      ...(isKey ? { lineWidth: EMPHASIS_LINE_PX } : {}),
       seed: true,
     });
   });

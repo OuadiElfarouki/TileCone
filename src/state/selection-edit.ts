@@ -86,6 +86,7 @@ export function editSelection(
       : workspaceHistory,
     focusedBox: nextFocus,
     pinnedBox: nextFocus === null ? null : get().pinnedBox,
+    editBox: keepFocus && sel && get().editBox !== null && get().editBox! < parts.length ? get().editBox : null,
     // `keepFocus` marks the edits that preserve part order and length (a move).
     // Anything else can renumber the parts, which would leave these indexes
     // pointing at the wrong cone.

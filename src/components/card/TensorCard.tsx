@@ -27,7 +27,7 @@ import type { ResizeCorner } from "../../view/tensor/resize";
 import { DECK_ROOM_PX, DECK_STEP_PX, deckSheets } from "../../view/tensor/deck";
 import { cancelDeal, deal, holdPicture, prefersStill } from "./deal";
 import { seedTile } from "../../view/tensor/tile-spec";
-import { graphIsInteractive, layoutMovable, partsOn } from "../../view/workspace";
+import { graphIsInteractive, keyboardTile, layoutMovable, partsOn } from "../../view/workspace";
 import { buildPlanPaint, buildLayers } from "../../view/tensor/layers";
 import {
   CellDrag,
@@ -131,6 +131,7 @@ function TensorCardView({
   const setPreviewBox = useStore((s) => s.setPreviewBox);
   const perBox = useStore((s) => s.perBox);
   const focusedBox = useStore((s) => s.focusedBox);
+  const keyTile = useStore(keyboardTile);
   const hiddenBoxes = useStore((s) => s.hiddenBoxes);
   const direction = useStore((s) => s.direction);
   const snapToGrid = useStore((s) => s.snapToGrid);
@@ -270,6 +271,7 @@ function TensorCardView({
         perBox,
         hiddenBoxes,
         focusedBox,
+        keyTile,
         back,
         fwd,
         prev,
@@ -311,6 +313,7 @@ function TensorCardView({
     entangled,
     showEntangled,
     focusedBox,
+    keyTile,
     fwd,
     geom,
     hiddenBoxes,
@@ -554,9 +557,13 @@ function TensorCardView({
       : [])
   );
 
+  // While its menu or size dialog is open, the card shows it is the one being
+  // set up, in the grey a card takes while pointed at to move.
+  const settingUp = (!!viewMenu.anchor || scaleEditor !== null) && interactive;
+
   return (
     <div
-      className={`tensor-card${isSelected ? " selected" : ""}${viewScale < OVERVIEW_SCALE ? " overview" : ""}`}
+      className={`tensor-card${isSelected ? " selected" : ""}${settingUp ? " setting-up" : ""}${viewScale < OVERVIEW_SCALE ? " overview" : ""}`}
       data-tensor={tensor.id}
       style={{
         "--view-scale": viewScale,

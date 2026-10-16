@@ -67,6 +67,7 @@ export const useStore = create<State>((set, get) => {
   perBox: null,
   focusedBox: null,
   pinnedBox: null,
+  editBox: null,
   hiddenBoxes: new Set<number>(),
   analysisGroup: null,
   dragging: false,

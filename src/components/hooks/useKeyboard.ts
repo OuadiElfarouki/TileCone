@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useStore } from "../../state/store";
 import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
 import { hiddenAxisPositioned, viewAxes } from "../../view/tensor/tensor-view";
-import { activeCanvasTool, analysisTarget, graphIsInteractive, InspectorTab } from "../../view/workspace";
+import { activeCanvasTool, analysisTarget, graphIsInteractive, InspectorTab, keyboardTile } from "../../view/workspace";
 
 const isTyping = (el: EventTarget | null) => {
   const t = el as HTMLElement | null;
@@ -28,15 +28,13 @@ const ownsWorkspaceKeys = (el: EventTarget | null) => {
 /**
  * The tile a removal acts on, or `null` when the keys should do nothing.
  *
- * Unlike a move, a removal takes only a tile that is actually pointed at: the
- * focused one, hovered or pinned, which is the tile the canvas draws with the
- * emphasised border and the list lights. The arrows may fall back to the anchor
- * because a move is visible where it lands and is reversed by the opposite key;
- * a removal that took the anchor deleted a tile the reader had just let go of
- * with Escape, which is the one gesture that means "I am done pointing at it".
+ * The keyboard's tile (`keyboardTile`), as for a move: the one hovered in the
+ * list, or the one just drawn or clicked, which the canvas draws with the
+ * heavier border. Escape and a press elsewhere release it, so a removal never
+ * takes a tile the reader has let go of.
  */
-export function removalTarget(focusedBox: number | null, tab: InspectorTab): number | null {
-  return tab === "dependencies" ? focusedBox : null;
+export function removalTarget(keyTile: number | null, tab: InspectorTab): number | null {
+  return tab === "dependencies" ? keyTile : null;
 }
 
 /** GraphView owns viewport geometry; the one global keyboard listener asks it
@@ -106,7 +104,7 @@ export function useKeyboard({
           s.selectPlanTask(null);
           return;
         }
-        if (s.pinnedBox !== null || s.focusedBox !== null) {
+        if (s.pinnedBox !== null || s.focusedBox !== null || s.editBox !== null) {
           s.clearFocus();
           return;
         }
@@ -188,17 +186,20 @@ export function useKeyboard({
         }
       }
 
-      if (!anchor || !cfg || !shape) return;
-
-      const { rowAxis: rowAx, colAxis: colAx } = viewAxes(shape, cfg);
-      const visible = [rowAx, colAx].filter((a) => a >= 0);
-
-      const arrows: Record<string, [number, number]> = {
-        ArrowLeft: [colAx, -1],
-        ArrowRight: [colAx, 1],
-        ArrowUp: [rowAx, -1],
-        ArrowDown: [rowAx, 1],
-      };
+      /* The arrows move the keyboard's tile, on its own tensor's drawn plane;
+         with none they move nothing. The rest below still follows the anchor. */
+      const keyTile = keyboardTile(s);
+      const keyTensor = keyTile === null ? null : s.selection!.parts[keyTile].tensorId;
+      const keyShape = keyTensor ? s.resolved?.tensors[keyTensor].resolved : null;
+      const keyAxes = keyTensor && keyShape ? viewAxes(keyShape, s.viewCfgs[keyTensor]) : null;
+      const arrows: Record<string, [number, number]> = keyAxes
+        ? {
+            ArrowLeft: [keyAxes.colAxis, -1],
+            ArrowRight: [keyAxes.colAxis, 1],
+            ArrowUp: [keyAxes.rowAxis, -1],
+            ArrowDown: [keyAxes.rowAxis, 1],
+          }
+        : {};
       /* Moving a tile is an edit to the selection, and the selection is the
          Dependencies view's subject: its list is what shows which tile the
          arrows are about to move. Under Plan that list is not on screen and
@@ -219,7 +220,7 @@ export function useKeyboard({
 
       /* `deleteBox` records a workspace history entry, so a removal is one
          Ctrl/Cmd+Z away like any other tile edit. */
-      const removable = removalTarget(s.focusedBox, s.inspectorTab);
+      const removable = removalTarget(keyTile, s.inspectorTab);
       if (matchesShortcut(e, SHORTCUTS.deleteTile) && removable !== null) {
         e.preventDefault();
         s.deleteBox(removable);
@@ -230,11 +231,15 @@ export function useKeyboard({
       // selection edit, so it follows the same rule as movement above: a pin
       // survives a view switch, and this would otherwise change which tiles are
       // measured while the list saying so is in the other view.
-      if (editsTiles && matchesShortcut(e, SHORTCUTS.toggleTile) && s.focusedBox !== null && s.perBox) {
+      if (editsTiles && matchesShortcut(e, SHORTCUTS.toggleTile) && keyTile !== null && s.perBox) {
         e.preventDefault();
-        s.toggleBoxHidden(s.focusedBox);
+        s.toggleBoxHidden(keyTile);
         return;
       }
+
+      if (!anchor || !cfg || !shape) return;
+      const { rowAxis: rowAx, colAxis: colAx } = viewAxes(shape, cfg);
+      const visible = [rowAx, colAx].filter((a) => a >= 0);
 
       // hidden-axis scrub: the first hidden axis with a position (`hiddenAxisPositioned`)
       if (matchesShortcut(e, SHORTCUTS.scrub)) {

@@ -1066,13 +1066,34 @@ describe("moving a single selected part", () => {
     expect(after[1]).toEqual(box([160, 224], [128, 192]));
   });
 
-  it("moves the whole selection when nothing is focused", () => {
-    S().clearFocus();
+  it("moves only the tile just drawn when nothing is focused", () => {
+    expect(S().editBox).toBe(1);
     S().moveSelection(0, 32);
     expect(selBoxes()).toEqual([
-      box([32, 96], [0, 64]),
+      box([0, 64], [0, 64]),
       box([160, 224], [128, 192]),
     ]);
+  });
+
+  it("moves nothing once the keyboard's tile is released", () => {
+    S().releaseEditBox();
+    const before = S().selection;
+    S().moveSelection(0, 32);
+    S().nudgeSelection(0, 1);
+    expect(S().selection).toBe(before);
+  });
+
+  it("selects an existing tile when the same box is drawn again", () => {
+    S().setSelection("C", fromBox(box([0, 64], [0, 64])), "union");
+    expect(selBoxes()).toHaveLength(2);
+    expect(S().editBox).toBe(0);
+  });
+
+  it("takes the clicked row as the keyboard's tile, and Escape lets it go", () => {
+    S().togglePinBox(0);
+    expect(S().editBox).toBe(0);
+    S().clearFocus();
+    expect(S().editBox).toBeNull();
   });
 
   it("repropagates the moved part's cone and leaves the other's alone", () => {

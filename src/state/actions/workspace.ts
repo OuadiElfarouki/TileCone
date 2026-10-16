@@ -223,6 +223,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
       workspaceHistory: workspaceHistory.slice(0, -1),
       focusedBox: null,
       pinnedBox: null,
+      editBox: null,
       hiddenBoxes: new Set<number>(),
       // The restored selection may not contain the group at all, and undo is
       // not the place to guess which of its tensors the reader meant.

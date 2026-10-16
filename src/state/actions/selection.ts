@@ -1,39 +1,37 @@
 import { executeQuery } from "../../core/executor";
 import { hasUnitStride } from "../../core/coordinates";
-import { addPart, Box, Region, sameBox, subtractFromParts, translateAllParts, translatePart } from "../../core/region";
+import { addPart, Box, Region, sameBox, subtractFromParts, translatePart } from "../../core/region";
 import { nudgeDelta, tileOf } from "../../view/tensor/grid";
 import { nudgeBoxes } from "../../view/tensor/movement";
 import { viewAxes } from "../../view/tensor/tensor-view";
 import { gestureTile, tileFits, tileSpanAt } from "../../view/tensor/tile-spec";
-import { analysisTarget, MAX_PREVIEW_NODES, operationForTensor, partsOn, SelPart } from "../../view/workspace";
+import { keyboardTile, MAX_PREVIEW_NODES, operationForTensor, partsOn, SelPart } from "../../view/workspace";
 import { recompute } from "../analysis";
 import { recordWorkspace } from "../history";
 import { editSelection, revealHidden } from "../selection-edit";
 import { GetState, SetState, State } from "../types";
 
-/** Share scope, rigid group translation, metadata, and hidden-axis following. */
+/** The keyboard's tile, metadata, and hidden-axis following. With no keyboard
+ * tile (`keyboardTile`) nothing moves. */
 function moveParts(
   get: GetState,
   set: SetState,
   record: boolean,
-  move: (boxes: Box[], focused: number, shape: number[], state: State) => Box[]
+  move: (box: Box, shape: number[], state: State) => Box
 ): void {
   const state = get();
   const parts = state.selection?.parts;
-  const target = analysisTarget(parts ?? [], state.analysisGroup, state.perBox ? state.focusedBox : null);
-  const anchor = target.tensorId;
-  const shape = anchor && state.resolved?.tensors[anchor]?.resolved;
-  if (!parts || !anchor || !shape) return;
-  const local = parts.flatMap((part, i) => part.tensorId === anchor ? [i] : []);
-  const boxes = local.map((i) => parts[i].box);
-  const focused = target.focusedBox === null ? -1 : local.indexOf(target.focusedBox);
-  const moved = move(boxes, focused, shape, state);
-  if (moved === boxes) return;
+  const index = keyboardTile(state);
+  if (!parts || index === null) return;
+  const anchor = parts[index].tensorId;
+  const shape = state.resolved?.tensors[anchor]?.resolved;
+  if (!shape) return;
+  const oldBox = parts[index].box;
+  const movedBox = move(oldBox, shape, state);
+  if (movedBox === oldBox) return;
   const next = parts.slice();
-  local.forEach((i, j) => { if (moved[j] !== boxes[j]) next[i] = { tensorId: anchor, box: moved[j] }; });
+  next[index] = { tensorId: anchor, box: movedBox };
   editSelection(get, set, () => next, true, record);
-  const oldBox = parts[target.index]?.box;
-  const movedBox = next[target.index]?.box;
   const { rowAxis, colAxis } = viewAxes(shape, get().viewCfgs[anchor]);
   const hiddenMoved = oldBox?.some((interval, axis) => axis !== rowAxis && axis !== colAxis && interval.lo !== movedBox[axis].lo);
   if (hiddenMoved) revealHidden(get, anchor, movedBox);
@@ -51,6 +49,7 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
   | "hoverBox"
   | "togglePinBox"
   | "clearFocus"
+  | "releaseEditBox"
   | "selectAnalysisGroup"
   | "toggleBoxHidden"
   | "setTensorTile"
@@ -93,6 +92,12 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
       for (; k < mine.length; k++) parts.push({ tensorId, box: mine[k] });
     }
     const sel = parts.length === 0 ? null : { parts };
+    // The tile just drawn is the one the keyboard moves next. Drawing a box
+    // that is already a tile adds nothing, and selects that tile instead.
+    const last = drawn[drawn.length - 1];
+    const editBox = mode === "subtract" || !last
+      ? null
+      : parts.findIndex((part) => part.tensorId === tensorId && sameBox(part.box, last));
     const newIndex = new Map(parts.map((part, index) => [part, index]));
     const remap = (index: number): number | null => {
       if (mode === "replace" || !selection) return null;
@@ -117,6 +122,7 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
       // drew sat dimmed in another group.
       focusedBox: null,
       pinnedBox: null,
+      editBox: editBox === null || editBox < 0 ? null : editBox,
       hiddenBoxes: nextHidden,
       // A subtract gesture can empty the tensor it was aimed at; the store then
       // holds no group rather than one nothing is drawn on.
@@ -141,6 +147,7 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
       entangled: null,
       focusedBox: null,
       pinnedBox: null,
+      editBox: null,
       hiddenBoxes: new Set<number>(),
       analysisGroup: null,
       preview: null,
@@ -148,36 +155,32 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
   },
 
   /**
-   * Moves the focused part when one is focused, otherwise every part on the
-   * anchor tensor. `axis` is an index into one tensor's shape, so it cannot be
-   * applied across tensors of different rank -- parts elsewhere hold still.
+   * Moves the keyboard's tile (`keyboardTile`), and nothing when there is
+   * none. `axis` is an index into that tile's tensor's shape.
    */
   moveSelection: (axis, delta, record = true) => {
-    moveParts(get, set, record, (boxes, focused, shape) => {
-      if (!Number.isSafeInteger(axis) || axis < 0 || axis >= shape.length || !Number.isSafeInteger(delta)) return boxes;
-      return focused >= 0 ? translatePart(boxes, focused, axis, delta, shape) : translateAllParts(boxes, axis, delta, shape);
+    moveParts(get, set, record, (box, shape) => {
+      if (!Number.isSafeInteger(axis) || axis < 0 || axis >= shape.length || !Number.isSafeInteger(delta)) return box;
+      return translatePart([box], 0, axis, delta, shape)[0];
     });
   },
 
   nudgeSelection: (axis, sign, multiplier = 1, record = true) => {
-    moveParts(get, set, record, (boxes, focused, shape, state) => {
+    moveParts(get, set, record, (box, shape, state) => {
       if (!Number.isSafeInteger(axis) || axis < 0 || axis >= shape.length ||
-          (sign !== -1 && sign !== 1) || !Number.isSafeInteger(multiplier) || multiplier < 1) return boxes;
-      const target = analysisTarget(state.selection!.parts, state.analysisGroup, state.perBox ? state.focusedBox : null);
-      const cfg = state.viewCfgs[target.tensorId!];
+          (sign !== -1 && sign !== 1) || !Number.isSafeInteger(multiplier) || multiplier < 1) return box;
+      const cfg = state.viewCfgs[state.selection!.parts[keyboardTile(state)!].tensorId];
       const units = state.snapToGrid
         ? gestureTile(shape, cfg, tileOf(shape, state.tileScale, state.graphPx, cfg))
         : shape.map(() => 1);
       // Non-contiguous axes keep the existing clamped translation policy.
       if (!hasUnitStride(shape, axis)) {
-        const interval = state.selection!.parts[target.index].box[axis];
-        const delta = nudgeDelta(interval, sign, units[axis], state.snapToGrid, multiplier);
-        return focused >= 0 ? translatePart(boxes, focused, axis, delta, shape) : translateAllParts(boxes, axis, delta, shape);
+        const delta = nudgeDelta(box[axis], sign, units[axis], state.snapToGrid, multiplier);
+        return translatePart([box], 0, axis, delta, shape)[0];
       }
-      const moving = focused >= 0 ? [boxes[focused]] : boxes;
+      const moving = [box];
       const moved = nudgeBoxes(moving, shape, units, axis, sign, multiplier);
-      if (moved === moving) return boxes;
-      return focused >= 0 ? boxes.map((box, i) => i === focused ? moved[0] : box) : moved;
+      return moved === moving ? box : moved[0];
     });
   },
 
@@ -207,10 +210,15 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
     // emphasise a tile the readout below was not about. Unpinning leaves the
     // group where the pin put it, which is what Escape should return to.
     const tensorId = pinned === null ? analysisGroup : selection?.parts[pinned]?.tensorId ?? null;
-    set({ pinnedBox: pinned, focusedBox: pinned, analysisGroup: tensorId });
+    // Either way the click was on this tile, so it is the one the keyboard edits.
+    set({ pinnedBox: pinned, focusedBox: pinned, analysisGroup: tensorId, editBox: index });
   },
 
-  clearFocus: () => set({ pinnedBox: null, focusedBox: null }),
+  clearFocus: () => set({ pinnedBox: null, focusedBox: null, editBox: null }),
+
+  releaseEditBox: () => {
+    if (get().editBox !== null) set({ editBox: null });
+  },
 
   selectAnalysisGroup: (tensorId) =>
     set({ analysisGroup: tensorId, pinnedBox: null, focusedBox: null }),

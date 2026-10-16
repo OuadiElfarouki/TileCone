@@ -62,11 +62,13 @@ describe("selection carry", () => {
     expect(S().hiddenBoxes).toEqual(new Set([1]));
   });
 
-  it("keeps a whole group rigid when no tile is focused", () => {
+  it("carries only the tile just drawn when no tile is focused", () => {
     S().setSelection("Y", fromBox(point(0, 0, 2)), "replace");
     S().setSelection("Y", fromBox(point(0, 1, 3)), "union");
+    const first = S().selection!.parts[0];
     S().nudgeSelection(2, 1);
-    expect(S().selection!.parts.map((part) => part.box)).toEqual([point(0, 1, 0), point(0, 2, 1)]);
+    expect(S().selection!.parts[0]).toBe(first);
+    expect(S().selection!.parts[1].box).not.toEqual(point(0, 1, 3));
   });
 
   it("keeps held and fast movement as one undo step and stops without history at the outer end", () => {
