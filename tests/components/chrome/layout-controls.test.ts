@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { LayoutControls } from "../../../src/components/chrome/LayoutControls";
+import { moveModifierKey } from "../../../src/components/hooks/useMoveModifier";
 import { useStore } from "../../../src/state/store";
 
 // Static renders observe the live test store, as the other chrome contracts do.
@@ -73,5 +74,30 @@ describe("restoring generated placement", () => {
     S().setNodeOffset("t:X", { dx: 30, dy: 0 });
     S().commitNodeMove("t:X", { dx: 0, dy: 0 });
     expect(render()).not.toContain("disabled");
+  });
+});
+
+/* Borrowing the move tool for one drag is the common way to move a node, so
+   the group says how, in the key that works on this platform. */
+describe("the move modifier hint", () => {
+  it("names the modifier beside the toggle under the select tool", () => {
+    expect(render()).toMatch(/<span class="layout-hint"[^>]*>or (Ctrl|⌘)-drag<\/span>/);
+  });
+
+  it("is gone under the move tool and in the Plan view, where it does not apply", () => {
+    S().setCanvasTool("move");
+    expect(render()).not.toContain("layout-hint");
+    S().setCanvasTool("select");
+    S().setInspectorTab("plan");
+    expect(render()).not.toContain("layout-hint");
+    S().setInspectorTab("dependencies");
+  });
+
+  it("says ⌘ on Apple platforms and Ctrl elsewhere", () => {
+    expect(moveModifierKey({ platform: "MacIntel" })).toBe("⌘");
+    expect(moveModifierKey({ userAgent: "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X)" })).toBe("⌘");
+    expect(moveModifierKey({ platform: "Linux x86_64" })).toBe("Ctrl");
+    expect(moveModifierKey({ platform: "Win32" })).toBe("Ctrl");
+    expect(moveModifierKey(undefined)).toBe("Ctrl");
   });
 });

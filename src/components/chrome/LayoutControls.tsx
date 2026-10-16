@@ -1,6 +1,7 @@
 import React from "react";
 import { useStore } from "../../state/store";
 import { activeCanvasTool, layoutMovable } from "../../view/workspace";
+import { moveModifierKey } from "../hooks/useMoveModifier";
 
 /**
  * The layout group: the tool that moves nodes, and the way back.
@@ -10,7 +11,9 @@ import { activeCanvasTool, layoutMovable } from "../../view/workspace";
  * makes a chain legible. The move tool turns every node, card or operation, into
  * furniture dragged from anywhere on it, for arranging a graph to be looked at
  * or shown. Holding Ctrl/Cmd borrows it for one drag without switching, so a
- * single card can be moved aside in the middle of reading.
+ * single card can be moved aside in the middle of reading. That is the common
+ * case, so it is written beside the toggle rather than left in its tooltip;
+ * the toggle stays for arranging many nodes, and for input with no modifier.
  *
  * `reset` belongs here rather than beside the zoom buttons: it restores
  * generated placement, which is this group's subject, while zoom and fit change
@@ -35,6 +38,7 @@ export function LayoutControls({
      unavailable there rather than hidden: the group keeps its place, and the
      reason is on each control. */
   const locked = "the Plan view keeps cards and operations where they are; switch to Dependencies to move them";
+  const key = moveModifierKey();
 
   return (
     <div className="layout-controls">
@@ -45,11 +49,16 @@ export function LayoutControls({
         disabled={!movable}
         onClick={() => setCanvasTool(moveTool ? "select" : "move")}
         title={movable
-          ? "drag cards and operations from anywhere on them; Esc or off returns to drawing tiles and selecting operations. Hold Ctrl/Cmd to move one without switching"
+          ? `drag cards and operations from anywhere on them; Esc or off returns to drawing tiles and selecting operations. Hold ${key} to move one without switching`
           : locked}
       >
         move
       </button>
+      {movable && !moveTool && (
+        <span className="layout-hint" title={`hold ${key} and drag a card or operation to move it without switching tools`}>
+          or {key}-drag
+        </span>
+      )}
       <button
         className="mini"
         onClick={onResetLayout}

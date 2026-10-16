@@ -10,6 +10,19 @@ export const borrowsMoveTool = (event: { ctrlKey: boolean; metaKey: boolean }): 
   event.ctrlKey || event.metaKey;
 
 /**
+ * The key to name when telling the reader how to borrow the move tool. Both
+ * work everywhere, but on macOS Ctrl+click is a right-click and opens the card
+ * menu, so the key that works there is ⌘, and naming "Ctrl/Cmd" leaves the
+ * reader to find that out.
+ */
+export function moveModifierKey(
+  nav: { platform?: string; userAgent?: string } | undefined =
+    typeof navigator === "undefined" ? undefined : navigator
+): "⌘" | "Ctrl" {
+  return /Mac|iPhone|iPad|iPod/.test(nav?.platform || nav?.userAgent || "") ? "⌘" : "Ctrl";
+}
+
+/**
  * Whether Ctrl/Cmd is held, so the canvas can show the move tool before the
  * press that uses it, as design tools change the cursor while the key is down.
  *

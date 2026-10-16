@@ -751,6 +751,7 @@ textarea.source.error-state { border-color: var(--err); }
 .setup-kicker {
   color: var(--muted); font-size: var(--t-micro); letter-spacing: .09em; text-transform: uppercase;
 }
+.layout-hint { color: var(--muted); font-size: var(--t-micro); white-space: nowrap; }
 
 /* The tile itself, as the panel's heading. Right padding keeps the row clear of
    the absolutely-positioned collapse control, which floats over this corner. */
