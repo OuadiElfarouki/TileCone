@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { Inspector } from "../../../src/components/inspector/Inspector";
 import { useStore } from "../../../src/state/store";
 import { familyReplay } from "../../../src/core/plan/replay";
+import { EXAMPLES } from "../../../src/examples/index";
 
 // Static-render tests read the live test store rather than Zustand's initial
 // server snapshot. Actions and all derivation logic remain the real implementation.
@@ -152,5 +153,14 @@ describe("fusing and materializing in the Plan view", () => {
     expect(html).toMatch(/title="materialize C:[^"]*"[^>]*>materialize<\/button>/);
     S().tilePlanTensor("C");
     expect(S().planTiles.C).toBeDefined();
+  });
+});
+
+describe("what the current plan changes from each kept one", () => {
+  it("says it under each kept plan, decisions first", () => {
+    S().applyDSL(EXAMPLES.find((example) => example.name === "Experiment: fusion and recomputation")!.dsl);
+    const html = render();
+    expect(html).toContain("From P1, the current plan fuses H into its consumers and retiles Y 64×64 → 64×128.");
+    expect(html).toMatch(/From P2, the current plan retiles Y 64×64 → 64×128\. Lower: [^.<]*recomputed/);
   });
 });

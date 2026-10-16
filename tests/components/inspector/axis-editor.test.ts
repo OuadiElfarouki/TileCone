@@ -6,7 +6,7 @@ import { box, fromBox } from "../../../src/core/region";
 import { useStore } from "../../../src/state/store";
 import { tileOf } from "../../../src/view/tensor/grid";
 import { gestureTile, isLatticeTile } from "../../../src/view/tensor/tile-spec";
-import { axisTableMenu, type AxisTableAction } from "../../../src/view/tensor/menus";
+import { axisTableMenu, planWithTile, type AxisTableAction } from "../../../src/view/tensor/menus";
 import type { MenuAction } from "../../../src/view/menu";
 
 // Static-render tests read the live test store rather than Zustand's initial
@@ -33,7 +33,6 @@ const actionsNow = () => {
   return axisTableMenu({
     own: !!S().viewCfgs.X.tile,
     matchesTile: isLatticeTile(S().selection!.parts[0].box, currentTile(), shape),
-    input: true,
   }).filter((entry): entry is MenuAction<AxisTableAction> => entry.kind === "action");
 };
 const option = (id: AxisTableAction) => actionsNow().find((o) => o.id === id)!;
@@ -45,12 +44,21 @@ describe("the axis table at rest", () => {
     S().setSelection("X", fromBox(box([0, rows], [0, cols])), "replace");
   });
 
-  it("states axis, size, tile and range, and keeps its actions behind the options menu", () => {
+  it("states axis, size, grid and range, and keeps the grid actions behind the options menu", () => {
     const html = render();
     expect(html).toContain('aria-label="axis options"');
     expect(html).toContain('aria-haspopup="menu"');
-    for (const hidden of ["tile #", "use as tile", "reset tile", "plan with this tile"])
+    expect(html).toMatch(/<th[^>]*>grid<\/th>/);
+    for (const hidden of ["tile #", "use as card grid", "reset card grid"])
       expect(html).not.toContain(hidden);
+  });
+
+  /* Planning is the way from Dependencies into Plan, so it is on the panel
+     rather than in the menu; on a graph input it says why it does nothing. */
+  it("offers planning with the tile beside the heading", () => {
+    expect(render()).toMatch(/<button class="mini" disabled=""[^>]*>plan with this tile<\/button>/);
+    S().setSelection("Y", fromBox(box([0, 16], [0, 16])), "replace");
+    expect(render()).toMatch(/<button class="mini" title="divide this tensor[^"]*">plan with this tile<\/button>/);
   });
 
   it("does not choose the card's axes: that is the tensor's setting, made on the card", () => {
@@ -59,7 +67,7 @@ describe("the axis table at rest", () => {
   });
 });
 
-describe("keeping the canvas tile as a tensor's own", () => {
+describe("keeping the canvas grid as a tensor's own", () => {
   beforeEach(() => {
     S().applyDSL("X = Tensor(256, 256, dtype=fp32)\nY = relu(X)\n");
     const [rows, cols] = currentTile();
@@ -68,7 +76,7 @@ describe("keeping the canvas tile as a tensor's own", () => {
     S().setSelection("X", fromBox(box([0, rows], [0, cols])), "replace");
   });
 
-  it("offers 'use as tile' on a lattice tile the tensor does not own yet", () => {
+  it("offers 'use as card grid' on a lattice tile the tensor does not own yet", () => {
     expect(S().viewCfgs.X.tile).toBeUndefined();
     expect(option("own")).toMatchObject({ disabled: false });
     expect(option("own").title).toContain("so later detail changes no longer resize it");
@@ -95,15 +103,14 @@ describe("keeping the canvas tile as a tensor's own", () => {
 
 describe("the actions that do not apply", () => {
   it("says why, rather than disappearing", () => {
-    const actions = axisTableMenu({ own: false, matchesTile: false, input: true })
+    const actions = axisTableMenu({ own: false, matchesTile: false })
       .filter((entry): entry is MenuAction<AxisTableAction> => entry.kind === "action");
-    expect(actions.map((o) => o.id)).toEqual(["own", "reset", "plan"]);
-    expect(actions.find((o) => o.id === "plan")).toMatchObject({
+    expect(actions.map((o) => o.id)).toEqual(["own", "reset"]);
+    expect(actions.filter((o) => o.disabled).map((o) => o.id)).toEqual(["reset"]);
+    expect(planWithTile(true)).toEqual({
       disabled: true,
       title: "a graph input has no tasks: nothing computes it",
     });
-    expect(axisTableMenu({ own: false, matchesTile: false, input: false })
-      .filter((entry) => entry.kind === "action" && entry.disabled)
-      .map((entry) => entry.kind === "action" && entry.id)).toEqual(["reset"]);
+    expect(planWithTile(false).disabled).toBe(false);
   });
 });

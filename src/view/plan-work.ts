@@ -107,3 +107,70 @@ export function describeTiling(
     .map(({ name, tile }) => `${name} ${tile.length ? tile.join("×") : "scalar"}`);
   return parts.length ? parts.join(", ") : "nothing tiled";
 }
+
+/**
+ * What a plan changes from another, as the plan's own decisions: which
+ * tensors it fuses, materializes, retiles, or starts or stops writing. Names
+ * the decisions and not their effects - the figures report those, and one
+ * change can move several figures for reasons a sentence would only guess at.
+ */
+export function describeTilingChange(
+  from: Readonly<Record<string, readonly number[]>>,
+  to: Readonly<Record<string, readonly number[]>>,
+  isOutput: (tensorId: string) => boolean,
+  nameOf: (tensorId: string) => string
+): string[] {
+  const extents = (tile: readonly number[]) => (tile.length ? tile.join("×") : "scalar");
+  return [...new Set([...Object.keys(from), ...Object.keys(to)])]
+    .sort((a, b) => nameOf(a).localeCompare(nameOf(b)))
+    .flatMap((id) => {
+      const before = from[id];
+      const after = to[id];
+      const name = nameOf(id);
+      if (before && !after) return [isOutput(id) ? `stops writing ${name}` : `fuses ${name} into its consumers`];
+      if (!before && after) return [isOutput(id) ? `writes ${name}` : `materializes ${name}`];
+      if (before.length === after!.length && before.every((extent, axis) => extent === after![axis])) return [];
+      return [`retiles ${name} ${extents(before)} → ${extents(after!)}`];
+    });
+}
+
+/**
+ * The rows whose figure is lower, and higher, in `to` than in `from`. Only
+ * figures exact on both sides are compared: two bounds do not say which
+ * quantity is the larger.
+ */
+export function workDirection(from: Work, to: Work): { lower: string[]; higher: string[] } {
+  const lower: string[] = [];
+  const higher: string[] = [];
+  for (const row of WORK_ROWS) {
+    const a = row.figure(from);
+    const b = row.figure(to);
+    if (a.status !== "exact" || b.status !== "exact" || a.value === null || b.value === null) continue;
+    if (b.value < a.value) lower.push(row.label);
+    else if (b.value > a.value) higher.push(row.label);
+  }
+  return { lower, higher };
+}
+
+/**
+ * A kept plan against the current one in a sentence: what the current plan
+ * changes from it, then which figures that leaves lower and higher.
+ */
+export function describePlanChange(
+  label: string,
+  from: { tiles: Readonly<Record<string, readonly number[]>>; work: Work },
+  to: { tiles: Readonly<Record<string, readonly number[]>>; work: Work | null },
+  isOutput: (tensorId: string) => boolean,
+  nameOf: (tensorId: string) => string
+): string {
+  const changes = describeTilingChange(from.tiles, to.tiles, isOutput, nameOf);
+  if (!changes.length) return `${label} is the current plan.`;
+  const list = (items: string[]) =>
+    items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+  let text = `From ${label}, the current plan ${list(changes)}.`;
+  if (!to.work) return text;
+  const { lower, higher } = workDirection(from.work, to.work);
+  if (lower.length) text += ` Lower: ${lower.join(", ")}.`;
+  if (higher.length) text += ` Higher: ${higher.join(", ")}.`;
+  return text;
+}

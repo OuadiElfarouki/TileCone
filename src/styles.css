@@ -858,6 +858,7 @@ textarea.source.error-state { border-color: var(--err); }
 /* Headings that pair a name with an action become a row; the rest stay text. */
 .ins-title.with-action { display: flex; align-items: baseline; justify-content: space-between; }
 .ins-title.with-action .mini { font-weight: 400; }
+.ins-title-actions { display: inline-flex; align-items: baseline; gap: 4px; }
 
 /* The two classes of question, as two panels rather than two registers of the
    same column: a modelled figure sitting under an exact one reads as exact. */
@@ -1122,6 +1123,8 @@ textarea.source.error-state { border-color: var(--err); }
 }
 .plan-kept { margin-top: 5px; }
 .plan-kept .plan-kept-tiling { flex: 1 1 0; min-width: 0; font-size: var(--t-micro); }
+/* What the current plan changes from a kept one, under that plan's row. */
+.plan-kept .plan-change { flex-basis: 100%; margin: 0 0 2px; }
 
 /* Consumer tasks down, producer tiles across. The rows are a pointer
    convenience; the arrow keys are the accessible route to the same move. */

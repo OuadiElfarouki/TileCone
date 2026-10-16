@@ -110,8 +110,10 @@ Fusing `H` stops writing and re-reading it, but with 64-wide `Y` tiles two tasks
 band of `H`. Full-width `Y` tiles compute each band once.
 
 **keep** saves the current plan with its figures, and the whole-plan rows gain a column for it, so
-up to two kept plans read beside the current one. Each kept plan can be restored as the current
-tiling, which undoes like any other plan edit.
+up to two kept plans read beside the current one. Under each kept plan a line states what the
+current plan changes from it ("fuses H into its consumers and retiles Y 64×64 → 64×128") and which
+figures that leaves lower and higher. Each kept plan can be restored as the current tiling, which
+undoes like any other plan edit.
 
 **replay** walks the inspected task's family on the graph: what each task reads and computes, with
 the part it shares with the inspected task drawn on top, and a trail of the tiles walked so far.
@@ -158,7 +160,10 @@ that rewrites the number in the source, with a stepper that doubles a power of t
 values by 32 and odd ones by 1; a run that only changes sizes keeps
 the cards where you placed them, their views, and the viewport. The source panel carries built-in examples, among them
 multi-head attention, KV-cache and grouped-query decode steps, a SwiGLU feed-forward block and MoE
-expert dispatch. The share button encodes the source, the tiles and the view settings in a link.
+expert dispatch. Three of them are worked experiments: tile size and reuse in a GEMM, fusion and
+recomputation in an MLP, and splitting a layernorm's normalised axis. Running one opens the Plan
+view on a plan with two others kept beside it, and the source's comments state the question and
+what the figures show. The share button encodes the source, the tiles and the view settings in a link.
 
 ## What's supported
 

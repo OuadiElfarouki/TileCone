@@ -11,6 +11,7 @@ import { analysisWorkerAvailable, compileInWorker, restoreInWorker } from "../an
 import { compile } from "../compile-epoch";
 import { cardScalesOf, planEditOf, samePlanEdit, withCardScales, WorkspaceSnapshot } from "../history";
 import {
+  experimentWorkspace,
   installedDSLState,
   loadResolvedGraph,
   restoredWorkspaceState,
@@ -57,6 +58,11 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
   },
 
   applyDSL: (text) => {
+    const experiment = experimentWorkspace(text, get());
+    if (experiment) {
+      get().restoreWorkspace(experiment);
+      return;
+    }
     compile.epoch++;
     // `tryCompileDSL` rather than the throwing form: a thrown CompilationError
     // flattens to its first diagnostic's message, and the editor wants all of
@@ -85,6 +91,11 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
     if (!analysisWorkerAvailable()) {
       get().applyDSL(text);
       return get().dslText === text && get().loadError === null;
+    }
+    const experiment = experimentWorkspace(text, get());
+    if (experiment) {
+      set({ draftText: text, loadError: null, diagnostics: [] });
+      return get().restoreWorkspaceAsync(experiment);
     }
     const epoch = ++compile.epoch;
     set({ compiling: true, draftText: text, loadError: null, diagnostics: [] });

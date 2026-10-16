@@ -5,11 +5,14 @@ import { tilePlan } from "../../src/core/plan/plan";
 import { compileDSL } from "../../src/parse/compiler";
 import { FIGURE_MARK } from "../../src/view/format";
 import {
+  describePlanChange,
   describeTiling,
+  describeTilingChange,
   WORK_ROWS,
   workCell,
   workCellTitle,
   workChange,
+  workDirection,
 } from "../../src/view/plan-work";
 
 const chain = () =>
@@ -105,5 +108,45 @@ describe("a tiling in words", () => {
       "C 64×128, S scalar, Y 64×64"
     );
     expect(describeTiling({}, (id) => id)).toBe("nothing tiled");
+  });
+});
+
+describe("what a plan changes from a kept one", () => {
+  const isOutput = (id: string) => id === "Y";
+  const name = (id: string) => id;
+
+  it("names fusing, materializing, retiling, and starting or stopping a write", () => {
+    expect(describeTilingChange({ C: [64, 64], Y: [64, 64] }, { Y: [64, 128] }, isOutput, name))
+      .toEqual(["fuses C into its consumers", "retiles Y 64×64 → 64×128"]);
+    expect(describeTilingChange({ Y: [64, 64] }, { C: [64, 64], Y: [64, 64] }, isOutput, name))
+      .toEqual(["materializes C"]);
+    expect(describeTilingChange({ C: [64, 64], Y: [64, 64] }, { C: [64, 64] }, isOutput, name))
+      .toEqual(["stops writing Y"]);
+    expect(describeTilingChange({ C: [64, 64] }, { C: [64, 64], Y: [64, 64] }, isOutput, name))
+      .toEqual(["writes Y"]);
+    expect(describeTilingChange({ Y: [64, 64] }, { Y: [64, 64] }, isOutput, name)).toEqual([]);
+  });
+
+  it("says which exact figures are lower and higher, and compares no bounds", () => {
+    const written = planReport(tilePlan(chain(), { C: [64, 64], Y: [64, 64] })).total!;
+    const fused = planReport(tilePlan(chain(), { Y: [64, 64] })).total!;
+    const { lower, higher } = workDirection(written, fused);
+    expect(lower).toEqual(expect.arrayContaining(["tasks", "dependencies", "written"]));
+    expect(higher).toEqual(expect.arrayContaining(["FLOPs", "recomputed"]));
+    const bounded: Work = { ...fused, flops: { value: fused.flops.value!, status: "upper", reasons: ["test"] } };
+    const both = workDirection(written, bounded);
+    expect([...both.lower, ...both.higher]).not.toContain("FLOPs");
+  });
+
+  it("puts the decisions first and the figures after, in one sentence", () => {
+    const tiles = { C: [64, 64], Y: [64, 64] };
+    const written = planReport(tilePlan(chain(), tiles)).total!;
+    const fused = planReport(tilePlan(chain(), { Y: [64, 64] })).total!;
+    const text = describePlanChange("P1", { tiles, work: written }, { tiles: { Y: [64, 64] }, work: fused }, isOutput, name);
+    expect(text).toMatch(/^From P1, the current plan fuses C into its consumers\. Lower: [^.]*\. Higher: [^.]*recomputed[^.]*\.$/);
+    expect(describePlanChange("P1", { tiles, work: written }, { tiles: { Y: [64, 64] }, work: null }, isOutput, name))
+      .toBe("From P1, the current plan fuses C into its consumers.");
+    expect(describePlanChange("P2", { tiles, work: written }, { tiles, work: written }, isOutput, name))
+      .toBe("P2 is the current plan.");
   });
 });

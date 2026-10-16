@@ -20,52 +20,59 @@ import {
   viewAxes,
 } from "./tensor-view";
 
-export type AxisTableAction = "own" | "reset" | "plan";
+export type AxisTableAction = "own" | "reset";
 
+/**
+ * The action that divides the inspected tensor into tasks of the inspected
+ * tile's extents. It sits beside the Axes heading, not in the menu: it is the
+ * way from Dependencies into Plan, and a menu item hid it.
+ */
+export function planWithTile(input: boolean): { disabled: boolean; title: string } {
+  return {
+    disabled: input,
+    title: input
+      ? "a graph input has no tasks: nothing computes it"
+      : "divide this tensor into tasks of these extents and inspect the task holding this tile in the Plan view",
+  };
+}
+
+/**
+ * The card grid actions. Worded as the grid, not the tile: the inspected tile
+ * is the selection, the plan's tile is a task, and this is neither - it is the
+ * lattice the card draws and gestures snap to.
+ */
 export function axisTableMenu({
   own,
   matchesTile,
-  input,
 }: {
-  /** The tensor has a tile of its own. */
+  /** The tensor has a grid of its own. */
   own: boolean;
-  /** The inspected tile is one tile of the tensor's lattice. */
+  /** The inspected tile is one cell of the tensor's grid. */
   matchesTile: boolean;
-  /** The tensor is a graph input, which no task computes. */
-  input: boolean;
 }): MenuSpec<AxisTableAction> {
   return [
     {
       kind: "action",
       id: "own",
-      label: "use as tile",
-      // Offered whenever the tensor has no tile of its own, even when this
+      label: "use as card grid",
+      // Offered whenever the tensor has no grid of its own, even when this
       // tile already matches the canvas lattice: owning it is still a change,
       // because a detail change would otherwise resize it.
       disabled: own && matchesTile,
       title: own && matchesTile
-        ? "this tile is already the tensor's tile"
+        ? "this tile is already a cell of the tensor's grid"
         : matchesTile
-          ? "keep this tile as the tensor's own, so later detail changes no longer resize it"
-          : "make this tile's extents the tensor's tile, so later gestures and steps use them",
+          ? "keep this grid as the tensor's own, so later detail changes no longer resize it"
+          : "make this tile's extents the tensor's grid, so later gestures and steps use them",
     },
     {
       kind: "action",
       id: "reset",
-      label: "reset tile",
+      label: "reset card grid",
       disabled: !own,
       title: own
-        ? "return this tensor to the canvas tile: the detail setting on the visible axes and the view mode on the others"
-        : "the tensor already follows the canvas tile",
-    },
-    {
-      kind: "action",
-      id: "plan",
-      label: "plan with this tile",
-      disabled: input,
-      title: input
-        ? "a graph input has no tasks: nothing computes it"
-        : "divide this tensor into tasks of these extents and inspect the task holding this tile",
+        ? "return this tensor to the canvas grid: the detail setting on the visible axes and the view mode on the others"
+        : "the tensor already follows the canvas grid",
     },
   ];
 }

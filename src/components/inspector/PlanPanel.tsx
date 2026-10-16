@@ -32,7 +32,7 @@ import { tileBox, tileOrdinal, tiles, type TileFamily } from "../../core/plan/ti
 import { count, formatBoxIndices, unionOf } from "../../core/region";
 import { FIGURE_MARK, fmt, formatBytes, formatFigure, formatIntensity } from "../../view/format";
 import { demandDetail, demandSummary } from "../../view/demand";
-import { describeTiling, WORK_ROWS, workCell, workCellTitle } from "../../view/plan-work";
+import { describePlanChange, describeTiling, WORK_ROWS, workCell, workCellTitle } from "../../view/plan-work";
 import { boxColor, rgbCss } from "../../view/palette";
 import { useDark, useStore } from "../../state/store";
 import { DraftField } from "../chrome/DraftField";
@@ -216,6 +216,7 @@ function PlanTotals({ report }: { report: PlanReport | null }): React.ReactEleme
   const dropKeptPlan = useStore((s) => s.dropKeptPlan);
   const restoreKeptPlan = useStore((s) => s.restoreKeptPlan);
   const nameOf = (tensorId: string) => resolved.tensors[tensorId].name;
+  const isOutput = (tensorId: string) => !resolved.consumers[tensorId]?.length;
   const total = report?.total ?? null;
 
   const same = kept.find((k) => sameTiles(k.tiles, planTiles));
@@ -314,6 +315,15 @@ function PlanTotals({ report }: { report: PlanReport | null }): React.ReactEleme
               >
                 ×
               </button>
+              <span className="hint plan-change">
+                {describePlanChange(
+                  `P${k.id}`,
+                  { tiles: k.tiles, work: k.total },
+                  { tiles: planTiles, work: total },
+                  isOutput,
+                  nameOf
+                )}
+              </span>
             </li>
           ))}
         </ul>

@@ -3,7 +3,7 @@ import { axisName } from "../../view/tensor/shape-label";
 import type { Box } from "../../core/region";
 import { tileOf } from "../../view/tensor/grid";
 import { useStore } from "../../state/store";
-import { axisTableMenu, type AxisTableAction } from "../../view/tensor/menus";
+import { axisTableMenu, planWithTile, type AxisTableAction } from "../../view/tensor/menus";
 import { viewAxes } from "../../view/tensor/tensor-view";
 import { gestureTile, isLatticeTile, lastTileExtent, tilePosition } from "../../view/tensor/tile-spec";
 import { DraftField } from "../chrome/DraftField";
@@ -18,9 +18,9 @@ import { OptionsMenu, OptionsMenuButton, useOptionsMenu } from "../chrome/Option
  * written down. The tile column is editable: typing an extent gives the tensor
  * a tile of its own (`ViewCfg.tile`) and refits the inspected tile to it, so
  * `[1, 2, 64, 128]` on `[B, H, S, D]` is four entries rather than a gesture
- * nobody can make. Actions on the tile - keeping it as the tensor's tile,
- * resetting that, planning with it - are occasional, and sit in a menu behind
- * ⋯ or a right-click. Which axes the card draws is the tensor's own setting,
+ * nobody can make. Planning with the tile is the way into the Plan view and
+ * is a button beside the heading; keeping the tile as the tensor's grid, and
+ * resetting that, are occasional, and sit in a menu behind ⋯ or a right-click. Which axes the card draws is the tensor's own setting,
  * whatever tile is studied, and is chosen on the card (`cardViewMenu`); the
  * table only shades the axes the card does not draw.
  */
@@ -48,7 +48,7 @@ export function AxisEditor({ index }: { index: number }): React.ReactElement | n
   const name = (axis: number) => axisName(tensor, axis);
   const extents = box.map((interval) => interval.hi - interval.lo);
   const matchesTile = isLatticeTile(box, tile, shape);
-  // What "use as tile" and "plan with this tile" take: the tile itself when
+  // What "use as card grid" and "plan with this tile" take: the tile itself when
   // this is one, since a shortened boundary tile's extents are not the tiling's.
   const tileExtents = matchesTile ? tile : extents;
   const setAxis = (axis: number, extent: number) => {
@@ -59,22 +59,28 @@ export function AxisEditor({ index }: { index: number }): React.ReactElement | n
   const actions: Record<AxisTableAction, () => void> = {
     own: () => setTensorTile(part.tensorId, tileExtents, index),
     reset: () => setTensorTile(part.tensorId, null),
-    plan: () => {
-      setPlanTileAt(part.tensorId, tileExtents, box.map((interval) => interval.lo));
-      setInspectorTab("plan");
-    },
+  };
+  const plan = planWithTile(!tensor.producer);
+  const planWith = () => {
+    setPlanTileAt(part.tensorId, tileExtents, box.map((interval) => interval.lo));
+    setInspectorTab("plan");
   };
 
   return (
     <div className="ins-section axis-editor" onContextMenu={menu.onContextMenu}>
       <div className="ins-title with-action">
         Axes
-        <OptionsMenuButton menu={menu} label="axis options" />
+        <span className="ins-title-actions">
+          <button className="mini" onClick={planWith} disabled={plan.disabled} title={plan.title}>
+            plan with this tile
+          </button>
+          <OptionsMenuButton menu={menu} label="axis options" />
+        </span>
       </div>
       <OptionsMenu
         menu={menu}
         label="axis options"
-        spec={axisTableMenu({ own, matchesTile, input: !tensor.producer })}
+        spec={axisTableMenu({ own, matchesTile })}
         handlers={{ action: actions, choice: {} }}
       />
       <table className="axis-table">
@@ -82,8 +88,14 @@ export function AxisEditor({ index }: { index: number }): React.ReactElement | n
           <tr>
             <th scope="col">axis</th>
             <th scope="col" className="num">size</th>
-            <th scope="col" className="num" title={own ? "this tensor's tile" : "the canvas tile; type to give the tensor its own"}>
-              tile
+            <th
+              scope="col"
+              className="num"
+              title={own
+                ? "this tensor's card grid: gestures snap to it and arrow keys step by it"
+                : "the canvas grid: gestures snap to it and arrow keys step by it; type to give the tensor its own"}
+            >
+              grid
             </th>
             <th scope="col">range</th>
           </tr>
@@ -110,7 +122,7 @@ export function AxisEditor({ index }: { index: number }): React.ReactElement | n
                     value={tile[axis]}
                     max={extent}
                     own={own}
-                    label={`${name(axis)} tile extent on ${tensor.name}`}
+                    label={`${name(axis)} grid extent on ${tensor.name}`}
                     onCommit={(value) => setAxis(axis, value)}
                   />
                 </td>
@@ -144,7 +156,7 @@ export function selectionReading(box: Box, name: (axis: number) => string): stri
 
 /**
  * One axis of the tensor's tile. On a tensor without a tile of its own, Enter
- * is a deliberate act and keeps the canvas tile as the tensor's own even when
+ * is a deliberate act and keeps the canvas grid as the tensor's own even when
  * the value is unchanged; leaving the field is not, so tabbing through the
  * fields changes nothing.
  */
@@ -174,7 +186,7 @@ function ExtentInput({
       label={label}
       title={own
         ? "Enter or leaving the field applies, Escape abandons"
-        : "Enter or leaving the field applies, Escape abandons; Enter keeps the canvas tile as this tensor's own"}
+        : "Enter or leaving the field applies, Escape abandons; Enter keeps the canvas grid as this tensor's own"}
       invalidTitle={`a whole number from 1 to ${max}`}
       className={`axis-extent${own ? " own" : ""}`}
       inputMode="numeric"

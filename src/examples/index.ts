@@ -1,8 +1,19 @@
-type Example = {
+export type Example = {
   name: string;
   dsl: string;
   /** initial selection: tensor name + box as [lo, hi] pairs */
   defaultSelection?: { tensor: string; box: [number, number][] };
+  /**
+   * A worked experiment: building this exact source opens the Plan view on
+   * `tiles`, inspecting `task`, with `kept` already kept for comparison as P1
+   * and P2. The question and what the figures show are in the source's
+   * comments, which name the plans by those labels.
+   */
+  experiment?: {
+    tiles: Record<string, number[]>;
+    task: { tensor: string; coord: number[] };
+    kept: Record<string, number[]>[];
+  };
 };
 
 export const EXAMPLES: Example[] = [
@@ -291,5 +302,87 @@ W = Tensor(batch=B, head=H, k=K, n=N, dtype=fp16)
 C = matmul(A, W)
 `,
     defaultSelection: { tensor: "C", box: [[0, 1], [0, 2], [64, 128], [0, 64]] },
+  },
+  {
+    name: "Experiment: tile size and reuse",
+    dsl: `M = 256
+N = 256
+K = 512
+
+# Question: how does a larger tile increase operand reuse?
+#
+# Three tilings of C are compared in the Plan view: P1 is 32x32, P2 is 64x64,
+# and the current plan is 128x128. FLOPs are 67.11M in all three. Bytes read
+# halve each time the tile side doubles - 4 MB, 2 MB, 1 MB - because a task
+# reads a band of A as tall as its tile and a band of B as wide, and uses each
+# element of A once per column of its tile. "Operand reuse in this task" shows
+# that count: 128 uses per element here, 32 under P1.
+
+A = Tensor(M, K, dtype=fp16)
+B = Tensor(K, N, dtype=fp16)
+
+C = matmul(A, B)
+`,
+    defaultSelection: { tensor: "C", box: [[128, 256], [0, 128]] },
+    experiment: {
+      tiles: { C: [128, 128] },
+      task: { tensor: "C", coord: [1, 0] },
+      kept: [{ C: [32, 32] }, { C: [64, 64] }],
+    },
+  },
+  {
+    name: "Experiment: fusion and recomputation",
+    dsl: `# Question: when does fusion introduce recomputation?
+#
+# P1 writes H in 64x128 tiles and Y reads them: 24 tasks, 32 dependencies,
+# 320 KB written. P2 fuses H into 64x64 tiles of Y: each task computes the
+# 64 rows of H it needs, and both Y tasks in a row band compute the same rows,
+# so 33.55M of its 100.66M FLOPs are recomputed. The current plan fuses H into
+# full-width 64x128 tiles of Y: one task per row band, nothing recomputed, and
+# 64 KB written. Fusion recomputes when several tasks need the same part of
+# the fused tensor; press fuse or materialize beside H to move between them.
+
+X = Tensor(256, 128, dtype=fp16)
+W1 = Parameter(128, 512, dtype=fp16)
+W2 = Parameter(512, 128, dtype=fp16)
+
+H = matmul(X, W1)
+Y = matmul(H, W2)
+`,
+    defaultSelection: { tensor: "Y", box: [[64, 128], [0, 128]] },
+    experiment: {
+      tiles: { Y: [64, 128] },
+      task: { tensor: "Y", coord: [1, 0] },
+      kept: [{ H: [64, 128], Y: [64, 64] }, { Y: [64, 64] }],
+    },
+  },
+  {
+    name: "Experiment: splitting a normalised axis",
+    dsl: `S = 64
+E = 64
+
+# Question: why does splitting the normalised axis repeat statistics?
+#
+# layernorm needs a whole row of X for the mean and variance of any element in
+# that row. P1 tiles Y in 16x64 row bands with H fused: 33.0K FLOPs, nothing
+# recomputed. P2 splits each band into four 16x16 tiles, still fused: each of
+# the four computes the same row statistics, so 49.9K of its 82.9K FLOPs are
+# recomputed. The current plan keeps the 16x16 tiles of Y but materializes H
+# in row bands: nothing is recomputed, and the cost moves to memory - 16 KB
+# written instead of 8 KB, and 16 dependencies on H's tasks.
+
+X = Tensor(S, E, dtype=fp16)
+W = Parameter(E, dtype=fp16)
+Bb = Parameter(E, dtype=fp16)
+
+H = layernorm(X, W, Bb, axes=[-1])
+Y = add(H, X)
+`,
+    defaultSelection: { tensor: "Y", box: [[16, 32], [16, 32]] },
+    experiment: {
+      tiles: { Y: [16, 16], H: [16, 64] },
+      task: { tensor: "Y", coord: [1, 1] },
+      kept: [{ Y: [16, 64] }, { Y: [16, 16] }],
+    },
   },
 ];

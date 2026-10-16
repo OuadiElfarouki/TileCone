@@ -172,6 +172,38 @@ export function installedDSLState(
   return state;
 }
 
+/**
+ * The workspace an experiment's source opens on, when that exact source is
+ * built: the graph fresh, the example's selection, and the experiment's plan,
+ * task and kept tilings, on the Plan view. Restored like a shared link, so the
+ * kept plans are evaluated where a link's are. Canvas settings stay the
+ * reader's own. Null for any other source.
+ */
+export function experimentWorkspace(
+  text: string,
+  state: Pick<State, "direction" | "showEntangled" | "tileScale" | "snapToGrid" | "axisMode">
+): WorkspaceRestore | null {
+  const example = EXAMPLES.find((candidate) => candidate.dsl === text);
+  const experiment = example?.experiment;
+  if (!example || !experiment) return null;
+  const selection = example.defaultSelection;
+  return {
+    dsl: text,
+    direction: state.direction,
+    showEntangled: state.showEntangled,
+    tileScale: state.tileScale,
+    snapToGrid: state.snapToGrid,
+    axisMode: state.axisMode,
+    parts: selection
+      ? [{ tensorId: selection.tensor, box: selection.box.map(([lo, hi]) => ({ lo, hi })) }]
+      : null,
+    planTiles: experiment.tiles,
+    planTask: { tensorId: experiment.task.tensor, coord: experiment.task.coord },
+    keptTilings: experiment.kept,
+    planView: true,
+  };
+}
+
 export const validWorkspaceFields = (workspace: WorkspaceRestore): boolean =>
   ["none", "backward", "forward", "both"].includes(workspace.direction) &&
   (workspace.showEntangled === undefined || typeof workspace.showEntangled === "boolean") &&
@@ -262,7 +294,7 @@ export function restoredWorkspaceState(
     ...(workspace.planView ? { inspectorTab: "plan" as const } : {}),
     dslText: workspace.dsl,
     draftText: workspace.draftText ?? workspace.dsl,
-    exampleIndex: -1,
+    exampleIndex: EXAMPLES.findIndex((example) => example.dsl === workspace.dsl),
     focusNode: null,
     direction: workspace.direction,
     showEntangled: workspace.showEntangled ?? false,
