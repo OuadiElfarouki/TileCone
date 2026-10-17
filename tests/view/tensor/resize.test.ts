@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { canvasSize, cardCanResize, cardScaleFor, cardShapeView, cardSize, scaleRatioLabel } from "../../../src/view/tensor/card-size";
 import { gridGeometry } from "../../../src/view/tensor/grid";
-import { constrainResize, displayedCardScales, resizeScale } from "../../../src/view/tensor/resize";
+import { resizeScale } from "../../../src/view/tensor/resize";
 import { defaultViewCfg, MAX_CARD_SCALE, MIN_CARD_SCALE, viewCfgFits } from "../../../src/view/tensor/tensor-view";
 import { cardDisplayMenu } from "../../../src/view/tensor/menus";
 
@@ -24,14 +24,13 @@ describe("manual card sizing", () => {
     expect(cardCanResize(shape, { ...cfg, axes: [0, 2] }, 4)).toBe(true);
     expect(cardCanResize(shape, { ...cfg, projection: false, unfold: "across" }, 4)).toBe(false);
   });
-  it("only offers arranging when a requested size is constrained and placement is ready", () => {
-    const stored = { ...defaultViewCfg([8, 16]), scale: 4 };
-    const shown = { ...stored, scale: 1.5 };
-    const action = (cfg: typeof stored, ready: boolean) => cardDisplayMenu([8, 16], cfg, 4, true, false, stored, ready)
+  it("only offers making room when the card overlaps a node and placement is ready", () => {
+    const cfg = { ...defaultViewCfg([8, 16]), scale: 4 };
+    const action = (crowded: boolean, ready: boolean) => cardDisplayMenu([8, 16], cfg, 4, true, false, crowded, ready)
       .find((e) => e.kind === "action" && e.id === "makeRoom");
-    expect(action(shown, true)).toMatchObject({ disabled: false });
-    expect(action(shown, false)).toMatchObject({ disabled: true });
-    expect(action(stored, true)).toMatchObject({ disabled: true });
+    expect(action(true, true)).toMatchObject({ disabled: false });
+    expect(action(true, false)).toMatchObject({ disabled: true });
+    expect(action(false, true)).toMatchObject({ disabled: true });
   });
   it("uses the fitted scale as its starting point, including unfolded panels", () => {
     const shape = [16, 128, 128];
@@ -58,37 +57,8 @@ describe("manual card sizing", () => {
     expect(resizeScale(1, { w: 200, h: 100 }, { x: -1e6, y: -1e6 }, "bottom")).toBe(MIN_CARD_SCALE);
     expect(resizeScale(1, { w: 200, h: 100 }, { x: 1e6, y: 1e6 }, "bottom")).toBe(MAX_CARD_SCALE);
   });
-  it("stops a single large request at a neighbour and permits shrinking away", () => {
-    const measure = (s: number) => ({ x: 0, y: 0, w: 100 * s, h: 50 * s });
-    const blockers = [{ x: 150, y: 0, w: 20, h: 100 }];
-    expect(constrainResize(1, 8, measure, blockers)).toBeCloseTo(1.5, 6);
-    expect(constrainResize(1, 0.5, measure, blockers)).toBe(0.5);
-  });
-  it("keeps requested and constrained scales to three decimals", () => {
+  it("keeps requested scales to three decimals", () => {
     expect(resizeScale(1, { w: 300, h: 0 }, { x: 100, y: 0 }, "bottom")).toBe(1.333);
-    const measure = (s: number) => ({ x: 0, y: 0, w: 100 * s, h: 50 * s });
-    const blockers = [{ x: 133.37, y: 0, w: 20, h: 100 }];
-    expect(constrainResize(1, 2, measure, blockers)).toBe(1.333);
-    expect(constrainResize(1.0004, 2, (s) => ({ x: 0, y: 0, w: 100 * s, h: 50 * s }), [{ x: 100.05, y: 0, w: 20, h: 100 }])).toBe(1.0004);
-  });
-  it("allows reducing existing overlap but never increases it", () => {
-    const measure = (s: number) => ({ x: 0, y: 100 - 100 * s, w: 100 * s, h: 100 * s });
-    const blockers = [{ x: 75, y: 0, w: 100, h: 100 }];
-    expect(constrainResize(1, 0.5, measure, blockers)).toBe(0.5);
-    expect(constrainResize(1, 2, measure, blockers)).toBeCloseTo(1, 6);
-  });
-  it("draws a resized card at its stored scale while it has room, and smaller where it has not", () => {
-    const nodes = [{ key: "t:A", x: 0, y: 0, w: 100, h: 50 }, { key: "op", x: 200, y: 0, w: 40, h: 50 }];
-    const measure = (_key: string, s: number) => ({ x: 0, y: 0, w: 100 * s, h: 50 * s });
-    expect(displayedCardScales(nodes, { "t:A": 1.5 }, measure)).toEqual({ "t:A": 1.5 });
-    expect(displayedCardScales(nodes, { "t:A": 3 }, measure)).toEqual({ "t:A": 2 });
-    expect(displayedCardScales(nodes, { "t:A": 0.5 }, measure)).toEqual({ "t:A": 0.5 });
-  });
-  it("gives contested room to resized cards in key order", () => {
-    const nodes = [{ key: "t:A", x: 0, y: 0, w: 100, h: 50 }, { key: "t:B", x: 150, y: 0, w: 100, h: 50 }];
-    const measure = (key: string, s: number) => ({ x: key === "t:A" ? 0 : 150, y: 0, w: 100 * s, h: 50 * s });
-    // A grows to B's fitted card; B then grows from where it stands.
-    expect(displayedCardScales(nodes, { "t:B": 2, "t:A": 2 }, measure)).toEqual({ "t:A": 1.5, "t:B": 2 });
   });
   it.each([NaN, Infinity, 0, -1, 0.01, 20])("rejects an invalid saved scale %s", (scale) => {
     expect(viewCfgFits([8, 8], { ...defaultViewCfg([8, 8]), scale })).toBe(false);
@@ -116,12 +86,6 @@ describe("manual card sizing", () => {
       expect(next.h).toBeGreaterThanOrEqual(last.h);
       last = next;
     }
-  });
-  it("says when neighbours leave a card less room than it was resized to", () => {
-    const shown = { ...defaultViewCfg([8, 8]), scale: 1.25 };
-    const [info] = cardDisplayMenu([8, 8], shown, 2, true, false, { ...shown, scale: 2 });
-    expect(info).toMatchObject({ kind: "info", label: "display scale ×1.25, limited by neighbours" });
-    expect((info as { title: string }).title).toContain("Resized to ×2");
   });
   it("describes scale as menu information and explains unavailable resizing", () => {
     const cfg = { ...defaultViewCfg([8, 8]), scale: 2 };

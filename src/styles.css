@@ -636,16 +636,8 @@ textarea.source.error-state { border-color: var(--err); }
 .tc-name { font-size: var(--t-base); font-weight: 600; line-height: 1; cursor: help; outline: none; }
 .tc-name:focus-visible { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
 .tc-shape { color: var(--muted); font-size: var(--t-micro); font-variant-numeric: tabular-nums; }
-.tc-tile {
-  color: var(--muted); font: var(--t-micro)/1 var(--mono);
-  font-variant-numeric: tabular-nums;
-}
-/* The tensor has a tile of its own, set in the axis table. */
-.tc-tile.own { color: var(--ink); }
 /* A chosen pair of axes, stated on the card. */
 .tc-plane { color: var(--muted); font: var(--t-micro)/1 var(--mono); white-space: nowrap; }
-/* The scale note is ink because it changes how every length on the card reads. */
-.tc-scale { color: var(--ink); font: 600 var(--t-micro)/1 var(--mono); white-space: nowrap; }
 /* The reuse lens's scale and its off switch, on the card it shades. */
 .tc-lens {
   display: inline-flex; align-items: center; gap: 3px; padding: 1px 2px 1px 5px;

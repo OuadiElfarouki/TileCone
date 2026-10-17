@@ -63,7 +63,7 @@ export function viewTags(
  * chosen pair of axes - `[B, S, H, D]` shown as `S x D` can be many times the
  * plane the graph was scaled for - and an unfolded one, which draws a plane per
  * hidden index. Both shrink to a size budget. Manual resizing multiplies that
- * fitted scale. A card off the graph's scale states its ratio in its header.
+ * fitted scale. A card off the graph's scale states its ratio in its menu.
  */
 export function cardScaleFor(
   shape: readonly number[],
@@ -92,9 +92,6 @@ export function scaleRatioLabel(
   return shown === 1 ? null : `${ratio >= 1 ? "×" : "÷"}${shown}`;
 }
 
-/** The header's scale note at its longest, for the width the card reserves. */
-const LONGEST_SCALE_NOTE = "scale ÷0000";
-
 /** The canvas a card draws, in card px: the plane, or every panel of an
  *  unfolded card with the gaps between them. */
 export function canvasSize(
@@ -122,8 +119,6 @@ export function cardSize(
   axisNames: readonly (string | undefined)[] = []
 ): { w: number; h: number; port: { x: number; y: number; w: number; h: number } } {
   const rank = shape.length;
-  const { rowAxis, colAxis } = viewAxes(shape, cfg);
-  const { rows, cols } = planeExtents(shape, rowAxis, colAxis);
   const canvas = canvasSize(shape, cfg, px);
   const hiddenCount = hiddenAxes(shape, cfg).length;
   // Slice sliders and projected tile-position controls each need one row.
@@ -135,19 +130,14 @@ export function cardSize(
   const numericShapeLabel = `[${shape.join(" × ")}]`;
   const widestShapeLabel = [numericShapeLabel, ...alternateShapeLabels]
     .reduce((longest, label) => label.length > longest.length ? label : longest);
-  const widestTileLabel = `⊞ ${rows}×${cols}`;
   // The view line is short beside a plane of any size; only long axis names
   // need the card wider.
   const tags = viewTags(shape, cfg, (axis) => axisNames[axis] ?? `ax${axis}`);
   const viewLine = [tags.hidden, tags.plane].filter(Boolean).join(" · ");
   const viewLineW = viewLine ? viewLine.length * 6.5 + 20 : 0;
-  // A card that can draw off the graph's scale reserves its longest scale note,
-  // so the card's width does not follow the ratio. A scale of exactly 1 is the
-  // fitted card that placement measured.
-  const offScale = remapped(shape, cfg) || !!cfg?.unfold || (cfg?.scale !== undefined && cfg.scale !== 1);
-  const scaleNoteW = offScale ? LONGEST_SCALE_NOTE.length * 6.5 + 6 : 0;
-  const labelW = name.length * 9 +
-    (widestShapeLabel.length + widestTileLabel.length) * 6.5 + 22 + scaleNoteW;
+  // The header is the name and the shape; the card is as wide as the longest
+  // reading of the shape, so switching readings does not move the card.
+  const labelW = name.length * 9 + widestShapeLabel.length * 6.5 + 14;
   const w = Math.max(canvas.w + deck, labelW, viewLineW, 120);
   // The grid is centred under the header and sits on the card's bottom edge
   // (`.tc-canvas-wrap` takes the free space above it); a slice deck's room is

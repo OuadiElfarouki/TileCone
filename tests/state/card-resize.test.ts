@@ -6,10 +6,26 @@ import { layoutArtifact } from "../../src/worker/analysis-jobs";
 import { buildGraphScene } from "../../src/view/graph/graph-scene";
 import { cardShapeView, type CardShapeView } from "../../src/view/tensor/card-size";
 import { displayedCards } from "../../src/view/tensor/resize";
+import type { BaseGraphLayout } from "../../src/view/graph/graph-scene";
 import { box, fromBox } from "../../src/core/region";
 
 const SOURCE = "X = Tensor(8, 16, dtype=fp32)\nY = relu(X)\n";
 const S = () => useStore.getState();
+/** The placed graph as the canvas sees it: layout, offsets, and resized cards. */
+const sceneOf = (base: BaseGraphLayout) =>
+  buildGraphScene(base, S().nodeOffsets, displayedCards(S().viewCfgs, S().resolved!, S().graphPx).sizes).nodes;
+const overlapping = (nodes: { x: number; y: number; w: number; h: number }[]) => nodes.some((a, i) =>
+  nodes.some((b, j) => i < j && Math.min(a.x + a.w, b.x + b.w) > Math.max(a.x, b.x) && Math.min(a.y + a.h, b.y + b.h) > Math.max(a.y, b.y)));
+/** The structural layout the canvas would place this build with. */
+const layoutFor = () => {
+  const s = S(), resolved = s.resolved!;
+  const views: Record<string, CardShapeView> = {};
+  for (const [id, cfg] of Object.entries(s.viewCfgs)) {
+    const view = cardShapeView(resolved.tensors[id].resolved!, cfg);
+    if (view) views[id] = view;
+  }
+  return layoutArtifact(resolved, s.graphPx, views);
+};
 beforeEach(() => { useStore.setState(useStore.getInitialState(), true); S().applyDSL(SOURCE); });
 describe("card resize workspace edits", () => {
   it("updates and cancels live geometry atomically, without recording intermediate frames", () => {
@@ -59,19 +75,15 @@ describe("card resize workspace edits", () => {
     const base = layoutArtifact(S().resolved!, S().graphPx);
     S().setNodeOffset("t:X", { dx: 5, dy: 10 });
     const before = S();
-    const oldDisplay = displayedCards(base, before.nodeOffsets, before.viewCfgs, before.resolved!, before.graphPx);
-    expect(oldDisplay.scales["t:X"]).toBeLessThan(4);
+    expect(overlapping(sceneOf(base))).toBe(true);
     const seen: unknown[] = [];
     const stop = useStore.subscribe((state) => seen.push(state));
     S().makeRoomForCard("X", base); stop();
     expect(seen).toHaveLength(1);
     expect(S().nodeOffsets["t:X"]).toEqual(before.nodeOffsets["t:X"]);
     expect(S().selection).toBe(before.selection); expect(S().backwardRes).toBe(before.backwardRes);
-    const display = displayedCards(base, S().nodeOffsets, S().viewCfgs, S().resolved!, S().graphPx);
-    expect(display.scales).toMatchObject({ "t:X": 4, "t:Y": 1.5 });
-    const nodes = buildGraphScene(base, S().nodeOffsets, display.sizes).nodes;
-    for (const [i, a] of nodes.entries()) for (const b of nodes.slice(i + 1))
-      expect(Math.min(a.x + a.w, b.x + b.w) > Math.max(a.x, b.x) && Math.min(a.y + a.h, b.y + b.h) > Math.max(a.y, b.y)).toBe(false);
+    expect(displayedCards(S().viewCfgs, S().resolved!, S().graphPx).scales).toMatchObject({ "t:X": 4, "t:Y": 1.5 });
+    expect(overlapping(sceneOf(base))).toBe(false);
     expect(S().workspaceHistory).toHaveLength(before.workspaceHistory.length + 1);
     S().makeRoomForCard("X", base);
     expect(S().workspaceHistory).toHaveLength(before.workspaceHistory.length + 1);
@@ -102,14 +114,14 @@ describe("card resize workspace edits", () => {
     S().setCardScale("Y", 1.5, false); S().setCardScale("Y", 2, false);
     S().setNodeOffset("t:Y", { dx: 0, dy: -128 });
     expect(S().workspaceHistory).toHaveLength(0);
-    S().commitCardResize("Y", 1, { dx: 0, dy: 0 });
+    S().commitCardResize("Y", 1, {});
     expect(S().workspaceHistory).toHaveLength(1);
     expect(S().resolved).toBe(before.resolved); expect(S().selection).toBe(before.selection);
     S().undoWorkspace(); expect(S().viewCfgs.Y.scale).toBeUndefined(); expect(S().nodeOffsets["t:Y"]).toBeUndefined();
   });
   it("restores size and position in a single store update", () => {
     S().setCardScale("Y", 2, false); S().setNodeOffset("t:Y", { dx: 0, dy: -64 });
-    S().commitCardResize("Y", 1, { dx: 0, dy: 0 });
+    S().commitCardResize("Y", 1, {});
     const seen: [number | undefined, unknown][] = [];
     const stop = useStore.subscribe((s) => seen.push([s.viewCfgs.Y.scale, s.nodeOffsets["t:Y"]]));
     S().undoWorkspace(); stop();
@@ -123,7 +135,7 @@ describe("card resize workspace edits", () => {
   });
   it("normalizes resets and records no step for no-op or invalid resizing", () => {
     S().setCardScale("Y", 1 + 1e-10); S().setCardScale("Y", Infinity); S().setCardScale("Y", 9);
-    S().commitCardResize("Y", 1, { dx: 0, dy: 0 }); expect(S().workspaceHistory).toHaveLength(0);
+    S().commitCardResize("Y", 1, {}); expect(S().workspaceHistory).toHaveLength(0);
     S().setCardScale("Y", 2); S().setCardScale("Y", 1); S().undoWorkspace(); expect(S().viewCfgs.Y.scale).toBe(2);
   });
   it("persists size in files and links, without persisting the active mode", () => {
@@ -139,31 +151,56 @@ describe("card resize workspace edits", () => {
     S().applyDSL(SOURCE.replace("8, 16", "16, 16"));
     expect(S().viewCfgs.Y.scale).toBe(2); expect(S().resizingTensor).toBeNull();
   });
-  it("draws a resized card smaller, not over its neighbour, when a rebuild leaves it less room", () => {
-    const scene = () => {
-      const s = S(), resolved = s.resolved!;
-      const views: Record<string, CardShapeView> = {};
-      for (const [id, cfg] of Object.entries(s.viewCfgs)) {
-        const view = cardShapeView(resolved.tensors[id].resolved!, cfg);
-        if (view) views[id] = view;
-      }
-      const base = layoutArtifact(resolved, s.graphPx, views);
-      const cards = displayedCards(base, s.nodeOffsets, s.viewCfgs, resolved, s.graphPx);
-      return { cards, nodes: buildGraphScene(base, s.nodeOffsets, cards.sizes).nodes };
-    };
-    const overlapping = (nodes: { x: number; y: number; w: number; h: number }[]) => nodes.some((a, i) =>
-      nodes.some((b, j) => i < j && Math.min(a.x + a.w, b.x + b.w) > Math.max(a.x, b.x) && Math.min(a.y + a.h, b.y + b.h) > Math.max(a.y, b.y)));
-    // Store the largest X that fits beside its operation, as a resize stopping there would.
-    S().setCardScale("X", 8);
-    const largest = scene().cards.scales["t:X"];
-    expect(largest).toBeGreaterThan(1);
-    S().setCardScale("X", largest);
-    expect(scene().cards.scales["t:X"]).toBe(largest);
-    expect(overlapping(scene().nodes)).toBe(false);
+  it("keeps a resized card at its stored scale when a rebuild leaves it less room", () => {
+    S().setCardScale("X", 3);
+    const fits = layoutFor();
+    const roomy = () => !overlapping(sceneOf(layoutFor()));
+    S().makeRoomForCard("X", fits);
+    expect(roomy()).toBe(true);
     S().applyDSL(SOURCE.replace("8, 16", "8, 64"));
-    const after = scene();
-    expect(S().viewCfgs.X.scale).toBe(largest);
-    expect(after.cards.scales["t:X"]).toBeLessThan(largest);
-    expect(overlapping(after.nodes)).toBe(false);
+    expect(S().viewCfgs.X.scale).toBe(3);
+    expect(displayedCards(S().viewCfgs, S().resolved!, S().graphPx).scales["t:X"]).toBe(3);
+    expect(roomy()).toBe(false);
+    S().makeRoomForCard("X", layoutFor());
+    expect(roomy()).toBe(true);
+  });
+});
+
+describe("resizing makes its own room", () => {
+  const offsetOf = (key: string) => S().nodeOffsets[key] ?? { dx: 0, dy: 0 };
+
+  it("moves a neighbour aside as the card grows, and back as it shrinks", () => {
+    const layout = layoutFor();
+    const from = S().nodeOffsets;
+    const grow = (scale: number) => S().setCardGeometry("X", scale, offsetOf("t:X"), false, { layout, from });
+    grow(1.2);
+    const start = sceneOf(layout);
+    grow(4);
+    expect(overlapping(sceneOf(layout))).toBe(false);
+    const moved = sceneOf(layout).filter((node) => {
+      const was = start.find((n) => n.kind === node.kind && n.id === node.id)!;
+      return node.x !== was.x || node.y !== was.y;
+    });
+    expect(moved.length).toBeGreaterThan(0);
+    expect(moved.some((node) => node.kind === "tensor" && node.id === "X")).toBe(false);
+    grow(1);
+    expect(S().nodeOffsets).toEqual(from);
+    expect(S().workspaceHistory).toHaveLength(0);
+  });
+
+  it("restores every node when cancelled, and undoes the neighbours with the size", () => {
+    const layout = layoutFor();
+    const from = S().nodeOffsets;
+    S().setCardGeometry("X", 4, offsetOf("t:X"), false, { layout, from });
+    expect(S().nodeOffsets).not.toEqual(from);
+    S().restoreCardGeometry("X", 1, from);
+    expect(S().viewCfgs.X.scale).toBeUndefined();
+    expect(S().nodeOffsets).toEqual(from);
+    S().setCardGeometry("X", 4, offsetOf("t:X"), false, { layout, from });
+    S().commitCardResize("X", 1, from);
+    expect(S().workspaceHistory).toHaveLength(1);
+    S().undoWorkspace();
+    expect(S().viewCfgs.X.scale).toBeUndefined();
+    expect(S().nodeOffsets).toEqual(from);
   });
 });

@@ -1,5 +1,6 @@
 import { nodeKey } from "../../view/graph/graph-scene";
-import { NodeOffset } from "../../view/graph/node-layout";
+import { NodeOffset, NodeOffsets } from "../../view/graph/node-layout";
+import type { BaseGraphLayout } from "../../view/graph/graph-scene";
 import { graphIsInteractive, idRecord, layoutMovable, MAX_NODE_OFFSET, PANEL_COLLAPSE_AT, PANEL_MAX, PANEL_MIN } from "../../view/workspace";
 import { cardCanResize, tensorCardSize } from "../../view/tensor/card-size";
 import { roomForNode } from "../../view/graph/carry-placement";
@@ -7,8 +8,30 @@ import { MAX_CARD_SCALE, MIN_CARD_SCALE } from "../../view/tensor/tensor-view";
 import { cardScalesOf, recordWorkspace } from "../history";
 import { GetState, SetState, State } from "../types";
 
+/** Every tensor card's footprint under `viewCfgs`, by node key. */
+function cardSizes(state: State, viewCfgs: State["viewCfgs"]): Record<string, { w: number; h: number }> {
+  const tensors = state.resolved ? Object.values(state.resolved.tensors) : [];
+  return Object.fromEntries(tensors.map((tensor) =>
+    [nodeKey("tensor", tensor.id), tensorCardSize(tensor, state.graphPx, viewCfgs[tensor.id])]));
+}
+
+const sameOffsets = (a: Readonly<NodeOffsets>, b: Readonly<NodeOffsets>): boolean =>
+  [...new Set([...Object.keys(a), ...Object.keys(b)])].every((key) =>
+    (a[key]?.dx ?? 0) === (b[key]?.dx ?? 0) && (a[key]?.dy ?? 0) === (b[key]?.dy ?? 0));
+
+const offsetsInBounds = (offsets: Readonly<NodeOffsets>): boolean =>
+  Object.values(offsets).every(({ dx, dy }) =>
+    Number.isFinite(dx) && Number.isFinite(dy) && Math.abs(dx) <= MAX_NODE_OFFSET && Math.abs(dy) <= MAX_NODE_OFFSET);
+
 /** Validate a resize before producing one complete store update. */
-function cardGeometry(state: State, id: string, scale: number, offset: NodeOffset, record: boolean): Partial<State> | null {
+function cardGeometry(
+  state: State,
+  id: string,
+  scale: number,
+  offset: NodeOffset,
+  record: boolean,
+  room?: { layout: BaseGraphLayout; from: Readonly<NodeOffsets> }
+): Partial<State> | null {
   const cfg = state.viewCfgs[id], shape = state.resolved?.tensors[id]?.resolved;
   if (!cfg || !shape || !Number.isFinite(scale) || scale < MIN_CARD_SCALE || scale > MAX_CARD_SCALE ||
       !Number.isFinite(offset.dx) || !Number.isFinite(offset.dy) ||
@@ -20,15 +43,22 @@ function cardGeometry(state: State, id: string, scale: number, offset: NodeOffse
   const dx = Math.abs(offset.dx) < 1e-6 ? 0 : offset.dx;
   const dy = Math.abs(offset.dy) < 1e-6 ? 0 : offset.dy;
   const scaleChanged = (cfg.scale ?? 1) !== nextScale, moved = before.dx !== dx || before.dy !== dy;
-  if (!scaleChanged && !moved) return null;
+  if (!scaleChanged && !moved && !room) return null;
   let viewCfgs = state.viewCfgs, nodeOffsets = state.nodeOffsets;
   if (scaleChanged) {
     const { scale: _scale, ...rest } = cfg;
     viewCfgs = idRecord({ ...viewCfgs, [id]: nextScale === 1 ? rest : { ...rest, scale: nextScale } });
   }
-  if (moved) {
-    nodeOffsets = idRecord(nodeOffsets);
+  if (moved || room) {
+    nodeOffsets = idRecord(room ? room.from : nodeOffsets);
     if (dx === 0 && dy === 0) delete nodeOffsets[key]; else nodeOffsets[key] = { dx, dy };
+  }
+  if (room) {
+    // Placed again from where the gesture began, not from the last frame, so
+    // the neighbours follow the card's size both ways rather than drifting.
+    const placed = idRecord(roomForNode(room.layout.nodes, nodeOffsets, key, cardSizes(state, viewCfgs)));
+    if (offsetsInBounds(placed)) nodeOffsets = placed;
+    if (!scaleChanged && sameOffsets(nodeOffsets, state.nodeOffsets)) return null;
   }
   return { viewCfgs, nodeOffsets, preview: null,
     ...(record ? { workspaceHistory: recordWorkspace(state) } : {}) };
@@ -48,6 +78,7 @@ export const layoutActions = (set: SetState, get: GetState): Pick<
   | "setCardScale"
   | "commitCardResize"
   | "setCardGeometry"
+  | "restoreCardGeometry"
   | "makeRoomForCard"
 > => ({
   setResizingTensor: (id) => {
@@ -64,34 +95,35 @@ export const layoutActions = (set: SetState, get: GetState): Pick<
     if (next) set(next);
   },
 
-  setCardGeometry: (id, scale, offset, record = true) => {
-    const next = cardGeometry(get(), id, scale, offset, record);
+  setCardGeometry: (id, scale, offset, record = true, room) => {
+    const next = cardGeometry(get(), id, scale, offset, record, room);
     if (next) set(next);
+  },
+
+  restoreCardGeometry: (id, scale, offsets) => {
+    const state = get(), cfg = state.viewCfgs[id];
+    if (!cfg) return;
+    const { scale: _scale, ...rest } = cfg;
+    set({
+      viewCfgs: idRecord({ ...state.viewCfgs, [id]: scale === 1 ? rest : { ...rest, scale } }),
+      nodeOffsets: idRecord(offsets),
+    });
   },
 
   makeRoomForCard: (id, layout) => {
     const state = get(), resolved = state.resolved;
     if (!resolved?.tensors[id] || !graphIsInteractive(state) || !layoutMovable(state.inspectorTab) || state.dragging) return;
-    const sizes = Object.fromEntries(Object.values(resolved.tensors).map((tensor) =>
-      [nodeKey("tensor", tensor.id), tensorCardSize(tensor, state.graphPx, state.viewCfgs[tensor.id])]));
-    const nodeOffsets = roomForNode(layout.nodes, state.nodeOffsets, nodeKey("tensor", id), sizes);
-    if (Object.values(nodeOffsets).some(({ dx, dy }) => !Number.isFinite(dx) || !Number.isFinite(dy) || Math.abs(dx) > MAX_NODE_OFFSET || Math.abs(dy) > MAX_NODE_OFFSET)) return;
-    const keys = new Set([...Object.keys(nodeOffsets), ...Object.keys(state.nodeOffsets)]);
-    if ([...keys].every((key) => (nodeOffsets[key]?.dx ?? 0) === (state.nodeOffsets[key]?.dx ?? 0) &&
-      (nodeOffsets[key]?.dy ?? 0) === (state.nodeOffsets[key]?.dy ?? 0))) return;
+    const nodeOffsets = roomForNode(layout.nodes, state.nodeOffsets, nodeKey("tensor", id), cardSizes(state, state.viewCfgs));
+    if (!offsetsInBounds(nodeOffsets) || sameOffsets(nodeOffsets, state.nodeOffsets)) return;
     set({ nodeOffsets, workspaceHistory: recordWorkspace(state), preview: null, resizingTensor: null });
   },
 
-  commitCardResize: (id, beforeScale, beforeOffset) => {
+  commitCardResize: (id, beforeScale, beforeOffsets) => {
     const state = get();
-    const key = nodeKey("tensor", id);
-    const after = state.nodeOffsets[key] ?? { dx: 0, dy: 0 };
-    if ((state.viewCfgs[id]?.scale ?? 1) === beforeScale && after.dx === beforeOffset.dx && after.dy === beforeOffset.dy) return;
+    if ((state.viewCfgs[id]?.scale ?? 1) === beforeScale && sameOffsets(state.nodeOffsets, beforeOffsets)) return;
     const cardScales = cardScalesOf(state);
     if (beforeScale === 1) delete cardScales[id]; else cardScales[id] = beforeScale;
-    const nodeOffsets = idRecord(state.nodeOffsets);
-    if (beforeOffset.dx === 0 && beforeOffset.dy === 0) delete nodeOffsets[key]; else nodeOffsets[key] = beforeOffset;
-    set({ workspaceHistory: recordWorkspace(state, { cardScales, nodeOffsets }) });
+    set({ workspaceHistory: recordWorkspace(state, { cardScales, nodeOffsets: idRecord(beforeOffsets) }) });
   },
   setPanelWidth: (side, w) => {
     const { panelW, panelCollapsed } = get();

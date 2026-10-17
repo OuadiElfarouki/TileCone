@@ -25,7 +25,7 @@ import {
 import { cardDisplayMenu, cardViewMenu, hiddenViewCfg, type CardViewAction, type CardViewChoice } from "../../view/tensor/menus";
 import { OptionsMenu, useOptionsMenu } from "../chrome/OptionsMenu";
 import type { MenuHandlers } from "../../view/menu";
-import { scaleRatioLabel, viewTags } from "../../view/tensor/card-size";
+import { viewTags } from "../../view/tensor/card-size";
 import type { ResizeCorner } from "../../view/tensor/resize";
 import { DECK_ROOM_PX, DECK_STEP_PX, deckSheets } from "../../view/tensor/deck";
 import { cancelDeal, deal, holdPicture, prefersStill } from "./deal";
@@ -68,7 +68,7 @@ function TensorCardView({
   overviewWidth,
   rasterize = true,
   rasterPixels,
-  displayScale,
+  crowded = false,
   onResizeStart,
   onResizeKeyDown,
   onMakeRoom,
@@ -79,8 +79,8 @@ function TensorCardView({
   overviewWidth?: number;
   rasterize?: boolean;
   rasterPixels?: number;
-  /** The scale the graph has room to draw a resized card at; see `displayedCardScales`. */
-  displayScale?: number;
+  /** The card overlaps another node, so making room is offered. */
+  crowded?: boolean;
   onResizeStart?: (event: React.PointerEvent<HTMLElement>, id: string, corner: ResizeCorner) => void;
   onResizeKeyDown?: (event: React.KeyboardEvent, id: string, corner: ResizeCorner) => void;
   onMakeRoom?: (id: string) => void;
@@ -92,10 +92,7 @@ function TensorCardView({
   const [scaleEditor, setScaleEditor] = useState<number | null>(null);
   useEffect(() => { setScaleEditor(null); }, [graph, interactive]);
   const storedCfg = useStore((s) => s.viewCfgs[tensor.id]);
-  const cfg = useMemo(
-    () => displayScale === undefined || displayScale === storedCfg.scale ? storedCfg : { ...storedCfg, scale: displayScale },
-    [storedCfg, displayScale]
-  );
+  const cfg = storedCfg;
   const setViewCfg = useStore((s) => s.setViewCfg);
   const setViewAxes = useStore((s) => s.setViewAxes);
   const resizing = useStore((s) => s.resizingTensor === tensor.id);
@@ -545,10 +542,7 @@ function TensorCardView({
 
   const totalBytes = elementCount(shape) * DTYPE_BYTES[tensor.dtype];
   const nameOf = (ax: number) => axisName(tensor, ax);
-  const scaleNote = scaleRatioLabel(shape, cfg, graphPx);
   const planeSpec = cardViewMenu(shape, cfg, nameOf);
-  const viewSpec = [...planeSpec, ...(planeSpec.length ? [{ kind: "separator" as const }] : []),
-    ...cardDisplayMenu(shape, cfg, graphPx, movable, resizing, storedCfg, !!onMakeRoom)];
   const viewHandlers: MenuHandlers<CardViewAction, CardViewChoice> = {
     action: {
       swap: () => setViewAxes(tensor.id, [colAxis, rowAxis]),
@@ -624,6 +618,26 @@ function TensorCardView({
   // set up, in the grey a card takes while pointed at to move.
   const settingUp = (!!viewMenu.anchor || scaleEditor !== null) && interactive;
 
+  /* The grid the card draws, kept out of the header, which names the tensor
+     and its shape only. In the Plan view it is the plan's tile. */
+  const gridInfo = planView
+    ? planFamily && {
+        kind: "info" as const,
+        label: `plan tile ${Math.min(geom.rows, rowAxis >= 0 ? planFamily.tile[rowAxis] : 1)}×` +
+          `${Math.min(geom.cols, colAxis >= 0 ? planFamily.tile[colAxis] : 1)} · ` +
+          `${planFamily.count} task${planFamily.count === 1 ? "" : "s"}`,
+        title: "the plan tile on the drawn axes, rows × columns",
+      }
+    : {
+        kind: "info" as const,
+        label: `grid ${tileSpanRows}×${tileSpanCols}${ownTile ? ", this tensor's own" : ""}`,
+        title: ownTile
+          ? `this tensor's tile: [${ownTile.join(", ")}]`
+          : "the tile a click or snapped drag takes here, rows × columns",
+      };
+  const viewSpec = [...planeSpec, ...(planeSpec.length ? [{ kind: "separator" as const }] : []),
+    ...(gridInfo ? [gridInfo] : []),
+    ...cardDisplayMenu(shape, cfg, graphPx, movable, resizing, crowded, !!onMakeRoom)];
   return (
     <div
       className={`tensor-card${isSelected ? " selected" : ""}${settingUp ? " setting-up" : ""}${viewScale < OVERVIEW_SCALE ? " overview" : ""}`}
@@ -656,36 +670,6 @@ function TensorCardView({
           </span>
         </span>
         <span className="tc-shape">{shownShape}</span>
-        {planView ? (
-          planFamily && (
-            <span className="tc-tile plan" title={`plan tile · ${planFamily.count} task${planFamily.count === 1 ? "" : "s"}`}>
-              ⊞ {Math.min(geom.rows, rowAxis >= 0 ? planFamily.tile[rowAxis] : 1)}×
-              {Math.min(geom.cols, colAxis >= 0 ? planFamily.tile[colAxis] : 1)}
-            </span>
-          )
-        ) : (
-          (
-            <span
-              className={`tc-tile${ownTile ? " own" : ""}`}
-              title={ownTile
-                ? `this tensor's tile: [${ownTile.join(", ")}]`
-                : "the tile a click or snapped drag takes here, rows × columns"}
-            >
-              ⊞ {tileSpanRows}×{tileSpanCols}
-            </span>
-          )
-        )}
-        {/* Lengths on a card off the graph's scale do not compare with other
-            cards', so the card says so wherever it is read. */}
-        {scaleNote && (
-          <span
-            className="tc-scale"
-            title={`drawn at ${scaleNote} the graph's scale, so its lengths are not comparable with other cards` +
-              (storedCfg.scale !== cfg.scale ? `; resized to ${scaleRatioLabel(shape, storedCfg, graphPx) ?? "×1"}, it is drawn smaller until its neighbours leave room` : "")}
-          >
-            scale {scaleNote}
-          </span>
-        )}
         {roleTag && <span className="tc-role">{roleTag}</span>}
         {/* The shading is scaled to this lens's own largest count, so the
             card states that count: two tiles' strongest shades can stand for

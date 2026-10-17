@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ResolvedGraph } from "../../core/graph";
 import { isExpandable } from "../../core/expand";
-import { constrainRectMotion, Rect } from "../../view/graph/graph-geometry";
+import { constrainRectMotion, Rect, rectsOverlap } from "../../view/graph/graph-geometry";
 import {
+  type BaseGraphLayout,
   buildGraphScene,
   GraphNodeKind,
   GraphScene,
@@ -12,10 +13,10 @@ import {
 import { TensorCard } from "../card/TensorCard";
 import { carriedOffsets } from "../../view/graph/carry-placement";
 import { canvasSize, cardCanResize, cardShapeView, tensorCardSize, type CardShapeView } from "../../view/tensor/card-size";
-import { constrainResize, displayedCards, resizeScale, type ResizeCorner } from "../../view/tensor/resize";
+import { displayedCards, resizeScale, type ResizeCorner } from "../../view/tensor/resize";
 import { opLabel } from "../../core/ops/index";
 import { useStore } from "../../state/store";
-import type { NodeOffset } from "../../view/graph/node-layout";
+import type { NodeOffset, NodeOffsets } from "../../view/graph/node-layout";
 import { MIN_SIDE_PX } from "../../view/tensor/tiling";
 import {
   OPERAND_FONT_PX,
@@ -49,11 +50,13 @@ type NodeDrag = {
   viewportMovedBefore: boolean;
 };
 
-/** A card about to be resized from one corner. It starts from the scale it is
- * drawn at, and an undo or cancel returns it to the scale it had stored. */
+/** A card about to be resized from one corner. It starts from its stored
+ * scale, and an undo or cancel returns it and every node it moved aside to
+ * where they were. */
 type ResizeTarget = {
   placed: Rect; fromScale: number; beforeScale: number; beforeOffset: NodeOffset;
-  canvas: { w: number; h: number }; measure: (scale: number) => Rect; blockers: Rect[];
+  beforeOffsets: NodeOffsets; layout: BaseGraphLayout;
+  canvas: { w: number; h: number }; measure: (scale: number) => Rect;
 };
 
 type CardResize = ResizeTarget & {
@@ -331,15 +334,13 @@ export function GraphView(): React.ReactElement {
   /** Resized cards' stored scales, as a stable key. */
   const cardScaleKey = useStore((s) => JSON.stringify(Object.entries(s.viewCfgs).flatMap(([id, cfg]) =>
     cfg.scale === undefined ? [] : [[id, cfg.scale]])));
-  /** Resized cards' drawn scale and size, by node key. */
+  /** Resized cards' scale and size, by node key. */
   const cardDisplay = useMemo(
-    () => baseLayout && resolved
-      ? displayedCards(baseLayout, nodeOffsets, useStore.getState().viewCfgs, resolved, graphPx)
+    () => resolved
+      ? displayedCards(useStore.getState().viewCfgs, resolved, graphPx)
       : { scales: {}, sizes: {} },
-    [resolved, baseLayout, nodeOffsets, graphPx, footprintKey, cardScaleKey]
+    [resolved, graphPx, footprintKey, cardScaleKey]
   );
-  const displayScalesRef = useRef(cardDisplay.scales);
-  displayScalesRef.current = cardDisplay.scales;
   /** Offsets, resized cards and connector routes are cheap live scene projection, not layout. */
   const scene = useMemo(
     () =>
@@ -348,6 +349,13 @@ export function GraphView(): React.ReactElement {
         : null,
     [baseLayout, nodeOffsets, cardDisplay]
   );
+  /** Cards whose footprint overlaps another node: a later layout can leave a
+   * resized card less room than it had, and making room is then offered. */
+  const crowded = useMemo(() => {
+    const nodes = scene?.nodes ?? [];
+    return new Set(nodes.filter((node) => node.kind === "tensor" &&
+      nodes.some((other) => other !== node && rectsOverlap(node, other, 0))).map((node) => node.id));
+  }, [scene]);
   const raster = useMemo(
     () => graphRasterAllocation(scene?.nodes ?? [], tf, viewport),
     [scene, tf, viewport],
@@ -390,6 +398,8 @@ export function GraphView(): React.ReactElement {
 
   const sceneRef = useRef(scene);
   sceneRef.current = scene;
+  const baseLayoutRef = useRef(baseLayout);
+  baseLayoutRef.current = baseLayout;
 
   /* A run that changed only sizes keeps every node where it was on screen. The
      store flags it; the canvas, which owns placement, measures where each node
@@ -808,14 +818,14 @@ export function GraphView(): React.ReactElement {
     const drag = resizeRef.current;
     const point = resizePointRef.current;
     if (!drag || !point || !graphIsInteractive(useStore.getState())) return;
-    const wanted = resizeScale(drag.fromScale, drag.canvas,
+    const scale = resizeScale(drag.fromScale, drag.canvas,
       { x: (point.x - drag.start.x) / tfRef.current.k, y: (point.y - drag.start.y) / tfRef.current.k }, drag.corner);
-    const scale = constrainResize(drag.fromScale, wanted, drag.measure, drag.blockers);
     const rect = drag.measure(scale);
     const state = useStore.getState();
-    state.setCardGeometry(drag.id, scale, { dx: drag.beforeOffset.dx, dy: drag.beforeOffset.dy + rect.y - drag.placed.y }, false);
+    // The card takes the size asked for, and its neighbours make room for it.
+    state.setCardGeometry(drag.id, scale, { dx: drag.beforeOffset.dx, dy: drag.beforeOffset.dy + rect.y - drag.placed.y }, false,
+      { layout: drag.layout, from: drag.beforeOffsets });
     movedRef.current = true;
-    setBlockedNode(Math.abs(scale - wanted) > 1e-6 ? nodeKey("tensor", drag.id) : null);
   }, []);
   const requestResize = useFrameThrottle(applyResize);
   const finishResize = useCallback((commit: boolean) => {
@@ -826,9 +836,9 @@ export function GraphView(): React.ReactElement {
     resizeRef.current = null;
     resizePointRef.current = null;
     const state = useStore.getState();
-    if (commit) state.commitCardResize(drag.id, drag.beforeScale, drag.beforeOffset);
+    if (commit) state.commitCardResize(drag.id, drag.beforeScale, drag.beforeOffsets);
     else if (state.resolved === drag.graph) {
-      state.setCardGeometry(drag.id, drag.beforeScale, drag.beforeOffset, false);
+      state.restoreCardGeometry(drag.id, drag.beforeScale, drag.beforeOffsets);
       movedRef.current = drag.viewportMovedBefore;
     }
     if (drag.host.hasPointerCapture(drag.pointerId)) drag.host.releasePointerCapture(drag.pointerId);
@@ -838,18 +848,19 @@ export function GraphView(): React.ReactElement {
     const state = useStore.getState();
     const tensor = state.resolved?.tensors[id];
     const placed = sceneRef.current?.nodes.find((node) => node.kind === "tensor" && node.id === id);
-    if (!tensor || !placed || !graphIsInteractive(state) || state.resizingTensor !== id) return null;
+    const layout = baseLayoutRef.current;
+    if (!tensor || !placed || !layout || !graphIsInteractive(state) || state.resizingTensor !== id) return null;
     const key = nodeKey("tensor", id), cfg = state.viewCfgs[id];
     if (!cardCanResize(tensor.resolved!, cfg, state.graphPx)) return null;
-    const fromScale = displayScalesRef.current[key] ?? cfg.scale ?? 1;
+    const fromScale = cfg.scale ?? 1;
     const measure = (scale: number): Rect => {
       const size = tensorCardSize(tensor, state.graphPx, { ...cfg, scale });
       return { ...size, x: placed.x, y: placed.y + (corner === "top" ? placed.h - size.h : 0) };
     };
     return {
       placed, fromScale, beforeScale: cfg.scale ?? 1, beforeOffset: state.nodeOffsets[key] ?? { dx: 0, dy: 0 },
+      beforeOffsets: state.nodeOffsets, layout,
       canvas: canvasSize(tensor.resolved!, { ...cfg, scale: fromScale }, state.graphPx), measure,
-      blockers: (sceneRef.current?.nodes ?? []).filter((node) => node !== placed),
     };
   }, []);
 
@@ -868,12 +879,12 @@ export function GraphView(): React.ReactElement {
     const target = delta ? resizeTarget(id, corner) : null;
     if (!target) return;
     e.preventDefault(); e.stopPropagation();
-    const { fromScale, beforeOffset, measure, placed } = target;
+    const { fromScale, beforeOffset, beforeOffsets, layout, measure, placed } = target;
     const step = e.shiftKey ? NUDGE_PX * NUDGE_FAST : NUDGE_PX;
-    const wanted = resizeScale(fromScale, target.canvas, { x: delta.x * step, y: delta.y * step }, corner);
-    const scale = constrainResize(fromScale, wanted, measure, target.blockers);
+    const scale = resizeScale(fromScale, target.canvas, { x: delta.x * step, y: delta.y * step }, corner);
     const state = useStore.getState();
-    state.setCardGeometry(id, scale, { dx: beforeOffset.dx, dy: beforeOffset.dy + measure(scale).y - placed.y }, !e.repeat);
+    state.setCardGeometry(id, scale, { dx: beforeOffset.dx, dy: beforeOffset.dy + measure(scale).y - placed.y }, !e.repeat,
+      { layout, from: beforeOffsets });
     movedRef.current = true;
   }, [resizeTarget]);
 
@@ -1197,7 +1208,7 @@ export function GraphView(): React.ReactElement {
                 overviewWidth={overview.tensors.get(t.id)}
                 rasterize={raster.visible.has(t.id)}
                 rasterPixels={raster.pixelsPerCard}
-                displayScale={cardDisplay.scales[key]}
+                crowded={crowded.has(t.id)}
                 onResizeStart={startResize}
                 onResizeKeyDown={resizeByKey}
                 onMakeRoom={layoutPending ? undefined : makeRoom}

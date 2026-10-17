@@ -265,11 +265,26 @@ export type State = {
   resizingTensor: string | null;
   setResizingTensor: (id: string | null) => void;
   setCardScale: (id: string, scale: number, record?: boolean) => void;
-  /** Size and position together, for live gestures and their cancellation. */
-  setCardGeometry: (id: string, scale: number, offset: NodeOffset, record?: boolean) => void;
+  /**
+   * Size and position together, for live gestures. With `room`, every other
+   * node is placed again from the offsets `room.from`, moving the ones the
+   * card now covers aside (`roomForNode`): a resize makes its own room rather
+   * than stopping at its neighbours, and shrinking back returns them.
+   */
+  setCardGeometry: (
+    id: string,
+    scale: number,
+    offset: NodeOffset,
+    record?: boolean,
+    room?: { layout: BaseGraphLayout; from: Readonly<NodeOffsets> }
+  ) => void;
+  /** Put a card's scale and every node offset back as they were, unrecorded:
+   * what cancelling a resize does. */
+  restoreCardGeometry: (id: string, scale: number, offsets: Readonly<NodeOffsets>) => void;
   /** Make room at requested sizes, keeping this tensor anchored. Undoable. */
   makeRoomForCard: (id: string, layout: BaseGraphLayout) => void;
-  commitCardResize: (id: string, beforeScale: number, beforeOffset: NodeOffset) => void;
+  /** Record a finished resize as one undo step, back to these offsets. */
+  commitCardResize: (id: string, beforeScale: number, beforeOffsets: Readonly<NodeOffsets>) => void;
 
   /**
    * Tile extents per planned tensor (see `core/plan`). Independent of the

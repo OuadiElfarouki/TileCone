@@ -80,27 +80,25 @@ export function axisTableMenu({
 export type CardViewAction = "swap" | "default" | "resize" | "resetSize" | "setSize" | "makeRoom";
 export type CardViewChoice = "rows" | "cols" | "hidden";
 
-/** `cfg` is the view as drawn; `stored` is the one the card was resized to,
- *  which differs while its neighbours leave it less room. */
+/** `crowded` is whether the card overlaps another node, which a layout run
+ *  after a resize can leave it doing. */
 export function cardDisplayMenu(shape: readonly number[], cfg: ViewCfg, graphPx: number, movable: boolean, resizing: boolean,
-  stored: ViewCfg = cfg, canArrange = true): MenuSpec<CardViewAction, CardViewChoice> {
+  crowded = false, canArrange = true): MenuSpec<CardViewAction, CardViewChoice> {
   const text = scaleRatioLabel(shape, cfg, graphPx) ?? "×1";
-  const limited = stored.scale !== cfg.scale;
   const resizable = cardCanResize(shape, cfg, graphPx);
   const resizeTitle = !movable ? "the Plan view keeps graph placement fixed"
     : !resizable ? "this view has a fixed canvas size" : "enter Move and drag a right corner to resize; Escape or clicking elsewhere finishes resizing";
   return [
-    { kind: "info", label: `display scale ${text}${limited ? ", limited by neighbours" : ""}`,
-      title: "Relative to the graph's scale; display size changes no tensor dimensions or analysis." +
-        (limited ? ` Resized to ${scaleRatioLabel(shape, stored, graphPx) ?? "×1"}, it is drawn smaller until its neighbours leave room.` : "") },
+    { kind: "info", label: `display scale ${text}`,
+      title: "Relative to the graph's scale, so lengths compare with other cards only at ×1; display size changes no tensor dimensions or analysis." },
     { kind: "action", id: "resize", label: resizing ? "finish resizing" : "resize card", disabled: !movable || !resizable,
       title: resizeTitle },
     { kind: "action", id: "setSize", label: "set display size…", disabled: !movable || !resizable,
       title: !movable || !resizable ? resizeTitle : "enter an exact percentage of this card's automatically fitted size" },
-    { kind: "action", id: "makeRoom", label: "make room for this size", disabled: !movable || !limited || !canArrange,
-      title: !movable ? resizeTitle : !canArrange ? "wait for graph placement to finish" : !limited ? "the card already fits at its requested size"
-        : "keep this card anchored and move overlapping nodes to fit requested display sizes (undoable)" },
-    { kind: "action", id: "resetSize", label: "reset display size", disabled: !movable || stored.scale === undefined,
+    { kind: "action", id: "makeRoom", label: "make room for this size", disabled: !movable || !crowded || !canArrange,
+      title: !movable ? resizeTitle : !canArrange ? "wait for graph placement to finish" : !crowded ? "the card overlaps no other node"
+        : "keep this card anchored and move overlapping nodes aside (undoable)" },
+    { kind: "action", id: "resetSize", label: "reset display size", disabled: !movable || cfg.scale === undefined,
       title: "return to this card's automatically fitted size (undoable)" },
   ];
 }
