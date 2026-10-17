@@ -47,13 +47,13 @@ describe("plan replay paint", () => {
 
   it("keeps every walked run as a trail on the family's tensor, the last one active", () => {
     const paint = buildReplayPaint({ tensorId: "Y", dark: false, playback: playback() });
-    expect(paint.layers.map((layer) => layer.region.boxes[0])).toEqual([
-      box([0, 2], [0, 2]),
-      box([0, 2], [2, 4]),
-      box([2, 4], [0, 2]),
+    // The walked runs are one trail, each tile once; the active run on top.
+    expect(paint.layers.map((layer) => layer.region.boxes)).toEqual([
+      [box([0, 2], [0, 2]), box([0, 2], [2, 4])],
+      [box([2, 4], [0, 2])],
     ]);
-    expect(paint.layers.map((layer) => layer.alpha)).toEqual([0.1, 0.1, 0.68]);
-    expect(paint.layers[2].seed).toBe(true);
+    expect(paint.layers.map((layer) => layer.alpha)).toEqual([0.1, 0.68]);
+    expect(paint.layers[1].seed).toBe(true);
     // Not yet walked is not painted.
     expect(buildReplayPaint({ tensorId: "Y", dark: false, playback: playback(1) }).layers).toHaveLength(1);
   });
@@ -83,7 +83,7 @@ describe("plan replay paint", () => {
   it("fades the trail as it stands", () => {
     const fading = { ...playback(), exiting: true, opacity: 0.5 };
     const paint = buildReplayPaint({ tensorId: "Y", dark: false, playback: fading });
-    expect(paint.layers.map((layer) => layer.alpha)).toEqual([0.05, 0.05, 0.34]);
+    expect(paint.layers.map((layer) => layer.alpha)).toEqual([0.05, 0.34]);
   });
 
   /* What a run reads is the Plan view's solid fill: a ruling or a stipple

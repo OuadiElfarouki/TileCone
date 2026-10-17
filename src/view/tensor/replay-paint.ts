@@ -2,6 +2,38 @@ import { type Box, canonicalize, isEmpty, type Region, subtractBox } from "../..
 import { boxColor } from "../palette";
 import { Layer } from "./grid";
 import { ReplayPlayback } from "../workspace";
+import type { FamilyReplay } from "../../core/plan/replay";
+
+/** Boxes per trail layer, under the box budget a layer's fill is split within. */
+const TRAIL_LAYER_BOXES = 192;
+const trails = new WeakMap<FamilyReplay, { visited: number; regions: Region[] }>();
+
+/**
+ * The family's trail: every tile the frames before the active one walked,
+ * each once, less the active frame's, as disjoint layers.
+ *
+ * Several steps of a deeper replay share one family task, so painting each
+ * earlier frame as its own layer stacked the same tile once per step, and the
+ * trail's brightness came to count steps rather than mark where the walk has
+ * been. The tiles are joined by identity first, which is exact: a frame's
+ * region is whole tiles, and a tile walked twice is the same box. Cached per
+ * replay and position, since fade ticks repaint without moving.
+ */
+function trailOf(replay: FamilyReplay, visited: number): Region[] {
+  const cached = trails.get(replay);
+  if (cached && cached.visited === visited) return cached.regions;
+  const active = replay.frames[visited - 1]?.region;
+  const seen = new Map<string, Box>();
+  for (const frame of replay.frames.slice(0, Math.max(0, visited - 1)))
+    for (const b of frame.region.boxes) seen.set(b.map((i) => `${i.lo}:${i.hi}`).join(","), b);
+  const boxes = [...seen.values()].flatMap((b) =>
+    (active?.boxes ?? []).reduce<Box[]>((parts, a) => parts.flatMap((p) => subtractBox(p, a)), [b]));
+  const regions: Region[] = [];
+  for (let i = 0; i < boxes.length; i += TRAIL_LAYER_BOXES)
+    regions.push({ boxes: boxes.slice(i, i + TRAIL_LAYER_BOXES), exact: true, reasons: [] });
+  trails.set(replay, { visited, regions });
+  return regions;
+}
 
 const differences = new WeakMap<Region, WeakMap<Region, Region>>();
 const MAX_PAINT_FRAGMENTS = 256;
@@ -86,8 +118,8 @@ export function buildReplayPaint({
   if (!active) return { layers, tiles: [] };
 
   if (tensorId === playback.replay.task.tensorId) {
-    for (const frame of frames.slice(0, -1))
-      layers.push({ region: frame.region, color, alpha: 0.1 * playback.opacity, hatch: false });
+    for (const region of trailOf(playback.replay, playback.visited))
+      layers.push({ region, color, alpha: 0.1 * playback.opacity, hatch: false });
     layers.push({ region: active.region, color, alpha: 0.68 * playback.opacity, hatch: false, seed: true });
     return { layers, tiles: [] };
   }

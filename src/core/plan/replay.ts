@@ -28,7 +28,8 @@ import { linearRangeToBoxes } from "../ops/reshape";
 import { coaccessWithin } from "../entangle";
 import { producerNode } from "../graph";
 import type { BoundedCone } from "../propagate";
-import { canonicalize, count, fromBox, intersect, isEmpty, Region } from "../region";
+import { getOp } from "../ops/index";
+import { canonicalize, count, fromBox, intersect, isEmpty, markInexact, Region } from "../region";
 import { readOrder } from "./interfaces";
 import { familyOf, regionDemand, TaskRef, TilePlan } from "./plan";
 import { coordinatePage, PlanError, tileBox, tileCoord, tileRange, tilesBox, type TileFamily } from "./tile-family";
@@ -336,20 +337,48 @@ function steppedReplay(
       const step = path[i];
       const tile = tileOf(step);
       add(step.tensorId, tile, i, tile);
-      // What the step's tile is combined with inside the task it feeds.
+      // Follow the step's tile through the task it feeds: from the operations
+      // reading it across the frontier, through every fused operation its
+      // values pass on the way to that task's tile, pairing it at each one
+      // with the other operands it meets there and drawing the fused part it
+      // becomes. A tile read through `D = relu(C); Y = D @ W` meets W at the
+      // matmul, two operations after it is read.
       const cone = coneOf(consumer);
-      for (const c of cone.crossings) {
-        if (c.tensorId !== step.tensorId) continue;
-        const block = intersect(c.region, tile);
-        if (isEmpty(block)) continue;
-        const node = graph.topo.find((n) => n.id === c.node)!;
-        const outputs = cone.tensors.get(node.outputs[0])?.region;
-        if (!outputs) continue;
-        node.inputs.forEach((other, slot) => {
-          if (slot === c.slot) return;
-          const met = coaccessWithin(graph, c.node, c.slot, block, slot, outputs);
-          if (met) add(other, met, i);
+      const carried = new Map<string, Region>();
+      for (const node of graph.topo) {
+        const blocks = node.inputs.map((input, slot): Region | null => {
+          if (input === step.tensorId) {
+            const crossing = cone.crossings.find((c) => c.node === node.id && c.slot === slot);
+            const block = crossing ? intersect(crossing.region, tile) : null;
+            return block && !isEmpty(block) ? block : null;
+          }
+          return carried.get(input) ?? null;
         });
+        if (blocks.every((b) => !b)) continue;
+        const spec = getOp(node.op)!;
+        const ctx = { inShapes: graph.shapesOf(node.inputs), outShapes: graph.shapesOf(node.outputs), attrs: node.attrs };
+        for (const [outSlot, out] of node.outputs.entries()) {
+          const outputs = cone.tensors.get(out)?.region;
+          // Each output can independently be fused, tiled, or outside this task.
+          if (!outputs || (out !== consumer.tensorId && plan.families.has(out))) continue;
+          let reachedOut: Region | null = null;
+          blocks.forEach((block, slot) => {
+            if (!block) return;
+            node.inputs.forEach((other, otherSlot) => {
+              if (otherSlot === slot) return;
+              const met = coaccessWithin(graph, node.id, slot, block, otherSlot, outputs, outSlot);
+              if (met) add(other, met, i);
+            });
+            for (const b of block.boxes) {
+              const part = intersect(spec.forward(slot, b, ctx)[outSlot], outputs);
+              const marked = block.exact ? part : markInexact(part, ...block.reasons);
+              reachedOut = reachedOut ? merged(reachedOut, marked) : marked;
+            }
+          });
+          if (!reachedOut || isEmpty(reachedOut) || out === consumer.tensorId) continue;
+          carried.set(out, reachedOut);
+          add(out, reachedOut, i);
+        }
       }
     }
     // What the last task on the path reads and computes, one level further.

@@ -351,7 +351,9 @@ function checkWithin(graph: ReturnType<typeof G>, expectExact: boolean, trials =
     for (let fromSlot = 0; fromSlot < node.inputs.length; fromSlot++)
       for (let otherSlot = 0; otherSlot < node.inputs.length; otherSlot++) {
         if (otherSlot === fromSlot) continue;
-        const block = randomBox(shapes[fromSlot]);
+        // Two boxes, so a pairing that mixes one box's meet with another's
+        // outputs would show up.
+        const block = { boxes: [...randomBox(shapes[fromSlot]).boxes, ...randomBox(shapes[fromSlot]).boxes], exact: true, reasons: [] };
         const outputs = randomBox(outShape);
         const truth = truthEntangled(g, "n", fromSlot, otherSlot, block, outputs);
         const got = coaccessWithin(g, "n", fromSlot, block, otherSlot, outputs);
@@ -363,6 +365,14 @@ function checkWithin(graph: ReturnType<typeof G>, expectExact: boolean, trials =
 }
 
 describe("entanglement within one task's outputs matches brute force", () => {
+  it("pairs each box of a block on its own", () => {
+    const g = resolveGraph(G({ A: [2, 2], B: [2, 2] }, [["n", "matmul", ["A", "B"], ["C"]]]));
+    // A[0,0] meets B[0,0] within C[0,0]; A[1,1] reaches no output there.
+    const block = { boxes: [box([0, 1], [0, 1]), box([1, 2], [1, 2])], exact: true, reasons: [] };
+    const got = coaccessWithin(g, "n", 0, block, 1, fromBox(box([0, 1], [0, 1])))!;
+    expect(got).toMatchObject({ boxes: [box([0, 1], [0, 1])], exact: true });
+  });
+
   it("matmul, exactly", () =>
     checkWithin(G({ A: [5, 6], B: [6, 4] }, [["n", "matmul", ["A", "B"], ["C"]]]), true));
   it("attention scores, exactly", () =>

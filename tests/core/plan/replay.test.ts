@@ -170,6 +170,38 @@ describe("replaying through the plan's own producers", () => {
     expect(count(first.reach.get("A")!.shared!)).toBe(16 * 32);
   });
 
+  /* Fused operations between the frontier and the consumer's tile: the step's
+     block is carried through them, so what it becomes and what it meets later
+     move with it. */
+  it("carries a step through fused operations to the operands it meets there", () => {
+    const fused = compileDSL(CHAIN.replace("Y = matmul(C, W)", "D = relu(C)\nY = matmul(D, W)")).resolved;
+    const replay = familyReplay(tilePlan(fused, { C: [16, 16], Y: [8, 8] }), { tensorId: "Y", coord: [1, 0] }, { depth: 2 });
+    const steps = replay.frames.filter((f) => f.firstPath[0].coord.join(",") === "1,0");
+    expect(steps).toHaveLength(4);
+    steps.forEach((frame, j) => {
+      // C[0:16, k-block] reaches D[8:16, k-block] inside Y(1, 0), and D meets W[k-block, 0:8].
+      expect(frame.reach.get("D")!).toMatchObject({ level: 1, region: { boxes: [box([8, 16], [16 * j, 16 * j + 16])] } });
+      expect(frame.reach.get("W")!).toMatchObject({ level: 1, region: { boxes: [box([16 * j, 16 * j + 16], [0, 8])], exact: true } });
+    });
+  });
+
+  it("carries the second split output even when the first is materialized", () => {
+    const { resolved } = compileDSL(
+      "X = Tensor(8)\nC = relu(X)\nU, V = split(C, axis=0, sizes=[4,4])\nW = Tensor(4)\nY = add(V,W)\n"
+    );
+    const tilings: Record<string, number[]>[] = [{ C: [1], Y: [1] }, { C: [1], U: [1], Y: [1] }];
+    for (const tiles of tilings) {
+      const replay = familyReplay(tilePlan(resolved, tiles), { tensorId: "Y", coord: [0] }, { depth: 2 });
+      expect(replay.frames).toHaveLength(4);
+      replay.frames.forEach((frame, j) => {
+        expect(frame.firstPath).toEqual([{ tensorId: "Y", coord: [j] }, { tensorId: "C", coord: [j + 4] }]);
+        for (const id of ["V", "W"])
+          expect(frame.reach.get(id)).toMatchObject({ level: 1, region: { boxes: [box([j, j + 1])], exact: true } });
+        expect(frame.reach.has("U")).toBe(false);
+      });
+    }
+  });
+
   it("declines a depth whose steps need more queries than the budget", () => {
     expect(() => familyReplay(plan, { tensorId: "Y", coord: [1, 0] }, { depth: 2, budget: 10 }))
       .toThrow(/more than 10 task queries; choose a smaller depth/);
