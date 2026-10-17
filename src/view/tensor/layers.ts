@@ -69,12 +69,19 @@ export type LayerInputs = {
   /**
    * The selection parts drawn on *this* tensor, each carrying the index it has
    * in the whole workspace. Parts on other tensors are not this card's business
-   * to draw, but the index is: hue, focus and visibility are all keyed by it,
-   * so a tile must keep the same colour whichever card it lives on.
+   * to draw, but the index is: focus and visibility are keyed by it, and hue
+   * by the slot it carries (`hues`), so a tile keeps the same colour whichever
+   * card it lives on.
    */
   parts: { index: number; box: Box }[];
-  /** Parts in the whole workspace, so the rubber band previews the next hue. */
+  /** Parts in the whole workspace. */
   partCount: number;
+  /** Each workspace part's colour slot (`SelPart.hue`), by index. Absent, a
+   * part's slot is its index. */
+  hues?: readonly number[];
+  /** The slot the next tile takes, so the rubber band previews its hue.
+   * Absent, `partCount`. */
+  nextHue?: number;
   perBox: BoxProp[] | null;
   hiddenBoxes: Set<number>;
   focusedBox: number | null;
@@ -95,7 +102,7 @@ export type LayerInputs = {
   hoverRegion?: Region | null;
   /**
    * What the keyboard tile's growth added to its cone on this tensor
-   * (`view/growth.ts`), and that tile's index for its hue. Drawn over the
+   * (`view/growth.ts`), and that tile's index, whose slot is its hue. Drawn over the
    * cones, stronger and outlined, so the new elements stand out from the ones
    * the starting tile already needed.
    */
@@ -118,6 +125,8 @@ export function buildLayers({
   isSelected,
   parts,
   partCount,
+  hues,
+  nextHue,
   perBox,
   hiddenBoxes,
   focusedBox,
@@ -132,6 +141,7 @@ export function buildLayers({
   entangled,
   showEntangled,
 }: LayerInputs): Layer[] {
+  const hueOf = (index: number) => hues?.[index] ?? index;
   const layers: Layer[] = [];
   const agg = aggregateColors(dark);
   // Both cones are always analysed; `direction` decides which are painted. A
@@ -173,7 +183,7 @@ export function buildLayers({
       if (hiddenBoxes.has(i)) return;
       const emph = focusedBox === i;
       const alphaScale = focusedBox !== null && !emph ? PEER_FADE : 1;
-      const color = boxColor(i, dark);
+      const color = boxColor(hueOf(i), dark);
       const bTr = bp.backward?.tensors.get(tensorId);
       const fTr = bp.forward?.tensors.get(tensorId);
       const into = emph ? emphasised : plain;
@@ -199,7 +209,8 @@ export function buildLayers({
           // density to the future supplied-share measurement.
           alpha: CONE_ALPHA * alphaScale,
           hatch: !fTr.region.exact,
-          // Angle follows the box index, like the hue does. Where two boxes
+          // Angle follows the box index, so two tiles sharing a hue past the
+          // sixth still rule differently. Where two boxes
           // reach the same elements the rulings cross instead of the later one
           // hiding the earlier, which is the only place that overlap is visible.
           pattern: downstreamPattern(i),
@@ -227,13 +238,13 @@ export function buildLayers({
   /* Entanglement is orthogonal to the cone, so it paints whichever direction is
      shown, and when neither is: what a tile reads and what it is multiplied
      against are separate questions, and a reader may want either alone. Hue
-     still follows the part index, and a hidden part is hidden here too - one
+     still follows the part's slot, and a hidden part is hidden here too - one
      visibility control, not two. */
   if (showEntangled && entangled)
     for (const { index, region } of entangled) {
       if (hiddenBoxes.has(index)) continue;
       const alphaScale = focusedBox !== null && focusedBox !== index ? PEER_FADE : 1;
-      const color = boxColor(index, dark);
+      const color = boxColor(hueOf(index), dark);
       const alpha = CONE_ALPHA * alphaScale;
       /* Dots in the tile's hue vanish on a solid fill of that same hue, and
          that overlap is the headline case rather than an edge one: in
@@ -269,7 +280,7 @@ export function buildLayers({
   if (grown)
     layers.push({
       region: grown.region,
-      color: boxColor(grown.index, dark),
+      color: boxColor(hueOf(grown.index), dark),
       alpha: 0.55,
       hatch: !grown.region.exact,
       outline: true,
@@ -286,7 +297,7 @@ export function buildLayers({
     const hidden = hiddenBoxes.has(index);
     layers.push({
       region: fromBox(b),
-      color: boxColor(index, dark),
+      color: boxColor(hueOf(index), dark),
       alpha: hidden ? 0.18 : isFocused || isKey ? 0.9 : 0.35,
       hatch: false,
       outline: isKey || (isFocused && !hidden),
@@ -297,13 +308,13 @@ export function buildLayers({
 
   // What a click would take, in the hue the new tile would get.
   if (hoverRegion && !dragRegion)
-    layers.push({ region: hoverRegion, color: boxColor(partCount, dark), alpha: 0, hatch: false, outline: true });
+    layers.push({ region: hoverRegion, color: boxColor(nextHue ?? partCount, dark), alpha: 0, hatch: false, outline: true });
 
   // The in-progress rubber band, drawn on top of everything it will replace.
   if (dragRegion)
     layers.push({
       region: dragRegion,
-      color: boxColor(partCount, dark),
+      color: boxColor(nextHue ?? partCount, dark),
       alpha: 0.4,
       hatch: false,
       outline: true,

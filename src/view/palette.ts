@@ -1,14 +1,23 @@
 /**
  * Colors for selection boxes and their dependency cones.
  *
- * Hue encodes *which selected box* a highlighted region came from. The three
- * categorical slots below are the only ones used, because these regions are
- * compared all-pairs (any two can land side by side in one grid) and three is
- * the largest set that clears the all-pairs CVD and normal-vision floors on
- * both canvas surfaces : verified with the dataviz validator, all-pairs:
+ * Hue encodes *which selected box* a highlighted region came from. These
+ * regions are compared all-pairs (any two can land side by side in one grid),
+ * so the six slots are validated all-pairs with the dataviz validator:
  *
- *   light (surface #f3f4f6): CVD ΔE 9.4, normal ΔE 22.0, contrast >= 3:1 : PASS
- *   dark  (surface #1c1f24): CVD ΔE 9.4, normal ΔE 20.9, contrast >= 3:1 : PASS
+ *   light (surface #f3f4f6): CVD ΔE 9.1, normal ΔE 15.7, contrast >= 3:1 : PASS
+ *   dark  (surface #1c1f24): CVD ΔE 7.0, normal ΔE 15.2, contrast >= 3:1 : FLOOR
+ *
+ * The first three slots alone clear CVD ΔE 9.1 in both themes. Slots 4-6 fill
+ * the gaps between their hues: olive between orange and aqua, purple between
+ * blue and the reuse lens's violet, plum between that and orange. A cyan
+ * between aqua and blue does not fit anywhere: every cyan was within normal ΔE
+ * 15 of one or the other. Each new slot also stays at least ΔE 12 from the
+ * colours drawn on the same cards, the accent that marks the inspected tile
+ * and the lens violet. Dark mode's worst pair, ochre against orange under
+ * protanopia, is in the 6-8 floor band, which is legal with secondary
+ * encoding, and tiles have it: the inspector lists each tile with its index
+ * and swatch, and hovering a row emphasises that tile's cone.
  *
  * Separation is measured between the marks, so both ΔE figures are independent
  * of the surface. A surface move needs only the contrast check re-run; a *hue*
@@ -34,10 +43,11 @@
  * regenerated: they come from the dataviz validator, and re-running them needs
  * that script. Nothing measured without it regressed.
  *
- * A 4th hue fails in dark mode (violet↔blue ΔE 1.9), so boxes past the third
- * render in a neutral instead of an invented hue. Identity is never carried by
- * color alone: the inspector lists every box with its index, and hovering a row
- * emphasises that box's cone when per-box attribution is available.
+ * A tile keeps the slot it was given (`SelPart.hue`), so removing one does not
+ * repaint the others. Past six tiles the slots repeat, and identity is never
+ * carried by color alone: the inspector lists every box with its index, and
+ * hovering a row emphasises that box's cone when per-box attribution is
+ * available.
  */
 
 export type RGB = [number, number, number];
@@ -46,16 +56,19 @@ const CATEGORICAL_LIGHT: RGB[] = [
   [42, 120, 214], // blue   #2a78d6  4.01:1
   [226, 96, 58], // orange #e2603a  3.20:1
   [24, 159, 111], // aqua   #189f6f  3.06:1
+  [79, 89, 3], // olive  #4f5903  6.91:1
+  [128, 3, 179], // purple #8003b3  7.39:1
+  [120, 57, 96], // plum   #783960  7.48:1
 ];
 
 const CATEGORICAL_DARK: RGB[] = [
   [57, 135, 229], // blue   #3987e5
   [226, 96, 58], // orange #e2603a
   [25, 158, 112], // aqua   #199e70
+  [142, 96, 28], // ochre  #8e601c  3.02:1
+  [172, 120, 176], // mauve  #ac78b0  4.77:1
+  [187, 38, 162], // magenta #bb26a2  3.08:1
 ];
-
-const NEUTRAL_LIGHT: RGB = [107, 114, 128];
-const NEUTRAL_DARK: RGB = [139, 147, 163];
 
 /** Fallback hues when there are too many boxes to attribute individually. */
 const AGGREGATE_LIGHT = { upstream: [42, 120, 214] as RGB, downstream: [124, 58, 237] as RGB };
@@ -69,10 +82,10 @@ const AGGREGATE_DARK = { upstream: [57, 135, 229] as RGB, downstream: [167, 139,
  */
 export const CARD_SURFACE = { light: "#f3f4f6", dark: "#1c1f24" } as const;
 
-export function boxColor(index: number, dark: boolean): RGB {
+/** The colour of a tile's hue slot (`SelPart.hue`). Slots past the palette wrap. */
+export function boxColor(hue: number, dark: boolean): RGB {
   const pal = dark ? CATEGORICAL_DARK : CATEGORICAL_LIGHT;
-  if (index < pal.length) return pal[index];
-  return dark ? NEUTRAL_DARK : NEUTRAL_LIGHT;
+  return pal[((hue % pal.length) + pal.length) % pal.length];
 }
 
 export const MAX_DISTINCT_HUES = CATEGORICAL_LIGHT.length;

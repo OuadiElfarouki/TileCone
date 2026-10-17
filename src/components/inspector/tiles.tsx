@@ -7,7 +7,7 @@ import { fmt } from "../../view/format";
 import { boxColor, MAX_DISTINCT_HUES, rgbCss } from "../../view/palette";
 import { formatSelectionBox, parseSelectionBox } from "../../view/selection-range";
 import { viewAxes } from "../../view/tensor/tensor-view";
-import { graphIsInteractive, partsOn, selectedTensorIds } from "../../view/workspace";
+import { graphIsInteractive, partHue, partsOn, selectedTensorIds } from "../../view/workspace";
 import { SHORTCUTS } from "../../view/shortcuts";
 import { useDark, useStore } from "../../state/store";
 import { CopyButton } from "../chrome/CopyButton";
@@ -91,10 +91,10 @@ export function TileIdentity({
       <div className="tile-ord">
         {/* The swatch is the tile's hue on the canvas: the header and the cone
             it describes have to be the same colour, so it follows the anchor's
-            own index rather than the first one. A merged readout belongs to no
+            own slot rather than the first one. A merged readout belongs to no
             single hue, so it carries none. */}
         {!merged && (
-          <i className="swatch" style={{ background: rgbCss(boxColor(index, dark)) }} />
+          <i className="swatch" style={{ background: rgbCss(boxColor(partHue(selection?.parts, index), dark)) }} />
         )}
         <span>
           {measured.length === 0 ? "no enabled tiles" : merged
@@ -264,8 +264,8 @@ export function RegionEditor({ activeTensorId, onSelectGroup }: {
                 className="vis-toggle"
                 disabled={!perBox}
                 style={{
-                  borderColor: rgbCss(boxColor(i, dark)),
-                  background: hidden ? "transparent" : rgbCss(boxColor(i, dark)),
+                  borderColor: rgbCss(boxColor(partHue(parts, i), dark)),
+                  background: hidden ? "transparent" : rgbCss(boxColor(partHue(parts, i), dark)),
                 }}
                 title={
                   perBox
@@ -332,8 +332,7 @@ export function RegionEditor({ activeTensorId, onSelectGroup }: {
       </div>
       {parts.length > MAX_DISTINCT_HUES && (
         <p className="hint">
-          tiles past the {MAX_DISTINCT_HUES}rd share a neutral color, only {MAX_DISTINCT_HUES} hues stay
-          distinguishable side by side, so use hover to tell the rest apart.
+          {MAX_DISTINCT_HUES} hues are in use, so some tiles share one; hover a row to tell them apart.
         </p>
       )}
     </div>

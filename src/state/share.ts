@@ -40,7 +40,9 @@ export type WorkspaceLink = {
    * Links written before tiles could span tensors carry the older
    * `{ t, boxes }` object; `decodeWorkspace` accepts both.
    */
-  sel: { t: string; box: [number, number][] }[] | null;
+  /** `h` is the tile's colour slot; links written before slots carry none,
+   * and their tiles take slots in order. */
+  sel: { t: string; box: [number, number][]; h?: number }[] | null;
   /**
    * Optional: the tile plan, as extents per tiled tensor. Links written before
    * plans could be shared carry none and open with nothing tiled.
@@ -169,9 +171,11 @@ export function parseWorkspaceLink(value: unknown): WorkspaceLink | null {
     const candidate: unknown = raw.sel;
     if (Array.isArray(candidate)) {
       if (!candidate.every(
-        (p): p is { t: string; box: [number, number][] } =>
+        (p): p is { t: string; box: [number, number][]; h?: number } =>
           !!p && typeof p === "object" && typeof (p as { t?: unknown }).t === "string" &&
-          isBox((p as { box?: unknown }).box)
+          isBox((p as { box?: unknown }).box) &&
+          ((p as { h?: unknown }).h === undefined ||
+            (Number.isSafeInteger((p as { h?: unknown }).h) && ((p as { h: number }).h) >= 0))
       )) return null;
       if (candidate.length) sel = candidate;
     } else if (candidate && typeof candidate === "object") {
@@ -220,12 +224,13 @@ export function parseWorkspaceLink(value: unknown): WorkspaceLink | null {
 
 /** The ordered selection parts, in link form. */
 export function selectionToLink(
-  selection: { parts: { tensorId: string; box: Box }[] } | null
+  selection: { parts: { tensorId: string; box: Box; hue?: number }[] } | null
 ): WorkspaceLink["sel"] {
   if (!selection || !selection.parts.length) return null;
   return selection.parts.map((p) => ({
     t: p.tensorId,
     box: p.box.map((interval) => [interval.lo, interval.hi]) as [number, number][],
+    ...(p.hue !== undefined ? { h: p.hue } : {}),
   }));
 }
 
@@ -268,7 +273,11 @@ export function linkToRestore(link: WorkspaceLink): WorkspaceRestore {
     tileScale: link.tile, snapToGrid: link.snap !== false, axisMode: link.axes ?? "numeric",
     viewCfgs: link.views,
     nodeOffsets: Object.fromEntries(Object.entries(link.pos ?? {}).map(([id, [dx, dy]]) => [id, { dx, dy }])),
-    parts: link.sel?.map((p) => ({ tensorId: p.t, box: p.box.map(([lo, hi]) => ({ lo, hi })) })) ?? null,
+    parts: link.sel?.map((p) => ({
+      tensorId: p.t,
+      box: p.box.map(([lo, hi]) => ({ lo, hi })),
+      ...(p.h !== undefined ? { hue: p.h } : {}),
+    })) ?? null,
     planTiles: link.plan,
     planTask: link.task ? { tensorId: link.task.t, coord: link.task.at } : null,
     keptTilings: link.kept,

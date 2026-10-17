@@ -7,7 +7,7 @@ import { count, Region, subtract, union } from "../../core/region";
 import { fmt, formatBytes, formatFigure } from "../../view/format";
 import { boxColor, rgbCss } from "../../view/palette";
 import { SHORTCUTS } from "../../view/shortcuts";
-import { ConeDirection, MAX_PER_BOX_PROPS } from "../../view/workspace";
+import { ConeDirection, MAX_PER_BOX_PROPS, partHue } from "../../view/workspace";
 import { useStore } from "../../state/store";
 import { CopyButton } from "../chrome/CopyButton";
 
@@ -47,6 +47,7 @@ export function FootprintBar({
   totalElements: number;
   attr: TileAttribution;
 }): React.ReactElement {
+  const parts = useStore((s) => s.selection?.parts);
   if (totalElements <= 0) return <span className="footprint-bar" />;
 
   const regions = perBox?.map(
@@ -59,7 +60,7 @@ export function FootprintBar({
   if (regions && focusedBox !== null && regions[focusedBox]) {
     segments.push({
       elements,
-      color: rgbCss(boxColor(focusedBox, dark)),
+      color: rgbCss(boxColor(partHue(parts, focusedBox), dark)),
       title: `tile ${focusedBox + 1}: ${fmt(elements)} elements`,
     });
   } else if (regions) {
@@ -74,7 +75,7 @@ export function FootprintBar({
       if (exclusive > 0)
         segments.push({
           elements: exclusive,
-          color: rgbCss(boxColor(index, dark)),
+          color: rgbCss(boxColor(partHue(parts, index), dark)),
           title: `tile ${index + 1} only: ${fmt(exclusive)} elements`,
         });
     });

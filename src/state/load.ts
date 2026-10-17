@@ -11,7 +11,7 @@ import { NodeOffset, NodeOffsets } from "../view/graph/node-layout";
 import { planesOf } from "../view/tensor/seeds";
 import { defaultViewCfg, remapped, ViewCfg, viewCfgFits } from "../view/tensor/tensor-view";
 import { graphScale, TILE_SCALE_MAX, TILE_SCALE_MIN } from "../view/tensor/tiling";
-import { idRecord, MAX_NODE_OFFSET, operationForTensor } from "../view/workspace";
+import { idRecord, MAX_NODE_OFFSET, operationForTensor, withHues } from "../view/workspace";
 import { planRestoreArtifact } from "../worker/analysis-jobs";
 import type { PlanRestoreArtifact } from "../worker/analysis-protocol";
 import { recompute } from "./analysis";
@@ -168,6 +168,7 @@ export function installedDSLState(
       parts: [{
         tensorId: example.defaultSelection.tensor,
         box: example.defaultSelection.box.map(([lo, hi]) => ({ lo, hi })),
+        hue: 0,
       }],
     };
     state.focusedBox = null;
@@ -250,9 +251,10 @@ export function restoredWorkspaceState(
     });
     if (checked.region.boxes.length !== 1)
       throw new Error(`selection on tensor "${part.tensorId}" is empty`);
-    return { tensorId: checked.tensorId, box: checked.region.boxes[0] };
+    const hue = part.hue !== undefined && Number.isSafeInteger(part.hue) && part.hue >= 0 ? part.hue : undefined;
+    return { tensorId: checked.tensorId, box: checked.region.boxes[0], ...(hue !== undefined ? { hue } : {}) };
   });
-  const selection = checkedParts.length ? { parts: checkedParts } : null;
+  const selection = checkedParts.length ? { parts: withHues(checkedParts) } : null;
   const hiddenBoxes = new Set(workspace.hiddenBoxes ?? []);
   for (const index of hiddenBoxes) {
     if (!Number.isSafeInteger(index) || index < 0 || index >= checkedParts.length)

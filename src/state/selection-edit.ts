@@ -1,7 +1,7 @@
 import { Box } from "../core/region";
 import { tileBox } from "../core/plan/tile-family";
 import { viewAxes } from "../view/tensor/tensor-view";
-import { analysisTarget, anchorTensorId, operationForTensor, SelPart } from "../view/workspace";
+import { analysisTarget, anchorTensorId, operationForTensor, SelPart, withHues } from "../view/workspace";
 import { recompute } from "./analysis";
 import { recordWorkspace } from "./history";
 import { State } from "./types";
@@ -70,7 +70,7 @@ export function editSelection(
   } = get();
   if (!selection || !resolved) return;
   const shapeOf = (tensorId: string) => resolved.tensors[tensorId].resolved!;
-  const parts = fn(selection.parts, shapeOf);
+  const parts = withHues(fn(selection.parts, shapeOf));
   const sel = parts.length === 0 ? null : { parts };
   const nextFocus =
     keepFocus && sel && focusedBox !== null && focusedBox < parts.length ? focusedBox : null;

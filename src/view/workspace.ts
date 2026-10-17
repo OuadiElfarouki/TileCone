@@ -7,6 +7,7 @@
 import { ResolvedGraph } from "../core/graph";
 import { mergeProps, PropResult } from "../core/propagate";
 import { Box } from "../core/region";
+import { MAX_DISTINCT_HUES } from "./palette";
 import type { TilePlan } from "../core/plan/plan";
 import type { FamilyReplay } from "../core/plan/replay";
 import { sameParameterizedSource } from "./params";
@@ -88,7 +89,48 @@ export const idRecord = <T>(source?: Record<string, T>): Record<string, T> =>
  * pull from a shared input is the reason the tool exists, and it cannot be done
  * if drawing on B discards the tile on A.
  */
-export type SelPart = { tensorId: string; box: Box };
+export type SelPart = {
+  tensorId: string;
+  box: Box;
+  /**
+   * The tile's colour slot (`boxColor`), given once and kept while the tile
+   * lives, so removing a tile does not repaint the others. Parts read from
+   * older links or built by tests may lack one; `withHues` fills it in, and
+   * readers fall back to the part's index.
+   */
+  hue?: number;
+};
+
+/** A part's colour slot, or its index for a part that has none. */
+export const partHue = (parts: readonly SelPart[] | undefined, index: number): number =>
+  parts?.[index]?.hue ?? index;
+
+/**
+ * The slot a new tile takes: the lowest one no tile holds, so the colour of a
+ * removed tile is the next one used. With every slot held, the least used,
+ * which wraps the palette round in order.
+ */
+export function nextHue(parts: readonly SelPart[]): number {
+  const uses = Array.from({ length: MAX_DISTINCT_HUES }, () => 0);
+  parts.forEach((part, index) => {
+    const hue = part.hue ?? index;
+    uses[((hue % MAX_DISTINCT_HUES) + MAX_DISTINCT_HUES) % MAX_DISTINCT_HUES]++;
+  });
+  return uses.indexOf(Math.min(...uses));
+}
+
+/** Give every part without a slot the next free one, in order. Parts that
+ * already have one are returned as they are, keeping their identity. */
+export function withHues(parts: SelPart[]): SelPart[] {
+  if (parts.every((part) => part.hue !== undefined)) return parts;
+  const held = parts.filter((part) => part.hue !== undefined);
+  return parts.map((part) => {
+    if (part.hue !== undefined) return part;
+    const given = { ...part, hue: nextHue(held) };
+    held.push(given);
+    return given;
+  });
+}
 
 /**
  * Scope an aggregate result to enabled tiles, optionally to one focused tile.

@@ -7,7 +7,7 @@ import { displayTile } from "../../view/tensor/tiling";
 import { nudgeBoxes } from "../../view/tensor/movement";
 import { viewAxes } from "../../view/tensor/tensor-view";
 import { gestureTile, tileFits, tileSpanAt } from "../../view/tensor/tile-spec";
-import { keyboardTile, MAX_PREVIEW_NODES, operationForTensor, partsOn, SelPart } from "../../view/workspace";
+import { keyboardTile, MAX_PREVIEW_NODES, operationForTensor, partsOn, SelPart, withHues } from "../../view/workspace";
 import { recompute } from "../analysis";
 import { recordWorkspace } from "../history";
 import { editSelection, revealHidden } from "../selection-edit";
@@ -32,7 +32,7 @@ function moveParts(
   const movedBox = move(oldBox, shape, state);
   if (movedBox === oldBox) return;
   const next = parts.slice();
-  next[index] = { tensorId: anchor, box: movedBox };
+  next[index] = { ...parts[index], box: movedBox };
   editSelection(get, set, () => next, true, record);
   const { rowAxis, colAxis } = viewAxes(shape, get().viewCfgs[anchor]);
   const hiddenMoved = oldBox?.some((interval, axis) => axis !== rowAxis && axis !== colAxis && interval.lo !== movedBox[axis].lo);
@@ -86,14 +86,24 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
       // Rebuild in place and retain the object identity of parts on other
       // tensors. Their indices can still shift when this tensor loses parts,
       // so the index-based UI state below is remapped by identity.
+      // A box that survives the gesture unchanged is the same tile, and keeps
+      // its colour; a piece cut from one is a new tile and gets its own.
+      const before = partsOn(selection, tensorId).map(({ index }) => selection.parts[index]);
+      const rebuilt = (box: Box): SelPart => {
+        const at = before.findIndex((p) => sameBox(p.box, box));
+        if (at < 0) return { tensorId, box };
+        const [kept] = before.splice(at, 1);
+        return { tensorId, box, ...(kept.hue !== undefined ? { hue: kept.hue } : {}) };
+      };
       parts = [];
       let k = 0;
       for (const p of selection.parts) {
         if (p.tensorId !== tensorId) parts.push(p);
-        else if (k < mine.length) parts.push({ tensorId, box: mine[k++] });
+        else if (k < mine.length) parts.push(rebuilt(mine[k++]));
       }
-      for (; k < mine.length; k++) parts.push({ tensorId, box: mine[k] });
+      for (; k < mine.length; k++) parts.push(rebuilt(mine[k]));
     }
+    parts = withHues(parts);
     const sel = parts.length === 0 ? null : { parts };
     // The tile just drawn is the one the keyboard moves next. Drawing a box
     // that is already a tile adds nothing, and selects that tile instead.
@@ -240,7 +250,7 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
     // A step continues the growth the last one left; anything else - a move,
     // an edit, an undo - has changed the box, and this step starts afresh.
     const baseBox = activeGrowth(state.growth, parts, index)?.baseBox ?? part.box;
-    editSelection(get, set, (current) => current.map((p, i) => (i === index ? { tensorId: p.tensorId, box } : p)), true, record);
+    editSelection(get, set, (current) => current.map((p, i) => (i === index ? { ...p, box } : p)), true, record);
     const installed = get().selection!.parts[index];
     set({
       growth: { index, tensorId: part.tensorId, baseBox, box, part: installed, delta: growthDelta(state.resolved, part.tensorId, baseBox, box) },

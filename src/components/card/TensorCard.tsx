@@ -30,7 +30,7 @@ import type { ResizeCorner } from "../../view/tensor/resize";
 import { DECK_ROOM_PX, DECK_STEP_PX, deckSheets } from "../../view/tensor/deck";
 import { cancelDeal, deal, holdPicture, prefersStill } from "./deal";
 import { seedTile } from "../../view/tensor/tile-spec";
-import { graphIsInteractive, keyboardTile, layoutMovable, partsOn } from "../../view/workspace";
+import { graphIsInteractive, keyboardTile, layoutMovable, nextHue, partHue, partsOn } from "../../view/workspace";
 import { activeGrowth } from "../../view/growth";
 import { tilesBox } from "../../core/plan/tile-family";
 import { buildPlanPaint, buildLayers, composeCardLayers } from "../../view/tensor/layers";
@@ -199,6 +199,11 @@ function TensorCardView({
   const sheets = slicing ? deckSheets(ordinal.index, ordinal.count) : 0;
 
   const parts = useMemo(() => partsOn(selection, tensor.id), [selection, tensor.id]);
+  const hues = useMemo(
+    () => selection?.parts.map((_, index) => partHue(selection.parts, index)) ?? [],
+    [selection]
+  );
+  const newHue = useMemo(() => nextHue(selection?.parts ?? []), [selection]);
   /* One entry per (part, meeting operation) that lands on this card. A part can
      be entangled with this tensor at more than one node, and those are separate
      facts, so they are separate layers rather than a union. */
@@ -304,6 +309,8 @@ function TensorCardView({
         isSelected,
         parts,
         partCount: selection?.parts.length ?? 0,
+        hues,
+        nextHue: newHue,
         perBox,
         hiddenBoxes,
         focusedBox,
@@ -369,6 +376,8 @@ function TensorCardView({
     replayPlayback,
     lens,
     parts,
+    hues,
+    newHue,
     perBox,
     drawScale,
     prev,

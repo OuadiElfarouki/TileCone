@@ -6,7 +6,7 @@ import { fmt, formatBytes, formatFigure } from "../../view/format";
 import { demandDetail, demandSummary } from "../../view/demand";
 import { aggregateColors, boxColor, rgbCss } from "../../view/palette";
 import { SHORTCUTS } from "../../view/shortcuts";
-import { graphIsInteractive, MAX_PER_BOX_PROPS, partsOn } from "../../view/workspace";
+import { graphIsInteractive, MAX_PER_BOX_PROPS, partHue, partsOn } from "../../view/workspace";
 import { useDark, useStore } from "../../state/store";
 import { AxisEditor } from "./AxisEditor";
 import { GrowthSummary } from "./growth";
@@ -125,8 +125,8 @@ function ActiveInspector(): React.ReactElement {
   /** A bar carries the hue of the tile it belongs to, or the aggregate when the
    *  rows describe several tiles at once. */
   const coneHue = (cone: "upstream" | "downstream") => {
-    if (focusedBox !== null) return rgbCss(boxColor(focusedBox, dark));
-    if (selBoxes === 1 && !merged) return rgbCss(boxColor(groupParts[0].index, dark));
+    if (focusedBox !== null) return rgbCss(boxColor(partHue(selection?.parts, focusedBox), dark));
+    if (selBoxes === 1 && !merged) return rgbCss(boxColor(partHue(selection?.parts, groupParts[0].index), dark));
     return rgbCss(cone === "upstream" ? aggregate.upstream : aggregate.downstream);
   };
 
