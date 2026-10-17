@@ -158,7 +158,9 @@ export function truthEntangled(
   nodeId: string,
   fromSlot: number,
   otherSlot: number,
-  selRegion: Region
+  selRegion: Region,
+  /** Count only the terms of these elements of the first output, when given. */
+  outputs?: Region
 ): Set<number> {
   const node = g.topo.find((n) => n.id === nodeId)!;
   const spec = getOp(node.op)!;
@@ -176,7 +178,9 @@ export function truthEntangled(
   node.outputs.forEach((outId, slot) => {
     const outShape = g.tensors[outId].resolved!;
     const n = outShape.reduce((a, b) => a * b, 1);
+    const within = outputs && slot === 0 ? regionToFlatSet(outputs, outShape) : null;
     for (let f = 0; f < n; f++) {
+      if (within && !within.has(f)) continue;
       for (const term of spec.oracleTerms!(slot, unflatIndex(f, outShape), ctx)) {
         const mine = term[fromSlot];
         const theirs = term[otherSlot];

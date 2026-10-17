@@ -209,6 +209,16 @@ export interface OpSpec {
    * so a missing implementation degrades rather than lies.
    */
   coaccess?(slot: number, box: Box, otherSlot: number, ctx: OpCtx): Region;
+  /**
+   * `coaccess` restricted to some of the outputs is exactly `coaccess` meet
+   * what those outputs read of the other operand (`coaccessWithin`). True of a
+   * label join - a contraction - where restricting the outputs restricts each
+   * label independently, and of an elementwise op, whose one term per output
+   * reads both operands at that output. Not claimed elsewhere: for a window,
+   * the taps a block meets anywhere can be more than it meets within a tile,
+   * and the restriction is then a bound.
+   */
+  coaccessSeparable?: true;
 
   /**
    * Ground truth for entanglement: one entry per term the operation evaluates

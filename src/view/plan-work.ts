@@ -175,26 +175,4 @@ export function describePlanChange(
   return text;
 }
 
-/**
- * The tensors a task reads, in operand order: the task's own operation's slots
- * first, `arg0` before `arg1`, then what fused operations further upstream read,
- * nearest first. A tensor read through several slots takes its earliest.
- * Ordering by name instead put `A` (arg1) above `Y` (arg0).
- */
-export function readOrder(
-  demand: readonly { tensorId: string; node: string; slot: number }[],
-  ownNode: string,
-  topo: readonly { id: string }[]
-): string[] {
-  const position = new Map(topo.map((node, i) => [node.id, i]));
-  const rank = (d: { node: string; slot: number }): [number, number, number] =>
-    d.node === ownNode ? [0, 0, d.slot] : [1, -(position.get(d.node) ?? 0), d.slot];
-  const best = new Map<string, [number, number, number]>();
-  for (const d of demand) {
-    const r = rank(d);
-    const prior = best.get(d.tensorId);
-    if (!prior || r[0] < prior[0] || (r[0] === prior[0] && (r[1] < prior[1] || (r[1] === prior[1] && r[2] < prior[2]))))
-      best.set(d.tensorId, r);
-  }
-  return [...best].sort(([, a], [, b]) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]).map(([id]) => id);
-}
+export { readOrder } from "../core/plan/interfaces";

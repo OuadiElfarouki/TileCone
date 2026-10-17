@@ -19,6 +19,9 @@ describe("plan replay paint", () => {
     first: { tensorId: "Y", coord },
     last: { tensorId: "Y", coord },
     tasks: 1,
+    firstPath: [{ tensorId: "Y", coord }],
+    lastPath: [{ tensorId: "Y", coord }],
+    steps: 1,
     region: fromBox(tile),
     reach: new Map([["X", reach(read, box([0, 2], [0, 4]))]]),
   });
@@ -32,6 +35,8 @@ describe("plan replay paint", () => {
         frame([1, 0], box([2, 4], [0, 2]), box([0, 2], [4, 8])),
       ],
       tasks: 3,
+      steps: 3,
+      stepTensors: ["Y"],
     },
     plan: {} as ReplayPlayback["plan"],
     visited,

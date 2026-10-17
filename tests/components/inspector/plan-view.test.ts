@@ -120,7 +120,7 @@ describe("planning from the canvas", () => {
     const task = S().planTask;
     S().setInspectorTab("plan");
     S().setReplayPlayback({
-      replay: { task: task!, depth: 1, frames: [], tasks: 1 },
+      replay: { task: task!, depth: 1, frames: [], tasks: 1, steps: 1, stepTensors: [task!.tensorId] },
       plan: S().plan!,
       visited: 0,
       paused: false,

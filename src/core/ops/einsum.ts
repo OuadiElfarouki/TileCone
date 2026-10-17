@@ -552,6 +552,7 @@ export const einsumOp: OpSpec = {
   multiplicity: (_s, outBox, inSlot, ctx) => einsumMultiplicity(eqOf(ctx.attrs), outBox, inSlot, ctx),
   coaccess: (slot, box, otherSlot, ctx) =>
     einsumCoaccess(eqOf(ctx.attrs), slot, box, otherSlot, ctx),
+  coaccessSeparable: true,
   oracleTerms: (_slot, outIndex, ctx) => einsumOracleTerms(eqOf(ctx.attrs), outIndex, ctx),
   flopsFor: (_slot, outBox, ctx) => einsumFlops(eqOf(ctx.attrs), outBox, ctx),
   flopsPerElement: (_slot, ctx) => einsumFlopsPerElement(eqOf(ctx.attrs), ctx),
@@ -580,6 +581,7 @@ function einsumSugar(
     oracleDeps: (_s, outIndex, ctx) => einsumOracleDeps(eqFor(ctx), outIndex, ctx),
     multiplicity: (_s, outBox, inSlot, ctx) => einsumMultiplicity(eqFor(ctx), outBox, inSlot, ctx),
     coaccess: (slot, box, otherSlot, ctx) => einsumCoaccess(eqFor(ctx), slot, box, otherSlot, ctx),
+    coaccessSeparable: true,
     oracleTerms: (_s, outIndex, ctx) => einsumOracleTerms(eqFor(ctx), outIndex, ctx),
     flopsFor: (_s, outBox, ctx) => einsumFlops(eqFor(ctx), outBox, ctx),
     flopsPerElement: (_slot, ctx) => einsumFlopsPerElement(eqFor(ctx), ctx),

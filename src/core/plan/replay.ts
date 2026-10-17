@@ -25,9 +25,13 @@
  */
 
 import { linearRangeToBoxes } from "../ops/reshape";
+import { coaccessWithin } from "../entangle";
+import { producerNode } from "../graph";
+import type { BoundedCone } from "../propagate";
 import { canonicalize, count, fromBox, intersect, isEmpty, Region } from "../region";
+import { readOrder } from "./interfaces";
 import { familyOf, regionDemand, TaskRef, TilePlan } from "./plan";
-import { tileBox, tileCoord, tileRange, tilesBox, type TileFamily } from "./tile-family";
+import { coordinatePage, PlanError, tileBox, tileCoord, tileRange, tilesBox, type TileFamily } from "./tile-family";
 
 /** What a run reaches on one tensor, and the part the inspected task reaches too. */
 export type ReplayReach = {
@@ -46,8 +50,16 @@ export type ReplayFrame = {
   /** The run's first and last task in listing order; the same task for a run of one. */
   first: TaskRef;
   last: TaskRef;
-  /** Tasks in the run. */
+  /** Family tasks in the run. */
   tasks: number;
+  /**
+   * The run's first and last step as task paths, family task first: one task
+   * at depth 1, then each upstream task it was reached through (`familyReplay`).
+   */
+  firstPath: TaskRef[];
+  lastPath: TaskRef[];
+  /** Steps in the run. */
+  steps: number;
   /** The run's tiles on the family's tensor. */
   region: Region;
   /** What the run reads or computes, per tensor other than its own. */
@@ -62,7 +74,22 @@ export type FamilyReplay = {
   frames: ReplayFrame[];
   /** Tasks in the family; more than `frames.length` when runs hold several. */
   tasks: number;
+  /** Steps in the replay: the family's tasks at depth 1, task paths deeper. */
+  steps: number;
+  /** The tensors whose tasks are the step at the deepest level reached. */
+  stepTensors: string[];
 };
+
+/** Bounded queries a stepped replay may run before declining the depth. */
+export const STEP_QUERY_BUDGET = 4096;
+
+/**
+ * Frames a stepped replay shows one step each before it cuts steps into runs.
+ * Far above `REPLAY_FRAMES` on purpose: a step is the granularity a deeper
+ * replay exists to show, and a run of steps paints their union - a whole row
+ * of producer tiles at once - which is the picture depth 1 already gives.
+ */
+export const STEP_FRAMES = 2048;
 
 /** Runs a replay walks at most, by default. */
 export const REPLAY_FRAMES = 48;
@@ -171,13 +198,31 @@ function reachOf(plan: TilePlan, tensorId: string, region: Region, depth: number
   return reached;
 }
 
+/**
+ * The family's replay at `depth`.
+ *
+ * At depth 1 a step is one of the family's tasks, and its frame is everything
+ * it reads and computes. Deeper, the family's tasks are no longer the unit: a
+ * task needs the tasks producing its tiles first, and those are what move. A
+ * step is then a path - a family task, one producer task it requires, one
+ * producer of that, down to `depth - 1` levels of producers - and its frame is
+ * each task on the path, the elements of the other operands each one is
+ * combined with in the task it feeds (`coaccessWithin`), and what the last
+ * task reads. For `Z = Y @ A` at depth 2 the step is one Y task, and it moves
+ * with the one block of A it meets within the Z task, rather than with all of
+ * the Z task's row of Y and column of A at once. A path stops early at a task
+ * with no producers. Steps run in listing order, family task first, then its
+ * producers in operand order.
+ */
 export function familyReplay(
   plan: TilePlan,
   task: TaskRef,
-  { sampleCap = REPLAY_FRAMES, depth = 1 }: { sampleCap?: number; depth?: number } = {}
+  { sampleCap = REPLAY_FRAMES, stepCap = STEP_FRAMES, depth = 1, budget = STEP_QUERY_BUDGET }:
+    { sampleCap?: number; stepCap?: number; depth?: number; budget?: number } = {}
 ): FamilyReplay {
   const family = familyOf(plan, task);
   const levels = Math.max(1, Math.min(Math.floor(depth), replayDepthLimit(plan, task.tensorId)));
+  if (levels > 1) return steppedReplay(plan, task, family, levels, stepCap, budget);
   const inspected = reachOf(plan, task.tensorId, fromBox(tileBox(family, task.coord)), levels);
   const frames = replayRuns(family.count, sampleCap).map(([first, end]): ReplayFrame => {
     const region: Region = {
@@ -197,10 +242,15 @@ export function familyReplay(
         ...(producerFamily ? { producers: tilesMet(producerFamily, reached) } : {}),
       });
     }
+    const firstTask = { tensorId: task.tensorId, coord: tileCoord(family, first) };
+    const lastTask = { tensorId: task.tensorId, coord: tileCoord(family, end - 1) };
     return {
-      first: { tensorId: task.tensorId, coord: tileCoord(family, first) },
-      last: { tensorId: task.tensorId, coord: tileCoord(family, end - 1) },
+      first: firstTask,
+      last: lastTask,
       tasks: end - first,
+      firstPath: [firstTask],
+      lastPath: [lastTask],
+      steps: end - first,
       region,
       reach,
     };
@@ -210,6 +260,150 @@ export function familyReplay(
     depth: levels,
     frames,
     tasks: family.count,
+    steps: family.count,
+    stepTensors: [task.tensorId],
+  };
+}
+
+/** What one step reaches on one tensor, before runs are merged. */
+type StepReach = { region: Region; level: number; producers?: Region };
+
+function steppedReplay(
+  plan: TilePlan,
+  task: TaskRef,
+  family: TileFamily,
+  levels: number,
+  stepCap: number,
+  budget: number
+): FamilyReplay {
+  const graph = plan.graph;
+  const cones = new Map<string, BoundedCone>();
+  const tileOf = (t: TaskRef): Region => fromBox(tileBox(plan.families.get(t.tensorId)!, t.coord));
+  const coneOf = (t: TaskRef): BoundedCone => {
+    const key = `${t.tensorId}|${t.coord.join(",")}`;
+    let cone = cones.get(key);
+    if (!cone) {
+      if (cones.size >= budget)
+        throw new PlanError(
+          "PLAN_BUDGET",
+          `stepping ${graph.tensors[task.tensorId].name} at depth ${levels} needs more than ${budget} task queries; choose a smaller depth`
+        );
+      cone = regionDemand(plan, t.tensorId, tileOf(t));
+      cones.set(key, cone);
+    }
+    return cone;
+  };
+  /** A task's producer tasks: per tiled tensor it reads, in operand order, each in listing order. */
+  const producersOf = (t: TaskRef): TaskRef[] => {
+    const cone = coneOf(t);
+    const tiled = cone.crossings.filter((c) => plan.families.has(c.tensorId));
+    const own = producerNode(graph, t.tensorId)?.id ?? "";
+    return readOrder(tiled, own, graph.topo).flatMap((tensorId) => {
+      const producer = plan.families.get(tensorId)!;
+      const coordinates: Region = {
+        boxes: tiled.filter((c) => c.tensorId === tensorId).flatMap((c) => c.region.boxes.map((b) => tileRange(producer, b))),
+        exact: true,
+        reasons: [],
+      };
+      return [...coordinatePage(coordinates, 0, count(coordinates))].map((coord) => ({ tensorId, coord }));
+    });
+  };
+
+  // Every step, depth first: each family task, then its producers, to depth - 1.
+  const paths: TaskRef[][] = [];
+  const walk = (path: TaskRef[]) => {
+    const producers = path.length < levels ? producersOf(path[path.length - 1]) : [];
+    if (!producers.length) paths.push(path);
+    else for (const p of producers) walk([...path, p]);
+  };
+  for (let i = 0; i < family.count; i++) walk([{ tensorId: task.tensorId, coord: tileCoord(family, i) }]);
+
+  /** One step's frame content, per tensor other than the family's own. */
+  const stepReach = (path: TaskRef[]): Map<string, StepReach> => {
+    const reach = new Map<string, StepReach>();
+    const add = (id: string, region: Region, level: number, producers?: Region) => {
+      const prior = reach.get(id);
+      reach.set(id, prior
+        ? {
+            region: merged(prior.region, region),
+            level: Math.min(prior.level, level),
+            producers: prior.producers && producers ? merged(prior.producers, producers) : prior.producers ?? producers,
+          }
+        : { region, level, ...(producers ? { producers } : {}) });
+    };
+    for (let i = 1; i < path.length; i++) {
+      const consumer = path[i - 1];
+      const step = path[i];
+      const tile = tileOf(step);
+      add(step.tensorId, tile, i, tile);
+      // What the step's tile is combined with inside the task it feeds.
+      const cone = coneOf(consumer);
+      for (const c of cone.crossings) {
+        if (c.tensorId !== step.tensorId) continue;
+        const block = intersect(c.region, tile);
+        if (isEmpty(block)) continue;
+        const node = graph.topo.find((n) => n.id === c.node)!;
+        const outputs = cone.tensors.get(node.outputs[0])?.region;
+        if (!outputs) continue;
+        node.inputs.forEach((other, slot) => {
+          if (slot === c.slot) return;
+          const met = coaccessWithin(graph, c.node, c.slot, block, slot, outputs);
+          if (met) add(other, met, i);
+        });
+      }
+    }
+    // What the last task on the path reads and computes, one level further.
+    const last = path[path.length - 1];
+    for (const [id, { region }] of coneOf(last).tensors) {
+      if (id === last.tensorId) continue;
+      const producer = plan.families.get(id);
+      add(id, region, path.length, producer ? tilesMet(producer, region) : undefined);
+    }
+    reach.delete(task.tensorId);
+    return reach;
+  };
+
+  const inspected = reachOf(plan, task.tensorId, tileOf(task), levels);
+  const frames = replayRuns(paths.length, stepCap).map(([first, end]): ReplayFrame => {
+    const run = paths.slice(first, end);
+    const merges = new Map<string, StepReach>();
+    for (const path of run)
+      for (const [id, part] of stepReach(path)) {
+        const prior = merges.get(id);
+        merges.set(id, prior
+          ? {
+              region: merged(prior.region, part.region),
+              level: Math.min(prior.level, part.level),
+              producers: prior.producers && part.producers ? merged(prior.producers, part.producers) : prior.producers ?? part.producers,
+            }
+          : part);
+      }
+    const reach = new Map<string, ReplayReach>();
+    for (const [id, part] of merges) {
+      const mine = inspected.get(id)?.region;
+      const shared = mine ? intersect(part.region, mine) : null;
+      reach.set(id, { ...part, shared: shared && !isEmpty(shared) ? shared : null });
+    }
+    const owners = [...new Map(run.map((path) => [path[0].coord.join(","), path[0]])).values()];
+    return {
+      first: run[0][0],
+      last: run[run.length - 1][0],
+      tasks: owners.length,
+      firstPath: run[0],
+      lastPath: run[run.length - 1],
+      steps: run.length,
+      region: canonicalize({ boxes: owners.flatMap((t) => tileOf(t).boxes), exact: true, reasons: [] }),
+      reach,
+    };
+  });
+  const deepest = Math.max(...paths.map((path) => path.length));
+  return {
+    task: { tensorId: task.tensorId, coord: [...task.coord] },
+    depth: levels,
+    frames,
+    tasks: family.count,
+    steps: paths.length,
+    stepTensors: [...new Set(paths.filter((path) => path.length === deepest).map((path) => path[path.length - 1].tensorId))],
   };
 }
 

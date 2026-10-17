@@ -130,33 +130,49 @@ describe("replaying through the plan's own producers", () => {
     expect(at(replay, "1,0").reach.get("C")!.level).toBe(1);
   });
 
-  it("follows the tasks producing what a run reads, whole tiles, at depth 2", () => {
-    const replay = familyReplay(plan, { tensorId: "Y", coord: [1, 0] }, { depth: 2 });
-    expect(replay.depth).toBe(2);
-    const frame = at(replay, "1,0");
-    expect([...frame.reach.keys()].sort()).toEqual(["A", "B", "C", "W"]);
-    expect(frame.reach.get("A")!.level).toBe(2);
-    // Y(1, 0) reads C's rows 8:16. C's tasks compute 16-row tiles, so the ones
-    // it needs are rows 0:16, and they read A's rows 0:16 - not 8:16.
-    expect(frame.reach.get("C")!.region.boxes).toEqual([box([8, 16], [0, 64])]);
-    expect(frame.reach.get("C")!.producers!.boxes).toEqual([box([0, 16], [0, 64])]);
-    expect(count(frame.reach.get("A")!.region)).toBe(16 * 32);
-    expect(count(intersect(frame.reach.get("A")!.region, fromBox(box([0, 16], [0, 32]))))).toBe(16 * 32);
-    // The same as the producer tasks' own demand, taken one task at a time.
-    const producers = [0, 1, 2, 3].map((c) => taskDemand(plan, { tensorId: "C", coord: [0, c] }));
-    for (const tensorId of ["A", "B"])
-      expect(count(frame.reach.get(tensorId)!.region)).toBe(
-        count(unionOf(producers.map((cone) => cone.tensors.get(tensorId)!.region)))
-      );
+  /* Deeper than 1 the family's tasks are no longer the step: each Y task needs
+     C tasks first, so a step is one C task feeding one Y task. */
+  const stepped = familyReplay(plan, { tensorId: "Y", coord: [1, 0] }, { depth: 2 });
+  const stepsOf = (coord: string) => stepped.frames.filter((f) => f.firstPath[0].coord.join(",") === coord);
+
+  it("steps through the producer tasks at depth 2, one C task per step, in listing order", () => {
+    expect(stepped.depth).toBe(2);
+    // One frame per step, well past the depth-1 run cap: a run of steps would
+    // paint their union and lose the granularity a deeper replay is for.
+    expect(stepped.frames.length).toBe(stepped.steps);
+    expect(stepped.frames.every((f) => f.steps === 1)).toBe(true);
+    // 32 Y tasks, each reading a row band of C through the 4 C tasks across it.
+    expect(stepped.steps).toBe(32 * 4);
+    expect(stepped.stepTensors).toEqual(["C"]);
+    expect(stepsOf("1,0").map((f) => f.lastPath.map((t) => `${t.tensorId}${t.coord.join(",")}`).join(">")))
+      .toEqual(["Y1,0>C0,0", "Y1,0>C0,1", "Y1,0>C0,2", "Y1,0>C0,3"]);
   });
 
-  it("measures the overlap against the inspected task followed to the same depth", () => {
-    const replay = familyReplay(plan, { tensorId: "Y", coord: [1, 0] }, { depth: 2 });
-    // Y(0, 0) reads C's rows 0:8, none of the inspected task's 8:16 - but the
-    // same C tasks produce both, so upstream they read the same A rows.
-    const neighbour = at(replay, "0,0");
-    expect(neighbour.reach.get("C")!.shared).toBeNull();
-    expect(count(neighbour.reach.get("A")!.shared!)).toBe(16 * 32);
+  it("moves each step with the block of the other operand it meets inside the task it feeds", () => {
+    stepsOf("1,0").forEach((frame, j) => {
+      const c = frame.reach.get("C")!;
+      expect(c.region.boxes).toEqual([box([0, 16], [16 * j, 16 * j + 16])]);
+      expect(c.producers!.boxes).toEqual([box([0, 16], [16 * j, 16 * j + 16])]);
+      expect(c.level).toBe(1);
+      // C[8:16, k-block] meets W[k-block, 0:8] within Y(1, 0), not all of W's columns.
+      const w = frame.reach.get("W")!;
+      expect(w.region).toMatchObject({ boxes: [box([16 * j, 16 * j + 16], [0, 8])], exact: true });
+      expect(w.level).toBe(1);
+      // What the C task itself reads, one level further: A's rows and one band of B.
+      expect(frame.reach.get("A")!).toMatchObject({ level: 2, region: { boxes: [box([0, 16], [0, 32])] } });
+      expect(frame.reach.get("B")!).toMatchObject({ level: 2, region: { boxes: [box([0, 32], [16 * j, 16 * j + 16])] } });
+    });
+  });
+
+  it("measures each step's overlap against the inspected task followed to the same depth", () => {
+    // Y(0, 0)'s first step is C(0, 0), which reads the same A rows as Y(1, 0)'s producers.
+    const [first] = stepsOf("0,0");
+    expect(count(first.reach.get("A")!.shared!)).toBe(16 * 32);
+  });
+
+  it("declines a depth whose steps need more queries than the budget", () => {
+    expect(() => familyReplay(plan, { tensorId: "Y", coord: [1, 0] }, { depth: 2, budget: 10 }))
+      .toThrow(/more than 10 task queries; choose a smaller depth/);
   });
 
   it("clamps a depth beyond what the plan has", () => {

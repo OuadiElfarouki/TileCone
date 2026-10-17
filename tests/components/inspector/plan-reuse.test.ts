@@ -87,7 +87,7 @@ describe("family replay in the Plan view", () => {
 
   /* C is tiled, so Y's tasks have producers upstream, and the replay can follow
      them one level further. */
-  it("offers a depth per family, and says what the deeper levels show", () => {
+  it("offers a depth per family, and steps through producer tasks deeper than 1", () => {
     const html = render();
     expect(html).toContain('aria-label="replay depth"');
     expect(html).toMatch(/aria-pressed="true"[^>]*>1<\/button>/);
@@ -95,7 +95,12 @@ describe("family replay in the Plan view", () => {
     expect(render()).toMatch(/aria-pressed="true"[^>]*>2<\/button>/);
     const replay = familyReplay(S().plan!, S().planTask!, { depth: 2 });
     S().setReplayPlayback({ replay, plan: S().plan!, visited: 1, paused: false, exiting: false, opacity: 1 });
-    expect(render()).toContain("up to 1 level upstream");
+    const stepped = render();
+    // Deeper than 1 a step is a C task feeding a Y task, named as that path.
+    expect(stepped).toMatch(/each a C task feeding the Y tasks/);
+    // 16 Y tasks × 64 C tasks each: one frame per step, not runs of them.
+    expect(stepped).toMatch(/Y \(0, 0\) ← C \(0, 0\) · 1 of 1024/);
+    expect(stepped).toContain("All 1024 steps, each a C task");
     // A replay made at another depth is not this one.
     S().setReplayDepth("Y", 1);
     expect(render()).not.toContain("listing order");

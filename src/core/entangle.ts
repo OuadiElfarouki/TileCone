@@ -27,7 +27,7 @@
 import { ResolvedGraph } from "./graph";
 import { getOp } from "./ops/index";
 import { OpCtx } from "./ops/types";
-import { Region, canonicalize, isEmpty, markInexact, sortRegion, union } from "./region";
+import { Region, canonicalize, intersect, isEmpty, markInexact, sortRegion, union } from "./region";
 
 export type Entanglement = {
   /** The operation where the two tensors meet. */
@@ -132,4 +132,52 @@ function fallbackCoaccess(
     });
   }
   return result && markInexact(result, "composed from forward and backward");
+}
+
+/**
+ * What `block` of operand `fromSlot` of `nodeId` is combined with on operand
+ * `otherSlot`, counting only the terms of the outputs in `outputs` - the part
+ * of the operation one task computes. For `C = A @ B`, a block `A[m, k0:k1]`
+ * meets `B[k0:k1, :]` over all of C, but only `B[k0:k1, n0:n1]` within the
+ * task computing `C[m, n0:n1]`.
+ *
+ * Taken as the meet of the block's entanglement and what the outputs it
+ * reaches within `outputs` read of the other operand. Every true pairing is in
+ * both, so this is never a subset; it is the set exactly where the operation
+ * says so (`coaccessSeparable`) and is marked as a bound otherwise. Null when
+ * nothing is combined.
+ */
+export function coaccessWithin(
+  graph: ResolvedGraph,
+  nodeId: string,
+  fromSlot: number,
+  block: Region,
+  otherSlot: number,
+  outputs: Region
+): Region | null {
+  const node = graph.topo.find((n) => n.id === nodeId);
+  if (!node || isEmpty(block) || isEmpty(outputs)) return null;
+  const spec = getOp(node.op)!;
+  const ctx: OpCtx = { inShapes: graph.shapesOf(node.inputs), outShapes: graph.shapesOf(node.outputs), attrs: node.attrs };
+  let met: Region | null = null;
+  let reads: Region | null = null;
+  for (const b of block.boxes) {
+    if (spec.coaccess) {
+      const r = spec.coaccess(fromSlot, b, otherSlot, ctx);
+      met = met ? union(met, r) : r;
+    }
+    const reached = intersect(spec.forward(fromSlot, b, ctx)[0], outputs);
+    for (const ob of reached.boxes) {
+      const back = spec.backward(0, ob, ctx)[otherSlot];
+      if (!back) continue;
+      const read = reached.exact ? back : markInexact(back, ...reached.reasons);
+      reads = reads ? union(reads, read) : read;
+    }
+  }
+  if (!reads) return null;
+  let result = met ? intersect(met, reads) : markInexact(reads, "composed from forward and backward");
+  if (isEmpty(result)) return null;
+  if (!block.exact) result = markInexact(result, ...block.reasons);
+  if (met && !spec.coaccessSeparable) result = markInexact(result, "restricted to the task's outputs by intersection");
+  return sortRegion(canonicalize(result));
 }

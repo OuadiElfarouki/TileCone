@@ -11,7 +11,7 @@
 
 import { describe, expect, it } from "vitest";
 import { resolveGraph } from "../../src/core/graph";
-import { entangledWith } from "../../src/core/entangle";
+import { coaccessWithin, entangledWith } from "../../src/core/entangle";
 import { getOp } from "../../src/core/ops/index";
 import { box, count, fromBox } from "../../src/core/region";
 import { compileDSL } from "../../src/parse/compiler";
@@ -332,4 +332,44 @@ describe("operations without the hook fall back, and say so", () => {
       }
     }
   });
+});
+
+/* Restricted to one task's outputs: exact where the operation says the meet is
+   the set (`coaccessSeparable`), a superset everywhere. */
+function checkWithin(graph: ReturnType<typeof G>, expectExact: boolean, trials = 24) {
+  const g = resolveGraph(graph);
+  const node = g.topo.find((n) => n.id === "n")!;
+  const shapes = g.shapesOf(node.inputs);
+  const outShape = g.tensors[node.outputs[0]].resolved!;
+  const r = rng(7);
+  const randomBox = (shape: number[]) => fromBox(shape.map((e) => {
+    const lo = randInt(r, 0, e);
+    return { lo, hi: randInt(r, lo + 1, e + 1) };
+  }));
+  let exactSeen = 0;
+  for (let k = 0; k < trials; k++)
+    for (let fromSlot = 0; fromSlot < node.inputs.length; fromSlot++)
+      for (let otherSlot = 0; otherSlot < node.inputs.length; otherSlot++) {
+        if (otherSlot === fromSlot) continue;
+        const block = randomBox(shapes[fromSlot]);
+        const outputs = randomBox(outShape);
+        const truth = truthEntangled(g, "n", fromSlot, otherSlot, block, outputs);
+        const got = coaccessWithin(g, "n", fromSlot, block, otherSlot, outputs);
+        const set = got ? regionToFlatSet(got, shapes[otherSlot]) : new Set<number>();
+        for (const f of truth) expect(set.has(f), `missing ${f}`).toBe(true);
+        if (!got || got.exact) { expect(set).toEqual(truth); exactSeen++; }
+      }
+  if (expectExact) expect(exactSeen).toBe(trials * node.inputs.length * (node.inputs.length - 1));
+}
+
+describe("entanglement within one task's outputs matches brute force", () => {
+  it("matmul, exactly", () =>
+    checkWithin(G({ A: [5, 6], B: [6, 4] }, [["n", "matmul", ["A", "B"], ["C"]]]), true));
+  it("attention scores, exactly", () =>
+    checkWithin(G({ Q: [2, 3, 4], K: [2, 5, 4] }, [["n", "einsum", ["Q", "K"], ["S"], { equation: "bqd,bkd->bqk" }]]), true));
+  it("a convolution, never a subset, and a bound wherever it is looser", () =>
+    checkWithin(G({ X: [1, 2, 6, 6], W: [3, 2, 3, 3] }, [["n", "conv", ["X", "W"], ["Y"],
+      { stride: [1, 1], pads: [[1, 1], [1, 1]], dilation: [1, 1], groups: 1 }]]), false, 8));
+  it("a broadcast elementwise, exactly", () =>
+    checkWithin(G({ X: [4, 5], Y: [1, 5] }, [["n", "elementwise", ["X", "Y"], ["Z"], { fn: "add", nary: 2 }]]), true));
 });

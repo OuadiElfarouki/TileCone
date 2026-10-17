@@ -739,7 +739,14 @@ function FamilySection({
       </div>
       {replay.depthLimit > 1 && <ReplayDepth tensorId={task.tensorId} replay={replay} />}
       {replay.error && <p className="hint overlap">Replay failed: {replay.error}</p>}
-      {replay.playback && <ReplayStatus playback={replay.playback} name={name} replay={replay} />}
+      {replay.playback && (
+        <ReplayStatus
+          playback={replay.playback}
+          name={name}
+          nameOf={(tensorId) => plan.graph.tensors[tensorId].name}
+          replay={replay}
+        />
+      )}
       {run.error ? (
         <p className="hint overlap">Plan analysis failed: {run.error}</p>
       ) : run.evaluating ? (
@@ -831,16 +838,23 @@ function ComputedSection({ plan, computes }: { plan: TilePlan; computes: Compute
 function ReplayStatus({
   playback,
   name,
+  nameOf,
   replay,
 }: {
   playback: ReplayPlayback;
   name: string;
+  nameOf: (tensorId: string) => string;
   replay: PlanReplayControl;
 }): React.ReactElement {
-  const { frames, tasks, depth } = playback.replay;
+  const { frames, tasks, depth, steps, stepTensors } = playback.replay;
   const current = frames[playback.visited - 1];
-  const runs = frames.length < tasks;
-  const unit = runs ? "run" : "task";
+  const runs = frames.length < steps;
+  const stepped = depth > 1;
+  const unit = runs ? "run" : stepped ? "step" : "task";
+  /* A step deeper than 1 is a path, read as what feeds what: the family's task,
+     then the producer task feeding it, and so on upstream. */
+  const pathName = (path: TaskRef[]) => path.map((t) => taskName(nameOf(t.tensorId), t.coord)).join(" ← ");
+  const feeders = stepTensors.map(nameOf).join(" or ");
   const last = playback.visited >= frames.length;
   return (
     <>
@@ -893,19 +907,21 @@ function ReplayStatus({
       </div>
       {current && (
         <p className="hint">
-          {current.tasks === 1
-            ? `Task ${taskName(name, current.first.coord)}`
-            : `Tasks ${taskName(name, current.first.coord)} to ${taskName(name, current.last.coord)}`}{" "}
+          {stepped
+            ? current.steps === 1
+              ? pathName(current.firstPath)
+              : `${pathName(current.firstPath)} to ${pathName(current.lastPath)}`
+            : current.tasks === 1
+              ? `Task ${taskName(name, current.first.coord)}`
+              : `Tasks ${taskName(name, current.first.coord)} to ${taskName(name, current.last.coord)}`}{" "}
           · {playback.visited} of {frames.length}
         </p>
       )}
       <p className="hint">
-        {runs ? `All ${tasks} tasks in ${frames.length} runs,` : `All ${tasks} tasks`} in listing
-        order, which is not an execution order. Full strength marks what each {runs ? "run" : "task"}{" "}
-        shares with this task.
-        {depth > 1 &&
-          ` Fainter fills are reached through the tasks producing what it reads, up to ${depth - 1} ` +
-          `level${depth > 2 ? "s" : ""} upstream; outlines are the producer tiles it needs.`}
+        {stepped
+          ? `${runs ? `All ${steps} steps in ${frames.length} runs` : `All ${steps} steps`}, each a ${feeders} task feeding the ${name} tasks ${depth > 2 ? `through ${depth - 2} level${depth > 3 ? "s" : ""} of producers ` : ""}in listing order, which is not an execution order. A step moves with the parts of the other operands it is combined with in the task it feeds, and what its task reads is drawn fainter.`
+          : `${runs ? `All ${tasks} tasks in ${frames.length} runs,` : `All ${tasks} tasks`} in listing order, which is not an execution order.`}{" "}
+        Full strength marks what each {unit} shares with this task; outlines are the producer tiles.
       </p>
     </>
   );
@@ -929,8 +945,8 @@ function ReplayDepth({ tensorId, replay }: { tensorId: string; replay: PlanRepla
           aria-pressed={level === replay.depth}
           onClick={() => setReplayDepth(tensorId, level)}
           title={level === 1
-            ? "replay this family's tasks: what they read and compute"
-            : `also the tasks producing what they read, ${level - 1} level${level > 2 ? "s" : ""} upstream`}
+            ? "step through this family's tasks: what each reads and computes"
+            : `step through the tasks ${level - 1} level${level > 2 ? "s" : ""} of producers up, each with what it is combined with in the task it feeds`}
         >
           {level}
         </button>

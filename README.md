@@ -133,10 +133,12 @@ The tasks follow listing order, row by row, which is not an execution order. A f
 48 tasks is walked in 48 contiguous runs, so no task is skipped. When the replay ends it holds the
 last run on the graph. Under the heading, ‹ and › step one run, ▶ / ❚❚ play and pause, the slider
 moves to any run, and **clear** fades the overlay. While it shows, the inspected task's own paint
-steps back so the run is the subject. **depth** follows the plan upstream: at 2 a run also shows the tasks
-producing the tiles it reads and what they read, at 3 the tasks producing those, and so on. Those
-tasks compute whole tiles, so the deeper levels show what the plan computes, drawn fainter per
-level, with the producer tiles outlined.
+steps back so the run is the subject. **depth** changes what a step is. At 1 a step is one of the family's tasks. At 2
+a step is one task producing a tile it reads - for `Z = Y @ A`, one Y task feeding one Z task - and
+it moves with the elements of the other operands it is combined with in that Z task (the one block
+of A it is multiplied against, not A's whole column), plus what the Y task reads, drawn fainter. At
+3 a step is a task one level further up, and so on. Those tasks compute whole tiles. The panel
+names each step as a path, `Z (0, 0) ← Y (0, 3)`.
 
 Share links include the current tiling, inspected task, kept tilings and Plan view. Kept
 figures are recomputed when the link is opened. Producer details are paged, with total counts

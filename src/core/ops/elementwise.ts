@@ -172,6 +172,7 @@ export const elementwiseOp: OpSpec = {
     const out = broadcastForwardBox(box, ctx.inShapes[slot], ctx.outShapes[0]);
     return fromBox(broadcastBackwardBox(out, ctx.inShapes[otherSlot]));
   },
+  coaccessSeparable: true,
   oracleTerms: (_slot, outIndex, ctx) => [
     ctx.inShapes.map((sh) => broadcastOracleIndex(outIndex, sh)),
   ],

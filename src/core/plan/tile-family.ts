@@ -33,7 +33,8 @@ export type PlanErrorCode =
   | "PLAN_TILE"
   | "PLAN_SIZE"
   | "PLAN_UNPLANNED"
-  | "PLAN_TASK";
+  | "PLAN_TASK"
+  | "PLAN_BUDGET";
 
 export class PlanError extends Error {
   constructor(
