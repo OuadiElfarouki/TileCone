@@ -1,7 +1,8 @@
 import { executeQuery } from "../../core/executor";
 import { hasUnitStride } from "../../core/coordinates";
 import { addPart, Box, Region, sameBox, subtractFromParts, translatePart } from "../../core/region";
-import { nudgeDelta } from "../../view/tensor/grid";
+import { nudgeDelta, nudgeUnit } from "../../view/tensor/grid";
+import { activeGrowth, growthDelta, stepEdge } from "../../view/growth";
 import { displayTile } from "../../view/tensor/tiling";
 import { nudgeBoxes } from "../../view/tensor/movement";
 import { viewAxes } from "../../view/tensor/tensor-view";
@@ -51,6 +52,7 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
   | "togglePinBox"
   | "clearFocus"
   | "releaseEditBox"
+  | "growSelection"
   | "selectAnalysisGroup"
   | "toggleBoxHidden"
   | "setTensorTile"
@@ -149,6 +151,7 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
       focusedBox: null,
       pinnedBox: null,
       editBox: null,
+      growth: null,
       hiddenBoxes: new Set<number>(),
       analysisGroup: null,
       preview: null,
@@ -219,6 +222,28 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
 
   releaseEditBox: () => {
     if (get().editBox !== null) set({ editBox: null });
+  },
+
+  growSelection: (axis, grow, record = true) => {
+    const state = get();
+    const parts = state.selection?.parts;
+    const index = keyboardTile(state);
+    if (!parts || index === null || !state.resolved) return;
+    const part = parts[index];
+    const shape = state.resolved.tensors[part.tensorId].resolved!;
+    if (!Number.isSafeInteger(axis) || axis < 0 || axis >= shape.length) return;
+    // The step is the arrows' unit: a tile while snapping, an element when not.
+    const unit = nudgeUnit(shape, state.viewCfgs[part.tensorId], state.tileScale, state.snapToGrid, axis);
+    const edge = stepEdge(part.box[axis], unit, shape[axis], grow);
+    if (!edge) return;
+    const box = part.box.map((interval, a) => (a === axis ? edge : interval));
+    // A step continues the growth the last one left; anything else - a move,
+    // an edit, an undo - has changed the box, and this step starts afresh.
+    const baseBox = activeGrowth(state.growth, parts, index)?.baseBox ?? part.box;
+    editSelection(get, set, (current) => current.map((p, i) => (i === index ? { tensorId: p.tensorId, box } : p)), true, record);
+    set({
+      growth: { index, tensorId: part.tensorId, baseBox, box, delta: growthDelta(state.resolved, part.tensorId, baseBox, box) },
+    });
   },
 
   selectAnalysisGroup: (tensorId) =>

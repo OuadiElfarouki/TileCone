@@ -26,6 +26,13 @@ export const SHORTCUTS = {
     keys: ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"],
     shift: true,
   },
+  growTile: {
+    id: "grow-tile",
+    label: "Alt + arrow",
+    action: "grow the tile's right or bottom edge one step (→ ↓), or shrink it back (← ↑), showing what the growth adds to its needs",
+    keys: ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"],
+    alt: true,
+  },
   deleteTile: {
     id: "delete-tile",
     label: "Del / Backspace",
@@ -135,6 +142,7 @@ export const SHORTCUT_GROUPS = [
     items: [
       SHORTCUTS.move,
       SHORTCUTS.moveFast,
+      SHORTCUTS.growTile,
       SHORTCUTS.deleteTile,
       SHORTCUTS.toggleTile,
       SHORTCUTS.escape,

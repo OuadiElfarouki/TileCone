@@ -93,6 +93,13 @@ export type LayerInputs = {
    * tile a click selects could only be learned by clicking.
    */
   hoverRegion?: Region | null;
+  /**
+   * What the keyboard tile's growth added to its cone on this tensor
+   * (`view/growth.ts`), and that tile's index for its hue. Drawn over the
+   * cones, stronger and outlined, so the new elements stand out from the ones
+   * the starting tile already needed.
+   */
+  grown?: { index: number; region: Region } | null;
   /** Regions on this tensor that the selection is combined with, by part index. */
   entangled?: { index: number; region: Region }[];
   showEntangled?: boolean;
@@ -121,6 +128,7 @@ export function buildLayers({
   prevForward,
   dragRegion,
   hoverRegion = null,
+  grown = null,
   entangled,
   showEntangled,
 }: LayerInputs): Layer[] {
@@ -257,6 +265,16 @@ export function buildLayers({
           pattern: { kind: "stipple", density: 0.5 },
         });
     }
+
+  if (grown)
+    layers.push({
+      region: grown.region,
+      color: boxColor(grown.index, dark),
+      alpha: 0.55,
+      hatch: !grown.region.exact,
+      outline: true,
+      lineWidth: EMPHASIS_LINE_PX,
+    });
 
   // The selection itself: each box in its own hue, dimmed when another is
   // focused. A hidden box keeps its rectangle - hiding removes the *cone*, and

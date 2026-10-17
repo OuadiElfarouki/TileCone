@@ -26,7 +26,7 @@ export function loadResolvedGraph(
   | "graph" | "resolved" | "baseLayout" | "workerGraphId" | "loadError" | "diagnostics" | "selection" | "backwardRes" | "forwardRes"
   | "byTensorRes"
   | "entangled"
-  | "perBox" | "focusedBox" | "pinnedBox" | "editBox" | "viewCfgs" | "preview" | "graphPx"
+  | "perBox" | "focusedBox" | "pinnedBox" | "editBox" | "growth" | "viewCfgs" | "preview" | "graphPx"
   | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "nodeOffsets"
   | "planTiles" | "planTask" | "plan" | "planSupply" | "keptPlans"
   | "replayPlayback" | "reuseLens" | "replayDepth" | "placementCarry" | "resizingTensor"
@@ -53,6 +53,7 @@ export function loadResolvedGraph(
     focusedBox: null,
     pinnedBox: null,
     editBox: null,
+    growth: null,
     hiddenBoxes: new Set<number>(),
     analysisGroup: null,
     replayPlayback: null,

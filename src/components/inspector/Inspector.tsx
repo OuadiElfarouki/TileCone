@@ -9,6 +9,7 @@ import { SHORTCUTS } from "../../view/shortcuts";
 import { graphIsInteractive, MAX_PER_BOX_PROPS, partsOn } from "../../view/workspace";
 import { useDark, useStore } from "../../state/store";
 import { AxisEditor } from "./AxisEditor";
+import { GrowthSummary } from "./growth";
 import { PlanPanel } from "./PlanPanel";
 import { ConeSection, MERGED_AT_CAP, NO_ENABLED_TILES, sliceLines, TileAttribution } from "./cones";
 import {
@@ -242,6 +243,7 @@ function ActiveInspector(): React.ReactElement {
                 which cone the two sections describe, so it sits above them. */}
             <RegionEditor activeTensorId={activeTensorId} onSelectGroup={selectGroup} />
             {axisIndex !== null && <AxisEditor index={axisIndex} />}
+            <GrowthSummary />
 
             <ConeSection
               direction="backward"

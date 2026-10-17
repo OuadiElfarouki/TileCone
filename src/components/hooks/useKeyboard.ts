@@ -149,6 +149,30 @@ export function useKeyboard({
         window.dispatchEvent(new Event(FIT_GRAPH_EVENT));
         return;
       }
+      /* Alt+arrow is the browser's Back and Forward on some platforms. The
+         workspace claims it whenever it has the keys, so a press with no tile
+         to grow - or in the Plan view, or on an old build - cannot navigate
+         away from the page. */
+      if (matchesShortcut(e, SHORTCUTS.growTile)) {
+        e.preventDefault();
+        if (!graphIsInteractive(s) || s.inspectorTab !== "dependencies") return;
+        const index = keyboardTile(s);
+        const tensorId = index === null ? null : s.selection!.parts[index].tensorId;
+        const tileShape = tensorId ? s.resolved?.tensors[tensorId].resolved : null;
+        if (!tensorId || !tileShape) return;
+        const { rowAxis, colAxis } = viewAxes(tileShape, s.viewCfgs[tensorId]);
+        const steps: Record<string, [number, boolean]> = {
+          ArrowRight: [colAxis, true],
+          ArrowLeft: [colAxis, false],
+          ArrowDown: [rowAxis, true],
+          ArrowUp: [rowAxis, false],
+        };
+        const [axis, grow] = steps[e.key];
+        // Auto-repeat records no undo entry, as a held move does not.
+        if (axis >= 0) s.growSelection(axis, grow, !e.repeat);
+        return;
+      }
+
       // Navigation and panel controls remain available for an old build;
       // selection, plan edits and workspace undo require the current source.
       if (!graphIsInteractive(s)) return;

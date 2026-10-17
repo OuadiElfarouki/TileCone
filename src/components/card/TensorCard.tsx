@@ -31,6 +31,7 @@ import { DECK_ROOM_PX, DECK_STEP_PX, deckSheets } from "../../view/tensor/deck";
 import { cancelDeal, deal, holdPicture, prefersStill } from "./deal";
 import { seedTile } from "../../view/tensor/tile-spec";
 import { graphIsInteractive, keyboardTile, layoutMovable, partsOn } from "../../view/workspace";
+import { activeGrowth } from "../../view/growth";
 import { buildPlanPaint, buildLayers, composeCardLayers } from "../../view/tensor/layers";
 import {
   CellDrag,
@@ -133,6 +134,13 @@ function TensorCardView({
   const perBox = useStore((s) => s.perBox);
   const focusedBox = useStore((s) => s.focusedBox);
   const keyTile = useStore(keyboardTile);
+  // What the keyboard tile's growth added on this tensor. Selected as the
+  // stored region itself, so a card the growth does not reach never repaints.
+  const grownRegion = useStore((s) => {
+    const growth = activeGrowth(s.growth, s.selection?.parts, keyboardTile(s));
+    const row = growth?.delta.tensors.find((t) => t.tensorId === tensor.id);
+    return row && row.elements > 0 ? row.added : null;
+  });
   const hiddenBoxes = useStore((s) => s.hiddenBoxes);
   const direction = useStore((s) => s.direction);
   const snapToGrid = useStore((s) => s.snapToGrid);
@@ -286,6 +294,7 @@ function TensorCardView({
         prevForward,
         dragRegion,
         hoverRegion,
+        grown: grownRegion && keyTile !== null ? { index: keyTile, region: grownRegion } : null,
         entangled,
         showEntangled,
       });
@@ -359,6 +368,7 @@ function TensorCardView({
     tensor.producer,
     hoverCell,
     interactive,
+    grownRegion,
   ]);
 
   useEffect(() => {

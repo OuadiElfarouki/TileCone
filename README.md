@@ -176,6 +176,11 @@ so an axis of one length is gridded alike on every card and editing one tensor n
 another; each card's header shows its tile as rows × columns. Under the pointer, the card outlines
 the box a click would take. **snap** off cuts exact element ranges instead of whole tiles.
 
+**Alt+→** and **Alt+↓** grow the selected tile's right or bottom edge one grid step, and **Alt+←**
+and **Alt+↑** shrink it back. While you grow it, the cards outline what the larger tile needs that
+the starting tile did not, and a Growth section under the Axes table lists it per tensor: one more
+column block of a GEMM tile needs no more of A and a whole band of B.
+
 ## What's supported
 
 | | |

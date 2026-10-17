@@ -11,6 +11,7 @@ import { NodeOffset, NodeOffsets } from "../view/graph/node-layout";
 import { AxisMode } from "../view/tensor/shape-label";
 import { ViewCfg } from "../view/tensor/tensor-view";
 import type { ReuseLens } from "../view/reuse-lens";
+import type { Growth } from "../view/growth";
 import {
   BoxProp,
   CanvasTool,
@@ -130,6 +131,12 @@ export type State = {
    * arrows, Delete and `h` act on nothing (`keyboardTile`).
    */
   editBox: number | null;
+  /**
+   * The keyboard tile's growth since its first Alt+arrow step, with what it
+   * adds to the tile's cone (`view/growth.ts`). Read through `activeGrowth`,
+   * which drops it once the tile is no longer the box the last step left.
+   */
+  growth: Growth | null;
   /**
    * Parts excluded from merged analysis and dependency paint. Focus is still a
    * separate transient choice, but hiding the focused part clears that focus so
@@ -316,6 +323,11 @@ export type State = {
   clearFocus: () => void;
   /** Release the keyboard's tile (`editBox`) without touching focus or pin. */
   releaseEditBox: () => void;
+  /**
+   * Move the keyboard tile's far edge on `axis` one grid step out (`grow`) or
+   * back. The first step keeps the starting box as the growth baseline.
+   */
+  growSelection: (axis: number, grow: boolean, record?: boolean) => void;
   /** Scope every readout below the tiles list to one tensor's tiles. Releases
    * the pin, which is itself a group choice and would otherwise outrank this
    * one and block hovering the group just chosen. */

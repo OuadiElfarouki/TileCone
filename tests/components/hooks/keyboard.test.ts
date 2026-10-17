@@ -89,6 +89,41 @@ describe("global shortcuts with movable node focus", () => {
 /* Escape backs out of the innermost mode, and under the move tool the tool is
    that mode - unless a gesture is in flight, which cancels itself and is the
    whole of the press. */
+/* Alt+arrow grows the keyboard tile, and is claimed even when it cannot, since
+   on some platforms it is the browser's Back and Forward. */
+describe("Alt + arrow and the tile growth lens", () => {
+  const alt = (name: string) => ({ ...key(name, "canvas"), altKey: true }) as KeyboardEvent;
+  beforeEach(() => {
+    useStore.getState().setCanvasTool("select");
+    useStore.getState().setInspectorTab("dependencies");
+    useStore.getState().setSnapToGrid(false);
+    useStore.getState().setSelection("Y", fromBox([{ lo: 0, hi: 2 }]), "replace");
+  });
+
+  it("grows the far edge on the drawn axis, and shrinks it back", () => {
+    const event = alt("ArrowRight");
+    onKey(event);
+    expect(useStore.getState().selection!.parts[0].box).toEqual([{ lo: 0, hi: 3 }]);
+    expect(event.preventDefault).toHaveBeenCalled();
+    onKey(alt("ArrowLeft"));
+    expect(useStore.getState().selection!.parts[0].box).toEqual([{ lo: 0, hi: 2 }]);
+  });
+
+  it("claims the key in the Plan view and with no tile, changing nothing", () => {
+    useStore.getState().setInspectorTab("plan");
+    const inPlan = alt("ArrowLeft");
+    onKey(inPlan);
+    expect(inPlan.preventDefault).toHaveBeenCalled();
+    useStore.getState().setInspectorTab("dependencies");
+    useStore.getState().releaseEditBox();
+    const selection = useStore.getState().selection;
+    const noTile = alt("ArrowRight");
+    onKey(noTile);
+    expect(noTile.preventDefault).toHaveBeenCalled();
+    expect(useStore.getState().selection).toBe(selection);
+  });
+});
+
 /* The reuse lens is an overlay on one card, so it is the innermost thing
    Escape can take down - before the move tool, and alone. */
 describe("Escape and the reuse lens", () => {
