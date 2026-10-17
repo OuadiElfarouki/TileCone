@@ -4,7 +4,7 @@ import { hasUnitStride, stepCoordinate } from "../../core/coordinates";
 import { defaultPlanTile } from "../../view/tensor/seeds";
 import { idRecord, operationForTensor } from "../../view/workspace";
 import { recordWorkspace, sameNumbers, sameTask, sameTiles } from "../history";
-import { derivePlan, inspectTask, MAX_KEPT_PLANS, tileContaining } from "../plan";
+import { activePlanTrail, derivePlan, inspectTask, MAX_KEPT_PLANS, tileContaining } from "../plan";
 import { revealHidden } from "../selection-edit";
 import { GetState, SetState, State } from "../types";
 
@@ -13,6 +13,8 @@ export const planActions = (set: SetState, get: GetState): Pick<
   State,
   "setPlanTile"
   | "selectPlanTask"
+  | "followPlanTask"
+  | "backPlanTask"
   | "planTaskAt"
   | "setPlanTileAt"
   | "tilePlanTensor"
@@ -70,6 +72,26 @@ export const planActions = (set: SetState, get: GetState): Pick<
       selectedOp: next.planTask ? operationForTensor(state.resolved, next.planTask.tensorId) : state.selectedOp,
       ...next,
     });
+  },
+
+  followPlanTask: (task) => {
+    const state = get();
+    const from = state.planTask;
+    if (!from || sameTask(from, task)) return;
+    const trail = activePlanTrail(state);
+    get().selectPlanTask(task);
+    // Only once the step has landed: a task the plan does not have is refused.
+    if (sameTask(get().planTask, task))
+      set({ planTrail: { from: [...(trail?.from ?? []), from], to: task } });
+  },
+
+  backPlanTask: (index) => {
+    const trail = activePlanTrail(get());
+    const target = trail?.from[index];
+    if (!trail || !target) return;
+    get().selectPlanTask(target);
+    if (sameTask(get().planTask, target))
+      set({ planTrail: index > 0 ? { from: trail.from.slice(0, index), to: target } : null });
   },
 
   planTaskAt: (tensorId, element) => {

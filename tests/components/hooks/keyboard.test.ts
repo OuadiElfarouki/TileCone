@@ -109,6 +109,19 @@ describe("Alt + arrow and the tile growth lens", () => {
     expect(useStore.getState().selection!.parts[0].box).toEqual([{ lo: 0, hi: 2 }]);
   });
 
+  it("steps back along followed producers in the Plan view", () => {
+    const s = useStore.getState();
+    s.applyDSL("X = Tensor(8)\nY = relu(X)\nZ = relu(Y)\n");
+    s.setInspectorTab("plan");
+    s.setPlanTile("Y", [2]);
+    s.setPlanTileAt("Z", [2], [0]);
+    s.followPlanTask({ tensorId: "Y", coord: [0] });
+    const event = alt("ArrowLeft");
+    onKey(event);
+    expect(useStore.getState().planTask).toEqual({ tensorId: "Z", coord: [0] });
+    expect(event.preventDefault).toHaveBeenCalled();
+  });
+
   it("claims the key in the Plan view and with no tile, changing nothing", () => {
     useStore.getState().setInspectorTab("plan");
     const inPlan = alt("ArrowLeft");

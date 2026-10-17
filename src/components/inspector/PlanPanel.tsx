@@ -28,11 +28,12 @@ import {
   type Work,
 } from "../../core/plan/interfaces";
 import type { TaskRef, TilePlan } from "../../core/plan/plan";
-import { tileBox, tileOrdinal, tiles, type TileFamily } from "../../core/plan/tile-family";
+import { coordinatePage, tileBox, tileOrdinal, tiles, type TileFamily } from "../../core/plan/tile-family";
+import { taskLineage, type LineageRow } from "../../core/plan/replay";
 import { count, formatBoxIndices, unionOf } from "../../core/region";
 import { FIGURE_MARK, fmt, formatBytes, formatFigure, formatIntensity } from "../../view/format";
 import { demandDetail, demandSummary } from "../../view/demand";
-import { describePlanChange, describeTiling, WORK_ROWS, workCell, workCellTitle } from "../../view/plan-work";
+import { describePlanChange, describeTiling, readOrder, WORK_ROWS, workCell, workCellTitle } from "../../view/plan-work";
 import { boxColor, rgbCss } from "../../view/palette";
 import { useDark, useStore } from "../../state/store";
 import { DraftField } from "../chrome/DraftField";
@@ -40,7 +41,7 @@ import { OperandReuse } from "./operand-reuse";
 import type { PlanReplayControl } from "./usePlanReplay";
 import type { ReplayPlayback } from "../../view/workspace";
 import { sameTiles } from "../../state/history";
-import { MAX_KEPT_PLANS } from "../../state/plan";
+import { activePlanTrail, MAX_KEPT_PLANS } from "../../state/plan";
 import {
   analysisWorkerAvailable,
   isAnalysisCancelled,
@@ -542,6 +543,9 @@ function DemandGroup({
     <div className="plan-demand">
       <div className="plan-demand-head">
         <code>{tensor.name}</code>
+        {demands[0].supplier === "input" && (
+          <span className="badge input" title="read from memory; no task produces it">graph input</span>
+        )}
         <span className="muted">
           {named ? `${demands.map(slotLabel).join(", ")} · ` : ""}
           {formatFigure(byteFigure(tensor, count(union), union), formatBytes)}
@@ -555,13 +559,11 @@ function DemandGroup({
           {regionSliceExprs(tensor.name, d.region).join("\n")}
         </pre>
       ))}
-      {demands[0].supplier === "input" ? (
-        <p className="hint">Graph input: read from memory, produced by no task.</p>
-      ) : (
+      {demands[0].supplier === "tasks" && (
         family && (
           <>
-            <p className="plan-need">
-              needs {group && group.definiteCount < total ? FIGURE_MARK.upper : ""}{total} of {family.count} {tensor.name} task{family.count === 1 ? "" : "s"}
+            <p className="plan-need" title={`${total} of the ${family.count} tasks of ${tensor.name}`}>
+              requires {group && group.definiteCount < total ? FIGURE_MARK.upper : ""}{total}/{family.count} task{family.count === 1 ? "" : "s"}
             </p>
             <ul className="plan-list">
               {shown.map((need) => (
@@ -942,7 +944,9 @@ export function PlanPanel({ replay }: { replay: PlanReplayControl }): React.Reac
   const plan = useStore((s) => s.plan);
   const task = useStore((s) => s.planTask);
   const supply = useStore((s) => s.planSupply);
-  const selectPlanTask = useStore((s) => s.selectPlanTask);
+  const followPlanTask = useStore((s) => s.followPlanTask);
+  const backPlanTask = useStore((s) => s.backPlanTask);
+  const trail = useStore(activePlanTrail);
   const setFocusNode = useStore((s) => s.setFocusNode);
   const dark = useDark();
   const run = usePlanRun(plan);
@@ -953,11 +957,19 @@ export function PlanPanel({ replay }: { replay: PlanReplayControl }): React.Reac
     [plan, supply]
   );
 
-  /** Following a producer makes it the task, and brings its tensor into view. */
+  /** Following a producer makes it the task, remembers where it came from, and
+   *  brings its tensor into view. */
   const follow = (next: TaskRef) => {
-    selectPlanTask(next);
+    followPlanTask(next);
     setFocusNode({ kind: "tensor", id: next.tensorId });
   };
+  const back = (index: number) => {
+    const target = trail?.from[index];
+    if (!target) return;
+    backPlanTask(index);
+    setFocusNode({ kind: "tensor", id: target.tensorId });
+  };
+  const nameOf = (tensorId: string) => resolved.tensors[tensorId]?.name ?? tensorId;
 
   const family = plan && task ? plan.families.get(task.tensorId) : undefined;
   const tensor = task ? resolved.tensors[task.tensorId] : undefined;
@@ -974,6 +986,25 @@ export function PlanPanel({ replay }: { replay: PlanReplayControl }): React.Reac
       {plan && task && family && tensor && node && supply ? (
         <>
           <div className="ins-section">
+            {/* Where this task was reached from, by following producer lists:
+                any step back returns there, Alt+← to the last. */}
+            {trail && (
+              <nav className="plan-trail" aria-label="followed from">
+                {trail.from.map((step, i) => (
+                  <React.Fragment key={i}>
+                    <button
+                      className="mini"
+                      onClick={() => back(i)}
+                      title={i === trail.from.length - 1 ? "back to this task (Alt+←)" : "back to this task"}
+                    >
+                      {taskName(nameOf(step.tensorId), step.coord)}
+                    </button>
+                    <span className="muted" aria-hidden>›</span>
+                  </React.Fragment>
+                ))}
+                <span className="muted">{taskName(tensor.name, task.coord)}</span>
+              </nav>
+            )}
             <div className="ins-title">Task {taskName(tensor.name, task.coord)}</div>
             <p className="plan-op">
               <code>{`${tensor.name}[${formatBoxIndices(tileBox(family, task.coord))}]`}</code>
@@ -993,7 +1024,7 @@ export function PlanPanel({ replay }: { replay: PlanReplayControl }): React.Reac
             {supply.demand.length === 0 ? (
               <p className="hint">This task reads nothing.</p>
             ) : (
-              [...new Map(supply.demand.map((d) => [d.tensorId, d])).keys()].map((tensorId) => (
+              readOrder(supply.demand, node.id, plan.graph.topo).map((tensorId) => (
                 <DemandGroup
                   key={tensorId}
                   tensorId={tensorId}
@@ -1007,6 +1038,7 @@ export function PlanPanel({ replay }: { replay: PlanReplayControl }): React.Reac
             )}
           </section>
           {supply.computes.length > 0 && <ComputedSection plan={plan} computes={supply.computes} />}
+          <LineageSection plan={plan} task={task} onFollow={follow} />
           {reads && (
             <OperandReuse
               reads={reads}
@@ -1022,5 +1054,98 @@ export function PlanPanel({ replay }: { replay: PlanReplayControl }): React.Reac
         plan && <p className="hint">Click a tile of a tiled tensor to inspect its task.</p>
       )}
     </div>
+  );
+}
+
+const levelNote = (level: number) =>
+  level === 1 ? "this task" : level === 2 ? "the tasks producing those tiles" : `${level - 1} levels of producers up`;
+
+/**
+ * Everything the inspected task depends on through the plan, to the graph's
+ * inputs (`taskLineage`): per upstream tensor, the producer tasks it needs, the
+ * input elements it reads, or the fused computation its producers do, level by
+ * level. An output task relates to the tasks of any tensor above it here
+ * without replaying its family. Pointing at a row outlines those tasks on the
+ * tensor's card; a row's first task can be followed into, keeping the trail.
+ */
+function LineageSection({
+  plan,
+  task,
+  onFollow,
+}: {
+  plan: TilePlan;
+  task: TaskRef;
+  onFollow: (task: TaskRef) => void;
+}): React.ReactElement | null {
+  const setLineageFocus = useStore((s) => s.setLineageFocus);
+  const rows = useMemo(() => taskLineage(plan, task), [plan, task]);
+  // A focus left behind by a row that went away with its task would outline
+  // tiles nothing on screen is pointing at.
+  useEffect(() => () => setLineageFocus(null), [plan, task, setLineageFocus]);
+  if (!rows.length) return null;
+  const levels = [...new Set(rows.map((row) => row.level))];
+  const name = (row: LineageRow) => plan.graph.tensors[row.tensorId].name;
+  return (
+    <section className="ins-section" aria-label="upstream to the inputs">
+      <div className="ins-title">Upstream, to the inputs</div>
+      {levels.map((level) => (
+        <div className="plan-lineage-level" key={level}>
+          <div className="plan-lineage-head muted">
+            level {level} · {levelNote(level)}
+          </div>
+          <ul className="reuse-list">
+            {rows.filter((row) => row.level === level).map((row) => {
+              const tensor = plan.graph.tensors[row.tensorId];
+              const bytes = formatFigure(byteFigure(tensor, count(row.region), row.region), formatBytes);
+              if (row.kind === "tasks") {
+                const first = [...coordinatePage(row.coordinates!, 0, 1)][0];
+                return (
+                  <li
+                    key={row.tensorId}
+                    onMouseEnter={() => setLineageFocus({ tensorId: row.tensorId, coordinates: row.coordinates! })}
+                    onMouseLeave={() => setLineageFocus(null)}
+                  >
+                    <code>{name(row)}</code>
+                    <span className="muted" title={`${row.tasks} of the ${row.of} tasks of ${name(row)}; point to outline them`}>
+                      requires {row.tasks}/{row.of} task{row.of === 1 ? "" : "s"} · {bytes}
+                    </span>
+                    {!row.region.exact && (
+                      <span className="badge approx" title={row.region.reasons.join("; ")}>≈</span>
+                    )}
+                    {first && (
+                      <button
+                        className="mini reads-figures"
+                        title={`inspect ${taskName(name(row), first)}, the first of them, keeping the way back`}
+                        onClick={() => onFollow({ tensorId: row.tensorId, coord: first })}
+                      >
+                        {taskName(name(row), first)}
+                      </button>
+                    )}
+                  </li>
+                );
+              }
+              return (
+                <li key={row.tensorId}>
+                  <code>{name(row)}</code>
+                  {row.kind === "input" ? (
+                    <span className="badge input" title="read from memory; no task produces it">graph input</span>
+                  ) : (
+                    <span className="muted">fused, computed by {levelNote(level)}</span>
+                  )}
+                  <span className="muted">{bytes}</span>
+                  {!row.region.exact && (
+                    <span className="badge approx" title={row.region.reasons.join("; ")}>≈</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
+      <p className="hint">
+        Level 1 is what this task reads; each further level is what the tasks producing those tiles
+        read, which is whole tiles. Point at a row to outline its tasks on the card.
+      </p>
+    </section>
   );
 }

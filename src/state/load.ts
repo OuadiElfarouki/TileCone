@@ -28,7 +28,7 @@ export function loadResolvedGraph(
   | "entangled"
   | "perBox" | "focusedBox" | "pinnedBox" | "editBox" | "growth" | "viewCfgs" | "preview" | "graphPx"
   | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "nodeOffsets"
-  | "planTiles" | "planTask" | "plan" | "planSupply" | "keptPlans"
+  | "planTiles" | "planTask" | "plan" | "planSupply" | "keptPlans" | "planTrail" | "lineageFocus"
   | "replayPlayback" | "reuseLens" | "replayDepth" | "placementCarry" | "resizingTensor"
 > {
   const viewCfgs = Object.create(null) as Record<string, ViewCfg>;
@@ -66,6 +66,8 @@ export function loadResolvedGraph(
     // does, and a kept plan's totals were measured on this graph alone.
     ...NO_PLAN,
     keptPlans: [],
+    planTrail: null,
+    lineageFocus: null,
     placementCarry: false,
     resizingTensor: null,
   };

@@ -57,6 +57,8 @@ export const useStore = create<State>((set, get) => {
   replayDepth: idRecord<number>(),
   ...NO_PLAN,
   keptPlans: [],
+  planTrail: null,
+  lineageFocus: null,
   entangled: null,
   selection: null,
   workspaceHistory: [],

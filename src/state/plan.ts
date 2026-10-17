@@ -23,6 +23,22 @@ export const NO_PLAN = {
 } as const;
 
 /**
+ * The stored trail, while it still leads to the inspected task and every task
+ * on it is still a task of the plan; null otherwise.
+ */
+export function activePlanTrail(
+  state: Pick<State, "planTrail" | "planTask" | "plan">
+): { from: TaskRef[]; to: TaskRef } | null {
+  const { planTrail: trail, planTask, plan } = state;
+  if (!trail || !plan || !sameTask(trail.to, planTask)) return null;
+  const valid = trail.from.every((task) => {
+    const family = plan.families.get(task.tensorId);
+    return !!family && isTile(family, task.coord);
+  });
+  return valid ? trail : null;
+}
+
+/**
  * The checked plan and the inspected task's supply for one graph.
  *
  * Every stored entry was checked when it was set, against the graph it is

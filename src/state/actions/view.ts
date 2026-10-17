@@ -22,6 +22,7 @@ export const viewActions = (set: SetState, get: GetState): Pick<
   | "setInspectorTab"
   | "setReplayPlayback"
   | "setReuseLens"
+  | "setLineageFocus"
   | "setReplayDepth"
   | "updateReplayPlayback"
   | "setTileScale"
@@ -107,6 +108,8 @@ export const viewActions = (set: SetState, get: GetState): Pick<
   setReplayPlayback: (replayPlayback) => set({ replayPlayback }),
 
   setReuseLens: (reuseLens) => set({ reuseLens }),
+
+  setLineageFocus: (lineageFocus) => set({ lineageFocus }),
 
   setReplayDepth: (tensorId, depth) =>
     set((state) => ({

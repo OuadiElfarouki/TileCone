@@ -1164,5 +1164,9 @@ textarea.source.error-state { border-color: var(--err); }
 .plan-producer-pages { display: flex; align-items: center; gap: 8px; }
 /* The replay depth sits under the family heading it applies to. */
 .plan-replay-depth { display: flex; align-items: center; gap: 4px; margin: 2px 0 6px; }
+/* The tasks followed to reach the inspected one, above its heading. */
+.plan-trail { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; font-size: var(--t-small); }
+.plan-lineage-level + .plan-lineage-level { margin-top: 6px; }
+.plan-lineage-head { font-size: var(--t-micro); text-transform: uppercase; letter-spacing: .06em; }
 /* Replay stepping shares the card sliders' look (.tc-slider). */
 .plan-replay-controls { margin: 2px 0 4px; }

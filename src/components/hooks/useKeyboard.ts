@@ -3,6 +3,7 @@ import { useStore } from "../../state/store";
 import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
 import { hiddenAxisPositioned, viewAxes } from "../../view/tensor/tensor-view";
 import { activeCanvasTool, analysisTarget, graphIsInteractive, InspectorTab, keyboardTile } from "../../view/workspace";
+import { activePlanTrail } from "../../state/plan";
 
 const isTyping = (el: EventTarget | null) => {
   const t = el as HTMLElement | null;
@@ -155,7 +156,14 @@ export function useKeyboard({
          away from the page. */
       if (matchesShortcut(e, SHORTCUTS.growTile)) {
         e.preventDefault();
-        if (!graphIsInteractive(s) || s.inspectorTab !== "dependencies") return;
+        if (!graphIsInteractive(s)) return;
+        // In the Plan view Alt+← steps back along the followed producers, as
+        // the browser's Back would step back a page.
+        if (s.inspectorTab === "plan") {
+          const trail = activePlanTrail(s);
+          if (e.key === "ArrowLeft" && trail) s.backPlanTask(trail.from.length - 1);
+          return;
+        }
         const index = keyboardTile(s);
         const tensorId = index === null ? null : s.selection!.parts[index].tensorId;
         const tileShape = tensorId ? s.resolved?.tensors[tensorId].resolved : null;

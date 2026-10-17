@@ -284,6 +284,20 @@ export type State = {
   /** Derived: what `planTask` reads and which producer tasks supply it. */
   planSupply: TaskSupply | null;
   /**
+   * The tasks followed to reach `to` through their producer lists, oldest
+   * first, so the Plan view can step back to any of them. Read through
+   * `activePlanTrail`, which drops it once the inspected task is not `to` -
+   * a click on a card, an arrow step, a retiling or an undo - so nothing has
+   * to clear it.
+   */
+  planTrail: { from: TaskRef[]; to: TaskRef } | null;
+  /**
+   * The tasks of one upstream tensor that the inspected task depends on,
+   * outlined on that tensor's card while its lineage row is pointed at.
+   * Transient view state.
+   */
+  lineageFocus: { tensorId: string; coordinates: Region } | null;
+  /**
    * Plans kept for comparison with the current one, oldest first, at most
    * `MAX_KEPT_PLANS`. Each holds the totals it was evaluated to; the graph
    * cannot change under them, since replacing it clears them. Not workspace
@@ -369,6 +383,11 @@ export type State = {
   setPlanTile: (tensorId: string, tile: number[] | null) => void;
   /** Inspect one task, or none. Undoable. */
   selectPlanTask: (task: TaskRef | null) => void;
+  /** Inspect a producer of the inspected task, remembering where it came from. */
+  followPlanTask: (task: TaskRef) => void;
+  /** Return to the `index`th task of the trail, dropping the ones after it. */
+  backPlanTask: (index: number) => void;
+  setLineageFocus: (focus: { tensorId: string; coordinates: Region } | null) => void;
   /**
    * Inspect the task whose tile contains `element`. A produced tensor the plan
    * does not tile yet is tiled at `defaultTile` first; a graph input has no

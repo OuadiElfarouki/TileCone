@@ -80,7 +80,8 @@ starts with one operation per task. **fuse** beside a tiled intermediate fuses i
 consumers, and **materialize** under "Computed in this task" writes it back. On a graph output the
 same button reads **stop writing**: untiling an output leaves it unwritten rather than fusing it.
 
-For the inspected task, the panel shows its FLOPs, what it reads from each tensor, which producer
+For the inspected task, the panel shows its FLOPs, what it reads from each tensor in operand order
+(graph inputs marked as such), which producer
 tasks supply that, the untiled tensors it computes, and how many of its outputs use each operand
 element ("64 uses per element"). Clicking those figures, here or under Dependencies, turns on the
 **reuse lens**: the operand's card is shaded by that count per element, one violet ramp from zero
@@ -113,6 +114,12 @@ many tasks read each producer tile. For the MLP in the headless example below:
 
 Fusing `H` stops writing and re-reading it, but with 64-wide `Y` tiles two tasks compute each row
 band of `H`. Full-width `Y` tiles compute each band once.
+
+Clicking a producer task inspects it and keeps a trail above the heading (`Z (0, 0) › Y (0, 3)`):
+any step returns there, and Alt+← returns to the last. **Upstream, to the inputs** breaks the task
+down level by level to the graph's inputs: for every tensor above it, the producer tasks it requires
+(`8/16`), the input it reads, or the work fused into the tasks one level down. Pointing at a row
+outlines those tasks on the card.
 
 **keep** saves the current plan with its figures, and the whole-plan rows gain a column for it, so
 up to two kept plans read beside the current one. Under each kept plan a line states what the

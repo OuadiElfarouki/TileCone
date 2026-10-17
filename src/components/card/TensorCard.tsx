@@ -32,6 +32,7 @@ import { cancelDeal, deal, holdPicture, prefersStill } from "./deal";
 import { seedTile } from "../../view/tensor/tile-spec";
 import { graphIsInteractive, keyboardTile, layoutMovable, partsOn } from "../../view/workspace";
 import { activeGrowth } from "../../view/growth";
+import { tilesBox } from "../../core/plan/tile-family";
 import { buildPlanPaint, buildLayers, composeCardLayers } from "../../view/tensor/layers";
 import {
   CellDrag,
@@ -165,6 +166,10 @@ function TensorCardView({
   });
   const plan = useStore((s) => s.plan);
   const planSupply = useStore((s) => s.planSupply);
+  /** The tasks of this tensor a lineage row in the Plan view points at. */
+  const lineage = useStore((s) =>
+    s.inspectorTab === "plan" && s.lineageFocus?.tensorId === tensor.id ? s.lineageFocus : null
+  );
   /** The reuse lens, when it is on this card: counts take the place of cones. */
   const lens = useLensPaint(tensor.id);
   const planTaskAt = useStore((s) => s.planTaskAt);
@@ -276,6 +281,11 @@ function TensorCardView({
       });
       layers = planned.layers;
       paint = planned.paint;
+      // A lineage row being pointed at outlines the tasks it names here, in
+      // place of the inspected task's direct producers.
+      const lineageFamily = lineage && plan?.families.get(tensor.id);
+      if (lineage && lineageFamily)
+        paint = { ...paint, tiles: lineage.coordinates.boxes.map((b) => ({ box: tilesBox(lineageFamily, b), definite: true })) };
     } else {
       layers = buildLayers({
         tensorId: tensor.id,
@@ -369,6 +379,7 @@ function TensorCardView({
     hoverCell,
     interactive,
     grownRegion,
+    lineage,
   ]);
 
   useEffect(() => {

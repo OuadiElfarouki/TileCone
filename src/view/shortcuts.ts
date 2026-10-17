@@ -26,6 +26,13 @@ export const SHORTCUTS = {
     keys: ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"],
     shift: true,
   },
+  planBack: {
+    id: "plan-back",
+    label: "Alt + ←",
+    action: "back to the task you followed this one from",
+    keys: ["ArrowLeft"],
+    alt: true,
+  },
   growTile: {
     id: "grow-tile",
     label: "Alt + arrow",
@@ -156,7 +163,7 @@ export const SHORTCUT_GROUPS = [
      leaves with. */
   {
     title: "Plan",
-    items: [SHORTCUTS.movePlanTask],
+    items: [SHORTCUTS.movePlanTask, SHORTCUTS.planBack],
     note: "Applies while the inspector shows Plan, the view that names the task.",
   },
   /* Layout keys are reached through the thing they move, not globally: they

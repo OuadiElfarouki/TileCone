@@ -55,7 +55,7 @@ describe("producer paging in the Plan view", () => {
     S().setPlanTile("C", [1, 1]);
     S().setPlanTileAt("Y", [1, 1], [0, 0]);
     const html = render();
-    expect(html).toContain("needs 32 of 1024 C tasks");
+    expect(html).toContain("requires 32/1024 tasks");
     expect(html).toContain("1–8 of 32");
     expect(html).toContain("previous");
     expect(html).toContain("next");

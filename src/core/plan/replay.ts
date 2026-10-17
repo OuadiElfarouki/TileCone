@@ -25,7 +25,7 @@
  */
 
 import { linearRangeToBoxes } from "../ops/reshape";
-import { canonicalize, fromBox, intersect, isEmpty, Region } from "../region";
+import { canonicalize, count, fromBox, intersect, isEmpty, Region } from "../region";
 import { familyOf, regionDemand, TaskRef, TilePlan } from "./plan";
 import { tileBox, tileCoord, tileRange, tilesBox, type TileFamily } from "./tile-family";
 
@@ -204,4 +204,53 @@ export function familyReplay(
     frames,
     tasks: family.count,
   };
+}
+
+/** One tensor upstream of a task, as the plan supplies it. */
+export type LineageRow = {
+  tensorId: string;
+  /**
+   * The nearest level the task reaches this tensor at: 1 for what the task
+   * itself reads or computes, 2 for what the tasks producing those tiles do,
+   * and so on.
+   */
+  level: number;
+  /** A tiled tensor's producer tasks, a graph input read from memory, or an
+   *  untiled tensor the tasks one level down compute themselves. */
+  kind: "tasks" | "input" | "computed";
+  /** What is read or computed of it, exact for the plan or widened with reasons. */
+  region: Region;
+  /** On a tiled tensor, the producer tasks as an exact cover of tile coordinates. */
+  coordinates?: Region;
+  /** On a tiled tensor, how many of its family's tasks those are, of how many. */
+  tasks?: number;
+  of?: number;
+};
+
+/**
+ * Everything one task depends on through the plan, to the graph's inputs: per
+ * tensor upstream, the nearest level it is reached at and the tasks, input
+ * elements or fused computation that supply it. The same walk a replay takes,
+ * for one task and at the deepest level the plan has, so an output task can be
+ * related to the tasks of any tensor above it without a sweep of its family.
+ * Rows run by level, then in the order the source declares the tensors.
+ */
+export function taskLineage(plan: TilePlan, task: TaskRef): LineageRow[] {
+  const family = familyOf(plan, task);
+  const depth = replayDepthLimit(plan, task.tensorId);
+  const order = new Map(Object.keys(plan.graph.tensors).map((id, i) => [id, i]));
+  const rows = [...reachOf(plan, task.tensorId, fromBox(tileBox(family, task.coord)), depth)]
+    .map(([tensorId, { region, level }]): LineageRow => {
+      const producer = plan.families.get(tensorId);
+      if (producer) {
+        const coordinates: Region = {
+          boxes: region.boxes.map((b) => tileRange(producer, b)),
+          exact: true,
+          reasons: [],
+        };
+        return { tensorId, level, kind: "tasks", region, coordinates, tasks: count(coordinates), of: producer.count };
+      }
+      return { tensorId, level, kind: plan.graph.tensors[tensorId].producer ? "computed" : "input", region };
+    });
+  return rows.sort((a, b) => a.level - b.level || order.get(a.tensorId)! - order.get(b.tensorId)!);
 }
