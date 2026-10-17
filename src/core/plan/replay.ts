@@ -128,7 +128,9 @@ export function replayDepthLimit(plan: TilePlan, tensorId: string): number {
   return limits.get(tensorId) ?? 1;
 }
 
-type Reached = { region: Region; level: number };
+/** `definite` is the union of the exact parts: what is reached for certain,
+ *  where `region` may be widened by some path. */
+type Reached = { region: Region; level: number; definite: Region | null };
 
 /**
  * Everything the tasks computing `region` of `tensorId` reach, `depth` levels
@@ -140,9 +142,14 @@ function reachOf(plan: TilePlan, tensorId: string, region: Region, depth: number
   const reached = new Map<string, Reached>();
   const add = (id: string, part: Region, level: number) => {
     const prior = reached.get(id);
+    const exact = part.exact ? part : null;
     reached.set(id, prior
-      ? { region: merged(prior.region, part), level: Math.min(prior.level, level) }
-      : { region: part, level });
+      ? {
+          region: merged(prior.region, part),
+          level: Math.min(prior.level, level),
+          definite: prior.definite && exact ? merged(prior.definite, exact) : prior.definite ?? exact,
+        }
+      : { region: part, level, definite: exact });
   };
   let wave = new Map<string, Region>([[tensorId, region]]);
   for (let level = 1; level <= depth && wave.size; level++) {
@@ -222,8 +229,12 @@ export type LineageRow = {
   region: Region;
   /** On a tiled tensor, the producer tasks as an exact cover of tile coordinates. */
   coordinates?: Region;
-  /** On a tiled tensor, how many of its family's tasks those are, of how many. */
+  /** The producer tasks reached through exact demand; the rest are only possible. */
+  definiteCoordinates?: Region;
+  /** On a tiled tensor, how many of its family's tasks those are, of how many,
+   *  and how many of them are definite. */
   tasks?: number;
+  definiteTasks?: number;
   of?: number;
 };
 
@@ -240,15 +251,21 @@ export function taskLineage(plan: TilePlan, task: TaskRef): LineageRow[] {
   const depth = replayDepthLimit(plan, task.tensorId);
   const order = new Map(Object.keys(plan.graph.tensors).map((id, i) => [id, i]));
   const rows = [...reachOf(plan, task.tensorId, fromBox(tileBox(family, task.coord)), depth)]
-    .map(([tensorId, { region, level }]): LineageRow => {
+    .map(([tensorId, { region, level, definite }]): LineageRow => {
       const producer = plan.families.get(tensorId);
       if (producer) {
-        const coordinates: Region = {
-          boxes: region.boxes.map((b) => tileRange(producer, b)),
+        // Exact covers of tile coordinates, even where the demand is a bound.
+        const cover = (r: Region | null): Region => ({
+          boxes: r ? r.boxes.map((b) => tileRange(producer, b)) : [],
           exact: true,
           reasons: [],
+        });
+        const coordinates = cover(region);
+        const definiteCoordinates = cover(definite);
+        return {
+          tensorId, level, kind: "tasks", region, coordinates, definiteCoordinates,
+          tasks: count(coordinates), definiteTasks: count(definiteCoordinates), of: producer.count,
         };
-        return { tensorId, level, kind: "tasks", region, coordinates, tasks: count(coordinates), of: producer.count };
       }
       return { tensorId, level, kind: plan.graph.tensors[tensorId].producer ? "computed" : "input", region };
     });

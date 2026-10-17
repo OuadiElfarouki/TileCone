@@ -16,20 +16,22 @@
 
 import type { ResolvedGraph } from "../core/graph";
 import { executeQuery } from "../core/executor";
-import { count, empty, fromBox, sameBox, subtract, type Box, type Interval, type Region } from "../core/region";
+import { count, empty, fromBox, subtract, type Box, type Interval, type Region } from "../core/region";
 import type { SelPart } from "./workspace";
 
 /**
  * Where a grown tile started and where it is now, with what the change adds.
  * Stored when a step is taken; it describes the keyboard tile only while that
- * tile is still the box the last step left (`activeGrowth`), so a move, an
- * edit or an undo retires it without anything having to clear it.
+ * tile is still the part the last step installed (`activeGrowth`), so a move,
+ * an edit or an undo retires it without anything having to clear it.
  */
 export type Growth = {
   index: number;
   tensorId: string;
   baseBox: Box;
   box: Box;
+  /** The selection part the last step installed, compared by identity. */
+  part: SelPart;
   delta: GrowthDelta;
 };
 
@@ -77,13 +79,19 @@ export function growthDelta(graph: ResolvedGraph, tensorId: string, baseBox: Box
   return { outputs: count(subtract(fromBox(box), fromBox(baseBox))), tensors, exact };
 }
 
-/** The stored growth, while it still describes the keyboard tile `index`. */
+/**
+ * The stored growth, while it still describes the keyboard tile `index`.
+ *
+ * Identity, not an equal box: moving the tile away and back, or redrawing the
+ * same box, installs another part object, so a growth left behind never
+ * returns with a baseline from before the detour. An undo restores the part
+ * object itself, and with it the growth that made it.
+ */
 export function activeGrowth(
   growth: Growth | null,
   parts: readonly SelPart[] | undefined,
   index: number | null
 ): Growth | null {
   if (!growth || index === null || growth.index !== index) return null;
-  const part = parts?.[index];
-  return part && part.tensorId === growth.tensorId && sameBox(part.box, growth.box) ? growth : null;
+  return parts?.[index] === growth.part ? growth : null;
 }

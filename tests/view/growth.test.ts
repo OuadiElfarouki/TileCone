@@ -89,6 +89,16 @@ describe("growing the keyboard tile", () => {
     expect(activeGrowth(S().growth, S().selection?.parts, keyboardTile(S()))).toBeNull();
   });
 
+  it("does not revive a growth when the tile is moved away and back", () => {
+    S().growSelection(1, true);
+    S().moveSelection(0, 1);
+    S().moveSelection(0, -1);
+    expect(S().selection!.parts[0].box).toEqual(box([0, 4], [0, 5]));
+    expect(activeGrowth(S().growth, S().selection?.parts, keyboardTile(S()))).toBeNull();
+    S().growSelection(1, true);
+    expect(S().growth!.baseBox).toEqual(box([0, 4], [0, 5]));
+  });
+
   it("does nothing without a keyboard tile, and is one undo step per step", () => {
     const depth = S().workspaceHistory.length;
     S().growSelection(1, true);

@@ -4,7 +4,7 @@ import { elementCount } from "../../core/shapes";
 import { DTYPE_BYTES } from "../../core/dtypes";
 import { useFrameThrottle } from "../hooks/useFrameThrottle";
 import { useDebounced } from "../hooks/useDebounced";
-import { Box, formatBoxIndices, fromBox, iv } from "../../core/region";
+import { Box, formatBoxIndices, fromBox, iv, subtract } from "../../core/region";
 import { CardCell, paintScale, elementFromEvent, gridGeometry, HeatPaint, Layer, PlanPaint } from "../../view/tensor/grid";
 import { displayTile } from "../../view/tensor/tiling";
 import { lensColor, lensReading, lensReadingText } from "../../view/reuse-lens";
@@ -282,10 +282,19 @@ function TensorCardView({
       layers = planned.layers;
       paint = planned.paint;
       // A lineage row being pointed at outlines the tasks it names here, in
-      // place of the inspected task's direct producers.
+      // place of the inspected task's direct producers: solid where a task is
+      // reached for certain, dashed where it is only possible. The two sets
+      // are kept apart, since the strokes are translucent and would compound.
       const lineageFamily = lineage && plan?.families.get(tensor.id);
       if (lineage && lineageFamily)
-        paint = { ...paint, tiles: lineage.coordinates.boxes.map((b) => ({ box: tilesBox(lineageFamily, b), definite: true })) };
+        paint = {
+          ...paint,
+          tiles: [
+            ...lineage.definite.boxes.map((b) => ({ box: tilesBox(lineageFamily, b), definite: true })),
+            ...subtract(lineage.coordinates, lineage.definite).boxes
+              .map((b) => ({ box: tilesBox(lineageFamily, b), definite: false })),
+          ],
+        };
     } else {
       layers = buildLayers({
         tensorId: tensor.id,

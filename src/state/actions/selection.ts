@@ -241,8 +241,9 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
     // an edit, an undo - has changed the box, and this step starts afresh.
     const baseBox = activeGrowth(state.growth, parts, index)?.baseBox ?? part.box;
     editSelection(get, set, (current) => current.map((p, i) => (i === index ? { tensorId: p.tensorId, box } : p)), true, record);
+    const installed = get().selection!.parts[index];
     set({
-      growth: { index, tensorId: part.tensorId, baseBox, box, delta: growthDelta(state.resolved, part.tensorId, baseBox, box) },
+      growth: { index, tensorId: part.tensorId, baseBox, box, part: installed, delta: growthDelta(state.resolved, part.tensorId, baseBox, box) },
     });
   },
 

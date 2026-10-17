@@ -1102,12 +1102,19 @@ function LineageSection({
                 return (
                   <li
                     key={row.tensorId}
-                    onMouseEnter={() => setLineageFocus({ tensorId: row.tensorId, coordinates: row.coordinates! })}
+                    onMouseEnter={() => setLineageFocus({
+                      tensorId: row.tensorId, coordinates: row.coordinates!, definite: row.definiteCoordinates!,
+                    })}
                     onMouseLeave={() => setLineageFocus(null)}
                   >
                     <code>{name(row)}</code>
-                    <span className="muted" title={`${row.tasks} of the ${row.of} tasks of ${name(row)}; point to outline them`}>
-                      requires {row.tasks}/{row.of} task{row.of === 1 ? "" : "s"} · {bytes}
+                    <span
+                      className="muted"
+                      title={`${row.tasks} of the ${row.of} tasks of ${name(row)}${
+                        row.definiteTasks! < row.tasks! ? `, ${row.definiteTasks} of them definite and the rest only possible` : ""
+                      }; point to outline them`}
+                    >
+                      requires {row.definiteTasks! < row.tasks! ? FIGURE_MARK.upper : ""}{row.tasks}/{row.of} task{row.of === 1 ? "" : "s"} · {bytes}
                     </span>
                     {!row.region.exact && (
                       <span className="badge approx" title={row.region.reasons.join("; ")}>≈</span>

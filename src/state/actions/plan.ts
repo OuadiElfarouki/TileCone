@@ -81,8 +81,10 @@ export const planActions = (set: SetState, get: GetState): Pick<
     const trail = activePlanTrail(state);
     get().selectPlanTask(task);
     // Only once the step has landed: a task the plan does not have is refused.
-    if (sameTask(get().planTask, task))
-      set({ planTrail: { from: [...(trail?.from ?? []), from], to: task } });
+    // `to` is the installed object, which `activePlanTrail` compares by identity.
+    const landed = get().planTask;
+    if (landed && sameTask(landed, task))
+      set({ planTrail: { from: [...(trail?.from ?? []), from], to: landed } });
   },
 
   backPlanTask: (index) => {
@@ -90,8 +92,9 @@ export const planActions = (set: SetState, get: GetState): Pick<
     const target = trail?.from[index];
     if (!trail || !target) return;
     get().selectPlanTask(target);
-    if (sameTask(get().planTask, target))
-      set({ planTrail: index > 0 ? { from: trail.from.slice(0, index), to: target } : null });
+    const landed = get().planTask;
+    if (landed && sameTask(landed, target))
+      set({ planTrail: index > 0 ? { from: trail.from.slice(0, index), to: landed } : null });
   },
 
   planTaskAt: (tensorId, element) => {

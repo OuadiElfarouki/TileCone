@@ -67,6 +67,23 @@ describe("a task's lineage, to the graph's inputs", () => {
   });
 });
 
+describe("how certain a lineage row's tasks are", () => {
+  it("keeps tasks reached only through a widened demand apart from definite ones", () => {
+    const { resolved } = compileDSL(
+      "W0 = Tensor(8, 4)\nW = relu(W0)\nIdx = Tensor(3, dtype=int32)\nE = gather(W, Idx, axis=0)\n"
+    );
+    const plan = tilePlan(resolved, { W: [2, 4], E: [3, 4] });
+    const [w] = taskLineage(plan, { tensorId: "E", coord: [0, 0] });
+    expect(w).toMatchObject({ tensorId: "W", kind: "tasks", tasks: 4, definiteTasks: 0, of: 4 });
+    expect(w.definiteCoordinates!.boxes).toEqual([]);
+  });
+
+  it("counts every task definite where the demand is exact", () => {
+    const [y] = taskLineage(tilePlan(compileDSL(RESHAPED).resolved, { Y: [1, 1], Z: [1, 1] }), Z00);
+    expect([y.tasks, y.definiteTasks]).toEqual([8, 8]);
+  });
+});
+
 describe("following producers and stepping back", () => {
   beforeEach(() => {
     S().applyDSL(RESHAPED);
@@ -96,6 +113,24 @@ describe("following producers and stepping back", () => {
     S().followPlanTask({ tensorId: "Y", coord: [0, 3] });
     S().undoWorkspace();
     expect(activePlanTrail(S())).toBeNull();
+  });
+
+  /* Equal coordinates are not the same arrival: landing on the trail's task
+     again by a click must not bring back a trail that was left. */
+  it("does not revive a trail when its task is reached again directly", () => {
+    S().followPlanTask({ tensorId: "Y", coord: [0, 0] });
+    S().selectPlanTask({ tensorId: "Y", coord: [1, 0] });
+    S().selectPlanTask({ tensorId: "Y", coord: [0, 0] });
+    expect(activePlanTrail(S())).toBeNull();
+    S().backPlanTask(0);
+    expect(S().planTask).toEqual({ tensorId: "Y", coord: [0, 0] });
+  });
+
+  it("brings the trail back with an undo to the task it reached", () => {
+    S().followPlanTask({ tensorId: "Y", coord: [0, 0] });
+    S().selectPlanTask({ tensorId: "Y", coord: [1, 0] });
+    S().undoWorkspace();
+    expect(activePlanTrail(S())!.from).toEqual([Z00]);
   });
 
   it("shows the reads in operand order, inputs as a badge, producers as k/n, and the trail", () => {

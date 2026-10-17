@@ -25,12 +25,18 @@ export const NO_PLAN = {
 /**
  * The stored trail, while it still leads to the inspected task and every task
  * on it is still a task of the plan; null otherwise.
+ *
+ * "Leads to" is identity, not equal coordinates: `to` is the task object the
+ * follow step installed. Reaching the same coordinates any other way - a click,
+ * an arrow step - installs another object, so a trail left behind can never
+ * come back by landing on its task again. An undo restores the object itself,
+ * and with it the trail that reached it.
  */
 export function activePlanTrail(
   state: Pick<State, "planTrail" | "planTask" | "plan">
 ): { from: TaskRef[]; to: TaskRef } | null {
   const { planTrail: trail, planTask, plan } = state;
-  if (!trail || !plan || !sameTask(trail.to, planTask)) return null;
+  if (!trail || !plan || !planTask || trail.to !== planTask) return null;
   const valid = trail.from.every((task) => {
     const family = plan.families.get(task.tensorId);
     return !!family && isTile(family, task.coord);

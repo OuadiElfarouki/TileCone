@@ -296,7 +296,7 @@ export type State = {
    * outlined on that tensor's card while its lineage row is pointed at.
    * Transient view state.
    */
-  lineageFocus: { tensorId: string; coordinates: Region } | null;
+  lineageFocus: { tensorId: string; coordinates: Region; definite: Region } | null;
   /**
    * Plans kept for comparison with the current one, oldest first, at most
    * `MAX_KEPT_PLANS`. Each holds the totals it was evaluated to; the graph
@@ -387,7 +387,7 @@ export type State = {
   followPlanTask: (task: TaskRef) => void;
   /** Return to the `index`th task of the trail, dropping the ones after it. */
   backPlanTask: (index: number) => void;
-  setLineageFocus: (focus: { tensorId: string; coordinates: Region } | null) => void;
+  setLineageFocus: (focus: { tensorId: string; coordinates: Region; definite: Region } | null) => void;
   /**
    * Inspect the task whose tile contains `element`. A produced tensor the plan
    * does not tile yet is tiled at `defaultTile` first; a graph input has no
