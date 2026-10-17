@@ -46,6 +46,14 @@ export type Graph = {
   nodes: Node[];
   tensors: Record<string, Tensor>;
   params: Record<string, number>;
+  /**
+   * Symbols defined by an expression over the parameters and the derived
+   * symbols before them, in declaration order: `E = H*D`. They size
+   * dimensions like a parameter and take part in symbolic shapes under their
+   * own name, but their value follows from their definition, so they are not
+   * in `params` and nothing offers to set them.
+   */
+  derived?: Record<string, Sym>;
 };
 
 export type ResolvedGraph = Graph & {
@@ -149,6 +157,9 @@ function cloneGraph(source: Graph): Graph {
     })),
     tensors,
     params,
+    ...(source.derived
+      ? { derived: Object.assign(Object.create(null) as Record<string, Sym>, source.derived) }
+      : {}),
   };
 }
 
@@ -228,11 +239,15 @@ class FormalShapes {
   private readonly shapes = new Map<string, Shape>();
   /** Symbols standing for extents with no known expression. */
   readonly unknowns = new Set<string>();
-  /** The parameters, plus each unknown bound to its actual extent. */
+  /** The parameters and derived symbols, plus each unknown bound to its
+   * actual extent. */
   private readonly values: Record<string, number>;
   private count = 0;
 
-  constructor(private readonly params: Record<string, number>) {
+  constructor(
+    private readonly params: Record<string, number>,
+    readonly definitions: Readonly<Record<string, Sym>>
+  ) {
     this.values = Object.assign(Object.create(null) as Record<string, number>, params);
   }
 
@@ -273,10 +288,24 @@ class FormalShapes {
     );
   }
 
-  /** The bindings an expression is evaluated under, for a message. */
+  /** The bindings an expression is evaluated under, for a message: the
+   * parameters it reads, and the definitions of the derived symbols it reads
+   * them through. */
   bindings(syms: Sym[]): string {
-    const names = [...new Set(syms.flatMap(dimSymbols))].filter((name) => !this.unknowns.has(name));
-    return names.map((name) => `${name}=${this.params[name]}`).join(", ");
+    const params: string[] = [];
+    const definitions: string[] = [];
+    const seen = new Set<string>();
+    const visit = (name: string): void => {
+      if (seen.has(name) || this.unknowns.has(name)) return;
+      seen.add(name);
+      if (Object.prototype.hasOwnProperty.call(this.definitions, name)) {
+        const definition = this.definitions[name];
+        definitions.push(`${name} = ${definition}`);
+        dimSymbols(definition).forEach(visit);
+      } else params.push(`${name}=${this.params[name]}`);
+    };
+    syms.flatMap(dimSymbols).forEach(visit);
+    return params.join(", ") + (definitions.length ? `, where ${definitions.join(", ")}` : "");
   }
 }
 
@@ -286,8 +315,11 @@ class FormalShapes {
  * `different` is two expressions that coincide here and nowhere in general.
  */
 function checkSymEqualities(node: Node, equalities: SymEquality[], formal: FormalShapes): void {
+  const context = { opaque: formal.unknowns, definitions: formal.definitions };
+  const isOne = (sym: Sym) => compareDims(sym, 1, context) === "same";
   for (const eq of equalities) {
-    if (compareDims(eq.left, eq.right, formal.unknowns) !== "different") continue;
+    if (eq.orOne && (isOne(eq.left) || (eq.orOne === "either" && isOne(eq.right)))) continue;
+    if (compareDims(eq.left, eq.right, context) !== "different") continue;
     const bindings = formal.bindings([eq.left, eq.right]);
     throw new GraphError(
       `node "${node.id}" (${node.op}): ${eq.what} must be equal, but ` +
@@ -437,6 +469,7 @@ function pruneSubject(g: Graph, subject: GraphErrorSubject): Graph {
     nodes: g.nodes.filter((n) => !deadNodes.has(n.id)),
     tensors,
     params: g.params,
+    ...(g.derived ? { derived: g.derived } : {}),
   };
 }
 
@@ -496,15 +529,46 @@ export function resolveGraph(source: Graph): ResolvedGraph {
         "GRAPH_SHAPE",
         { kind: "parameter", id: name }
       );
+  // Derived symbols evaluate in declaration order, each over the parameters
+  // and the derived symbols before it, so a definition cannot be cyclic: a
+  // forward reference is an unbound symbol.
+  const bindings = Object.assign(Object.create(null) as Record<string, number>, g.params);
+  /** The parameters each derived symbol is ultimately written in. */
+  const derivedFrom = new Map<string, string[]>();
+  for (const [name, definition] of Object.entries(g.derived ?? {})) {
+    const subject = { kind: "parameter" as const, id: name };
+    if (Object.prototype.hasOwnProperty.call(bindings, name))
+      throw new GraphError(
+        `derived symbol "${name}" is already defined`,
+        "GRAPH_DEFINITION",
+        subject
+      );
+    try {
+      bindings[name] = resolveShape([definition], bindings)[0];
+    } catch (e) {
+      throw new GraphError(
+        `derived symbol "${name}" = ${definition}: ${(e as Error).message}`,
+        e instanceof GraphError ? e.code : "GRAPH_SHAPE",
+        subject
+      );
+    }
+    derivedFrom.set(name, [
+      ...new Set(dimSymbols(definition).flatMap((sym) => derivedFrom.get(sym) ?? [sym])),
+    ]);
+  }
   const usedParameters = new Set<string>();
   // Record semantic binding reads at the shape engine's existing boundary.
   // Operators continue resolving their own attributes; names in arbitrary
   // labels, comments or strings are never scanned for supposed dependencies.
-  const shapeParams = new Proxy(g.params, {
-    get(bindings, key, receiver) {
-      if (typeof key === "string" && Object.prototype.hasOwnProperty.call(bindings, key))
-        usedParameters.add(key);
-      return Reflect.get(bindings, key, receiver);
+  // Reading a derived symbol reads the parameters it is defined over.
+  const shapeParams = new Proxy(bindings, {
+    get(values, key, receiver) {
+      if (typeof key === "string") {
+        const from = derivedFrom.get(key);
+        if (from) from.forEach((name) => usedParameters.add(name));
+        else if (Object.prototype.hasOwnProperty.call(values, key)) usedParameters.add(key);
+      }
+      return Reflect.get(values, key, receiver);
     },
   });
   const tensorIds = new Set(Object.keys(g.tensors));
@@ -645,13 +709,13 @@ export function resolveGraph(source: Graph): ResolvedGraph {
   if (topo.length !== g.nodes.length) throw new GraphError("graph has a cycle", "GRAPH_CYCLE");
 
   // Resolve declared shapes, then infer through the DAG.
-  const formal = new FormalShapes(g.params);
+  const formal = new FormalShapes(bindings, g.derived ?? {});
   for (const t of Object.values(g.tensors)) {
     if (t.producer) continue;
     try {
       t.resolved = resolveShape(t.shape, shapeParams);
       validateTensorCardinality(t.resolved, t.dtype, { kind: "tensor", id: t.id });
-      t.symShape = verifiedSymShape(t.shape, t.resolved, g.params);
+      t.symShape = verifiedSymShape(t.shape, t.resolved, bindings);
       formal.set(t.id, t.shape, t.resolved);
     } catch (e) {
       throw new GraphError(
@@ -856,7 +920,7 @@ export function resolveGraph(source: Graph): ResolvedGraph {
       }
       t.resolved = inferred;
       t.dtype = outDTypes[s];
-      t.symShape = verifiedSymShape(outSyms?.[s], inferred, g.params);
+      t.symShape = verifiedSymShape(outSyms?.[s], inferred, bindings);
       formal.set(t.id, formalOut?.[s], inferred);
       const names = outNames?.[s];
       if (names && names.some((v) => v !== undefined))

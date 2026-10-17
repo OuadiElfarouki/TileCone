@@ -19,6 +19,10 @@
  * sum, or an extent the caller marks as unknown. Opaque atoms cancel against
  * themselves, but a difference that still contains one proves nothing, and the
  * answer is `undecided` rather than a claim the algebra cannot back.
+ *
+ * A derived symbol (`E = H*D`) is not an atom: it is replaced by its
+ * definition, so `E` and `H*D` are the same expression and `E` against `M*N`
+ * is compared as `H*D` against `M*N`.
  */
 
 import { DimNode, readDimExpr, Sym } from "./shapes";
@@ -130,25 +134,44 @@ function formatPoly(poly: Poly): string {
 /** Marks an atom the algebra treats as an unknown quantity. */
 const OPAQUE_PREFIX = "\u0000";
 
-function canonical(node: DimNode, opaque: ReadonlySet<string>): Poly | null {
+export type DimContext = {
+  /** Symbols standing for unknown quantities rather than free parameters. */
+  opaque?: ReadonlySet<string>;
+  /** Derived symbols and the expressions that define them. */
+  definitions?: Readonly<Record<string, Sym>>;
+};
+
+type Scope = DimContext & { expanding: Set<string> };
+
+function canonical(node: DimNode, scope: Scope): Poly | null {
   switch (node.kind) {
     case "num": {
       if (!Number.isSafeInteger(node.value)) return null;
       return constant(rat(BigInt(node.value)));
     }
     case "sym": {
-      const atom = opaque.has(node.name) ? OPAQUE_PREFIX + node.name : node.name;
+      const { definitions, expanding } = scope;
+      if (definitions && Object.prototype.hasOwnProperty.call(definitions, node.name)) {
+        // A cyclic definition has no value; resolution rejects one, and here
+        // it is simply not something to reason about.
+        if (expanding.has(node.name)) return null;
+        expanding.add(node.name);
+        const expanded = canonicalSym(definitions[node.name], scope);
+        expanding.delete(node.name);
+        return expanded;
+      }
+      const atom = scope.opaque?.has(node.name) ? OPAQUE_PREFIX + node.name : node.name;
       const poly: Poly = new Map();
       addTerm(poly, [[atom, 1]], rat(1n));
       return poly;
     }
     case "neg": {
-      const arg = canonical(node.arg, opaque);
+      const arg = canonical(node.arg, scope);
       return arg && polyAdd(new Map(), arg, -1n);
     }
     case "bin": {
-      const left = canonical(node.left, opaque);
-      const right = canonical(node.right, opaque);
+      const left = canonical(node.left, scope);
+      const right = canonical(node.right, scope);
       if (!left || !right) return null;
       if (node.op === "+") return polyAdd(left, right);
       if (node.op === "-") return polyAdd(left, right, -1n);
@@ -179,11 +202,11 @@ function canonical(node: DimNode, opaque: ReadonlySet<string>): Poly | null {
   }
 }
 
-function canonicalSym(s: Sym, opaque: ReadonlySet<string>): Poly | null {
+function canonicalSym(s: Sym, scope: Scope): Poly | null {
   if (typeof s === "number") return Number.isSafeInteger(s) ? constant(rat(BigInt(s))) : null;
   const parsed = readDimExpr(s);
   if (!parsed || s.slice(parsed.end).trim()) return null;
-  return canonical(parsed.node, opaque);
+  return canonical(parsed.node, scope);
 }
 
 export type DimComparison = "same" | "different" | "undecided";
@@ -191,13 +214,13 @@ export type DimComparison = "same" | "different" | "undecided";
 /**
  * Whether two extents are equal for every binding of their symbols.
  *
- * `opaque` names symbols that stand for unknown quantities rather than free
- * parameters: an extent whose expression was lost along the way still has a
- * value, but not one this module can reason about.
+ * `context.opaque` names symbols that stand for unknown quantities rather than
+ * free parameters: an extent whose expression was lost along the way still has
+ * a value, but not one this module can reason about.
  */
-export function compareDims(a: Sym, b: Sym, opaque: ReadonlySet<string> = new Set()): DimComparison {
-  const left = canonicalSym(a, opaque);
-  const right = canonicalSym(b, opaque);
+export function compareDims(a: Sym, b: Sym, context: DimContext = {}): DimComparison {
+  const left = canonicalSym(a, { ...context, expanding: new Set() });
+  const right = canonicalSym(b, { ...context, expanding: new Set() });
   if (!left || !right) return "undecided";
   const difference = polyAdd(left, right, -1n);
   if (!difference.size) return "same";

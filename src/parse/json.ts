@@ -60,6 +60,7 @@ const graphSchema = z.object({
   nodes: z.array(nodeSchema),
   tensors: safeRecord(tensorSchema),
   params: safeRecord(z.number().int().min(1)).default(Object.create(null)),
+  derived: safeRecord(symSchema).optional(),
 }).strict();
 
 /**
@@ -111,7 +112,7 @@ export function graphToJSON(g: Graph): string {
       ...(t.role ? { role: t.role } : {}),
     };
   return JSON.stringify(
-    { nodes: g.nodes.map((n) => ({ id: n.id, op: n.op, inputs: n.inputs, outputs: n.outputs, attrs: n.attrs, ...(n.label ? { label: n.label } : {}) })), tensors, params: g.params },
+    { nodes: g.nodes.map((n) => ({ id: n.id, op: n.op, inputs: n.inputs, outputs: n.outputs, attrs: n.attrs, ...(n.label ? { label: n.label } : {}) })), tensors, params: g.params, ...(g.derived ? { derived: g.derived } : {}) },
     null,
     2
   );

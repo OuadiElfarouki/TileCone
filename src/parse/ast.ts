@@ -46,6 +46,17 @@ export type Arg =
 export type Stmt =
   /** `M = 512` */
   | { kind: "param"; name: Spanned<string>; value: Spanned<number>; span: SourceSpan }
+  /**
+   * `E = H*D`: a symbol defined by an expression over earlier ones. It sizes
+   * dimensions like a parameter, but its value follows from its definition,
+   * so it has no value of its own to set.
+   */
+  | {
+      kind: "derive";
+      name: Spanned<string>;
+      value: { kind: "dim"; text: string; span: SourceSpan };
+      span: SourceSpan;
+    }
   /** `A = Tensor(M, K, dtype=fp16)` / `W = Parameter(...)` */
   | {
       kind: "declare";

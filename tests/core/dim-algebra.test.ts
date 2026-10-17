@@ -31,9 +31,20 @@ describe("comparing dimension expressions for every binding", () => {
 
   it("treats an opaque symbol as unknown, but lets it cancel", () => {
     const opaque = new Set(["U"]);
-    expect(compareDims("U", "M", opaque)).toBe("undecided");
-    expect(compareDims("U+M", "M+U", opaque)).toBe("same");
-    expect(compareDims("U+M", "U+N", opaque)).toBe("different");
+    expect(compareDims("U", "M", { opaque })).toBe("undecided");
+    expect(compareDims("U+M", "M+U", { opaque })).toBe("same");
+    expect(compareDims("U+M", "U+N", { opaque })).toBe("different");
+  });
+
+  it("expands a derived symbol into its definition", () => {
+    const definitions = { E: "H*D", HALF: "E/2" };
+    expect(compareDims("E", "D*H", { definitions })).toBe("same");
+    expect(compareDims("HALF*2", "H*D", { definitions })).toBe("same");
+    expect(compareDims("E", "M*N", { definitions })).toBe("different");
+  });
+
+  it("does not loop on a cyclic definition", () => {
+    expect(compareDims("A", "B", { definitions: { A: "B+1", B: "A-1" } })).toBe("undecided");
   });
 
   it("gives up rather than expanding an unbounded product", () => {

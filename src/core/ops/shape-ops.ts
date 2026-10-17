@@ -14,7 +14,7 @@ import { limitsOf } from "./limits";
 import { broadcastAxisNames, firstNamedAxis, sameAxisNames } from "./axis-names";
 import { sameSymShape } from "./sym-shape";
 import { Sym } from "../shapes";
-import { compareDims, symSum } from "../dim-algebra";
+import { symSum } from "../dim-algebra";
 import { separableTally, type Step, uniformTally } from "../tally";
 
 const zero = () => 0;
@@ -538,11 +538,13 @@ export const expandOp: OpSpec = {
   symEqualities: (inSyms, ctx) => {
     const target = ctx.attrs.shape as Sym[];
     const off = target.length - inSyms[0].length;
-    return inSyms[0].flatMap((sym, ax): SymEquality[] =>
-      compareDims(sym, 1) === "same"
-        ? []
-        : [{ left: sym, right: target[ax + off], what: `input axis ${ax} and shape axis ${ax + off}`, attribute: "shape" }]
-    );
+    return inSyms[0].map((sym, ax): SymEquality => ({
+      left: sym,
+      right: target[ax + off],
+      what: `input axis ${ax} and shape axis ${ax + off}`,
+      attribute: "shape",
+      orOne: "left",
+    }));
   },
   inferDTypes: uniformDTypeOutputs("expand"),
   inferShapes: (inShapes, attrs, params) => {

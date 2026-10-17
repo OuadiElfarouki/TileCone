@@ -6,7 +6,6 @@
  * for why this is a separate question from axis names.
  */
 
-import { compareDims } from "../dim-algebra";
 import { Sym } from "../shapes";
 import { OpCtx, SymEquality } from "./types";
 
@@ -54,8 +53,7 @@ export function broadcastSymEqualities(inSyms: Sym[][], ctx: OpCtx, outSlot = 0)
     for (let slot = 0; slot < inSyms.length; slot++) {
       const at = axis - (rank - inSyms[slot].length);
       if (at < 0) continue;
-      const sym = inSyms[slot][at];
-      if (compareDims(sym, 1) !== "same") aligned.push({ slot, at, sym });
+      aligned.push({ slot, at, sym: inSyms[slot][at] });
     }
     for (let i = 0; i < aligned.length; i++)
       for (let j = i + 1; j < aligned.length; j++)
@@ -64,6 +62,7 @@ export function broadcastSymEqualities(inSyms: Sym[][], ctx: OpCtx, outSlot = 0)
           right: aligned[j].sym,
           what: `broadcast axes input ${aligned[i].slot} axis ${aligned[i].at} and input ${aligned[j].slot} axis ${aligned[j].at}`,
           input: aligned[j].slot,
+          orOne: "either",
         });
   }
   return equalities;

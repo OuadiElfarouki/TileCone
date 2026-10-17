@@ -9,7 +9,9 @@ export function isExpandable(op: string): boolean {
 }
 
 function clone(g: Graph): Graph {
-  return JSON.parse(JSON.stringify({ nodes: g.nodes, tensors: g.tensors, params: g.params }));
+  return JSON.parse(
+    JSON.stringify({ nodes: g.nodes, tensors: g.tensors, params: g.params, derived: g.derived })
+  );
 }
 
 /** Allocate generated identities hygienically while keeping the old readable

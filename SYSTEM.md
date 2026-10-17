@@ -194,7 +194,8 @@ The parser creates the structural graph. Declared inputs and weights already hav
 
 `resolveGraph` clones the input graph and then establishes the invariants required by execution:
 
-1. Parameters are positive safe integers.
+1. Parameters are positive safe integers. Derived symbols evaluate in declaration order, over
+   the names before them, to positive safe integers.
 2. Node and tensor IDs are unique and all references exist.
 3. Every operation exists in the registry.
 4. Static and attribute-dependent arity constraints hold.
@@ -312,6 +313,12 @@ The AST describes syntax; lowering owns operation desugaring. `parse/sugar.ts` s
 The DSL is line-oriented and intentionally small:
 
 - Numeric assignments bind symbolic dimensions, such as `B = 1` and `D = 32`.
+- An assignment of a dimension expression defines a derived symbol, such as `E = H*D`. It may
+  read only parameters and derived symbols defined above it, which keeps definitions acyclic.
+  Lowering stores it in `Graph.derived` rather than `params`: it sizes dimensions and appears
+  in symbolic shapes under its own name, the symbolic checks expand it into its definition,
+  and reading it counts the parameters it is written over as used. It has no value of its
+  own, so the parameter controls do not offer one.
 - `Tensor(...)` declares a graph input and `Parameter(...)` declares a learned graph input.
 - An axis may be labelled in place: `X = Tensor(batch=B, seq=S, emb=E, dtype=fp16)`. A constructor
   names every axis or none, because a half-named declaration is a slip rather than a

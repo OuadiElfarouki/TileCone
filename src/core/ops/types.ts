@@ -45,6 +45,12 @@ export type SymEquality = {
   left: Sym;
   right: Sym;
   what: string;
+  /**
+   * Broadcasting: the requirement is also met when this side is the expression
+   * 1, which then stretches. Decided by the resolver, which knows the derived
+   * symbols an operation does not.
+   */
+  orOne?: "left" | "either";
   input?: number;
   attribute?: string;
 };

@@ -119,6 +119,15 @@ describe("controls for parameters used by the graph", () => {
     expect(html).not.toContain('class="syntax-hint"');
   });
 
+  it("offers the parameters behind a derived symbol, not the derived symbol", () => {
+    useStore.getState().applyDSL("H = 4\nD = 8\nE = H*D\nX = Tensor(E, dtype=fp16)\nY = relu(X)\n");
+    const html = renderToStaticMarkup(createElement(SidePanel));
+    expect(html).toContain('id="param-H"');
+    expect(html).toContain('id="param-D"');
+    expect(html).not.toContain('id="param-E"');
+    expect(html.match(/class="syntax-hint"/g)).toHaveLength(2);
+  });
+
   it("offers controls for symbolic split sizes over an input of unknown extent", () => {
     useStore.getState().applyDSL('N = 2\nL = 4\nUnused = 16\nX = opaque(op="Src", shapes=[[6]], dtypes=[fp32])\n' +
       "Y, Z = split(X, axis=0, sizes=[N, L])\n");

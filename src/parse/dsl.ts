@@ -75,6 +75,9 @@ function attrValueToDSL(v: unknown, name?: string): string {
 export function toDSL(g: Graph): string {
   const lines: string[] = [];
   for (const [name, value] of Object.entries(g.params)) lines.push(`${name} = ${value}`);
+  // After every parameter: a definition only reads names declared before it.
+  for (const [name, definition] of Object.entries(g.derived ?? {}))
+    lines.push(`${name} = ${definition}`);
   for (const t of Object.values(g.tensors)) {
     if (t.producer || g.nodes.some((n) => n.outputs.includes(t.id))) continue;
     const constructor = t.role === "weight" ? "Parameter" : "Tensor";

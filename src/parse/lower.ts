@@ -12,7 +12,7 @@
 
 import { Graph, Node, Tensor } from "../core/graph";
 import { DType } from "../core/dtypes";
-import { Sym } from "../core/shapes";
+import { dimSymbols, Sym } from "../core/shapes";
 import { Arg, Expr, Program, Spanned, Stmt } from "./ast";
 import { DSLError } from "./parser";
 import { sugarForCall } from "./sugar";
@@ -74,6 +74,7 @@ function dtypeFromExpr(e: Expr): DType | null {
 export function lowerProgram(program: Program): LowerResult {
   const dictionary = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
   const params = dictionary<number>();
+  const derived = dictionary<Sym>();
   const tensors = dictionary<Tensor>();
   const nodes: Node[] = [];
   const sourceMap: DSLSourceMap = {
@@ -92,8 +93,16 @@ export function lowerProgram(program: Program): LowerResult {
   };
   const defined = (name: string) =>
     Object.prototype.hasOwnProperty.call(params, name) ||
+    Object.prototype.hasOwnProperty.call(derived, name) ||
     Object.prototype.hasOwnProperty.call(tensors, name) ||
     poisoned.has(name);
+
+  /** Whether a written value reads a symbol a failed statement would have
+   * bound. Such a value is skipped in silence, like a poisoned tensor. */
+  const readsPoisoned = (e: Expr): boolean =>
+    e.kind === "list"
+      ? e.items.some(readsPoisoned)
+      : e.kind === "dim" && dimSymbols(e.text).some((name) => poisoned.has(name));
 
   /** Report a redefinition, or claim the name. Returns false when taken. */
   const claim = (name: Spanned<string>, code: string): boolean => {
@@ -117,12 +126,50 @@ export function lowerProgram(program: Program): LowerResult {
       continue;
     }
 
+    if (stmt.kind === "derive") {
+      lowerDerive(stmt);
+      continue;
+    }
+
     if (stmt.kind === "declare") {
       lowerDeclare(stmt);
       continue;
     }
 
     lowerCall(stmt);
+  }
+
+  /**
+   * A derived symbol may only be written over the parameters and derived
+   * symbols above it. That keeps definitions acyclic by construction, and an
+   * unknown name is reported here, on the definition, rather than at every
+   * dimension that later reads it.
+   */
+  function lowerDerive(stmt: Stmt & { kind: "derive" }): void {
+    if (!claim(stmt.name, "DSL_DUPLICATE_PARAM")) return;
+    let bad = false;
+    for (const name of dimSymbols(stmt.value.text)) {
+      if (
+        Object.prototype.hasOwnProperty.call(params, name) ||
+        Object.prototype.hasOwnProperty.call(derived, name)
+      )
+        continue;
+      bad = true;
+      if (poisoned.has(name)) continue;
+      fail(
+        Object.prototype.hasOwnProperty.call(tensors, name)
+          ? `"${name}" is a tensor; a derived symbol is written over size parameters`
+          : `unknown parameter "${name}"; a derived symbol can use only parameters defined above it`,
+        stmt.value.span,
+        "DSL_UNKNOWN_PARAM"
+      );
+    }
+    if (bad) {
+      poisoned.add(stmt.name.value);
+      return;
+    }
+    derived[stmt.name.value] = stmt.value.text;
+    sourceMap.params[stmt.name.value] = stmt.span;
   }
 
   function lowerDeclare(stmt: Stmt & { kind: "declare" }): void {
@@ -150,6 +197,10 @@ export function lowerProgram(program: Program): LowerResult {
         continue;
       }
       const value = arg.kind === "named" ? arg.value : arg.value;
+      if (readsPoisoned(value)) {
+        bad = true;
+        continue;
+      }
       const dim = dimensionOf(value);
       if (dim === null) {
         bad = true;
@@ -268,6 +319,10 @@ export function lowerProgram(program: Program): LowerResult {
           attrs.dtypes = items;
           continue;
         }
+        if (readsPoisoned(arg.value)) {
+          bad = true;
+          continue;
+        }
         attrs[arg.name.value] = exprToAttr(arg.value);
         continue;
       }
@@ -367,5 +422,9 @@ export function lowerProgram(program: Program): LowerResult {
     };
   }
 
-  return { graph: { nodes, tensors, params }, sourceMap, errors };
+  return {
+    graph: { nodes, tensors, params, ...(Object.keys(derived).length ? { derived } : {}) },
+    sourceMap,
+    errors,
+  };
 }

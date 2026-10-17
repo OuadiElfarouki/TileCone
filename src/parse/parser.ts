@@ -204,7 +204,7 @@ function parseStatement(p: LineParser, statementSpan: SourceSpan, outs: Spanned<
       );
   if (!p.eat("="))
     throw new DSLError(
-      "expected an assignment: NAME = number, Tensor(...), Parameter(...), or op(...)",
+      "expected an assignment: NAME = number, NAME = expression, Tensor(...), Parameter(...), or op(...)",
       statementSpan,
       "DSL_UNKNOWN_STATEMENT"
     );
@@ -221,6 +221,30 @@ function parseStatement(p: LineParser, statementSpan: SourceSpan, outs: Spanned<
         span: statementSpan,
       };
     p.pos = rhsStart;
+
+    // Anything that is not a call is a derived symbol, when the whole right
+    // side reads as one dimension expression: `E = H*D`, `HALF = N/2`.
+    const word = p.ident();
+    const isCall = word !== null && p.eat("(");
+    p.pos = rhsStart;
+    if (!isCall) {
+      p.ws();
+      const exprStart = p.pos;
+      const parsed = readDimExpr(p.src, exprStart);
+      if (parsed) {
+        p.pos = parsed.end;
+        if (p.atEnd()) {
+          const text = p.src.slice(exprStart, parsed.end).trim();
+          return {
+            kind: "derive",
+            name: outs[0],
+            value: { kind: "dim", text, span: p.spanFrom(exprStart, exprStart + text.length) },
+            span: statementSpan,
+          };
+        }
+      }
+      p.pos = rhsStart;
+    }
   }
 
   const callee = p.identReq("op name");

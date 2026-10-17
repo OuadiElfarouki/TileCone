@@ -150,16 +150,18 @@ Split reductions, working sets and execution order are not modelled.
 
 One statement per line, `#` comments, single assignment. Scalars bind symbolic dimensions;
 `Tensor` declares an input and `Parameter` a weight. Axes may be named, and a dimension may be
-arithmetic over bound symbols.
+arithmetic over bound symbols. A symbol may also be derived from the ones above it (`E = H*D`);
+it sizes dimensions under its own name, and its value follows from the definition.
 
 ```
 B = 1
 H = 4
 S = 128
 D = 32
+E = H*D
 
-X  = Tensor(batch=B, seq=S, emb=H*D, dtype=fp16)
-Wq = Parameter(emb=H*D, proj=H*D, dtype=fp16)
+X  = Tensor(batch=B, seq=S, emb=E, dtype=fp16)
+Wq = Parameter(emb=E, proj=E, dtype=fp16)
 
 Qp = einsum("bse,ef->bsf", X, Wq)
 Q4 = reshape(Qp, shape=[B, S, H, D])
@@ -169,8 +171,10 @@ P  = softmax(Sc, axis=-1)
 ```
 
 Ctrl/Cmd+Enter runs the source. Every independent error is reported in one pass, in source order,
-each underlining the part it is about. Once built, each size parameter (`M = 256`) gets a value box under the editor
-that rewrites the number in the source, with a stepper that doubles a power of two, moves other even
+each underlining the part it is about. Extents an operation needs to match are checked as
+expressions, not only as numbers: `M*2` against `N*2` is rejected even when `M` and `N` are bound
+to the same value. Once built, each size parameter (`M = 256`) gets a value box under the editor
+that rewrites the number in the source (a derived symbol gets none), with a stepper that doubles a power of two, moves other even
 values by 32 and odd ones by 1; a run that only changes sizes keeps
 the cards where you placed them, their views, and the viewport. The source panel carries built-in examples, among them
 multi-head attention, KV-cache and grouped-query decode steps, a SwiGLU feed-forward block and MoE
