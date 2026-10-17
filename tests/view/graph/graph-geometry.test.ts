@@ -216,3 +216,24 @@ describe("staggered marks on a fanned bundle", () => {
     }
   });
 });
+
+/* A relayout or a change of footprint can leave two nodes overlapping. Neither
+   may then be stuck: the overlapped neighbour does not hold a move back, and
+   every other neighbour still stops one. */
+describe("leaving an overlap", () => {
+  const card = { x: 0, y: 0, w: 100, h: 100 };
+  const under = { x: 50, y: 50, w: 100, h: 100 };
+  const third = { x: 300, y: 0, w: 50, h: 50 };
+
+  it("lets a node move away from a neighbour it already overlaps", () => {
+    const moved = constrainRectMotion(card, { x: -5, y: 0 }, [under]);
+    expect(moved.x).toBe(-5);
+    const out = constrainRectMotion(card, { x: -200, y: 0 }, [under]);
+    expect(out.x).toBe(-200);
+  });
+
+  it("still stops it at any neighbour it did not overlap", () => {
+    const moved = constrainRectMotion(card, { x: 400, y: 0 }, [under, third]);
+    expect(moved.x + moved.w).toBeLessThanOrEqual(third.x - NODE_GAP);
+  });
+});

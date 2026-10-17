@@ -64,9 +64,14 @@ function moveY(rect: Rect, requested: number, blockers: Rect[], gap: number): Re
 export function constrainRectMotion(
   rect: Rect,
   delta: Point,
-  blockers: Rect[],
+  allBlockers: Rect[],
   gap = NODE_GAP
 ): Rect {
+  // A node already overlapping a neighbour - left there by a relayout, a
+  // restored link or a change of footprint - must be able to leave it. That
+  // neighbour neither stops the sweep nor vetoes the result; every other one
+  // still does, so a move can end an overlap but never start one.
+  const blockers = allBlockers.filter((block) => !rectsOverlap(rect, block, gap));
   let moved = rect;
   if (Math.abs(delta.x) >= Math.abs(delta.y)) {
     moved = moveX(moved, delta.x, blockers, gap);
@@ -75,8 +80,7 @@ export function constrainRectMotion(
     moved = moveY(moved, delta.y, blockers, gap);
     moved = moveX(moved, delta.x, blockers, gap);
   }
-  // A valid graph starts separated. This guard makes the invariant fail safe
-  // if a future layout policy supplies an already-overlapping blocker set.
+  // Fail safe: whatever the sweeps allowed, no new overlap is accepted.
   return blockers.some((block) => rectsOverlap(moved, block, gap)) ? rect : moved;
 }
 

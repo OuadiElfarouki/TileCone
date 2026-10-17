@@ -408,6 +408,20 @@ export function GraphView(): React.ReactElement {
     movedRef.current = true;
     carryPlacement(carriedOffsets(drawnRef.current, baseLayout.nodes));
   }, [placementCarry, baseLayout, layoutPending, carryPlacement]);
+  /* A new layout of the same graph is a card's footprint changing - a swapped
+     plane, a slice or unfold, a tile-position control. Placement reruns, and
+     offsets measured against the old layout would put the cards somewhere the
+     reader never left them, a grown card on top of its neighbour. Carry the
+     drawn placement across instead, as a size-only run does: every card stays
+     where it was drawn, and one that grew is nudged clear. */
+  const layoutSourceRef = useRef<{ resolved: typeof resolved; layout: typeof baseLayout } | null>(null);
+  useLayoutEffect(() => {
+    if (!baseLayout || layoutPending || !resolved) return;
+    const previous = layoutSourceRef.current;
+    layoutSourceRef.current = { resolved, layout: baseLayout };
+    if (placementCarry || !previous || previous.resolved !== resolved || previous.layout === baseLayout) return;
+    carryPlacement(carriedOffsets(drawnRef.current, baseLayout.nodes));
+  }, [resolved, baseLayout, layoutPending, placementCarry, carryPlacement]);
   useLayoutEffect(() => {
     // Not while a carry is pending: this commit's scene is the generated layout
     // the carry is about to replace, and the previous one is what it reads.
