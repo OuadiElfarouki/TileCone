@@ -41,9 +41,10 @@ describe("derived symbols", () => {
   it("is the same expression as its definition", () => {
     // E against B*S*H*D is the reshape's element count check.
     expect(tryCompileDSL(heads).ok).toBe(true);
-    const [diagnostic] = diagnostics("M = 4\nN = 4\nE = M*N\nX = Tensor(E)\nY = reshape(X, shape=[N*N])\n");
-    expect(diagnostic.code).toBe("SEM_SYMBOLIC_SHAPE");
-    expect(diagnostic.message).toContain("this holds only for M=4, N=4, where E = M*N");
+    const result = tryCompileDSL("M = 4\nN = 4\nE = M*N\nX = Tensor(E)\nY = reshape(X, shape=[N*N])\n");
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics[0].code).toBe("SEM_SYMBOLIC_SHAPE");
+    expect(result.diagnostics[0].message).toContain("agree for M=4, N=4, where E = M*N");
   });
 
   it("chains over earlier derived symbols", () => {

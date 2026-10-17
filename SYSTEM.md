@@ -216,14 +216,16 @@ The parser creates the structural graph. Declared inputs and weights already hav
    rather than a question with an answer.
 8. Each operation infers the expected number of output shapes and dtypes.
 9. All inferred extents are non-negative safe integers and all dtypes are supported.
-10. Extents an operation requires to be equal are equal as expressions, not only as
+10. Extents an operation requires to be equal are checked as expressions, not only as
     numbers. Each operation lists them (`symEqualities`): a contraction's two sides, a
     reshape's element counts, concatenated and broadcast axes, split sizes against the cut
     axis. `dim-algebra.ts` puts both sides into a canonical form, a polynomial over the
-    parameters with exact rational coefficients and monomial divisors, and rejects a pair
-    whose forms differ: `M*2` against `N*2` resolves when `M == N` and fails for every other
-    binding, so the program only works because of the values chosen. A parameter against a
-    literal is held to the same rule. The check runs over a second set of symbolic shapes in
+    parameters with exact rational coefficients and monomial divisors. A pair whose forms
+    differ is a warning on `ResolvedGraph.warnings`, not an error: `M*2` against `N*2`
+    resolves when `M == N` and fails for every other binding, so the graph is valid as bound
+    but a parameter control can break it. A parameter against a literal is held to the same
+    rule. The compiler returns warnings with a successful build, as diagnostics of severity
+    `warning` with their spans, and the Worker's compile artifact carries them to the editor. The check runs over a second set of symbolic shapes in
     which every extent with no known expression is an opaque symbol. That covers
     convolution spatial axes, `slice`, `pad` and barrier outputs, and a pair that depends on
     one is left undecided rather than refuted. A division by a sum is opaque on the same

@@ -119,6 +119,19 @@ describe("controls for parameters used by the graph", () => {
     expect(html).not.toContain('class="syntax-hint"');
   });
 
+  it("builds a program that warns, keeps its controls, and lists the warning", () => {
+    useStore.getState().applyDSL("M = 4\nN = 4\nA = Tensor(3, M)\nB = Tensor(N, 5)\nC = matmul(A, B)\n");
+    const state = useStore.getState();
+    expect(state.loadError).toBeNull();
+    expect(state.resolved?.tensors.C.resolved).toEqual([3, 5]);
+    expect(state.diagnostics.map((d) => d.severity)).toEqual(["warning"]);
+    const html = renderToStaticMarkup(createElement(SidePanel));
+    expect(html).toContain('<span class="warning"><b>1 warning</b>');
+    expect(html).toContain("agree for M=4, N=4");
+    expect(html).toContain('id="param-M"');
+    expect(html).not.toContain("last graph that built");
+  });
+
   it("offers the parameters behind a derived symbol, not the derived symbol", () => {
     useStore.getState().applyDSL("H = 4\nD = 8\nE = H*D\nX = Tensor(E, dtype=fp16)\nY = relu(X)\n");
     const html = renderToStaticMarkup(createElement(SidePanel));

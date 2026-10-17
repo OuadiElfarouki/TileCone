@@ -95,3 +95,15 @@ it("validates every restored plan and task before returning cloneable measuremen
   expect(() => planRestoreArtifact(compiled.resolved, { ...request, task: { tensorId: "Y", coord: [99, 0] } })).toThrow();
   expect(() => planRestoreArtifact(compiled.resolved, { ...request, tiles: { Y: [0, 64] } })).toThrow();
 });
+
+describe("warnings across the Worker boundary", () => {
+  it("carries a program's warnings, with their spans, as plain data", () => {
+    const result = compileArtifact("M = 4\nN = 4\nA = Tensor(3, M)\nB = Tensor(N, 5)\nC = matmul(A, B)\n");
+    if (!result.ok) throw new Error("expected the program to build");
+    const warnings = structuredClone(result.artifact.warnings);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ severity: "warning", code: "SEM_SYMBOLIC_SHAPE" });
+    expect(warnings[0].span.start.line).toBe(5);
+    expect(structuredClone(result.artifact.resolved).warnings).toHaveLength(1);
+  });
+});

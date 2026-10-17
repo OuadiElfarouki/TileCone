@@ -172,8 +172,9 @@ P  = softmax(Sc, axis=-1)
 
 Ctrl/Cmd+Enter runs the source. Every independent error is reported in one pass, in source order,
 each underlining the part it is about. Extents an operation needs to match are checked as
-expressions, not only as numbers: `M*2` against `N*2` is rejected even when `M` and `N` are bound
-to the same value. Once built, each size parameter (`M = 256`) gets a value box under the editor
+expressions, not only as numbers: `M*2` against `N*2` builds when `M` and `N` are bound to the
+same value, with a warning that another value of either breaks it. Clicking a diagnostic selects
+what it is about in the source. Once built, each size parameter (`M = 256`) gets a value box under the editor
 that rewrites the number in the source (a derived symbol gets none), with a stepper that doubles a power of two, moves other even
 values by 32 and odd ones by 1; a run that only changes sizes keeps
 the cards where you placed them, their views, and the viewport. The source panel carries built-in examples, among them

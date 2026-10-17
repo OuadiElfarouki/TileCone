@@ -187,11 +187,11 @@ export interface OpSpec {
    * counts, the non-concatenated axes of a concat.
    *
    * `inferShapes` has already checked each of these numerically. The resolver
-   * checks them again as expressions, and rejects a pair that is provably not
-   * the same expression: `M*2` against `N*2` holds when `M` and `N` are bound
-   * alike and fails for every other binding, so the program the author wrote
-   * is not the one that resolved. `inSyms` holds an opaque symbol wherever an
-   * extent is unknown, and a pair that depends on one is left alone.
+   * checks them again as expressions, and warns about a pair that is provably
+   * not the same expression: `M*2` against `N*2` holds when `M` and `N` are
+   * bound alike and fails for every other binding. `inSyms` holds an opaque
+   * symbol wherever an extent is unknown, and a pair that depends on one is
+   * left alone.
    */
   symEqualities?(inSyms: Sym[][], ctx: OpCtx): SymEquality[];
 

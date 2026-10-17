@@ -2,18 +2,27 @@ import { describe, expect, it } from "vitest";
 import { compileDSL, tryCompileDSL } from "../../src/parse/compiler";
 import { EXAMPLES } from "../../src/examples";
 
-const rejection = (src: string) => {
+/** The first warning of a program that built. */
+const warning = (src: string) => {
   const result = tryCompileDSL(src);
-  if (result.ok) throw new Error("expected the source to be rejected");
-  return result.diagnostics[0];
+  if (!result.ok) throw new Error(`expected the source to build: ${result.diagnostics[0].message}`);
+  const [first] = result.diagnostics;
+  if (!first) throw new Error("expected a warning");
+  expect(first.severity).toBe("warning");
+  return first;
 };
 
 const underlined = (src: string) => {
-  const { span } = rejection(src);
+  const { span } = warning(src);
   return src.slice(span.start.offset, span.end.offset);
 };
 
-const accepts = (src: string) => expect(tryCompileDSL(src).ok).toBe(true);
+/** Builds, with nothing to warn about. */
+const accepts = (src: string) => {
+  const result = tryCompileDSL(src);
+  expect(result.ok).toBe(true);
+  expect(result.diagnostics).toEqual([]);
+};
 
 describe("extents that agree only for the current bindings", () => {
   const flattened = `M = 4
@@ -24,13 +33,21 @@ F = reshape(X, shape=[M*N])
 Y = reshape(F, shape=[N/2, M*2])
 `;
 
-  it("rejects a contraction whose sides are equal only because M == N", () => {
+  it("builds a contraction whose sides are equal only because M == N, and warns", () => {
     const src = flattened + "A = Tensor(N*2, K)\nZ = matmul(Y, A)\n";
-    const diagnostic = rejection(src);
+    const result = tryCompileDSL(src);
+    expect(result.ok && result.program.resolved.tensors.Z.resolved).toEqual([2, 38]);
+    const diagnostic = warning(src);
     expect(diagnostic.code).toBe("SEM_SYMBOLIC_SHAPE");
-    expect(diagnostic.message).toContain("M*2 and N*2 are different expressions");
-    expect(diagnostic.message).toContain("holds only for M=4, N=4");
+    expect(diagnostic.message).toContain("M*2 and N*2 agree for M=4, N=4 but are different expressions");
+    expect(diagnostic.message).toContain("one symbol, or a derived one");
     expect(underlined(src)).toBe("A");
+  });
+
+  it("reports an error, not a warning, once the bindings differ", () => {
+    const result = tryCompileDSL(flattened.replace("N = 4", "N = 8") + "A = Tensor(N*2, K)\nZ = matmul(Y, A)\n");
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.every((d) => d.severity === "error")).toBe(true);
   });
 
   it("accepts the same contraction once both sides are one expression", () => {
@@ -39,38 +56,38 @@ Y = reshape(F, shape=[N/2, M*2])
 
   it("checks a reshape's element count as an expression", () => {
     const src = "M = 4\nN = 4\nX = Tensor(M, N)\nY = reshape(X, shape=[N*N])\n";
-    expect(rejection(src).message).toContain("M*N and N*N");
+    expect(warning(src).message).toContain("M*N and N*N agree");
     expect(underlined(src)).toBe("shape=[N*N]");
     accepts("H = 4\nD = 8\nX = Tensor(H*D, 3)\nY = reshape(X, shape=[(H*D)/H, H*3])\n");
   });
 
   it("treats a parameter matching a literal as a coincidence", () => {
     const src = "M = 8\nK = 8\nA = Tensor(M, K)\nB = Tensor(8, 3)\nC = matmul(A, B)\n";
-    expect(rejection(src).message).toContain("K and 8 are different expressions");
+    expect(warning(src).message).toContain("K and 8 agree for K=8");
   });
 
   it("names the label of a written einsum", () => {
     const src = 'M = 4\nN = 4\nA = Tensor(M, 3)\nB = Tensor(N, 5)\nC = einsum("ij,ik->jk", A, B)\n';
-    expect(rejection(src).message).toContain('the contracted axes "i"');
+    expect(warning(src).message).toContain('the contracted axes "i"');
   });
 
   it("broadcasts against a written 1, not against a parameter bound to 1", () => {
     accepts("M = 4\nA = Tensor(M, 3)\nB = Tensor(1, 3)\nC = add(A, B)\n");
     const src = "M = 4\nN = 1\nA = Tensor(M)\nB = Tensor(N)\nC = add(A, B)\n";
-    expect(rejection(src).message).toContain("M and N are different expressions");
+    expect(warning(src).message).toContain("M and N agree for M=4, N=1");
     expect(underlined(src)).toBe("B");
   });
 
   it("checks split sizes, concat axes and normalization weights", () => {
     expect(
-      rejection("H = 4\nD = 2\nX = Tensor(H*D)\nA, B = split(X, axis=0, sizes=[D*2, H])\n").message
-    ).toContain("D*2+H and H*D");
+      warning("H = 4\nD = 2\nX = Tensor(H*D)\nA, B = split(X, axis=0, sizes=[D*2, H])\n").message
+    ).toContain("D*2+H and H*D agree");
     expect(
-      rejection("R = 4\nC = 4\nA = Tensor(R, 2)\nB = Tensor(C, 3)\nY = concat(A, B, axis=1)\n").message
-    ).toContain("R and C");
+      warning("R = 4\nC = 4\nA = Tensor(R, 2)\nB = Tensor(C, 3)\nY = concat(A, B, axis=1)\n").message
+    ).toContain("R and C agree");
     expect(
-      rejection("S = 4\nE = 8\nF = 8\nX = Tensor(S, E)\nW = Tensor(F)\nY = layernorm(X, W)\n").message
-    ).toContain("E and F");
+      warning("S = 4\nE = 8\nF = 8\nX = Tensor(S, E)\nW = Tensor(F)\nY = layernorm(X, W)\n").message
+    ).toContain("E and F agree");
   });
 
   it("carries a symbolic split size downstream", () => {
@@ -102,7 +119,7 @@ X = Tensor(N, C, 8, 8)
 W = Tensor(C, G, 3, 3)
 Y = conv(X, W, stride=[1, 1], pads=[[1, 1], [1, 1]], dilation=[1, 1])
 `;
-    expect(rejection(src).message).toContain("C and G");
+    expect(warning(src).message).toContain("C and G agree");
   });
 
   it("does not refute what a barrier produced", () => {
