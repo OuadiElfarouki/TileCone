@@ -36,6 +36,19 @@ export type DependencyNoteDraft = {
  */
 export type AxisNames = (string | undefined)[];
 
+/**
+ * Two extents an operation needs to be equal, and how to say which. `what`
+ * reads as the subject of a sentence: "input 0 axis 1 and input 1 axis 0".
+ * `input` or `attribute` lets a diagnostic underline the part it is about.
+ */
+export type SymEquality = {
+  left: Sym;
+  right: Sym;
+  what: string;
+  input?: number;
+  attribute?: string;
+};
+
 export type Attrs = Record<string, unknown>;
 export type Cardinality = number | { min: number; max?: number };
 
@@ -152,8 +165,29 @@ export interface OpSpec {
    * against the bound parameters and drops any axis that does not come out at
    * the extent actually inferred, so a wrong mapping degrades to the number
    * rather than asserting a shape the graph does not have.
+   *
+   * A number is read as a literal: one the source wrote, or one carried from
+   * an input that was. An extent the operation derives without an expression
+   * for it - a convolution's spatial axes - is `null`. It is displayed as its
+   * literal, but the symbolic checks treat it as unknown, which is what keeps
+   * `conv` over `H` followed by `reshape(shape=[H/2])` from being refuted by an
+   * `8` that only looked like a literal.
    */
-  inferSymShapes?(inSyms: Sym[][], ctx: OpCtx): Sym[][];
+  inferSymShapes?(inSyms: Sym[][], ctx: OpCtx): (Sym | null)[][];
+
+  /**
+   * The extents this operation requires to be equal, as expressions over the
+   * inputs' symbolic shapes: a contraction's two sides, a reshape's element
+   * counts, the non-concatenated axes of a concat.
+   *
+   * `inferShapes` has already checked each of these numerically. The resolver
+   * checks them again as expressions, and rejects a pair that is provably not
+   * the same expression: `M*2` against `N*2` holds when `M` and `N` are bound
+   * alike and fails for every other binding, so the program the author wrote
+   * is not the one that resolved. `inSyms` holds an opaque symbol wherever an
+   * extent is unknown, and a pair that depends on one is left alone.
+   */
+  symEqualities?(inSyms: Sym[][], ctx: OpCtx): SymEquality[];
 
   /**
    * What to call an instance of this operation on screen, when the registry

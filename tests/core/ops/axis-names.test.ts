@@ -61,9 +61,8 @@ describe("carrying axis names through operations", () => {
 H = 4
 S = 128
 D = 32
-E = 128
-X = Tensor(batch=B, seq=S, emb=E, dtype=fp16)
-Wq = Tensor(emb=E, proj=E, dtype=fp16)
+X = Tensor(batch=B, seq=S, emb=H*D, dtype=fp16)
+Wq = Tensor(emb=H*D, proj=H*D, dtype=fp16)
 Qp = einsum("bse,ef->bsf", X, Wq)
 Q4 = reshape(Qp, shape=[B, S, H, D])
 Qh = transpose(Q4, perm=[0, 2, 1, 3])

@@ -2,9 +2,10 @@
 
 import { ZodObject, ZodType, ZodIssue } from "zod";
 import { getOp } from "./ops/index";
-import { GraphError, GraphErrorSubject, resolveShape, Shape } from "./shapes";
+import { dimSymbols, GraphError, GraphErrorSubject, resolveShape, Shape, Sym } from "./shapes";
+import { compareDims } from "./dim-algebra";
 import { DTYPES, DTYPE_BYTES, DType, type DTypeWidening } from "./dtypes";
-import type { AxisNames, Cardinality } from "./ops/types";
+import type { AxisNames, Cardinality, OpCtx, SymEquality } from "./ops/types";
 
 export type { Shape, Sym } from "./shapes";
 export type { DType } from "./dtypes";
@@ -197,19 +198,110 @@ function axisNamesOf(tensor: Tensor, rank: number): AxisNames {
  * a plain number cannot, and no mapping is trusted far enough to do that.
  */
 function verifiedSymShape(
-  proposed: Shape | undefined,
+  proposed: readonly (Sym | null)[] | undefined,
   extents: number[],
   params: Record<string, number>
 ): Shape {
   return extents.map((extent, axis) => {
     const sym = proposed?.[axis];
-    if (sym === undefined) return extent;
+    if (sym === undefined || sym === null) return extent;
     try {
       return resolveShape([sym], params)[0] === extent ? sym : extent;
     } catch {
       return extent;
     }
   });
+}
+
+/**
+ * Symbolic shapes for the equality checks, kept apart from `symShape`.
+ *
+ * `symShape` is for display, and writes an axis it has no expression for as
+ * its literal extent. That is the right thing to show, but the wrong thing to
+ * reason with: a literal `8` the author wrote is a constant, while an `8` that
+ * a convolution derived from `H` is not, and an equality check that cannot
+ * tell them apart refutes programs that are correct. Here every such axis is
+ * a fresh opaque symbol instead, bound to its extent only so that expressions
+ * built on it can still be verified numerically.
+ */
+class FormalShapes {
+  private readonly shapes = new Map<string, Shape>();
+  /** Symbols standing for extents with no known expression. */
+  readonly unknowns = new Set<string>();
+  /** The parameters, plus each unknown bound to its actual extent. */
+  private readonly values: Record<string, number>;
+  private count = 0;
+
+  constructor(private readonly params: Record<string, number>) {
+    this.values = Object.assign(Object.create(null) as Record<string, number>, params);
+  }
+
+  private unknown(extent: number): string {
+    let name: string;
+    do name = `_$${this.count++}`;
+    while (Object.prototype.hasOwnProperty.call(this.params, name));
+    this.unknowns.add(name);
+    this.values[name] = extent;
+    return name;
+  }
+
+  /** Keep each proposed expression that evaluates to the extent inferred; any
+   * other axis becomes unknown, exactly as `verifiedSymShape` falls back. */
+  set(id: string, proposed: readonly (Sym | null)[] | undefined, extents: number[]): void {
+    this.shapes.set(
+      id,
+      extents.map((extent, axis) => {
+        const sym = proposed?.[axis];
+        if (sym === undefined || sym === null) return this.unknown(extent);
+        try {
+          return resolveShape([sym], this.values)[0] === extent ? sym : this.unknown(extent);
+        } catch {
+          return this.unknown(extent);
+        }
+      })
+    );
+  }
+
+  get(id: string): Shape {
+    return this.shapes.get(id)!;
+  }
+
+  /** An expression as the author can read it: an unknown shows its extent. */
+  readable(sym: Sym): string {
+    return String(sym).replace(/_\$\d+/g, (name) =>
+      this.unknowns.has(name) ? String(this.values[name]) : name
+    );
+  }
+
+  /** The bindings an expression is evaluated under, for a message. */
+  bindings(syms: Sym[]): string {
+    const names = [...new Set(syms.flatMap(dimSymbols))].filter((name) => !this.unknowns.has(name));
+    return names.map((name) => `${name}=${this.params[name]}`).join(", ");
+  }
+}
+
+/**
+ * Reject an operation whose required equalities hold only for the current
+ * bindings. Each has already passed numerically, so a pair the algebra calls
+ * `different` is two expressions that coincide here and nowhere in general.
+ */
+function checkSymEqualities(node: Node, equalities: SymEquality[], formal: FormalShapes): void {
+  for (const eq of equalities) {
+    if (compareDims(eq.left, eq.right, formal.unknowns) !== "different") continue;
+    const bindings = formal.bindings([eq.left, eq.right]);
+    throw new GraphError(
+      `node "${node.id}" (${node.op}): ${eq.what} must be equal, but ` +
+        `${formal.readable(eq.left)} and ${formal.readable(eq.right)} are different ` +
+        `expressions${bindings ? `; this holds only for ${bindings}` : ""}`,
+      "GRAPH_SYMBOLIC_SHAPE",
+      {
+        kind: "node",
+        id: node.id,
+        ...(eq.attribute !== undefined ? { attribute: eq.attribute } : {}),
+        ...(eq.input !== undefined ? { input: eq.input } : {}),
+      }
+    );
+  }
 }
 
 /** Every exact count exposed by the engine is a JavaScript number. Reject a
@@ -553,12 +645,14 @@ export function resolveGraph(source: Graph): ResolvedGraph {
   if (topo.length !== g.nodes.length) throw new GraphError("graph has a cycle", "GRAPH_CYCLE");
 
   // Resolve declared shapes, then infer through the DAG.
+  const formal = new FormalShapes(g.params);
   for (const t of Object.values(g.tensors)) {
     if (t.producer) continue;
     try {
       t.resolved = resolveShape(t.shape, shapeParams);
       validateTensorCardinality(t.resolved, t.dtype, { kind: "tensor", id: t.id });
       t.symShape = verifiedSymShape(t.shape, t.resolved, g.params);
+      formal.set(t.id, t.shape, t.resolved);
     } catch (e) {
       throw new GraphError(
         `tensor "${t.id}": shape resolution failed: ${(e as Error).message}`,
@@ -655,7 +749,7 @@ export function resolveGraph(source: Graph): ResolvedGraph {
       }
     }
 
-    let outSyms: Shape[] | null = null;
+    let outSyms: (Sym | null)[][] | null = null;
     if (spec.inferSymShapes) {
       try {
         outSyms = spec.inferSymShapes(
@@ -686,13 +780,31 @@ export function resolveGraph(source: Graph): ResolvedGraph {
             "GRAPH_INVALID",
             { kind: "node", id: n.id }
           );
-        if (syms.some((sym) => typeof sym !== "string" && typeof sym !== "number"))
+        if (syms.some((sym) => sym !== null && typeof sym !== "string" && typeof sym !== "number"))
           throw new GraphError(
             `node "${n.id}" (${n.op}): inferSymShapes returned an invalid dimension for output ${slot}`,
             "GRAPH_INVALID",
             { kind: "node", id: n.id }
           );
       }
+    }
+
+    // The same mapping again over the formal shapes, so an axis whose extent
+    // is unknown stays unknown downstream instead of turning into a literal.
+    const formalIn = n.inputs.map((id) => formal.get(id));
+    const formalCtx: OpCtx = { inShapes, outShapes, attrs: n.attrs };
+    let formalOut: (Sym | null)[][] | null = null;
+    try {
+      if (spec.symEqualities)
+        checkSymEqualities(n, spec.symEqualities(formalIn, formalCtx), formal);
+      if (spec.inferSymShapes) formalOut = spec.inferSymShapes(formalIn, formalCtx);
+    } catch (e) {
+      if (e instanceof GraphError) throw e;
+      throw new GraphError(
+        `node "${n.id}" (${n.op}): symbolic shape check failed: ${(e as Error).message}`,
+        "GRAPH_INVALID",
+        { kind: "node", id: n.id }
+      );
     }
 
     let outDTypes: DType[];
@@ -745,6 +857,7 @@ export function resolveGraph(source: Graph): ResolvedGraph {
       t.resolved = inferred;
       t.dtype = outDTypes[s];
       t.symShape = verifiedSymShape(outSyms?.[s], inferred, g.params);
+      formal.set(t.id, formalOut?.[s], inferred);
       const names = outNames?.[s];
       if (names && names.some((v) => v !== undefined))
         t.axisNames = names.slice();

@@ -61,6 +61,7 @@ src/
 │   ├── expand.ts         composite-to-primitive graph rewrites
 │   ├── notes.ts          plain-language dependency constraints
 │   ├── shapes.ts         symbolic dimensions and shape errors
+│   ├── dim-algebra.ts    canonical forms of dimension expressions, and equality for every binding
 │   ├── dtypes.ts         canonical dtypes, byte widths, and the promotion lattice
 │   ├── ops/              operation semantics, registry, barriers, and fallback thresholds
 │   └── plan/
@@ -214,7 +215,19 @@ The parser creates the structural graph. Declared inputs and weights already hav
    rather than a question with an answer.
 8. Each operation infers the expected number of output shapes and dtypes.
 9. All inferred extents are non-negative safe integers and all dtypes are supported.
-10. Consumer indexes, producer links, and a stable topological order are built.
+10. Extents an operation requires to be equal are equal as expressions, not only as
+    numbers. Each operation lists them (`symEqualities`): a contraction's two sides, a
+    reshape's element counts, concatenated and broadcast axes, split sizes against the cut
+    axis. `dim-algebra.ts` puts both sides into a canonical form, a polynomial over the
+    parameters with exact rational coefficients and monomial divisors, and rejects a pair
+    whose forms differ: `M*2` against `N*2` resolves when `M == N` and fails for every other
+    binding, so the program only works because of the values chosen. A parameter against a
+    literal is held to the same rule. The check runs over a second set of symbolic shapes in
+    which every extent with no known expression is an opaque symbol. That covers
+    convolution spatial axes, `slice`, `pad` and barrier outputs, and a pair that depends on
+    one is left undecided rather than refuted. A division by a sum is opaque on the same
+    terms.
+11. Consumer indexes, producer links, and a stable topological order are built.
 
 Resolution is referentially transparent: it operates on a clone rather than mutating the caller's graph. The resulting `ResolvedGraph` is the only graph form accepted by symbolic execution. Its `shapeParameters` lists the bindings read by declared dimension resolution and registry-owned shape inference, in declaration order. These semantic reads include operation shape attributes without relying on displayed symbolic extents or scanning unrelated strings, and the metadata crosses Worker boundaries as ordinary data.
 
@@ -373,7 +386,10 @@ Every operation is described by an `OpSpec` in `src/core/ops/types.ts` and regis
 - optional attribute-dependent arity validation;
 - output shape inference;
 - optional axis-name propagation, defaulting to unnamed;
-- optional symbolic-extent propagation, defaulting to literal;
+- optional symbolic-extent propagation, defaulting to literal, with `null` for an extent the
+  operation derives without an expression;
+- optional symbolic equalities between input extents, checked as expressions during
+  resolution;
 - output dtype inference;
 - backward region mapping from an output box to input regions;
 - forward region mapping from an input box to output regions;

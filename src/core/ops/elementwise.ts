@@ -3,7 +3,7 @@ import { Box, fromBox, iv } from "../region";
 import { OpCtx, OpSpec } from "./types";
 import { DType, dtypeFamily, promoteDTypes } from "../dtypes";
 import { broadcastAxisNames } from "./axis-names";
-import { broadcastSymShape } from "./sym-shape";
+import { broadcastSymEqualities, broadcastSymShape } from "./sym-shape";
 import { uniformTally } from "../tally";
 
 /**
@@ -122,6 +122,7 @@ export const elementwiseOp: OpSpec = {
     broadcastAxisNames(inNames, ctx.inShapes, ctx.outShapes[0]),
   ],
   inferSymShapes: (inSyms, ctx) => [broadcastSymShape(inSyms, ctx)],
+  symEqualities: broadcastSymEqualities,
   validateArity: (inputCount, _outputCount, attrs) => {
     const nary = attrs.nary as number;
     if (nary !== inputCount)

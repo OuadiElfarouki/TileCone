@@ -1,6 +1,14 @@
 import { z } from "zod";
 import { Box, Region, coversAxisFully, empty, fromBox, iv, canonicalize } from "../region";
-import { Attrs, DependencyNoteDraft, OpCtx, OpSpec, promotingDTypeOutputs, NoteCtx } from "./types";
+import {
+  Attrs,
+  DependencyNoteDraft,
+  OpCtx,
+  OpSpec,
+  promotingDTypeOutputs,
+  NoteCtx,
+  SymEquality,
+} from "./types";
 import { limitsOf } from "./limits";
 import { AxisNames } from "./types";
 import { type Tally, uniformTally } from "../tally";
@@ -527,6 +535,41 @@ function einsumSymShape(eq: string, inSyms: Sym[][], ctx: OpCtx, nInputs: number
   ];
 }
 
+/**
+ * Every operand axis wearing a label must have the same extent: that is what
+ * a shared label means. `labelled` says whether to name the label, which only
+ * helps when the author wrote the equation; a matmul's labels are internal.
+ */
+function einsumSymEqualities(
+  eq: string,
+  inSyms: Sym[][],
+  nInputs: number,
+  labelled: boolean
+): SymEquality[] {
+  const pe = parseEquation(eq, nInputs);
+  const first = new Map<string, { slot: number; axis: number }>();
+  const equalities: SymEquality[] = [];
+  pe.operands.forEach((labels, slot) =>
+    labels.forEach((label, axis) => {
+      const seen = first.get(label);
+      if (!seen) {
+        first.set(label, { slot, axis });
+        return;
+      }
+      const kind = pe.output.includes(label) ? "shared" : "contracted";
+      equalities.push({
+        left: inSyms[seen.slot][seen.axis],
+        right: inSyms[slot][axis],
+        what:
+          `the ${kind} axes${labelled ? ` "${label}"` : ""} ` +
+          `(input ${seen.slot} axis ${seen.axis}, input ${slot} axis ${axis})`,
+        input: slot,
+      });
+    })
+  );
+  return equalities;
+}
+
 export const einsumOp: OpSpec = {
   name: "einsum",
   attrSchema: z.object({ equation: z.string() }),
@@ -535,6 +578,8 @@ export const einsumOp: OpSpec = {
     einsumAxisNames(eqOf(ctx.attrs), inNames, ctx.inShapes.length),
   inferSymShapes: (inSyms, ctx) =>
     einsumSymShape(eqOf(ctx.attrs), inSyms, ctx, ctx.inShapes.length),
+  symEqualities: (inSyms, ctx) =>
+    einsumSymEqualities(eqOf(ctx.attrs), inSyms, ctx.inShapes.length, true),
   validateArity: (inputCount, _outputCount, attrs) => {
     const parts = eqOf(attrs).replace(/\s+/g, "").split("->");
     if (parts.length !== 2) return; // equation syntax is diagnosed by shape inference
@@ -574,6 +619,8 @@ function einsumSugar(
       einsumAxisNames(makeEq(ctx.inShapes), inNames, ctx.inShapes.length),
     inferSymShapes: (inSyms, ctx) =>
       einsumSymShape(makeEq(ctx.inShapes), inSyms, ctx, ctx.inShapes.length),
+    symEqualities: (inSyms, ctx) =>
+      einsumSymEqualities(makeEq(ctx.inShapes), inSyms, ctx.inShapes.length, false),
     inferDTypes: promotingDTypeOutputs(name),
     inferShapes: (inShapes) => einsumInferShapes(makeEq(inShapes), inShapes),
     backward: (_s, outBox, ctx) => einsumBackward(eqFor(ctx), outBox, ctx),

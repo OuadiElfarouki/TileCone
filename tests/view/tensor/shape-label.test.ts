@@ -108,14 +108,17 @@ C = concat(A, B, axis=1)
   });
 
   it("can take an unchanged concat symbol from a later input", () => {
+    // A slice carries no symbols, so A's axes are unknown rather than literals
+    // that `Rows` would only coincide with.
     const CAT = `Rows = 4
 P = 6
 T = 2
-A = Tensor(4, P, dtype=fp32)
+A0 = Tensor(8, P, dtype=fp32)
+A = slice(A0, starts=[0, 0], stops=[4, 6], steps=[1, 1])
 B = Tensor(Rows, T, dtype=fp32)
 C = concat(A, B, axis=1)
 `;
-    expect(tensorIn(CAT, "C").symShape).toEqual(["Rows", "P+T"]);
+    expect(tensorIn(CAT, "C").symShape).toEqual(["Rows", "6+T"]);
   });
 
   it("carries only the unchanged extents through convolution and pooling", () => {

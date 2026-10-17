@@ -6,8 +6,9 @@
  * for why this is a separate question from axis names.
  */
 
+import { compareDims } from "../dim-algebra";
 import { Sym } from "../shapes";
-import { OpCtx } from "./types";
+import { OpCtx, SymEquality } from "./types";
 
 /** The output has the input's extents unchanged. */
 export function sameSymShape(inSyms: Sym[][]): Sym[][] {
@@ -34,4 +35,36 @@ export function broadcastSymShape(
     }
     return extent;
   });
+}
+
+/**
+ * Broadcasting requires each pair of aligned axes to be equal unless one of
+ * them is 1. "Is 1" is asked of the expression, not the extent: an axis
+ * written `N` broadcasts against `M` only because `N` is bound to 1, which is
+ * as much a coincidence as `N` being bound to `M`'s value.
+ *
+ * Every pair is compared, not each against the first: an unknown first axis
+ * would otherwise leave two provably different ones behind it unchecked.
+ */
+export function broadcastSymEqualities(inSyms: Sym[][], ctx: OpCtx, outSlot = 0): SymEquality[] {
+  const rank = ctx.outShapes[outSlot].length;
+  const equalities: SymEquality[] = [];
+  for (let axis = 0; axis < rank; axis++) {
+    const aligned: { slot: number; at: number; sym: Sym }[] = [];
+    for (let slot = 0; slot < inSyms.length; slot++) {
+      const at = axis - (rank - inSyms[slot].length);
+      if (at < 0) continue;
+      const sym = inSyms[slot][at];
+      if (compareDims(sym, 1) !== "same") aligned.push({ slot, at, sym });
+    }
+    for (let i = 0; i < aligned.length; i++)
+      for (let j = i + 1; j < aligned.length; j++)
+        equalities.push({
+          left: aligned[i].sym,
+          right: aligned[j].sym,
+          what: `broadcast axes input ${aligned[i].slot} axis ${aligned[i].at} and input ${aligned[j].slot} axis ${aligned[j].at}`,
+          input: aligned[j].slot,
+        });
+  }
+  return equalities;
 }

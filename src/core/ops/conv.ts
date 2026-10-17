@@ -5,6 +5,7 @@ import { DependencyNoteDraft, floatingDTypeOutputs, NoteCtx, OpCtx, OpSpec, prom
 import { limitsOf } from "./limits";
 import { sameAxisNames } from "./axis-names";
 import { separableTally, type Step, type Tally, uniformTally } from "../tally";
+import { symProduct } from "../dim-algebra";
 
 /**
  * Layout: NC* (batch, channels, spatial...). Weight: [Cout, Cin/groups, *kernel].
@@ -419,12 +420,25 @@ export const convOp: OpSpec = {
     [
       // Only batch and output channels retain an unchanged symbolic extent.
       // Spatial axes keep their identity via `inferAxisNames`, but their
-      // extents are derived by the convolution formula and remain literal.
+      // extents are derived by the convolution formula and have no expression.
       inSyms[0][0],
       inSyms[1][0],
-      ...ctx.outShapes[0].slice(2),
+      ...ctx.outShapes[0].slice(2).map(() => null),
     ],
   ],
+  // Each group reads its share of the activation's channels, and the weight's
+  // input-channel axis is that share.
+  symEqualities: (inSyms, ctx) => {
+    const groups = (ctx.attrs as ConvAttrs).groups;
+    return [
+      {
+        left: inSyms[0][1],
+        right: groups === 1 ? inSyms[1][1] : symProduct([inSyms[1][1], groups]),
+        what: "the activation's channels and the weight's input channels times groups",
+        input: 1,
+      },
+    ];
+  },
   dependencyNote: convDependencyNote,
   inferDTypes: promotingDTypeOutputs("conv"),
   inferShapes: (inShapes, attrs) => {
@@ -614,7 +628,7 @@ export const poolOp: OpSpec = {
   arity: { inputs: 1, outputs: 1 },
   inferAxisNames: sameAxisNames,
   inferSymShapes: (inSyms, ctx) => [
-    [inSyms[0][0], inSyms[0][1], ...ctx.outShapes[0].slice(2)],
+    [inSyms[0][0], inSyms[0][1], ...ctx.outShapes[0].slice(2).map(() => null)],
   ],
   inferDTypes: (inDTypes, attrs, outShapes) =>
     (attrs.kind === "avg" ? avgPoolDTypes : maxPoolDTypes)(inDTypes, attrs, outShapes),

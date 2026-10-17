@@ -54,6 +54,8 @@ function semanticCode(error: GraphError): string {
     case "GRAPH_SHAPE":
     case "GRAPH_UNBOUND_SYMBOL":
       return "SEM_SHAPE";
+    case "GRAPH_SYMBOLIC_SHAPE":
+      return "SEM_SYMBOLIC_SHAPE";
     case "GRAPH_DTYPE":
       return "SEM_DTYPE";
     case "GRAPH_DEFINITION":
@@ -80,6 +82,7 @@ function semanticSpan(error: GraphError, sourceMap: DSLSourceMap): SourceSpan {
       // it: a defaulted attribute has no span because it appears in no text.
       const attr = subject.attribute;
       if (attr && args.attrs[attr]) return args.attrs[attr];
+      if (subject.input !== undefined && args.inputs[subject.input]) return args.inputs[subject.input];
     }
     return sourceMap.nodes[subject.id];
   }

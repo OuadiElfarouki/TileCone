@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { Box, Region, boundingBox, canonicalize, iv } from "../region";
 import { resolveShape } from "../shapes";
+import { symProduct } from "../dim-algebra";
 import { DependencyNoteDraft, isRowMajor, NoteCtx, OpSpec, rowMajor, uniformDTypeOutputs } from "./types";
 import { DEFAULT_LIMITS, limitsOf } from "./limits";
 import { AxisNames } from "./types";
@@ -290,6 +291,17 @@ export const reshapeOp: OpSpec = {
     const target = (ctx.attrs as ReshapeAttrs).shape;
     return [out.map((sym, axis) => (typeof target[axis] === "string" ? target[axis] : sym))];
   },
+  // A reshape keeps every element, so the two shapes must hold the same count
+  // as expressions: `[M, N]` to `[N*N]` resolves when M == N and is wrong
+  // otherwise.
+  symEqualities: (inSyms, ctx) => [
+    {
+      left: symProduct(inSyms[0]),
+      right: symProduct((ctx.attrs as ReshapeAttrs).shape),
+      what: "the element counts of the input and of shape",
+      attribute: "shape",
+    },
+  ],
   inferDTypes: uniformDTypeOutputs("reshape"),
   inferShapes: (inShapes, attrs, params) => {
     const target = resolveShape((attrs as ReshapeAttrs).shape, params ?? {});

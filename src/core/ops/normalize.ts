@@ -1,7 +1,14 @@
 import { z } from "zod";
 import { Box, Region, canonicalize, count, coversAxisFully, fromBox, iv } from "../region";
 import { normAxes } from "./reduce";
-import { DependencyNoteDraft, OpCtx, OpSpec, floatingDTypeOutputs, NoteCtx } from "./types";
+import {
+  DependencyNoteDraft,
+  OpCtx,
+  OpSpec,
+  floatingDTypeOutputs,
+  NoteCtx,
+  SymEquality,
+} from "./types";
 import { uniformTally } from "../tally";
 import { sameAxisNames } from "./axis-names";
 import { axisWord } from "./axis-names";
@@ -97,6 +104,25 @@ export const normalizeOp: OpSpec = {
   arity: { inputs: { min: 1, max: 3 }, outputs: 1 },
   inferAxisNames: sameAxisNames,
   inferSymShapes: sameSymShape,
+  // Weight and bias span exactly the normalized axes of the input.
+  symEqualities: (inSyms, ctx) => {
+    const { axes, hasWeight, hasBias } = cfg(ctx);
+    const equalities: SymEquality[] = [];
+    let slot = 1;
+    for (const flag of [hasWeight, hasBias]) {
+      if (!flag) continue;
+      const param = slot++;
+      axes.forEach((axis, i) =>
+        equalities.push({
+          left: inSyms[0][axis],
+          right: inSyms[param][i],
+          what: `input 0 axis ${axis} and input ${param} axis ${i}`,
+          input: param,
+        })
+      );
+    }
+    return equalities;
+  },
   validateArity: (inputCount, _outputCount, attrs) => {
     const typed = attrs as NAttrs;
     const expected = 1 + Number(typed.hasWeight) + Number(typed.hasBias);

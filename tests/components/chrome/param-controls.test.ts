@@ -119,8 +119,8 @@ describe("controls for parameters used by the graph", () => {
     expect(html).not.toContain('class="syntax-hint"');
   });
 
-  it("offers controls for symbolic split sizes even when displayed extents are literal", () => {
-    useStore.getState().applyDSL("N = 2\nL = 4\nUnused = 16\nX = Tensor(6)\n" +
+  it("offers controls for symbolic split sizes over an input of unknown extent", () => {
+    useStore.getState().applyDSL('N = 2\nL = 4\nUnused = 16\nX = opaque(op="Src", shapes=[[6]], dtypes=[fp32])\n' +
       "Y, Z = split(X, axis=0, sizes=[N, L])\n");
     const html = renderToStaticMarkup(createElement(SidePanel));
     expect(html).toContain('id="param-N"');

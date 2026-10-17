@@ -278,12 +278,11 @@ Z = cumsum(Y, axis=0, reverse=false)
 H = 2
 S = 4
 D = 3
-E = 6
-X = Tensor(B, S, E, dtype=fp32)
-Wq = Tensor(E, E, dtype=fp32)
-Wk = Tensor(E, E, dtype=fp32)
-Wv = Tensor(E, E, dtype=fp32)
-Wo = Tensor(E, E, dtype=fp32)
+X = Tensor(B, S, H*D, dtype=fp32)
+Wq = Tensor(H*D, H*D, dtype=fp32)
+Wk = Tensor(H*D, H*D, dtype=fp32)
+Wv = Tensor(H*D, H*D, dtype=fp32)
+Wo = Tensor(H*D, H*D, dtype=fp32)
 Qp = einsum("bse,ef->bsf", X, Wq)
 Kp = einsum("bse,ef->bsf", X, Wk)
 Vp = einsum("bse,ef->bsf", X, Wv)
@@ -297,7 +296,7 @@ Scores = einsum("bhqd,bhkd->bhqk", Qh, Kh)
 P = softmax(Scores, axis=-1)
 Z = einsum("bhqk,bhkd->bhqd", P, Vh)
 Zt = transpose(Z, perm=[0, 2, 1, 3])
-Zm = reshape(Zt, shape=[B, S, E])
+Zm = reshape(Zt, shape=[B, S, H*D])
 Out = einsum("bse,ef->bsf", Zm, Wo)
 `);
     checkGraph(miniAttn, { perTensorElementCap: 3, boxSelections: 1, forward: false });

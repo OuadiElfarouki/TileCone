@@ -12,6 +12,7 @@ export type GraphErrorCode =
   | "GRAPH_SHAPE"
   | "GRAPH_DTYPE"
   | "GRAPH_UNBOUND_SYMBOL"
+  | "GRAPH_SYMBOLIC_SHAPE"
   | "GRAPH_DEFINITION";
 
 export type GraphErrorSubject = {
@@ -25,6 +26,8 @@ export type GraphErrorSubject = {
    * have to parse prose that was itself built from this exact value.
    */
   attribute?: string;
+  /** The input slot this error is about, when it is about one operand. */
+  input?: number;
 };
 
 export class GraphError extends Error {
@@ -49,7 +52,7 @@ export class GraphError extends Error {
  * parameter being the one-symbol case. Nothing downstream had to learn a new
  * shape type, and the text a reader wrote is what `notes.ts` and `toDSL` see.
  */
-type DimNode =
+export type DimNode =
   | { kind: "num"; value: number }
   | { kind: "sym"; name: string }
   | { kind: "neg"; arg: DimNode }

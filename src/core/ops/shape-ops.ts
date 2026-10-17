@@ -9,11 +9,12 @@ import {
   broadcastOracleIndex,
 } from "./elementwise";
 import { normAxis } from "./reduce";
-import { OpCtx, OpSpec, uniformDTypeOutputs } from "./types";
+import { OpCtx, OpSpec, SymEquality, uniformDTypeOutputs } from "./types";
 import { limitsOf } from "./limits";
 import { broadcastAxisNames, firstNamedAxis, sameAxisNames } from "./axis-names";
 import { sameSymShape } from "./sym-shape";
 import { Sym } from "../shapes";
+import { compareDims, symSum } from "../dim-algebra";
 import { separableTally, type Step, uniformTally } from "../tally";
 
 const zero = () => 0;
@@ -336,6 +337,22 @@ export const concatOp: OpSpec = {
       ),
     ];
   },
+  // Every axis but the joined one is shared by all the inputs.
+  symEqualities: (inSyms, ctx) => {
+    const axis = normAxis(ctx.attrs.axis as number, ctx.inShapes[0].length);
+    const equalities: SymEquality[] = [];
+    for (let slot = 1; slot < inSyms.length; slot++)
+      inSyms[slot].forEach((sym, ax) => {
+        if (ax !== axis)
+          equalities.push({
+            left: inSyms[0][ax],
+            right: sym,
+            what: `axis ${ax} of input 0 and input ${slot}`,
+            input: slot,
+          });
+      });
+    return equalities;
+  },
   inferDTypes: uniformDTypeOutputs("concat"),
   inferShapes: (inShapes, attrs) => {
     const rank = inShapes[0].length;
@@ -434,9 +451,25 @@ export const splitOp: OpSpec = {
   }),
   arity: { inputs: 1, outputs: { min: 1 } },
   inferAxisNames: (inNames, ctx) => ctx.outShapes.map(() => inNames[0].slice()),
-  // Only the axis being cut changes, and it becomes a literal size.
-  inferSymShapes: (inSyms, ctx) =>
-    ctx.outShapes.map((out) => inSyms[0].map((sym, ax) => (out[ax] === ctx.inShapes[0][ax] ? sym : out[ax]))),
+  // Only the axis being cut changes, and it becomes the size written for it.
+  inferSymShapes: (inSyms, ctx) => {
+    const axis = normAxis(ctx.attrs.axis as number, ctx.inShapes[0].length);
+    const sizes = ctx.attrs.sizes as Shape;
+    return ctx.outShapes.map((_out, slot) =>
+      inSyms[0].map((sym, ax) => (ax === axis ? sizes[slot] : sym))
+    );
+  },
+  symEqualities: (inSyms, ctx) => {
+    const axis = normAxis(ctx.attrs.axis as number, ctx.inShapes[0].length);
+    return [
+      {
+        left: symSum(ctx.attrs.sizes as Shape),
+        right: inSyms[0][axis],
+        what: `the sum of sizes and axis ${axis} of the input`,
+        attribute: "sizes",
+      },
+    ];
+  },
   validateArity: (_inputCount, outputCount, attrs) => {
     const sizeCount = (attrs.sizes as Shape).length;
     if (outputCount !== sizeCount)
@@ -500,6 +533,16 @@ export const expandOp: OpSpec = {
   inferSymShapes: (_inSyms, ctx) => {
     const target = ctx.attrs.shape as Sym[];
     return [ctx.outShapes[0].map((extent, axis) => target[axis] ?? extent)];
+  },
+  // An input axis is either 1, and stretched, or already the target extent.
+  symEqualities: (inSyms, ctx) => {
+    const target = ctx.attrs.shape as Sym[];
+    const off = target.length - inSyms[0].length;
+    return inSyms[0].flatMap((sym, ax): SymEquality[] =>
+      compareDims(sym, 1) === "same"
+        ? []
+        : [{ left: sym, right: target[ax + off], what: `input axis ${ax} and shape axis ${ax + off}`, attribute: "shape" }]
+    );
   },
   inferDTypes: uniformDTypeOutputs("expand"),
   inferShapes: (inShapes, attrs, params) => {
