@@ -1,3 +1,4 @@
+import { DECK_ROOM_PX } from "../../../src/view/tensor/deck";
 import { describe, expect, it } from "vitest";
 import { cardSize } from "../../../src/components/card/TensorCard";
 import { box, count, fromBox, intersect, unionOf, type Box } from "../../../src/core/region";
@@ -442,5 +443,18 @@ describe("hover direction filtering", () => {
     expect(buildLayers({ ...args, direction: "backward" })).toEqual([both[0]]);
     expect(buildLayers({ ...args, direction: "forward" })).toEqual([both[1]]);
     expect(buildLayers({ ...args, direction: "none" })).toEqual([]);
+  });
+});
+
+describe("where a card's grid sits", () => {
+  it("is centred under the header on the card's bottom edge, beside a slice deck's room", () => {
+    const px = 2;
+    const wide = cardSize([8], px, "normalize_H$mean", ["[S × 1]"]);
+    expect(wide.port.w).toBeLessThan(wide.w);
+    expect(wide.port.x).toBeCloseTo((wide.w - wide.port.w) / 2, 6);
+    expect(wide.port.y + wide.port.h).toBe(wide.h);
+    const sliced = cardSize([4, 16, 16], px, "X", [], { projection: false, sliders: [0, 0, 0] } as never);
+    expect(sliced.port.x).toBeCloseTo((sliced.w - sliced.port.w - DECK_ROOM_PX) / 2, 6);
+    expect(sliced.port.y + sliced.port.h).toBe(sliced.h);
   });
 });

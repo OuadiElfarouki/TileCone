@@ -109,7 +109,9 @@ export function canvasSize(
   return fold ? { w: fold.across.total, h: fold.down.total } : cardPx(rows, cols, scale);
 }
 
-/** Layout footprint of a tensor card at the graph's scale `px`.
+/** Layout footprint of a tensor card at the graph's scale `px`, and where its
+ * grid sits inside it (`port`): connectors end on the grid, not on the card's
+ * box, which is as wide as its header label and as tall as its header rows.
  * Independent of React so a Worker can perform structural layout. */
 export function cardSize(
   shape: number[],
@@ -118,7 +120,7 @@ export function cardSize(
   alternateShapeLabels: string[] = [],
   cfg?: CardShapeView,
   axisNames: readonly (string | undefined)[] = []
-): { w: number; h: number } {
+): { w: number; h: number; port: { x: number; y: number; w: number; h: number } } {
   const rank = shape.length;
   const { rowAxis, colAxis } = viewAxes(shape, cfg);
   const { rows, cols } = planeExtents(shape, rowAxis, colAxis);
@@ -146,11 +148,15 @@ export function cardSize(
   const scaleNoteW = offScale ? LONGEST_SCALE_NOTE.length * 6.5 + 6 : 0;
   const labelW = name.length * 9 +
     (widestShapeLabel.length + widestTileLabel.length) * 6.5 + 22 + scaleNoteW;
-  return { w: Math.max(canvas.w + deck, labelW, viewLineW, 120), h };
+  const w = Math.max(canvas.w + deck, labelW, viewLineW, 120);
+  // The grid is centred under the header and sits on the card's bottom edge
+  // (`.tc-canvas-wrap` takes the free space above it); a slice deck's room is
+  // above and to its right.
+  return { w, h, port: { x: (w - canvas.w - deck) / 2, y: h - canvas.h, w: canvas.w, h: canvas.h } };
 }
 
 /** A graph tensor's card, wide enough for any of its shape labels. */
-export function tensorCardSize(tensor: Tensor, px: number, cfg?: CardShapeView): { w: number; h: number } {
+export function tensorCardSize(tensor: Tensor, px: number, cfg?: CardShapeView): ReturnType<typeof cardSize> {
   return cardSize(tensor.resolved!, px, tensor.name,
     [shapeLabel(tensor, "symbolic"), symbolicExtentLabel(tensor)], cfg, tensor.axisNames);
 }

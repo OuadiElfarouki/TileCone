@@ -145,3 +145,35 @@ describe("live graph scene projection", () => {
     expect(scene.edges[0].mark).not.toBe(scene.edges[1].mark);
   });
 });
+
+/* A card's box is as wide as its header label and as tall as its header rows;
+   its connectors end on its grid, the part that stands for the tensor. */
+describe("connectors end on a card's grid", () => {
+  const vector = { w: 300, h: 240, port: { x: 140, y: 40, w: 20, h: 200 } };
+  const layoutOf = () => {
+    const resolved = resolveGraph(G({ X: [8] }, [["copy", "identity", ["X"], ["Y"]]]));
+    return buildBaseGraphLayout(resolved, (tensor) => (tensor.id === "X" ? vector : measure()));
+  };
+  const start = (path: string) => path.match(/^M\s*([-\d.]+)[ ,]([-\d.]+)/)!.slice(1).map(Number);
+
+  it("carries the grid's rect through layout", () => {
+    expect(layoutOf().nodes.find((node) => node.id === "X")!.port).toEqual(vector.port);
+  });
+
+  it("leaves from the grid's side at its middle, not from the box's", () => {
+    const scene = buildGraphScene(layoutOf(), {});
+    const x = scene.nodes.find((node) => node.id === "X")!;
+    const edge = scene.edges.find((e) => e.from === "t:X")!;
+    const [sx, sy] = start(edge.path);
+    expect(sx).toBeCloseTo(x.x + vector.port.x + vector.port.w, 6);
+    expect(sy).toBeCloseTo(x.y + vector.port.y + vector.port.h / 2, 6);
+  });
+
+  it("follows a resized card's grid", () => {
+    const resized = { w: 300, h: 340, port: { x: 130, y: 40, w: 40, h: 300 } };
+    const scene = buildGraphScene(layoutOf(), {}, { "t:X": resized });
+    const x = scene.nodes.find((node) => node.id === "X")!;
+    const [sx] = start(scene.edges.find((e) => e.from === "t:X")!.path);
+    expect(sx).toBeCloseTo(x.x + resized.port.x + resized.port.w, 6);
+  });
+});

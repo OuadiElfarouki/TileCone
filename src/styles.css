@@ -614,8 +614,11 @@ textarea.source.error-state { border-color: var(--err); }
 .graph-canvas.panning .op-node * { cursor: grabbing !important; }
 
 /* ---------------- tensor card ---------------- */
+/* A column filling its slot, so the grid can sit on the slot's bottom edge:
+   that is where `cardSize` places it (`port`), and where connectors end. */
 .tensor-card {
-  position: relative; width: 100%;
+  position: relative; width: 100%; height: 100%;
+  display: flex; flex-direction: column;
   background: transparent; border: 0; padding: 0; box-shadow: none;
 }
 .tc-header {
@@ -690,7 +693,7 @@ textarea.source.error-state { border-color: var(--err); }
 .tc-tile-position { height: 20px; }
 .tc-tile-position input { flex: 0 1 60px; min-width: 0; width: 60px; height: 18px; font-size: var(--t-small); }
 .tc-tile-position .tc-slider-val { margin-left: auto; }
-.tc-canvas-wrap { position: relative; width: max-content; margin: 4px auto 0; }
+.tc-canvas-wrap { position: relative; width: max-content; margin: auto auto 0; flex: none; }
 .tc-canvas-wrap canvas {
   display: block; image-rendering: auto;
   outline: none;

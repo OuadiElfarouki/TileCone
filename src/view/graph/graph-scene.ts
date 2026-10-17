@@ -17,6 +17,9 @@ export type GraphNodeKind = "tensor" | "op";
 export type PlacedGraphNode = Rect & {
   id: string;
   kind: GraphNodeKind;
+  /** Where connectors attach, relative to the node: a tensor card's grid. The
+   * whole node when absent. */
+  port?: Rect;
 };
 
 export type GraphLink = {
@@ -55,7 +58,13 @@ export type GraphScene = {
   height: number;
 };
 
-export type TensorMeasure = (tensor: Tensor) => Pick<Rect, "w" | "h">;
+export type TensorMeasure = (tensor: Tensor) => Pick<Rect, "w" | "h"> & { port?: Rect };
+
+/** The rect a node's connectors attach to, in world space. */
+export function anchorRect(node: PlacedGraphNode): Rect {
+  const { port } = node;
+  return port ? { x: node.x + port.x, y: node.y + port.y, w: port.w, h: port.h } : node;
+}
 
 /** The scene's key for a node of either kind: `t:<tensor>` / `n:<node>`. */
 export const nodeKey = (kind: GraphNodeKind, id: string): string =>
@@ -83,9 +92,11 @@ export function buildBaseGraphLayout(
   graph.setGraph({ rankdir: "LR", nodesep: 26, ranksep: 46, marginx: 20, marginy: 20 });
   graph.setDefaultEdgeLabel(() => ({}));
 
+  const ports = new Map<string, Rect>();
   for (const tensor of Object.values(resolved.tensors)) {
-    const { w, h } = measureTensor(tensor);
+    const { w, h, port } = measureTensor(tensor);
     graph.setNode(`t:${tensor.id}`, { width: w, height: h });
+    if (port) ports.set(`t:${tensor.id}`, port);
   }
   for (const node of resolved.nodes) {
     const label = opLabel(node);
@@ -109,6 +120,7 @@ export function buildBaseGraphLayout(
       y: placed.y - placed.height / 2,
       w: placed.width,
       h: placed.height,
+      ...(ports.has(id) ? { port: ports.get(id) } : {}),
     });
   }
 
@@ -151,7 +163,7 @@ export function buildBaseGraphLayout(
 export function buildGraphScene(
   base: BaseGraphLayout,
   nodeOffsets: Readonly<NodeOffsets>,
-  nodeSizes: Readonly<Record<string, Pick<Rect, "w" | "h">>> = {}
+  nodeSizes: Readonly<Record<string, Pick<Rect, "w" | "h"> & { port?: Rect }>> = {}
 ): GraphScene {
   const nodes = base.nodes.map((node) => {
     const offset = nodeOffsets[graphId(node)];
@@ -178,8 +190,13 @@ export function buildGraphScene(
     const to = nodesByGraphId.get(link.to);
     if (!from || !to) continue;
     const count = pairCounts.get(pairKey)!;
-    const spacing = fanSpacing(from, to, count);
-    const curve = curvedEdge(from, to, (slot - (count - 1) / 2) * spacing);
+    // Connectors end on a card's grid: its box is as wide as the header label
+    // and as tall as the header rows, so ending there left a vector's or a
+    // short tensor's connector stopping short of the grid it belongs to.
+    const a = anchorRect(from);
+    const b = anchorRect(to);
+    const spacing = fanSpacing(a, b, count);
+    const curve = curvedEdge(a, b, (slot - (count - 1) / 2) * spacing);
     edges.push({
       ...link,
       key: `${pairKey}#${slot}`,
