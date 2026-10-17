@@ -1,5 +1,6 @@
 /** Installing a compiled graph, an example, or a shared workspace. */
 
+import type { CompilerDiagnostic } from "../parse/compiler";
 import { validateSelection } from "../core/executor";
 import { Graph, ResolvedGraph } from "../core/graph";
 import { familyOf, tilePlan } from "../core/plan/plan";
@@ -138,7 +139,8 @@ export function installedDSLState(
   graph: Graph,
   resolved: ResolvedGraph,
   worker?: { graphId: number; layout: BaseGraphLayout; graphPx: number },
-  previous?: Pick<State, "graph" | "viewCfgs" | "dslText">
+  previous?: Pick<State, "graph" | "viewCfgs" | "dslText">,
+  warnings: CompilerDiagnostic[] = []
 ): Partial<State> {
   const base = loadResolvedGraph(graph, resolved, worker);
   /* A run that changed only sizes keeps the workspace the reader arranged:
@@ -175,7 +177,7 @@ export function installedDSLState(
     Object.assign(state, recompute(resolved, state.selection));
   }
   state.loadError = null;
-  state.diagnostics = [];
+  state.diagnostics = warnings;
   return state;
 }
 

@@ -2,7 +2,7 @@
 
 import { ZodObject, ZodType, ZodIssue } from "zod";
 import { getOp } from "./ops/index";
-import { dimSymbols, GraphError, GraphErrorSubject, resolveShape, Shape, Sym } from "./shapes";
+import { dimSymbols, GraphError, GraphErrorSubject, GraphWarning, resolveShape, Shape, Sym } from "./shapes";
 import { compareDims } from "./dim-algebra";
 import { DTYPES, DTYPE_BYTES, DType, type DTypeWidening } from "./dtypes";
 import type { AxisNames, Cardinality, OpCtx, SymEquality } from "./ops/types";
@@ -61,6 +61,9 @@ export type ResolvedGraph = Graph & {
    * Includes operation shape attributes even when symbolic display falls back
    * to literals. Declaration order, distinct, and structured-cloneable. */
   shapeParameters: readonly string[];
+  /** Facts about the graph that did not stop it resolving, in topological
+   * order: extents that agree only for the current bindings. */
+  warnings: readonly GraphWarning[];
   topo: Node[]; // topological order
   consumers: Record<string, { nodeId: string; slot: number }[]>;
   shapesOf: (ids: string[]) => number[][];
@@ -310,30 +313,38 @@ class FormalShapes {
 }
 
 /**
- * Reject an operation whose required equalities hold only for the current
+ * Report an operation whose required equalities hold only for the current
  * bindings. Each has already passed numerically, so a pair the algebra calls
  * `different` is two expressions that coincide here and nowhere in general.
+ *
+ * A warning rather than an error: the graph is valid as bound, and a quick
+ * experiment with two parameters of one value is a reasonable thing to run.
+ * What the author is told is which change of binding would break it.
  */
-function checkSymEqualities(node: Node, equalities: SymEquality[], formal: FormalShapes): void {
+function symEqualityWarnings(node: Node, equalities: SymEquality[], formal: FormalShapes): GraphWarning[] {
+  const warnings: GraphWarning[] = [];
   const context = { opaque: formal.unknowns, definitions: formal.definitions };
   const isOne = (sym: Sym) => compareDims(sym, 1, context) === "same";
   for (const eq of equalities) {
     if (eq.orOne && (isOne(eq.left) || (eq.orOne === "either" && isOne(eq.right)))) continue;
     if (compareDims(eq.left, eq.right, context) !== "different") continue;
     const bindings = formal.bindings([eq.left, eq.right]);
-    throw new GraphError(
-      `node "${node.id}" (${node.op}): ${eq.what} must be equal, but ` +
-        `${formal.readable(eq.left)} and ${formal.readable(eq.right)} are different ` +
-        `expressions${bindings ? `; this holds only for ${bindings}` : ""}`,
-      "GRAPH_SYMBOLIC_SHAPE",
-      {
+    warnings.push({
+      message:
+        `node "${node.id}" (${node.op}): ${eq.what} must be equal; ` +
+        `${formal.readable(eq.left)} and ${formal.readable(eq.right)} agree ` +
+        `${bindings ? `for ${bindings}` : "here"} but are different expressions, so other ` +
+        `values can break this. Write both with one symbol, or a derived one, to keep them equal`,
+      code: "GRAPH_SYMBOLIC_SHAPE",
+      subject: {
         kind: "node",
         id: node.id,
         ...(eq.attribute !== undefined ? { attribute: eq.attribute } : {}),
         ...(eq.input !== undefined ? { input: eq.input } : {}),
-      }
-    );
+      },
+    });
   }
+  return warnings;
 }
 
 /** Every exact count exposed by the engine is a JavaScript number. Reject a
@@ -710,6 +721,7 @@ export function resolveGraph(source: Graph): ResolvedGraph {
 
   // Resolve declared shapes, then infer through the DAG.
   const formal = new FormalShapes(bindings, g.derived ?? {});
+  const warnings: GraphWarning[] = [];
   for (const t of Object.values(g.tensors)) {
     if (t.producer) continue;
     try {
@@ -860,7 +872,7 @@ export function resolveGraph(source: Graph): ResolvedGraph {
     let formalOut: (Sym | null)[][] | null = null;
     try {
       if (spec.symEqualities)
-        checkSymEqualities(n, spec.symEqualities(formalIn, formalCtx), formal);
+        warnings.push(...symEqualityWarnings(n, spec.symEqualities(formalIn, formalCtx), formal));
       if (spec.inferSymShapes) formalOut = spec.inferSymShapes(formalIn, formalCtx);
     } catch (e) {
       if (e instanceof GraphError) throw e;
@@ -937,6 +949,7 @@ export function resolveGraph(source: Graph): ResolvedGraph {
   return {
     ...g,
     shapeParameters: Object.keys(g.params).filter((name) => usedParameters.has(name)),
+    warnings,
     topo,
     consumers,
     shapesOf: (ids: string[]) => ids.map((id) => g.tensors[id].resolved!),

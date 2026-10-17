@@ -12,7 +12,6 @@ export type GraphErrorCode =
   | "GRAPH_SHAPE"
   | "GRAPH_DTYPE"
   | "GRAPH_UNBOUND_SYMBOL"
-  | "GRAPH_SYMBOLIC_SHAPE"
   | "GRAPH_DEFINITION";
 
 export type GraphErrorSubject = {
@@ -28,6 +27,18 @@ export type GraphErrorSubject = {
   attribute?: string;
   /** The input slot this error is about, when it is about one operand. */
   input?: number;
+};
+
+/**
+ * A fact about a graph that resolved, worth the author's attention but not a
+ * reason to refuse it. Plain data, so it crosses a Worker boundary with the
+ * resolved graph.
+ */
+export type GraphWarning = {
+  message: string;
+  /** Extents that agree for the current bindings but not as expressions. */
+  code: "GRAPH_SYMBOLIC_SHAPE";
+  subject: GraphErrorSubject;
 };
 
 export class GraphError extends Error {

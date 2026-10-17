@@ -339,9 +339,11 @@ export type State = {
   releaseEditBox: () => void;
   /**
    * Move the keyboard tile's far edge on `axis` one grid step out (`grow`) or
-   * back. The first step keeps the starting box as the growth baseline.
+   * back. The first step keeps the starting box as the growth baseline. With
+   * `index`, that tile is grown instead and becomes the keyboard's tile, so the
+   * arrows continue the same growth.
    */
-  growSelection: (axis: number, grow: boolean, record?: boolean) => void;
+  growSelection: (axis: number, grow: boolean, record?: boolean, index?: number) => void;
   /** Scope every readout below the tiles list to one tensor's tiles. Releases
    * the pin, which is itself a group choice and would otherwise outrank this
    * one and block hovering the group just chosen. */

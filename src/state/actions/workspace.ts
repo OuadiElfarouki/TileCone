@@ -1,7 +1,7 @@
 import { expandNode } from "../../core/expand";
 import { Graph, hydrateResolvedGraph, ResolvedGraph } from "../../core/graph";
 import { planRestoreArtifact } from "../../worker/analysis-jobs";
-import { compileDSL, tryCompileDSL } from "../../parse/compiler";
+import { compileDSL, tryCompileDSL, type CompilerDiagnostic } from "../../parse/compiler";
 import { toDSL } from "../../parse/dsl";
 import { EXAMPLES } from "../../examples/index";
 import { BaseGraphLayout } from "../../view/graph/graph-scene";
@@ -79,7 +79,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
     }
     try {
       const program = result.program;
-      set(installedDSLState(text, program.graph, program.resolved, undefined, get()));
+      set(installedDSLState(text, program.graph, program.resolved, undefined, get(), program.warnings));
     } catch (e) {
       // Compilation succeeded; anything failing here is a workspace-build
       // problem with no source span to attach it to.
@@ -115,7 +115,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
         graphId: result.graphId,
         layout: result.artifact.layout,
         graphPx: result.artifact.graphPx,
-      }, get()));
+      }, get(), result.artifact.warnings));
       return true;
     } catch (error) {
       if (epoch !== compile.epoch) return false;
@@ -139,7 +139,10 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
         tiles: workspace.planTiles ?? {}, task: workspace.planTask ?? null,
         kept: workspace.keptTilings ?? [],
       });
-      set(restoredWorkspaceState(workspace, program.graph, resolved, undefined, restored));
+      set({
+        ...restoredWorkspaceState(workspace, program.graph, resolved, undefined, restored),
+        diagnostics: program.warnings,
+      });
       return true;
     } catch {
       return false;
@@ -168,11 +171,14 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
         return false;
       }
       const resolved = hydrateResolvedGraph(result.artifact.resolved);
-      set(restoredWorkspaceState(workspace, result.artifact.graph, resolved, {
-        graphId: result.graphId,
-        layout: result.artifact.layout,
-        graphPx: result.artifact.graphPx,
-      }, result.restoredPlan));
+      set({
+        ...restoredWorkspaceState(workspace, result.artifact.graph, resolved, {
+          graphId: result.graphId,
+          layout: result.artifact.layout,
+          graphPx: result.artifact.graphPx,
+        }, result.restoredPlan),
+        diagnostics: result.artifact.warnings,
+      });
       return true;
     } catch {
       if (epoch === compile.epoch) set({ compiling: false });
@@ -273,9 +279,11 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
       const install = (
         nextGraph: Graph,
         nextResolved: ResolvedGraph,
-        worker?: { graphId: number; layout: BaseGraphLayout; graphPx: number }
+        worker?: { graphId: number; layout: BaseGraphLayout; graphPx: number },
+        warnings: CompilerDiagnostic[] = []
       ) => set({
           ...loadResolvedGraph(nextGraph, nextResolved, worker),
+          diagnostics: warnings,
           dslText: source,
           draftText: source,
           exampleIndex: -1,
@@ -287,7 +295,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
       if (!analysisWorkerAvailable()) {
         compile.epoch++;
         const program = compileDSL(source);
-        install(program.graph, program.resolved);
+        install(program.graph, program.resolved, undefined, program.warnings);
         return;
       }
 
@@ -307,7 +315,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
           graphId: result.graphId,
           layout: result.artifact.layout,
           graphPx: result.artifact.graphPx,
-        });
+        }, result.artifact.warnings);
       }).catch((error) => {
         if (epoch === compile.epoch) set({
           compiling: false,

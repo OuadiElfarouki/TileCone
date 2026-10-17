@@ -1,12 +1,13 @@
 import { SymbolicExecutor } from "../core/executor";
 import { Graph, ResolvedGraph, resolveGraphCollecting } from "../core/graph";
-import { GraphError } from "../core/shapes";
+import { GraphError, GraphErrorSubject, GraphWarning } from "../core/shapes";
 import { lowerProgram } from "./lower";
 import { DSLError, parseProgram } from "./parser";
 import { documentSpan, DSLSourceMap, SourceSpan } from "./source";
 
 export type DiagnosticPhase = "parse" | "semantic";
-export type DiagnosticSeverity = "error";
+/** An error refuses the program; a warning comes with a program that built. */
+export type DiagnosticSeverity = "error" | "warning";
 
 export type CompilerDiagnostic = {
   severity: DiagnosticSeverity;
@@ -24,10 +25,13 @@ export type CompiledDSL = {
   resolved: ResolvedGraph;
   sourceMap: DSLSourceMap;
   executor: SymbolicExecutor;
+  /** Warnings about the program as built, in source order. */
+  warnings: CompilerDiagnostic[];
 };
 
 export type CompilationResult =
-  | { ok: true; program: CompiledDSL; diagnostics: [] }
+  /** `diagnostics` holds the program's warnings, and only warnings. */
+  | { ok: true; program: CompiledDSL; diagnostics: CompilerDiagnostic[] }
   | { ok: false; diagnostics: CompilerDiagnostic[] };
 
 export class CompilationError extends Error {
@@ -54,8 +58,6 @@ function semanticCode(error: GraphError): string {
     case "GRAPH_SHAPE":
     case "GRAPH_UNBOUND_SYMBOL":
       return "SEM_SHAPE";
-    case "GRAPH_SYMBOLIC_SHAPE":
-      return "SEM_SYMBOLIC_SHAPE";
     case "GRAPH_DTYPE":
       return "SEM_DTYPE";
     case "GRAPH_DEFINITION":
@@ -72,7 +74,10 @@ function semanticCode(error: GraphError): string {
  * attribute the author wrote, underline that attribute instead of the line.
  * An unknown *op* underlines the call name for the same reason.
  */
-function semanticSpan(error: GraphError, sourceMap: DSLSourceMap): SourceSpan {
+function semanticSpan(
+  error: { code: string; subject?: GraphErrorSubject },
+  sourceMap: DSLSourceMap
+): SourceSpan {
   const subject = error.subject;
   if (subject?.kind === "node" && sourceMap.nodes[subject.id]) {
     const args = sourceMap.nodeArgs[subject.id];
@@ -92,6 +97,14 @@ function semanticSpan(error: GraphError, sourceMap: DSLSourceMap): SourceSpan {
     return sourceMap.params[subject.id];
   return sourceMap.document;
 }
+
+const warningDiagnostic = (warning: GraphWarning, sourceMap: DSLSourceMap): CompilerDiagnostic => ({
+  severity: "warning",
+  phase: "semantic",
+  code: "SEM_SYMBOLIC_SHAPE",
+  message: warning.message,
+  span: semanticSpan(warning, sourceMap),
+});
 
 const asDiagnostic = (error: DSLError, phase: DiagnosticPhase): CompilerDiagnostic => ({
   severity: "error",
@@ -159,14 +172,18 @@ function tryCompileDSLUnchecked(source: string): CompilationResult {
       ),
     };
 
+  const warnings = inSourceOrder(
+    resolved.warnings.map((warning) => warningDiagnostic(warning, lowered.sourceMap))
+  );
   const program: CompiledDSL = {
     source,
     graph: lowered.graph,
     resolved,
     sourceMap: lowered.sourceMap,
     executor: new SymbolicExecutor(resolved),
+    warnings,
   };
-  return { ok: true, program, diagnostics: [] };
+  return { ok: true, program, diagnostics: warnings };
 }
 
 /** The editor feeds this boundary untrusted text on every apply. Parser and

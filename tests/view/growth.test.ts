@@ -121,6 +121,35 @@ describe("growing the keyboard tile", () => {
   });
 });
 
+describe("growing a tile from its row", () => {
+  beforeEach(() => {
+    S().applyDSL(GEMM);
+    S().setInspectorTab("dependencies");
+    S().setSnapToGrid(false);
+    S().setSelection("C", fromBox(box([0, 4], [0, 4])), "replace");
+    S().setSelection("C", fromBox(box([8, 12], [8, 12])), "union");
+  });
+
+  it("grows the named tile and hands it to the keyboard, so the arrows continue it", () => {
+    const named = S().selection!.parts.findIndex((p) => p.box[0].lo === 0);
+    S().growSelection(1, true, true, named);
+    expect(S().editBox).toBe(named);
+    expect(keyboardTile(S())).toBe(named);
+    S().growSelection(1, true);
+    const growth = activeGrowth(S().growth, S().selection?.parts, keyboardTile(S()))!;
+    expect(growth.baseBox).toEqual(box([0, 4], [0, 4]));
+    expect(growth.box).toEqual(box([0, 4], [0, 6]));
+  });
+
+  it("offers a shrink back for each edge the growth moved", () => {
+    const named = S().selection!.parts.findIndex((p) => p.box[0].lo === 0);
+    S().growSelection(1, true, true, named);
+    const html = renderToStaticMarkup(createElement(GrowthSummary));
+    expect(html).toContain('aria-label="shrink the tile back at its right edge"');
+    expect(html).not.toContain("bottom edge");
+  });
+});
+
 describe("the growth on a card", () => {
   it("is drawn over the cones in the tile's hue, outlined", () => {
     const region = fromBox(box([0, 32], [4, 8]));

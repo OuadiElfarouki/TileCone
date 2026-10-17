@@ -7,7 +7,8 @@ import { fmt } from "../../view/format";
 import { boxColor, MAX_DISTINCT_HUES, rgbCss } from "../../view/palette";
 import { formatSelectionBox, parseSelectionBox } from "../../view/selection-range";
 import { viewAxes } from "../../view/tensor/tensor-view";
-import { partsOn, selectedTensorIds } from "../../view/workspace";
+import { graphIsInteractive, partsOn, selectedTensorIds } from "../../view/workspace";
+import { SHORTCUTS } from "../../view/shortcuts";
 import { useDark, useStore } from "../../state/store";
 import { CopyButton } from "../chrome/CopyButton";
 import { DraftField } from "../chrome/DraftField";
@@ -123,6 +124,44 @@ export function TileIdentity({
  * The selection's tiles, one row each, including a single tile. Hovering a row
  * emphasises that tile's cone across the whole graph; clicking pins it.
  */
+/**
+ * The visible way into tile growth, which Alt+arrow otherwise is: one step
+ * out along the card's columns or rows. Shrinking back is offered with the
+ * growth it undoes, in the Growth section.
+ */
+function GrowButtons({ shape, box, axes, label, onGrow }: {
+  shape: number[];
+  box: Box;
+  axes: { rowAxis: number; colAxis: number };
+  label: string;
+  onGrow: (axis: number) => void;
+}): React.ReactElement | null {
+  const edges = [
+    { axis: axes.colAxis, glyph: "→", side: "right" },
+    { axis: axes.rowAxis, glyph: "↓", side: "bottom" },
+  ].filter(({ axis }) => axis >= 0);
+  if (!edges.length) return null;
+  return (
+    <span className="grow-buttons" role="group" aria-label={`grow ${label}`}>
+      {edges.map(({ axis, glyph, side }) => (
+        <button
+          key={side}
+          className="mini"
+          disabled={box[axis].hi >= shape[axis]}
+          aria-label={`grow ${label} at its ${side} edge`}
+          title={`grow this tile one step at its ${side} edge and show what that adds to its needs (${SHORTCUTS.growTile.label.replace("arrow", glyph)})`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onGrow(axis);
+          }}
+        >
+          +{glyph}
+        </button>
+      ))}
+    </span>
+  );
+}
+
 export function RegionEditor({ activeTensorId, onSelectGroup }: {
   activeTensorId: string | null;
   onSelectGroup: (tensorId: string) => void;
@@ -139,6 +178,9 @@ export function RegionEditor({ activeTensorId, onSelectGroup }: {
   const togglePinBox = useStore((s) => s.togglePinBox);
   const clearSelection = useStore((s) => s.clearSelection);
   const toggleBoxHidden = useStore((s) => s.toggleBoxHidden);
+  const growSelection = useStore((s) => s.growSelection);
+  const viewCfgs = useStore((s) => s.viewCfgs);
+  const interactive = useStore(graphIsInteractive);
   const dark = useDark();
 
   if (!resolved || !selection || selection.parts.length === 0) return null;
@@ -262,6 +304,15 @@ export function RegionEditor({ activeTensorId, onSelectGroup }: {
                   onCommit={(next) => replaceBox(i, next)}
                 />
               </span>
+              {interactive && (
+                <GrowButtons
+                  shape={shape}
+                  box={b}
+                  axes={viewAxes(shape, viewCfgs[tensorId])}
+                  label={`tile ${i + 1} on ${t.name}`}
+                  onGrow={(axis) => growSelection(axis, true, true, i)}
+                />
+              )}
               <button
                 className="mini danger"
                 aria-label={`remove tile ${i + 1} from ${t.name}`}

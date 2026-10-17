@@ -47,7 +47,7 @@ export function compileArtifact(source: string):
   return {
     ok: true,
     resolved,
-    artifact: { graph, resolved: resolvedGraphData(resolved), graphPx, layout },
+    artifact: { graph, resolved: resolvedGraphData(resolved), graphPx, layout, warnings: result.program.warnings },
   };
 }
 

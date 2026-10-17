@@ -172,6 +172,7 @@ function TensorCardView({
   );
   /** The reuse lens, when it is on this card: counts take the place of cones. */
   const lens = useLensPaint(tensor.id);
+  const setReuseLens = useStore((s) => s.setReuseLens);
   const planTaskAt = useStore((s) => s.planTaskAt);
   const setPlanTileAt = useStore((s) => s.setPlanTileAt);
 
@@ -677,6 +678,25 @@ function TensorCardView({
           </span>
         )}
         {roleTag && <span className="tc-role">{roleTag}</span>}
+        {/* The shading is scaled to this lens's own largest count, so the
+            card states that count: two tiles' strongest shades can stand for
+            8 uses and for 64. */}
+        {lens && (
+          <span
+            className="tc-lens"
+            title={`shaded by how many outputs use each element, 0 to ${lens.max}${lens.exact ? "" : " (upper bounds)"}; the strongest shade is this lens's largest count, so compare the numbers across tiles, not the shades`}
+          >
+            uses {lens.exact ? "" : "≤"}{lens.min === lens.max ? lens.max : `${lens.min}–${lens.max}`}
+            <button
+              type="button"
+              aria-label={`clear the reuse shading on ${tensor.name}`}
+              title="clear the reuse shading (Esc)"
+              onClick={() => setReuseLens(null)}
+            >
+              ×
+            </button>
+          </span>
+        )}
         {approximation.approximate && (
           <span
             className="tc-approx"

@@ -737,7 +737,14 @@ function FamilySection({
           {replay.pending ? "preparing…" : "replay"}
         </button>
       </div>
-      {replay.depthLimit > 1 && <ReplayDepth tensorId={task.tensorId} replay={replay} />}
+      {replay.depthLimit > 1 && (
+        <ReplayDepth
+          tensorId={task.tensorId}
+          name={name}
+          nameOf={(tensorId) => plan.graph.tensors[tensorId].name}
+          replay={replay}
+        />
+      )}
       {replay.error && <p className="hint overlap">Replay failed: {replay.error}</p>}
       {replay.playback && (
         <ReplayStatus
@@ -932,9 +939,23 @@ function ReplayStatus({
  * family's own tasks, and each level adds the tasks producing the tiles the
  * last one reads. Offered only where the plan has such tasks, and remembered
  * per family.
+ *
+ * The depth changes what one step is, not how much is shown around it, so the
+ * control says which tasks a step visits. The producers are named once a
+ * replay at this depth has found them.
  */
-function ReplayDepth({ tensorId, replay }: { tensorId: string; replay: PlanReplayControl }): React.ReactElement {
+function ReplayDepth({ tensorId, name, nameOf, replay }: {
+  tensorId: string;
+  name: string;
+  nameOf: (tensorId: string) => string;
+  replay: PlanReplayControl;
+}): React.ReactElement {
   const setReplayDepth = useStore((s) => s.setReplayDepth);
+  const found = replay.playback?.replay.depth === replay.depth ? replay.playback.replay.stepTensors : null;
+  const levels = replay.depth - 1;
+  const unit = replay.depth === 1
+    ? `${name} tasks`
+    : `${found?.length ? found.map(nameOf).join(" or ") : "producer"} tasks ${levels} level${levels === 1 ? "" : "s"} up, each with the ${levels === 1 ? `${name} ` : ""}task it feeds`;
   return (
     <div className="plan-replay-depth" role="group" aria-label="replay depth">
       <span className="muted">depth</span>
@@ -951,6 +972,7 @@ function ReplayDepth({ tensorId, replay }: { tensorId: string; replay: PlanRepla
           {level}
         </button>
       ))}
+      <span className="muted">· steps through {unit}</span>
     </div>
   );
 }

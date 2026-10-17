@@ -429,10 +429,16 @@ textarea.source.error-state { border-color: var(--err); }
 .source-status { font-size: var(--t-small); min-width: 0; overflow: hidden; }
 .source-status .ok { color: var(--muted); }
 .source-status .error { white-space: normal; }
+.source-status .warning { display: block; margin-top: 2px; color: var(--warn-ink); white-space: normal; }
 /* One diagnostic per line. The compiler reports every independent error in one
    pass, so they stack rather than running together: a wrapped paragraph of four
    errors is harder to act on than four lines. */
 .source-status .diag { display: block; }
+.source-status button.diag {
+  font: inherit; color: inherit; text-align: left; background: none; border: 0; padding: 0;
+  cursor: pointer;
+}
+.source-status button.diag:hover b { text-decoration: underline; }
 .source-status .diag + .diag { margin-top: 2px; }
 .workspace-status { font-size: var(--t-small); }
 .workspace-file-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
@@ -640,6 +646,16 @@ textarea.source.error-state { border-color: var(--err); }
 .tc-plane { color: var(--muted); font: var(--t-micro)/1 var(--mono); white-space: nowrap; }
 /* The scale note is ink because it changes how every length on the card reads. */
 .tc-scale { color: var(--ink); font: 600 var(--t-micro)/1 var(--mono); white-space: nowrap; }
+/* The reuse lens's scale and its off switch, on the card it shades. */
+.tc-lens {
+  display: inline-flex; align-items: center; gap: 3px; padding: 1px 2px 1px 5px;
+  color: var(--ink); font: 600 var(--t-micro)/1 var(--mono); white-space: nowrap;
+  border: 1px solid var(--lens-edge); border-radius: var(--r);
+}
+.tc-lens button {
+  font: inherit; color: var(--muted); background: none; border: 0; padding: 0 2px; cursor: pointer;
+}
+.tc-lens button:hover { color: var(--ink); }
 
 /* Compact details belong to the name, not the whole tensor plate. */
 .tc-info {
@@ -935,6 +951,9 @@ textarea.source.error-state { border-color: var(--err); }
   border: 1px solid transparent; border-bottom: 1px solid var(--line); cursor: pointer;
 }
 .box-row:hover { background: var(--bg); }
+.grow-buttons { display: inline-flex; gap: 2px; flex: none; }
+.box-row .grow-buttons { margin-top: 1px; }
+.ins-title .grow-buttons { margin-left: auto; }
 .box-row.active { background: var(--bg); border-color: var(--muted); }
 .box-row.pinned { border-color: var(--accent); }
 /* The swatch and the analysis control are one element: it shows the tile's hue
@@ -1056,6 +1075,7 @@ textarea.source.error-state { border-color: var(--err); }
 .reuse-list .lens-toggle {
   font: inherit; color: inherit; background: none; padding: 0 3px; cursor: pointer;
   border: 1px solid transparent; border-radius: var(--r);
+  text-decoration: underline dotted var(--lens-edge); text-underline-offset: 3px;
 }
 .reuse-list .lens-toggle:hover { border-color: var(--line); }
 .reuse-list .lens-toggle[aria-pressed="true"] { border-color: var(--lens-edge); }
@@ -1163,7 +1183,7 @@ textarea.source.error-state { border-color: var(--err); }
 
 .plan-producer-pages { display: flex; align-items: center; gap: 8px; }
 /* The replay depth sits under the family heading it applies to. */
-.plan-replay-depth { display: flex; align-items: center; gap: 4px; margin: 2px 0 6px; }
+.plan-replay-depth { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin: 2px 0 6px; }
 /* The tasks followed to reach the inspected one, above its heading. */
 .plan-trail { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; font-size: var(--t-small); }
 .plan-lineage-level + .plan-lineage-level { margin-top: 6px; }

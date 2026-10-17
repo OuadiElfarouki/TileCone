@@ -224,11 +224,11 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
     if (get().editBox !== null) set({ editBox: null });
   },
 
-  growSelection: (axis, grow, record = true) => {
+  growSelection: (axis, grow, record = true, chosen) => {
     const state = get();
     const parts = state.selection?.parts;
-    const index = keyboardTile(state);
-    if (!parts || index === null || !state.resolved) return;
+    const index = chosen ?? keyboardTile(state);
+    if (!parts || index === null || index >= parts.length || !state.resolved) return;
     const part = parts[index];
     const shape = state.resolved.tensors[part.tensorId].resolved!;
     if (!Number.isSafeInteger(axis) || axis < 0 || axis >= shape.length) return;
@@ -244,6 +244,7 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
     const installed = get().selection!.parts[index];
     set({
       growth: { index, tensorId: part.tensorId, baseBox, box, part: installed, delta: growthDelta(state.resolved, part.tensorId, baseBox, box) },
+      ...(chosen !== undefined ? { editBox: index } : {}),
     });
   },
 

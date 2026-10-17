@@ -14,6 +14,7 @@ import { overlayTokens, withHints } from "../../view/dsl-highlight";
 import { sameParameterizedSource, sourceParams } from "../../view/params";
 import { ParamControls } from "./ParamControls";
 import { graphIsInteractive, involvedTensorIds } from "../../view/workspace";
+import type { SourceSpan } from "../../parse/source";
 
 /**
  * Copies a link that restores this workspace - source, selection, analysis views,
@@ -70,6 +71,9 @@ function SourceEditor({ parametersActive }: { parametersActive: boolean }): Reac
   // app has not installed its initial graph yet.
   const dirty = text !== dslText;
   const unbuilt = dirty || !built;
+  // Errors belong to a run that failed; warnings to the program that built.
+  const errors = diagnostics.filter((d) => d.severity === "error");
+  const warnings = diagnostics.filter((d) => d.severity === "warning");
   const run = () => {
     if (compiling) return;
     void applyDSLAsync(text).then((installed) => {
@@ -89,6 +93,26 @@ function SourceEditor({ parametersActive }: { parametersActive: boolean }): Reac
     highlight.scrollLeft = ta.scrollLeft;
   };
   useLayoutEffect(syncScroll, [text]);
+
+  /* A diagnostic selects what it underlines. It is placed by line and column
+     in the text as it is now, since the author may have edited since the run;
+     an edit above the line can still move it, and the selection is clamped. */
+  const showDiagnostic = (span: SourceSpan) => {
+    const ta = taRef.current;
+    if (!ta) return;
+    const lines = ta.value.split("\n");
+    const line = Math.min(span.start.line, lines.length) - 1;
+    const lineStart = lines.slice(0, line).reduce((n, l) => n + l.length + 1, 0);
+    const start = Math.min(lineStart + span.start.column - 1, lineStart + lines[line].length);
+    const end = Math.min(start + Math.max(0, span.end.offset - span.start.offset), lineStart + lines[line].length);
+    ta.focus();
+    ta.setSelectionRange(start, end);
+    const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 16;
+    const top = line * lineHeight;
+    if (top < ta.scrollTop || top + lineHeight > ta.scrollTop + ta.clientHeight)
+      ta.scrollTop = Math.max(0, top - ta.clientHeight / 3);
+    syncScroll();
+  };
 
   return (
     <>
@@ -130,21 +154,30 @@ function SourceEditor({ parametersActive }: { parametersActive: boolean }): Reac
         >
           {compiling ? (
             <span className="muted">building graph…</span>
-          ) : diagnostics.length ? (
+          ) : errors.length ? (
             /* Every independent error, not just the first. The compiler finds
                them in one pass, and showing one at a time would put the author
                back on the fix-and-recompile loop that collecting exists to
                end. */
             <span className="error">
-              {diagnostics.length > 1 && (
-                <b>{diagnostics.length} errors · </b>
+              {errors.length > 1 && (
+                <b>{errors.length} errors · </b>
               )}
-              {diagnostics.map((d, i) => (
-                <span key={i} className="diag">
+              {errors.map((d, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  className="diag"
+                  title="select this in the source"
+                  onClick={() => showDiagnostic(d.span)}
+                >
                   <b>line {d.span.start.line}: </b>
                   {d.message}
-                </span>
+                </button>
               ))}
+              {built && (
+                <span className="diag muted">The canvas still shows the last graph that built.</span>
+              )}
             </span>
           ) : loadError ? (
             <span className="error">{loadError}</span>
@@ -156,6 +189,23 @@ function SourceEditor({ parametersActive }: { parametersActive: boolean }): Reac
             <span className="ok">✓ graph built</span>
           ) : (
             <span className="muted">⌘/ctrl+↵ to run</span>
+          )}
+          {!compiling && !errors.length && warnings.length > 0 && (
+            <span className="warning">
+              <b>{warnings.length} warning{warnings.length === 1 ? "" : "s"}{dirty ? " in the built graph" : ""}</b>
+              {warnings.map((d, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  className="diag"
+                  title="select this in the source"
+                  onClick={() => showDiagnostic(d.span)}
+                >
+                  <b>line {d.span.start.line}: </b>
+                  {d.message}
+                </button>
+              ))}
+            </span>
           )}
         </span>
       </div>

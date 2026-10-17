@@ -11,6 +11,8 @@ export type CompileArtifact = {
   resolved: ResolvedGraphData;
   graphPx: number;
   layout: BaseGraphLayout;
+  /** The program's warnings, with their source spans. */
+  warnings: CompilerDiagnostic[];
 };
 
 export type CompileJobResult =
