@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { box } from "../../../src/core/region";
+import { box, fromBox } from "../../../src/core/region";
+import { boxColor } from "../../../src/view/palette";
+import { buildLayers } from "../../../src/view/tensor/layers";
 import { gridGeometry, nudgeUnit } from "../../../src/view/tensor/grid";
 import { decodeWorkspace, encodeWorkspace, type WorkspaceLink } from "../../../src/state/share";
 import { useStore } from "../../../src/state/store";
@@ -41,15 +43,15 @@ describe("tile arithmetic", () => {
 
 describe("the tile a gesture takes", () => {
   it("falls back to the canvas behaviour without a tile of the tensor's own", () => {
-    expect(gestureTile(SHAPE, { projection: true }, 16)).toEqual([2, 8, 16, 16]);
-    expect(gestureTile(SHAPE, { projection: false }, 16)).toEqual([1, 1, 16, 16]);
-    expect(seedTile(SHAPE, undefined, 16)).toEqual([1, 1, 16, 16]);
+    expect(gestureTile(SHAPE, { projection: true }, [16, 16, 16, 16])).toEqual([2, 8, 16, 16]);
+    expect(gestureTile(SHAPE, { projection: false }, [16, 16, 16, 16])).toEqual([1, 1, 16, 16]);
+    expect(seedTile(SHAPE, undefined, [16, 16, 16, 16])).toEqual([1, 1, 16, 16]);
   });
 
   it("uses the tensor's own tile on every axis, whatever the view mode", () => {
     for (const projection of [true, false]) {
-      expect(gestureTile(SHAPE, { projection, tile: TILE }, 16)).toEqual(TILE);
-      expect(seedTile(SHAPE, { tile: TILE }, 16)).toEqual(TILE);
+      expect(gestureTile(SHAPE, { projection, tile: TILE }, [16, 16, 16, 16])).toEqual(TILE);
+      expect(seedTile(SHAPE, { tile: TILE }, [16, 16, 16, 16])).toEqual(TILE);
     }
   });
 
@@ -74,9 +76,9 @@ describe("the tile a gesture takes", () => {
 
   it("steps the keyboard by the tile on the axis it moves", () => {
     const cfg = { projection: true, sliders: [0, 0, 0, 0], tile: TILE };
-    expect(nudgeUnit(SHAPE, cfg, 0, 1, true, 2)).toBe(64);
-    expect(nudgeUnit(SHAPE, cfg, 0, 1, true, 3)).toBe(128);
-    expect(nudgeUnit(SHAPE, cfg, 0, 1, false, 2)).toBe(1);
+    expect(nudgeUnit(SHAPE, cfg, 0, true, 2)).toBe(64);
+    expect(nudgeUnit(SHAPE, cfg, 0, true, 3)).toBe(128);
+    expect(nudgeUnit(SHAPE, cfg, 0, false, 2)).toBe(1);
   });
 
   it("divides a plan at the drawn visible extents and the tensor's tile on the rest", () => {
@@ -113,8 +115,8 @@ describe("a tensor's tile in the workspace", () => {
 
   it("seeds starter tiles and plan divisions from the tensor's tile", () => {
     S().setTensorTile("Y", TILE);
-    expect(defaultPlanTile(S().resolved!, "Y", S().tileScale, S().graphPx, S().viewCfgs)).toEqual(TILE);
-    const [output] = startingTiles(S().resolved!, S().tileScale, S().graphPx, S().viewCfgs);
+    expect(defaultPlanTile(S().resolved!, "Y", S().tileScale, S().viewCfgs)).toEqual(TILE);
+    const [output] = startingTiles(S().resolved!, S().tileScale, S().viewCfgs);
     expect(output.box).toEqual(box([0, 1], [0, 2], [0, 64], [0, 128]));
   });
 
@@ -132,5 +134,27 @@ describe("a tensor's tile in the workspace", () => {
     })).toBe(true);
     expect(S().viewCfgs.X.tile).toEqual(TILE);
     expect(decodeWorkspace(`#s=${encodeWorkspace({ ...link, views: { X: { ...link.views!.X, tile: [1.5] } } })}`)).toBeNull();
+  });
+});
+
+/* Drawn lines thin out when zoomed out, so the card outlines the box a click
+   would take; the rubber band replaces it while a drag is under way. */
+describe("the hover outline", () => {
+  const base = {
+    tensorId: "X", dark: false, direction: "backward" as const, isSelected: false, parts: [], partCount: 1,
+    perBox: null, hiddenBoxes: new Set<number>(), focusedBox: null,
+    back: undefined, fwd: undefined, prev: undefined, prevForward: undefined, entangled: undefined, showEntangled: false,
+  };
+  const hover = fromBox(box([0, 8], [0, 2]));
+
+  it("outlines the box a click would take, unfilled, in the next tile's hue", () => {
+    const layers = buildLayers({ ...base, dragRegion: null, hoverRegion: hover });
+    expect(layers).toEqual([{ region: hover, color: boxColor(1, false), alpha: 0, hatch: false, outline: true }]);
+  });
+
+  it("gives way to the rubber band while a drag is under way", () => {
+    const drag = fromBox(box([0, 16], [0, 4]));
+    const layers = buildLayers({ ...base, dragRegion: drag, hoverRegion: hover });
+    expect(layers.map((layer) => layer.region)).toEqual([drag]);
   });
 });

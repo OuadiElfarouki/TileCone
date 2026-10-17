@@ -59,7 +59,7 @@ export function EmptyPanel(): React.ReactElement {
   const graphPx = useStore((s) => s.graphPx);
   const setSelection = useStore((s) => s.setSelection);
   const starts = useMemo(
-    () => startingTiles(resolved, tileScale, graphPx, viewCfgs),
+    () => startingTiles(resolved, tileScale, viewCfgs),
     [resolved, tileScale, graphPx, viewCfgs]
   );
 

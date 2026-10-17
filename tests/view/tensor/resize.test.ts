@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { canvasSize, cardCanResize, cardScaleFor, cardShapeView, cardSize, scaleRatioLabel } from "../../../src/view/tensor/card-size";
-import { gridGeometry, tileOf } from "../../../src/view/tensor/grid";
+import { gridGeometry } from "../../../src/view/tensor/grid";
 import { constrainResize, displayedCardScales, resizeScale } from "../../../src/view/tensor/resize";
 import { defaultViewCfg, MAX_CARD_SCALE, MIN_CARD_SCALE, viewCfgFits } from "../../../src/view/tensor/tensor-view";
 import { cardDisplayMenu } from "../../../src/view/tensor/menus";
@@ -51,7 +51,6 @@ describe("manual card sizing", () => {
     const bigger = gridGeometry(shape, { ...cfg, scale: 2 }, 0, 2);
     expect([bigger.rowTile, bigger.colTile]).toEqual([normal.rowTile, normal.colTile]);
     expect(bigger.cellW).toBe(normal.cellW * 2);
-    expect(tileOf(shape, 0, 2, { ...cfg, scale: 2 } as typeof cfg)).toBe(tileOf(shape, 0, 2, cfg));
   });
   it("projects either corner along the canvas diagonal and bounds extreme drags", () => {
     expect(resizeScale(1, { w: 200, h: 100 }, { x: 100, y: 50 }, "bottom")).toBe(1.5);

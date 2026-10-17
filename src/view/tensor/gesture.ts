@@ -76,7 +76,7 @@ export function selectionBoxFromDrag(
     : [Math.min(drag.c0, drag.c1), Math.max(drag.c0, drag.c1) + 1];
   // The display tile only matters on the visible axes, which were settled
   // above, so any value serves as the fallback here.
-  const tile = gestureTile(shape, cfg, 1);
+  const tile = gestureTile(shape, cfg, shape.map(() => 1));
   return shape.map((extent, ax) => {
     if (ax === geom.rowAxis) return iv(rLo, rHi);
     if (ax === geom.colAxis) return iv(cLo, cHi);
@@ -139,7 +139,7 @@ export function planGesture(
   const extentOn = (axis: number) => (axis >= 0 ? box[axis].hi - box[axis].lo : 1);
   // The drawn extents on the visible axes; the tensor's own tile, else one
   // element, on the others.
-  const tile = seedTile(shape, cfg, 1);
+  const tile = seedTile(shape, cfg, shape.map(() => 1));
   if (rowAxis >= 0) tile[rowAxis] = extentOn(rowAxis);
   if (colAxis >= 0) tile[colAxis] = extentOn(colAxis);
   return { kind: "divide", tile, element: box.map((interval) => interval.lo) };

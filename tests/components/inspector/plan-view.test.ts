@@ -28,7 +28,7 @@ describe("planning from the canvas", () => {
   });
 
   it("tiles a produced tensor on first click, at the size the canvas is drawing", () => {
-    const expected = defaultPlanTile(S().resolved!, "Y", S().tileScale, S().graphPx);
+    const expected = defaultPlanTile(S().resolved!, "Y", S().tileScale);
     S().planTaskAt("Y", [9, 2]);
     expect(S().planTiles.Y).toEqual(expected);
     expect(S().planTask).toEqual({
@@ -543,7 +543,7 @@ describe("tile extents as text", () => {
   it("defaults a tile to the displayed size on the visible axes and one elsewhere", () => {
     S().applyDSL(CHAIN);
     const resolved = S().resolved!;
-    const tile = defaultPlanTile(resolved, "Y", S().tileScale, S().graphPx);
+    const tile = defaultPlanTile(resolved, "Y", S().tileScale);
     // Y is 16x8, so the displayed tile clips to the axis rather than exceeding it.
     expect(tile).toEqual([Math.min(16, tile[0]), Math.min(8, tile[1])]);
     expect(tileFamily("Y", resolved.tensors.Y.resolved!, tile).count).toBeGreaterThan(0);
@@ -552,7 +552,7 @@ describe("tile extents as text", () => {
 R = relu(Q)
 `);
     // Hidden axes get one element each: one task per batch and head index.
-    expect(defaultPlanTile(S().resolved!, "R", S().tileScale, S().graphPx).slice(0, 2)).toEqual([1, 1]);
+    expect(defaultPlanTile(S().resolved!, "R", S().tileScale).slice(0, 2)).toEqual([1, 1]);
   });
 });
 

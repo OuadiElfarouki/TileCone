@@ -2,7 +2,7 @@
 
 import { graphOutputs, producerNode, ResolvedGraph } from "../../core/graph";
 import { Box } from "../../core/region";
-import { tileOf } from "./grid";
+import { displayTile } from "./tiling";
 import { viewAxes, ViewCfg } from "./tensor-view";
 import { seedTile } from "./tile-spec";
 import { planeExtents } from "./tiling";
@@ -27,7 +27,6 @@ export function planesOf(resolved: ResolvedGraph): { rows: number; cols: number 
 export function startingTiles(
   resolved: ResolvedGraph,
   tileScale: number,
-  graphPx: number,
   viewCfgs: Record<string, ViewCfg> = {}
 ): { label: string; tensorId: string; box: Box }[] {
   const output = graphOutputs(resolved)[0];
@@ -41,7 +40,7 @@ export function startingTiles(
     ...(previous ? [{ tensor: previous, label: "one step back" }] : []),
   ].map(({ tensor, label }) => {
     const shape = tensor.resolved!;
-    const tile = seedTile(shape, viewCfgs[tensor.id], tileOf(shape, tileScale, graphPx, viewCfgs[tensor.id]));
+    const tile = seedTile(shape, viewCfgs[tensor.id], displayTile(shape, tileScale));
     return {
       label,
       tensorId: tensor.id,
@@ -63,9 +62,8 @@ export function defaultPlanTile(
   resolved: ResolvedGraph,
   tensorId: string,
   tileScale: number,
-  graphPx: number,
   viewCfgs: Record<string, ViewCfg> = {}
 ): number[] {
   const shape = resolved.tensors[tensorId].resolved!;
-  return seedTile(shape, viewCfgs[tensorId], tileOf(shape, tileScale, graphPx, viewCfgs[tensorId]));
+  return seedTile(shape, viewCfgs[tensorId], displayTile(shape, tileScale));
 }

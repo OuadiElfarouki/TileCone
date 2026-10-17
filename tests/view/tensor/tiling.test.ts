@@ -2,23 +2,20 @@ import { seedCornerSegments } from "../../../src/components/card/draw-grid";
 import { describe, expect, it } from "vitest";
 import {
   AUTO_TILE_FRACTION,
-  autoTile,
+  axisTile,
   cardPx,
-  governingAxis,
+  displayTile,
   graphScale,
   effectiveTileScaleIndex,
   effectiveTileScaleStops,
   MAX_ELEM_PX,
   MAX_GRAPH_W,
   MAX_GRAPH_H,
-  maxTile,
   planeExtents,
-  settledTiles,
-  MIN_CELL_PX,
   MIN_SIDE_PX,
   pow2Floor,
   pow2Round,
-  tileFor,
+  tileScaleLabel,
   TILE_SCALE_MAX,
   TILE_SCALE_MIN,
 } from "../../../src/view/tensor/tiling";
@@ -53,144 +50,111 @@ describe("power-of-two helpers", () => {
   });
 });
 
-describe("auto tile sizing", () => {
-  it("matches the stated rule on the worked examples", () => {
-    expect(autoTile(100, 200)).toBe(4); // 5% of 100 = 5 -> 4
-    expect(autoTile(200, 214)).toBe(8); // 5% of 200 = 10 -> 8
-  });
-
-  it("uses the smallest non-degenerate axis", () => {
-    expect(governingAxis(100, 200)).toBe(100);
-    expect(governingAxis(1, 4096)).toBe(4096); // a 1-D tensor uses its only axis
-    expect(governingAxis(1, 1)).toBe(1);
-  });
-
-  it("is always a power of two within [1, minAxis/2]", () => {
-    for (const [r, c] of [[100, 200], [200, 214], [4, 4], [1, 4096], [4096, 4096], [7, 13], [2, 2]]) {
-      const t = autoTile(r, c);
-      expect(isPow2(t), `tile ${t} for ${r}x${c}`).toBe(true);
-      expect(t).toBeGreaterThanOrEqual(1);
-      expect(t).toBeLessThanOrEqual(maxTile(r, c));
-    }
-  });
-
-  it("leaves at least a 2x2 tile grid on the smallest axis", () => {
-    for (const [r, c] of [[4, 4], [8, 64], [100, 200]]) {
-      const t = maxTile(r, c);
-      expect(Math.floor(governingAxis(r, c) / t)).toBeGreaterThanOrEqual(2);
-    }
-  });
-
-  it("small tensors reach one element per cell", () => {
-    expect(autoTile(4, 4)).toBe(1);
-    expect(tileFor(8, 8, TILE_SCALE_MIN, pxFor(8, 8))).toBe(1);
-  });
-});
-
-describe("the global detail scale", () => {
-  it("shifts the tile by powers of two and stays monotone", () => {
-    let prev = 0;
-    for (let k = TILE_SCALE_MIN; k <= TILE_SCALE_MAX; k++) {
-      const t = tileFor(256, 256, k, pxFor(256, 256));
-      expect(isPow2(t)).toBe(true);
-      expect(t).toBeGreaterThanOrEqual(prev);
-      prev = t;
-    }
-  });
-
-  it("reaches half the smallest axis at the coarse end", () => {
-    expect(tileFor(256, 256, TILE_SCALE_MAX, pxFor(256, 256))).toBe(maxTile(256, 256));
-    expect(tileFor(100, 200, TILE_SCALE_MAX, pxFor(100, 200))).toBe(maxTile(100, 200));
-  });
-
-  it("reaches one element per cell when the tensor is small enough to draw", () => {
-    expect(tileFor(64, 64, TILE_SCALE_MIN, pxFor(64, 64))).toBe(1);
-    expect(tileFor(32, 90, TILE_SCALE_MIN, pxFor(32, 90))).toBe(1);
-  });
-
-  it("none is one element per tile even when boundaries are sub-pixel", () => {
-    const finest = tileFor(256, 256, TILE_SCALE_MIN, pxFor(256, 256));
-    expect(finest).toBe(1);
-    const geom = gridGeometry([256, 256], cfg, TILE_SCALE_MIN, pxFor(256, 256));
-    expect([geom.rowTile, geom.colTile]).toEqual([1, 1]);
-    expect(geom.tileRows).toBe(256);
-    expect(geom.tileCols).toBe(256);
-    expect(Math.min(geom.cellW, geom.cellH)).toBeLessThan(MIN_CELL_PX);
-  });
-
-  it("normal scale values never render cells below the minimum size", () => {
-    for (const [r, c] of [[4096, 4096], [1, 100000], [2048, 512]]) {
-      for (let k = TILE_SCALE_MIN + 1; k <= TILE_SCALE_MAX; k++) {
-        const geom = gridGeometry([r, c], cfg, k, pxFor(r, c));
-        expect(Math.min(geom.cellW, geom.cellH), `${r}x${c} @${k}`).toBeGreaterThanOrEqual(MIN_CELL_PX);
-      }
-    }
-  });
-
-  it("the auto default is ~5% of the smallest axis", () => {
-    for (const [r, c] of [[100, 200], [200, 214], [512, 512], [1000, 1000]]) {
-      const t = autoTile(r, c);
-      const ideal = AUTO_TILE_FRACTION * governingAxis(r, c);
+describe("the display tile on an axis", () => {
+  it("is about 5% of the axis, rounded to a power of two", () => {
+    expect(axisTile(100, 0)).toBe(4); // 5 -> 4
+    expect(axisTile(200, 0)).toBe(8); // 10 -> 8
+    expect(axisTile(704, 0)).toBe(32); // 35.2 -> 32
+    for (const extent of [100, 200, 214, 512, 1000, 4096]) {
+      const t = axisTile(extent, 0);
+      const ideal = AUTO_TILE_FRACTION * extent;
       expect(t).toBeGreaterThanOrEqual(ideal / 2);
       expect(t).toBeLessThanOrEqual(ideal * 2);
     }
   });
 
-  it("offers only graph-wide lattice changes as slider stops", () => {
+  it("is always a power of two that leaves at least two tiles", () => {
+    for (const extent of [2, 3, 4, 7, 13, 100, 214, 4096]) {
+      for (let k = TILE_SCALE_MIN; k <= TILE_SCALE_MAX; k++) {
+        const t = axisTile(extent, k);
+        expect(isPow2(t), `tile ${t} for ${extent} @${k}`).toBe(true);
+        expect(Math.floor(extent / t), `${extent} @${k}`).toBeGreaterThanOrEqual(2);
+      }
+    }
+  });
+
+  it("is one element on an axis of one, and under none", () => {
+    expect(axisTile(1, 3)).toBe(1);
+    expect(axisTile(4096, TILE_SCALE_MIN)).toBe(1);
+  });
+
+  /* The two properties the rule exists for. */
+  it("is the same for an axis of one length on every tensor, whatever the other axis", () => {
+    // seq = 128 beside D = 32, and beside another 128: the square tile from
+    // each tensor's smaller axis gave seq 2 on the first and 8 on the second.
+    expect(displayTile([128, 32], 0)[0]).toBe(displayTile([128, 128], 0)[0]);
+    expect(displayTile([4, 128, 32], 0)).toEqual([axisTile(4, 0), 8, 2]);
+  });
+
+  it("does not depend on the graph's scale, so an edit elsewhere never re-grids a tensor", () => {
+    // W [256, 64] drawn at the scale of a graph whose largest tensor grows.
+    const at = (px: number) => gridGeometry([256, 64], cfg, 0, px);
+    expect([at(1.172).rowTile, at(1.172).colTile]).toEqual([at(0.219).rowTile, at(0.219).colTile]);
+  });
+});
+
+describe("the global detail scale", () => {
+  it("shifts every axis's tile by powers of two and stays monotone", () => {
+    for (const extent of [64, 256, 704]) {
+      let prev = 0;
+      for (let k = TILE_SCALE_MIN; k <= TILE_SCALE_MAX; k++) {
+        const t = axisTile(extent, k);
+        expect(t).toBeGreaterThanOrEqual(prev);
+        prev = t;
+      }
+      expect(axisTile(extent, TILE_SCALE_MAX)).toBe(pow2Floor(extent / 2));
+    }
+  });
+
+  it("none is one element per tile even when boundaries are sub-pixel", () => {
+    const geom = gridGeometry([256, 256], cfg, TILE_SCALE_MIN, pxFor(256, 256));
+    expect([geom.rowTile, geom.colTile]).toEqual([1, 1]);
+    expect(geom.tileRows).toBe(256);
+    expect(geom.tileCols).toBe(256);
+    expect(Math.min(geom.cellW, geom.cellH)).toBeLessThan(5);
+  });
+
+  it("is rectangular where the drawn axes differ in length", () => {
+    const geom = gridGeometry([128, 704], cfg, 0, pxFor(128, 704));
+    expect([geom.rowTile, geom.colTile]).toEqual([8, 32]);
+  });
+
+  it("reads as about how many tiles cross each axis, the same in every graph", () => {
+    expect(tileScaleLabel(0)).toBe("≈20 per axis");
+    expect(tileScaleLabel(1)).toBe("≈10 per axis");
+    expect(tileScaleLabel(-1)).toBe("≈40 per axis");
+    expect(tileScaleLabel(3)).toBe("≈2 per axis");
+    expect(tileScaleLabel(TILE_SCALE_MAX)).toBe("≈2 per axis");
+    expect(tileScaleLabel(TILE_SCALE_MIN)).toBe("elements");
+  });
+
+  it("offers only settings that change the tiling of some axis the graph draws", () => {
     const planes = [
       { rows: 256, cols: 512 },
       { rows: 512, cols: 256 },
       { rows: 256, cols: 256 },
     ];
-    const px = graphScale(planes);
-    const stops = effectiveTileScaleStops(planes, px);
-    // TILE_SCALE_MIN leads as the explicit "no tiling" request; the rest are
-    // the scales that genuinely change the graph-wide lattice.
-    expect(stops).toEqual([TILE_SCALE_MIN, 0, 1, 2, 3]);
-    const state = (scale: number) =>
-      planes.map(({ rows, cols }) => tileFor(rows, cols, scale, px));
-    for (let i = 2; i < stops.length; i++) expect(state(stops[i])).not.toEqual(state(stops[i - 1]));
-  });
-
-  it("keeps no tiling semantically distinct from fitted scales", () => {
-    const planes = [{ rows: 256, cols: 512 }, { rows: 512, cols: 256 }];
-    const px = graphScale(planes);
-    expect(effectiveTileScaleStops(planes, px)[0]).toBe(TILE_SCALE_MIN);
-    expect(settledTiles(planes, TILE_SCALE_MIN, px)).toEqual({ min: 1, max: 1 });
-    expect(planes.map(({ rows, cols }) => tileFor(rows, cols, TILE_SCALE_MIN + 1, px)))
-      .not.toEqual([1, 1]);
-  });
-
-  it("settles at one cell per element where that does fit", () => {
-    const planes = [{ rows: 8, cols: 8 }];
-    const px = graphScale(planes);
-    expect(settledTiles(planes, TILE_SCALE_MIN, px)).toEqual({ min: 1, max: 1 });
-  });
-
-  it("names the spread when the graph does not settle on one tile", () => {
-    const planes = [{ rows: 8, cols: 8 }, { rows: 512, cols: 512 }];
-    const px = graphScale(planes);
-    const { min, max } = settledTiles(planes, 0, px);
-    expect(max).toBeGreaterThan(min); // a single number would be a lie here
+    const stops = effectiveTileScaleStops(planes);
+    // Past 3 both lengths sit at half their axis, so 4 and 5 add nothing.
+    expect(stops).toEqual([TILE_SCALE_MIN, -4, -3, -2, -1, 0, 1, 2, 3]);
+    const state = (scale: number) => [256, 512].map((extent) => axisTile(extent, scale));
+    for (let i = 1; i < stops.length; i++) expect(state(stops[i])).not.toEqual(state(stops[i - 1]));
   });
 
   it("maps legacy plateau values onto their equivalent visible stop", () => {
     const planes = [{ rows: 256, cols: 512 }];
-    const px = graphScale(planes);
-    const stops = effectiveTileScaleStops(planes, px);
-    expect(stops[effectiveTileScaleIndex(planes, px, stops, TILE_SCALE_MIN)]).toBe(TILE_SCALE_MIN);
-    expect(stops[effectiveTileScaleIndex(planes, px, stops, TILE_SCALE_MAX)]).toBe(3);
+    const stops = effectiveTileScaleStops(planes);
+    expect(stops[effectiveTileScaleIndex(planes, stops, TILE_SCALE_MIN)]).toBe(TILE_SCALE_MIN);
+    expect(stops[effectiveTileScaleIndex(planes, stops, TILE_SCALE_MAX)]).toBe(3);
   });
 
-  it("does not confuse auto with none when both happen to be 1x1", () => {
+  it("does not confuse the default with none when both happen to be one element", () => {
     const planes = [{ rows: 8, cols: 8 }];
-    const px = graphScale(planes);
-    const stops = effectiveTileScaleStops(planes, px);
+    const stops = effectiveTileScaleStops(planes);
     expect(stops).toContain(TILE_SCALE_MIN);
     expect(stops).toContain(0);
-    expect(stops[effectiveTileScaleIndex(planes, px, stops, TILE_SCALE_MIN)])
-      .toBe(TILE_SCALE_MIN);
-    expect(stops[effectiveTileScaleIndex(planes, px, stops, 0)]).toBe(0);
+    expect(stops[effectiveTileScaleIndex(planes, stops, TILE_SCALE_MIN)]).toBe(TILE_SCALE_MIN);
+    expect(stops[effectiveTileScaleIndex(planes, stops, 0)]).toBe(0);
   });
 });
 
@@ -269,13 +233,15 @@ describe("one scale for the whole graph", () => {
     expect(B.w, "N along B's columns == N along C's columns").toBe(C.w);
   });
 
-  it("cells stay square, so a tile reads as a tile", () => {
+  it("an axis's tile is drawn at one length on every card that draws the axis", () => {
+    // With one scale and a tile per axis length, the 256 axis is ruled alike
+    // as A's rows and as B's columns: the cells line up across cards.
     const planes = [{ rows: 256, cols: 512 }, { rows: 512, cols: 256 }];
     const px = graphScale(planes);
-    for (const { rows, cols } of planes) {
-      const geom = gridGeometry([rows, cols], cfg, 0, px);
-      expect(Math.abs(geom.cellW - geom.cellH), `${rows}x${cols}`).toBeLessThan(1);
-    }
+    const a = gridGeometry([256, 512], cfg, 0, px);
+    const b = gridGeometry([512, 256], cfg, 0, px);
+    expect(a.cellH).toBeCloseTo(b.cellW, 6);
+    expect(a.cellW).toBeCloseTo(b.cellH, 6);
   });
 
   it("a degenerate axis does not drag the whole graph to the cap", () => {

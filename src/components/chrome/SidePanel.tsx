@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "re
 import { useDismiss } from "../hooks/useDismiss";
 import { fromBox } from "../../core/region";
 import { EXAMPLES } from "../../examples";
-import { tileOf } from "../../view/tensor/grid";
+import { displayTile } from "../../view/tensor/tiling";
 import { workspaceToLink, shareTarget } from "../../state/share";
 import { CopyButton } from "./CopyButton";
 import { WorkspaceFiles } from "./WorkspaceFiles";
@@ -179,7 +179,6 @@ function Operations(): React.ReactElement {
   const hiddenBoxes = useStore((s) => s.hiddenBoxes);
   const setSelection = useStore((s) => s.setSelection);
   const tileScale = useStore((s) => s.tileScale);
-  const graphPx = useStore((s) => s.graphPx);
 
   if (!resolved) return <p className="hint">no graph</p>;
   if (!interactive) return <p className="hint">Run the source to load operations.</p>;
@@ -202,7 +201,7 @@ function Operations(): React.ReactElement {
     setSelectedOp(nodeId);
     if (shape.some((extent) => extent <= 0)) return;
     const cfg = useStore.getState().viewCfgs[tensorId];
-    const tile = seedTile(shape, cfg, tileOf(shape, tileScale, graphPx, cfg));
+    const tile = seedTile(shape, cfg, displayTile(shape, tileScale));
     setSelection(
       tensorId,
       fromBox(shape.map((extent, axis) => ({ lo: 0, hi: Math.min(tile[axis], extent) }))),

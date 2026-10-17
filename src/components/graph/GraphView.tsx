@@ -16,7 +16,7 @@ import { constrainResize, displayedCards, resizeScale, type ResizeCorner } from 
 import { opLabel } from "../../core/ops/index";
 import { useStore } from "../../state/store";
 import type { NodeOffset } from "../../view/graph/node-layout";
-import { MIN_SIDE_PX, settledTiles } from "../../view/tensor/tiling";
+import { MIN_SIDE_PX } from "../../view/tensor/tiling";
 import {
   OPERAND_FONT_PX,
   OVERVIEW_SCALE,
@@ -31,7 +31,6 @@ import { LayoutControls } from "../chrome/LayoutControls";
 import { useFrameThrottle } from "../hooks/useFrameThrottle";
 import { activeCanvasTool, graphIsInteractive, involvedTensorIds, layoutMovable, PANEL_RAIL } from "../../view/workspace";
 import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
-import { planesOf } from "../../view/tensor/seeds";
 import { isPrimaryPress } from "../pointer";
 import { borrowsMoveTool, useMoveModifier } from "../hooks/useMoveModifier";
 import { useGraphLayout } from "../hooks/useGraphLayout";
@@ -224,7 +223,6 @@ export function GraphView(): React.ReactElement {
   const workerBaseLayout = useStore((s) => s.baseLayout);
   const workerGraphId = useStore((s) => s.workerGraphId);
   const graphPx = useStore((s) => s.graphPx);
-  const tileScale = useStore((s) => s.tileScale);
   const backwardRes = useStore((s) => s.backwardRes);
   const forwardRes = useStore((s) => s.forwardRes);
   const perBox = useStore((s) => s.perBox);
@@ -329,17 +327,6 @@ export function GraphView(): React.ReactElement {
   const { layout: baseLayout, pending: layoutPending, error: layoutError } = useGraphLayout(
     resolved, workerBaseLayout, workerGraphId, graphPx, layoutViews,
   );
-
-  /**
-   * The tile every tensor settled on, or `null` when the fit rule coarsened
-   * some of them and the setup strip can only print a range. Computed once
-   * here rather than per card: `planesOf` walks every tensor in the graph.
-   */
-  const uniformTile = useMemo(() => {
-    if (!resolved) return null;
-    const { min, max } = settledTiles(planesOf(resolved), tileScale, graphPx);
-    return min === max ? min : null;
-  }, [resolved, tileScale, graphPx]);
 
   /** Resized cards' stored scales, as a stable key. */
   const cardScaleKey = useStore((s) => JSON.stringify(Object.entries(s.viewCfgs).flatMap(([id, cfg]) =>
@@ -1190,7 +1177,6 @@ export function GraphView(): React.ReactElement {
               {...dragFollow}
             >
               <TensorCard
-                uniformTile={uniformTile}
                 tensor={t}
                 renderScale={renderScale}
                 viewScale={tf.k}

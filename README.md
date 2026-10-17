@@ -170,6 +170,12 @@ recomputation in an MLP, and splitting a layernorm's normalised axis. Running on
 view on a plan with two others kept beside it, and the source's comments state the question and
 what the figures show. The share button encodes the source, the tiles and the view settings in a link.
 
+The **grid** control under the canvas sets about how many tiles cross each axis (`≈20 per axis` by
+default, down to single elements). The tile is a power of two decided by the axis's length alone,
+so an axis of one length is gridded alike on every card and editing one tensor never re-grids
+another; each card's header shows its tile as rows × columns. Under the pointer, the card outlines
+the box a click would take. **snap** off cuts exact element ranges instead of whole tiles.
+
 ## What's supported
 
 | | |

@@ -12,9 +12,9 @@
  * governs the lattice drawn on the visible axes, the extent a snapped gesture
  * selects on every axis, the arrow-key step, the starter tile, and the extents
  * a plan is first divided at. When it is absent every one of those falls back
- * to the behaviour the canvas had before: the square display tile on the
- * visible axes, and on the hidden axes the view mode's reading. The detail
- * slider therefore only governs tensors with no tile of their own.
+ * to the display tile on the visible axes (`tiling.displayTile`, one extent per
+ * axis), and on the hidden axes the view mode's reading. The detail slider
+ * therefore only governs tensors with no tile of their own.
  *
  * Nothing here changes a stored selection. Like snapping and detail, the tile
  * is a property of future gestures, not of boxes already drawn.
@@ -26,21 +26,21 @@ import { viewAxes, type ViewCfg } from "./tensor-view";
 /**
  * The extent a snapped gesture selects on each axis.
  *
- * `displayTile` is the square tile the canvas would draw without a tile of the
- * tensor's own (`grid.tileOf`). On a hidden axis the fallback follows the view:
- * projection draws the union over that axis, so a gesture takes all of it, and
- * slice mode shows one index, so a gesture takes that index.
+ * `display` is the tile the canvas draws on each axis without a tile of the
+ * tensor's own (`tiling.displayTile`). On a hidden axis the fallback follows
+ * the view: projection draws the union over that axis, so a gesture takes all
+ * of it, and slice mode shows one index, so a gesture takes that index.
  */
 export function gestureTile(
   shape: readonly number[],
   cfg: Pick<ViewCfg, "projection" | "tile" | "axes"> | undefined,
-  displayTile: number
+  display: readonly number[]
 ): number[] {
   if (cfg?.tile && cfg.tile.length === shape.length) return cfg.tile.slice();
   const { rowAxis, colAxis } = viewAxes(shape, cfg);
   return shape.map((extent, axis) =>
     axis === rowAxis || axis === colAxis
-      ? Math.max(1, Math.min(extent, displayTile))
+      ? Math.max(1, Math.min(extent, display[axis] ?? 1))
       : cfg?.projection === false ? 1 : Math.max(1, extent)
   );
 }
@@ -55,12 +55,12 @@ export function gestureTile(
 export function seedTile(
   shape: readonly number[],
   cfg: Pick<ViewCfg, "tile" | "axes"> | undefined,
-  displayTile: number
+  display: readonly number[]
 ): number[] {
   if (cfg?.tile && cfg.tile.length === shape.length) return cfg.tile.slice();
   const { rowAxis, colAxis } = viewAxes(shape, cfg);
   return shape.map((extent, axis) =>
-    axis === rowAxis || axis === colAxis ? Math.max(1, Math.min(extent, displayTile)) : 1
+    axis === rowAxis || axis === colAxis ? Math.max(1, Math.min(extent, display[axis] ?? 1)) : 1
   );
 }
 

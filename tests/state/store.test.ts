@@ -6,7 +6,8 @@ import { useStore } from "../../src/state/store";
 import { planToLink } from "../../src/state/share";
 import { planReport } from "../../src/core/plan/interfaces";
 import { cardPx, graphScale, MAX_ELEM_PX, planeExtents, TILE_SCALE_NONE } from "../../src/view/tensor/tiling";
-import { nudgeDelta, nudgeUnit, snapSpan, tileOf } from "../../src/view/tensor/grid";
+import { nudgeDelta, nudgeUnit, snapSpan } from "../../src/view/tensor/grid";
+import { displayTile } from "../../src/view/tensor/tiling";
 import { viewAxes } from "../../src/view/tensor/tensor-view";
 import { operationForTensor, enabledPropResult, involvedTensorIds, Direction, MAX_PER_BOX_PROPS, PANEL_COLLAPSE_AT, PANEL_MAX, PANEL_MIN } from "../../src/view/workspace";
 import { planesOf, startingTiles } from "../../src/view/tensor/seeds";
@@ -582,16 +583,16 @@ describe("snapping is a gesture setting, not an analysis one", () => {
     // The keyboard must not reach offsets the mouse cannot: with snapping off a
     // drag cuts an exact range, so a nudge has to step by one element too.
     const shape = S().resolved!.tensors.C.resolved!;
-    const tile = tileOf(shape, S().tileScale, S().graphPx);
+    const tile = displayTile(shape, S().tileScale)[0];
     expect(tile).toBeGreaterThan(1); // otherwise the two cases are the same
-    expect(nudgeUnit(shape, undefined, S().tileScale, S().graphPx, false, 0)).toBe(1);
-    expect(nudgeUnit(shape, undefined, S().tileScale, S().graphPx, true, 0)).toBe(tile);
+    expect(nudgeUnit(shape, undefined, S().tileScale, false, 0)).toBe(1);
+    expect(nudgeUnit(shape, undefined, S().tileScale, true, 0)).toBe(tile);
   });
 
   it("applies that step verbatim, so an odd offset survives", () => {
     S().setSnapToGrid(false);
     S().setSelection("C", fromBox(box([64, 128], [0, 64])), "replace");
-    S().moveSelection(0, nudgeUnit(S().resolved!.tensors.C.resolved!, undefined, S().tileScale, S().graphPx, false, 0));
+    S().moveSelection(0, nudgeUnit(S().resolved!.tensors.C.resolved!, undefined, S().tileScale, false, 0));
     expect(selBoxes()[0][0]).toEqual({ lo: 65, hi: 129 });
   });
 
@@ -637,7 +638,7 @@ describe("snapping is a gesture setting, not an analysis one", () => {
     S().setTileScale(2);
     S().setSnapToGrid(true);
     const shape = S().resolved!.tensors.C.resolved!;
-    const step = nudgeUnit(shape, undefined, S().tileScale, S().graphPx, S().snapToGrid, 0);
+    const step = nudgeUnit(shape, undefined, S().tileScale, S().snapToGrid, 0);
     expect(step).toBeGreaterThan(1);
 
     const delta = nudgeDelta(typed[0], 1, step, true);
@@ -659,11 +660,11 @@ describe("snapping is a gesture setting, not an analysis one", () => {
     const shape = S().resolved!.tensors.C.resolved!;
 
     S().setTileScale(TILE_SCALE_NONE);
-    expect(nudgeUnit(shape, undefined, S().tileScale, S().graphPx, true, 0)).toBe(1);
+    expect(nudgeUnit(shape, undefined, S().tileScale, true, 0)).toBe(1);
     expect(selBoxes()).toEqual([typed]);
 
     S().setTileScale(1);
-    const coarse = nudgeUnit(shape, undefined, S().tileScale, S().graphPx, true, 0);
+    const coarse = nudgeUnit(shape, undefined, S().tileScale, true, 0);
     expect(coarse).toBeGreaterThan(1);
     expect(selBoxes()).toEqual([typed]);
     const delta = nudgeDelta(typed[0], 1, coarse, true);
@@ -677,7 +678,7 @@ describe("snapping is a gesture setting, not an analysis one", () => {
     S().setTileScale(3);
     S().setSnapToGrid(true);
     const shape = S().resolved!.tensors.C.resolved!;
-    const coarse = nudgeUnit(shape, undefined, S().tileScale, S().graphPx, true, 0);
+    const coarse = nudgeUnit(shape, undefined, S().tileScale, true, 0);
     S().moveSelection(0, coarse);
     expect(selBoxes()[0][0]).toEqual({ lo: 192, hi: 256 });
   });
@@ -687,7 +688,7 @@ describe("snapping is a gesture setting, not an analysis one", () => {
     S().setSnapToGrid(false);
     for (const scale of [3, TILE_SCALE_NONE, 0]) {
       S().setTileScale(scale);
-      expect(nudgeUnit(shape, undefined, S().tileScale, S().graphPx, S().snapToGrid, 0)).toBe(1);
+      expect(nudgeUnit(shape, undefined, S().tileScale, S().snapToGrid, 0)).toBe(1);
     }
   });
 
@@ -695,9 +696,9 @@ describe("snapping is a gesture setting, not an analysis one", () => {
     const shape = S().resolved!.tensors.C.resolved!;
     S().setTileScale(TILE_SCALE_NONE);
     S().setSnapToGrid(true);
-    const tile = tileOf(shape, S().tileScale, S().graphPx);
+    const tile = displayTile(shape, S().tileScale)[0];
     expect(tile).toBe(1);
-    expect(nudgeUnit(shape, undefined, S().tileScale, S().graphPx, true, 0)).toBe(1);
+    expect(nudgeUnit(shape, undefined, S().tileScale, true, 0)).toBe(1);
     expect(snapSpan(7, 7, tile, shape[0])).toEqual([7, 8]);
   });
 
@@ -1507,10 +1508,10 @@ describe("offered starting tiles", () => {
   });
 
   it("offers the graph's result and the step before it", () => {
-    const starts = startingTiles(S().resolved!, S().tileScale, S().graphPx);
+    const starts = startingTiles(S().resolved!, S().tileScale);
     expect(starts.map((s) => s.tensorId)).toEqual(["C"]); // GEMM has no intermediate
     loadExampleNamed("Multi-head attention");
-    const attention = startingTiles(S().resolved!, S().tileScale, S().graphPx);
+    const attention = startingTiles(S().resolved!, S().tileScale);
     expect(attention).toHaveLength(2);
     const [output, previous] = attention;
     expect(S().resolved!.consumers[output.tensorId]).toHaveLength(0);
@@ -1518,22 +1519,22 @@ describe("offered starting tiles", () => {
   });
 
   it("offers a tile the canvas would have snapped to, in bounds", () => {
-    const [start] = startingTiles(S().resolved!, S().tileScale, S().graphPx);
+    const [start] = startingTiles(S().resolved!, S().tileScale);
     const shape = S().resolved!.tensors[start.tensorId].resolved!;
     const { rowAxis, colAxis } = viewAxes(shape);
-    const tile = tileOf(shape, S().tileScale, S().graphPx);
+    const tile = displayTile(shape, S().tileScale);
     start.box.forEach((interval, axis) => {
       expect(interval.lo).toBe(0);
       expect(interval.hi).toBeLessThanOrEqual(shape[axis]);
       expect(interval.hi).toBe(
-        axis === rowAxis || axis === colAxis ? Math.min(tile, shape[axis]) : 1
+        axis === rowAxis || axis === colAxis ? Math.min(tile[axis], shape[axis]) : 1
       );
     });
   });
 
   it("offers a single element when detail is none", () => {
     S().setTileScale(TILE_SCALE_NONE);
-    const [start] = startingTiles(S().resolved!, S().tileScale, S().graphPx);
+    const [start] = startingTiles(S().resolved!, S().tileScale);
     start.box.forEach((interval) => {
       expect(interval.lo).toBe(0);
       expect(interval.hi).toBe(1);
@@ -1541,7 +1542,7 @@ describe("offered starting tiles", () => {
   });
 
   it("produces a selection the executor accepts", () => {
-    const [start] = startingTiles(S().resolved!, S().tileScale, S().graphPx);
+    const [start] = startingTiles(S().resolved!, S().tileScale);
     S().setSelection(start.tensorId, fromBox(start.box), "replace");
     expect(selTensors()).toEqual([start.tensorId]);
     expect(S().backwardRes).not.toBeNull();

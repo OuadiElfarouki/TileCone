@@ -1,20 +1,25 @@
 /**
- * Tile sizing. Tiles are the *rendering unit*: a card draws one cell per tile,
- * shaded by how much of the region that tile actually contains. So the tile size
- * sets the reading lattice and the unit that snapped gestures select. Analysis
- * remains element-precise, and there is one global control rather than a
- * per-card setting.
+ * Tile sizing. The display tile is the lattice a card is ruled with and the
+ * unit a snapped gesture and an arrow step take; analysis stays
+ * element-precise whatever it is.
  *
- * Sizing rule, in order:
- *   1. auto  : 5% of the smallest non-degenerate visible axis, snapped to a power
- *              of two: (100×200) -> 4, (200×214) -> 8.
- *   2. scale : the global slider shifts that by powers of two (2^tileScale).
- *   3. clamp : to [1, largest power of two <= minAxis/2], so the coarsest setting
- *              still leaves at least a 2x2 tile grid on the smallest axis.
- *   4. fit   : for ordinary scale values, raise the tile until the grid fits the
- *              card at >= MIN_CELL_PX per cell. None deliberately bypasses this:
- *              its logical tile is 1 even when individual boundaries are too
- *              dense to render.
+ * One rule, per axis: about `20 / 2^tileScale` tiles across the axis, the tile
+ * rounded to a power of two and capped at half the axis, so even the coarsest
+ * setting leaves two tiles. It depends on the axis's extent and the setting
+ * and nothing else. Two consequences are the point of it:
+ *
+ *   - an axis of one length is gridded alike on every card. `seq = 128` takes
+ *     the same tile on Q and on the scores, so a snapped click selects the same
+ *     rows on both. A square tile from each tensor's smaller axis gave `seq` 8
+ *     on one card and 2 on the next.
+ *   - nothing else in the graph moves it. The earlier rule coarsened tiles
+ *     until a cell filled 5 canvas px, which tied every tile to the graph's
+ *     scale and so to its largest tensor: editing `K` re-gridded tensors that
+ *     have no `K`.
+ *
+ * Density is the renderer's concern instead: `grid.latticeStride` draws every
+ * 2nd, 4th... boundary when cells are too small on screen, and the hover
+ * outline shows the tile a click takes.
  *
  * Card size is a separate axis from tile size, and it is a property of the
  * *graph*, not of the tensor: `graphScale` picks one px-per-element for every
@@ -26,21 +31,13 @@
  */
 
 /** @internal Policy details are exported so tiling invariants can be tested directly. */
+/** The default tile as a fraction of its axis: about 20 tiles across. */
 export const AUTO_TILE_FRACTION = 0.05;
 export const TILE_SCALE_MIN = -5;
 export const TILE_SCALE_MAX = 5;
 /** The sentinel meaning no aggregation: one element per logical tile. */
 export const TILE_SCALE_NONE = TILE_SCALE_MIN;
 
-/** Rendering budget, in canvas px: the tile is chosen so a cell is at least
- * this wide inside the card, at scale 1.
- *
- * This is not the renderer's visibility threshold. `grid.MIN_LATTICE_PX` is the
- * screen-space one, and drawGrid strides the drawn boundaries to meet it, so
- * every drawn line remains a snapping boundary at any zoom. The two were one
- * constant compared in two coordinate systems, which made the lattice vanish
- * below 100% zoom while snapping still bound to it. */
-export const MIN_CELL_PX = 5;
 /** Px budget for the widest / tallest tensor in the graph. Soft: the floors
  * below may override them, because a tensor nobody can see is worse than a
  * tensor that needs a pan. */
@@ -80,24 +77,20 @@ export function planeExtents(
   };
 }
 
-/** Smallest axis that actually has extent; a 1-D tensor uses its only axis. */
-export function governingAxis(rows: number, cols: number): number {
-  const dims = [rows, cols].filter((d) => d > 1);
-  return dims.length ? Math.min(...dims) : 1;
+/**
+ * The display tile on an axis of `extent`: about `20 / 2^tileScale` tiles
+ * across it, a power of two, at most half the axis. One element under None,
+ * and on an axis of one element.
+ */
+export function axisTile(extent: number, tileScale: number): number {
+  if (tileScale === TILE_SCALE_NONE || extent <= 1) return 1;
+  const wanted = pow2Round(AUTO_TILE_FRACTION * extent * 2 ** tileScale);
+  return Math.max(1, Math.min(wanted, pow2Floor(extent / 2)));
 }
 
-export function autoTile(rows: number, cols: number): number {
-  const minAxis = governingAxis(rows, cols);
-  return clampTile(pow2Round(AUTO_TILE_FRACTION * minAxis), rows, cols);
-}
-
-export function maxTile(rows: number, cols: number): number {
-  const minAxis = governingAxis(rows, cols);
-  return Math.max(1, pow2Floor(minAxis / 2));
-}
-
-function clampTile(tile: number, rows: number, cols: number): number {
-  return Math.max(1, Math.min(tile, maxTile(rows, cols)));
+/** The display tile on every axis of `shape`; consumers take the axes they draw. */
+export function displayTile(shape: readonly number[], tileScale: number): number[] {
+  return shape.map((extent) => axisTile(extent, tileScale));
 }
 
 /**
@@ -140,32 +133,13 @@ export function cardPx(rows: number, cols: number, px: number): { w: number; h: 
   };
 }
 
-/** The tile actually used for this tensor, given the global detail setting. */
-export function tileFor(rows: number, cols: number, tileScale: number, px: number): number {
-  // None is semantic, not a best-effort rendering request. A large tensor may
-  // be too dense to draw every boundary, but gestures, hover readouts, starter
-  // tiles and keyboard nudges must still operate one element at a time.
-  if (tileScale === TILE_SCALE_NONE) return 1;
-  const base = autoTile(rows, cols);
-  let tile = clampTile(base * 2 ** tileScale, rows, cols);
-  // fit: the card is a fixed size, so refuse tiles that would draw cells below
-  // MIN_CELL_PX inside it. This is the minimum elementary tile.
-  //
-  // NOTE: clamping here is the common case, not the exception - a typical tensor
-  // has ~5 distinct tiles across the slider's 11 stops, so roughly half the
-  // travel is inert. That predates the graph scale (measured: mean 4.69 distinct
-  // stops before, 5.02 after) and is a property of snapping tiles to powers of
-  // two inside a bounded card. The effective-stop calculation removes adjacent
-  // requests that settle on the same graph-wide lattice.
-  const { w, h } = cardPx(rows, cols, px);
-  const maxCols = Math.max(1, Math.floor(w / MIN_CELL_PX));
-  const maxRows = Math.max(1, Math.floor(h / MIN_CELL_PX));
-  while (Math.ceil(cols / tile) > maxCols || Math.ceil(rows / tile) > maxRows) tile *= 2;
-  return tile;
+/** Every drawn axis length in the graph, once: what a tiling is decided over. */
+function drawnExtents(planes: { rows: number; cols: number }[]): number[] {
+  return [...new Set(planes.flatMap(({ rows, cols }) => [rows, cols]).filter((e) => e > 1))].sort((a, b) => a - b);
 }
 
-function tileState(planes: { rows: number; cols: number }[], scale: number, px: number): number[] {
-  return planes.map(({ rows, cols }) => tileFor(rows, cols, scale, px));
+function tileState(extents: number[], scale: number): number[] {
+  return extents.map((extent) => axisTile(extent, scale));
 }
 
 function sameTileState(a: number[], b: number[]): boolean {
@@ -173,23 +147,22 @@ function sameTileState(a: number[], b: number[]): boolean {
 }
 
 /**
- * Slider stops that produce distinct graph-wide tile lattices, plus the
+ * Slider stops that produce distinct tilings of this graph's axes, plus the
  * semantically distinct None sentinel.
  *
  * `tileScale` remains the serialized power-of-two shift; this only removes UI
- * positions whose complete per-tensor tile vector is identical to a neighbour.
- * For a plateau, the representative closest to auto (zero) is retained, so old
- * share links preserve their meaning and display at the equivalent live stop.
+ * positions whose tiles are identical to a neighbour's on every axis the graph
+ * draws - a small graph clamps the finest and coarsest settings together. For
+ * a plateau, the representative closest to the default (zero) is kept, so old
+ * share links display at the equivalent live stop.
  */
-export function effectiveTileScaleStops(
-  planes: { rows: number; cols: number }[],
-  px: number
-): number[] {
+export function effectiveTileScaleStops(planes: { rows: number; cols: number }[]): number[] {
+  const extents = drawnExtents(planes);
   const runs: { lo: number; hi: number }[] = [];
   let runLo = TILE_SCALE_MIN;
-  let previous = tileState(planes, TILE_SCALE_MIN, px);
+  let previous = tileState(extents, TILE_SCALE_MIN);
   for (let scale = TILE_SCALE_MIN + 1; scale <= TILE_SCALE_MAX; scale++) {
-    const current = tileState(planes, scale, px);
+    const current = tileState(extents, scale);
     if (!sameTileState(previous, current)) {
       runs.push({ lo: runLo, hi: scale - 1 });
       runLo = scale;
@@ -206,34 +179,31 @@ export function effectiveTileScaleStops(
 }
 
 /**
- * The tile every tensor actually settles on at this scale. A single number when
- * the graph agrees, a spread when the fit rule coarsens some tensors and not
- * others, the control is global but the outcome is per tensor, and saying one
- * number for a graph that has two would be a lie.
+ * What a setting asks for, the same on every tensor and in every graph: about
+ * how many tiles cross each axis. The tile is rounded to a power of two, so an
+ * axis lands near the number rather than on it, and never below two.
  */
-export function settledTiles(
-  planes: { rows: number; cols: number }[],
-  scale: number,
-  px: number
-): { min: number; max: number } {
-  const tiles = tileState(planes, scale, px);
-  if (!tiles.length) return { min: 1, max: 1 };
-  return { min: Math.min(...tiles), max: Math.max(...tiles) };
+export function tileScaleLabel(scale: number): string {
+  if (scale === TILE_SCALE_NONE) return "elements";
+  // Whole numbers down to 5; below that the half-axis cap holds an axis at
+  // two tiles, so 2.5 would overstate it.
+  return `≈${Math.max(2, Math.floor(1 / (AUTO_TILE_FRACTION * 2 ** scale)))} per axis`;
 }
 
-/** Find which effective stop renders the same graph-wide lattice as `scale`. */
+/** Find which effective stop tiles this graph's axes as `scale` does. */
 export function effectiveTileScaleIndex(
   planes: { rows: number; cols: number }[],
-  px: number,
   stops: number[],
   scale: number
 ): number {
-  // Intent wins over coincident geometry. On a small graph both None and Auto
-  // can be 1×1, but the control must still show the setting the user chose.
+  // Intent wins over coincident geometry. On a small graph None and the
+  // finest settings can both tile by one element, but the control must still
+  // show the setting the user chose.
   const exact = stops.indexOf(scale);
   if (exact >= 0) return exact;
-  const wanted = tileState(planes, scale, px);
-  const found = stops.findIndex((stop) => sameTileState(tileState(planes, stop, px), wanted));
+  const extents = drawnExtents(planes);
+  const wanted = tileState(extents, scale);
+  const found = stops.findIndex((stop) => sameTileState(tileState(extents, stop), wanted));
   if (found >= 0) return found;
   // Defensive fallback for a future non-monotone tiling policy.
   let best = 0;

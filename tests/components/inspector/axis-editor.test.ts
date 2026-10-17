@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { AxisEditor } from "../../../src/components/inspector/AxisEditor";
 import { box, fromBox } from "../../../src/core/region";
 import { useStore } from "../../../src/state/store";
-import { tileOf } from "../../../src/view/tensor/grid";
+import { displayTile } from "../../../src/view/tensor/tiling";
 import { gestureTile, isLatticeTile } from "../../../src/view/tensor/tile-spec";
 import { axisTableMenu, planWithTile, type AxisTableAction } from "../../../src/view/tensor/menus";
 import type { MenuAction } from "../../../src/view/menu";
@@ -24,7 +24,7 @@ const render = () => renderToStaticMarkup(createElement(AxisEditor, { index: 0 }
 /** The tile a gesture on X would take right now. */
 const currentTile = () => {
   const shape = S().resolved!.tensors.X.resolved!;
-  return gestureTile(shape, S().viewCfgs.X, tileOf(shape, S().tileScale, S().graphPx, S().viewCfgs.X));
+  return gestureTile(shape, S().viewCfgs.X, displayTile(shape, S().tileScale));
 };
 
 /** The menu's actions for the inspected part of X, derived as the panel derives them. */

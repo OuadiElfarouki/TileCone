@@ -1,7 +1,8 @@
 import { executeQuery } from "../../core/executor";
 import { hasUnitStride } from "../../core/coordinates";
 import { addPart, Box, Region, sameBox, subtractFromParts, translatePart } from "../../core/region";
-import { nudgeDelta, tileOf } from "../../view/tensor/grid";
+import { nudgeDelta } from "../../view/tensor/grid";
+import { displayTile } from "../../view/tensor/tiling";
 import { nudgeBoxes } from "../../view/tensor/movement";
 import { viewAxes } from "../../view/tensor/tensor-view";
 import { gestureTile, tileFits, tileSpanAt } from "../../view/tensor/tile-spec";
@@ -171,7 +172,7 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
           (sign !== -1 && sign !== 1) || !Number.isSafeInteger(multiplier) || multiplier < 1) return box;
       const cfg = state.viewCfgs[state.selection!.parts[keyboardTile(state)!].tensorId];
       const units = state.snapToGrid
-        ? gestureTile(shape, cfg, tileOf(shape, state.tileScale, state.graphPx, cfg))
+        ? gestureTile(shape, cfg, displayTile(shape, state.tileScale))
         : shape.map(() => 1);
       // Non-contiguous axes keep the existing clamped translation policy.
       if (!hasUnitStride(shape, axis)) {

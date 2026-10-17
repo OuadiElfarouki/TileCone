@@ -1,7 +1,7 @@
 import React from "react";
 import { axisName } from "../../view/tensor/shape-label";
 import type { Box } from "../../core/region";
-import { tileOf } from "../../view/tensor/grid";
+import { displayTile } from "../../view/tensor/tiling";
 import { useStore } from "../../state/store";
 import { axisTableMenu, planWithTile, type AxisTableAction } from "../../view/tensor/menus";
 import { viewAxes } from "../../view/tensor/tensor-view";
@@ -29,7 +29,6 @@ export function AxisEditor({ index }: { index: number }): React.ReactElement | n
   const part = useStore((s) => s.selection?.parts[index]);
   const cfg = useStore((s) => (part ? s.viewCfgs[part.tensorId] : undefined));
   const tileScale = useStore((s) => s.tileScale);
-  const graphPx = useStore((s) => s.graphPx);
   const setTensorTile = useStore((s) => s.setTensorTile);
   const setPlanTileAt = useStore((s) => s.setPlanTileAt);
   const setInspectorTab = useStore((s) => s.setInspectorTab);
@@ -42,7 +41,7 @@ export function AxisEditor({ index }: { index: number }): React.ReactElement | n
   const shape = tensor.resolved!;
   if (!shape.length) return null;
   const box = part.box;
-  const tile = gestureTile(shape, cfg, tileOf(shape, tileScale, graphPx, cfg));
+  const tile = gestureTile(shape, cfg, displayTile(shape, tileScale));
   const own = !!cfg?.tile;
   const { rowAxis, colAxis } = viewAxes(shape, cfg);
   const name = (axis: number) => axisName(tensor, axis);

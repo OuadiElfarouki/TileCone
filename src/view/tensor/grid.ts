@@ -11,7 +11,7 @@
  */
 
 import { Box, Interval, Region, disjointify } from "../../core/region";
-import { cardPx, planeExtents, tileFor } from "./tiling";
+import { cardPx, displayTile, planeExtents } from "./tiling";
 import { viewAxes, type ViewCfg } from "./tensor-view";
 import { gestureTile } from "./tile-spec";
 import { cardScaleFor } from "./card-size";
@@ -20,8 +20,8 @@ import { foldCoord, foldGeometry, runLocate, runSpans, type Fold } from "./fold"
 export type GridGeom = {
   rows: number; // element extent
   cols: number;
-  /** Elements per cell on the row and column axes. Equal unless the tensor has
-   * a tile of its own (`ViewCfg.tile`), which need not be square. */
+  /** Elements per cell on the row and column axes: each axis's own display
+   * tile, or the tensor's own tile (`ViewCfg.tile`). Not square in general. */
   rowTile: number;
   colTile: number;
   tileRows: number; // drawn cells
@@ -58,9 +58,9 @@ export function gridGeometry(
   const fold = foldGeometry(shape, cfg, rows, cols, scale);
   const canvasW = fold ? fold.across.total : panelW;
   const canvasH = fold ? fold.down.total : panelH;
-  // A tile of the tensor's own is a quantity and is drawn as given, however
-  // dense; `latticeStride` keeps the drawn boundaries apart on screen.
-  const tile = gestureTile(shape, cfg, tileFor(rows, cols, tileScale, cardScaleFor(shape, { ...cfg, scale: undefined }, px)));
+  // The tile is a quantity, display or the tensor's own, and is drawn as given
+  // however dense; `latticeStride` keeps the drawn boundaries apart on screen.
+  const tile = gestureTile(shape, cfg, displayTile(shape, tileScale));
   const rowTile = rowAxis >= 0 ? tile[rowAxis] : 1;
   const colTile = colAxis >= 0 ? tile[colAxis] : 1;
   const tileRows = Math.ceil(rows / rowTile);
@@ -180,9 +180,9 @@ export const MIN_MARK_PX = 1;
 /**
  * Screen-space stride threshold for the drawn lattice, in CSS px.
  *
- * Distinct from `tiling.MIN_CELL_PX`, which is a *canvas*-space budget used to
- * choose the tile: one constant compared in two coordinate systems is what let
- * the lattice disappear below 100% zoom while snapping still bound to it.
+ * The tile itself is chosen without regard to pixels (`tiling.axisTile`), so
+ * this stride is the only density control: a lattice too fine to draw is drawn
+ * at every 2nd, 4th... boundary rather than coarsened as a quantity.
  */
 export const MIN_LATTICE_PX = 5;
 
@@ -194,9 +194,9 @@ export const MIN_LATTICE_PX = 5;
  *
  * Note what this does not give: the drawn lines are a subset of the snapping
  * boundaries, not all of them, so a snapped edge can still land between two
- * drawn lines. Closing that gap would mean deriving the snap unit from the
- * viewport, which would make the same drag select a different range at a
- * different zoom and break shared links.
+ * drawn lines. The snap unit stays independent of the viewport - the same
+ * drag selects the same range at any zoom - and the card outlines the box a
+ * click would take under the pointer, which is what closes the gap.
  */
 export function latticeStride(cell: number, count: number, viewScale: number): number {
   let stride = 1;
@@ -307,18 +307,6 @@ export function regionFillRects(
   return out;
 }
 
-/** The square display tile a tensor renders at without a tile of its own. */
-export function tileOf(
-  shape: number[],
-  tileScale: number,
-  px: number,
-  cfg?: Pick<ViewCfg, "axes">
-): number {
-  const { rowAxis, colAxis } = viewAxes(shape, cfg);
-  const { rows, cols } = planeExtents(shape, rowAxis, colAxis);
-  return tileFor(rows, cols, tileScale, cardScaleFor(shape, { ...cfg, scale: undefined }, px));
-}
-
 /**
  * How far one arrow-key nudge moves the selection along `axis`.
  *
@@ -330,12 +318,11 @@ export function nudgeUnit(
   shape: number[],
   cfg: ViewCfg | undefined,
   tileScale: number,
-  px: number,
   snapToGrid: boolean,
   axis: number
 ): number {
   if (!snapToGrid) return 1;
-  return gestureTile(shape, cfg, tileOf(shape, tileScale, px, cfg))[axis] ?? 1;
+  return gestureTile(shape, cfg, displayTile(shape, tileScale))[axis] ?? 1;
 }
 
 /** Delta for one arrow press. An off-lattice selection first lands an edge on

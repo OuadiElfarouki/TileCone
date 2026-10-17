@@ -5,7 +5,8 @@ import { DTYPE_BYTES } from "../../core/dtypes";
 import { useFrameThrottle } from "../hooks/useFrameThrottle";
 import { useDebounced } from "../hooks/useDebounced";
 import { Box, formatBoxIndices, fromBox, iv } from "../../core/region";
-import { CardCell, paintScale, elementFromEvent, gridGeometry, HeatPaint, Layer, PlanPaint, tileOf } from "../../view/tensor/grid";
+import { CardCell, paintScale, elementFromEvent, gridGeometry, HeatPaint, Layer, PlanPaint } from "../../view/tensor/grid";
+import { displayTile } from "../../view/tensor/tiling";
 import { lensColor, lensReading, lensReadingText } from "../../view/reuse-lens";
 import { useLensPaint } from "./useLensPaint";
 import { drawGrid } from "./draw-grid";
@@ -63,7 +64,6 @@ function TensorCardView({
   renderScale = 1,
   viewScale = 1,
   overviewWidth,
-  uniformTile = null,
   rasterize = true,
   rasterPixels,
   displayScale,
@@ -75,7 +75,6 @@ function TensorCardView({
   renderScale?: number;
   viewScale?: number;
   overviewWidth?: number;
-  uniformTile?: number | null;
   rasterize?: boolean;
   rasterPixels?: number;
   /** The scale the graph has room to draw a resized card at; see `displayedCardScales`. */
@@ -205,8 +204,8 @@ function TensorCardView({
 
   /** The extents a click would divide this tensor at while it is untiled. */
   const planProposal = useMemo(
-    () => seedTile(shape, cfg, tileOf(shape, tileScale, graphPx, cfg)),
-    [shape, cfg, tileScale, graphPx]
+    () => seedTile(shape, cfg, displayTile(shape, tileScale)),
+    [shape, cfg, tileScale]
   );
 
   const commitPlan = (d: CellDrag) => {
@@ -251,6 +250,10 @@ function TensorCardView({
     let layers: Layer[];
     let paint: PlanPaint | undefined;
     const dragRegion = drag ? fromBox(dragToBox(drag)) : null;
+    // The box a click here would take, outlined; the Plan view has its own.
+    const hoverRegion = !planView && !drag && hoverCell && interactive
+      ? fromBox(dragToBox(dragAt(hoverCell)))
+      : null;
     if (planView) {
       const planned = buildPlanPaint({
         tensorId: tensor.id,
@@ -282,6 +285,7 @@ function TensorCardView({
         prev,
         prevForward,
         dragRegion,
+        hoverRegion,
         entangled,
         showEntangled,
       });
@@ -302,7 +306,7 @@ function TensorCardView({
       layers,
       replay: replayed?.layers ?? [],
       lens: !!lens,
-      gesture: planView ? planPointer : dragRegion,
+      gesture: planView ? planPointer : dragRegion ?? hoverRegion,
     });
     // A redraw that changes the slice shown is a deal. Hold the old picture
     // before it is painted over, so it can leave while the new one arrives.
@@ -353,6 +357,8 @@ function TensorCardView({
     colAxis,
     planProposal,
     tensor.producer,
+    hoverCell,
+    interactive,
   ]);
 
   useEffect(() => {
@@ -549,17 +555,11 @@ function TensorCardView({
   const tileSpanCols = Math.min(geom.cols, geom.colTile);
   const ownTile = cfg.tile;
   /**
-   * The span is only worth a slot in the header when it says something the
-   * setup strip does not. Two cases do: a tensor short enough to clip the
-   * square tile (C5), and a graph whose tensors did not all settle on the same
-   * one, where the strip can only print a range. On a uniform square lattice
-   * the strip already names the tile, and repeating it on every card put a
-   * second bracketed number pair beside the shape on the whole canvas.
-   *
-   * `cardSize` still reserves this label's width whether or not it is drawn, so
-   * detail changes re-rasterise in place (C4).
+   * The tile this card snaps to, always in the header: the setup strip names
+   * how many tiles cross an axis, and axes of different lengths settle on
+   * different tiles, so only the card can say which one it has. `cardSize`
+   * reserves the label's width, so detail changes re-rasterise in place (C4).
    */
-  const showTileSpan = !!ownTile || tileSpanRows !== tileSpanCols || uniformTile !== tileSpanRows;
   const roleTag = tensor.producer ? null : tensor.role === "weight" ? "weight" : "input";
   // Exactness is carried by hatching on the canvas; this repeats it in the
   // header because an over-approximation must never be mistakable for ground
@@ -624,12 +624,12 @@ function TensorCardView({
             </span>
           )
         ) : (
-          showTileSpan && (
+          (
             <span
               className={`tc-tile${ownTile ? " own" : ""}`}
               title={ownTile
                 ? `this tensor's tile: [${ownTile.join(", ")}]`
-                : "current visible-plane tile size"}
+                : "the tile a click or snapped drag takes here, rows × columns"}
             >
               ⊞ {tileSpanRows}×{tileSpanCols}
             </span>

@@ -87,6 +87,12 @@ export type LayerInputs = {
   prevForward?: { region: Region; depth: number };
   /** The in-progress rubber band, already in element space. */
   dragRegion: Region | null;
+  /**
+   * The box a click at the pointer would take, snapped as the click would be.
+   * Outlined only: drawn lines thin out when zoomed out, so without it the
+   * tile a click selects could only be learned by clicking.
+   */
+  hoverRegion?: Region | null;
   /** Regions on this tensor that the selection is combined with, by part index. */
   entangled?: { index: number; region: Region }[];
   showEntangled?: boolean;
@@ -114,6 +120,7 @@ export function buildLayers({
   prev,
   prevForward,
   dragRegion,
+  hoverRegion = null,
   entangled,
   showEntangled,
 }: LayerInputs): Layer[] {
@@ -269,6 +276,10 @@ export function buildLayers({
       seed: true,
     });
   });
+
+  // What a click would take, in the hue the new tile would get.
+  if (hoverRegion && !dragRegion)
+    layers.push({ region: hoverRegion, color: boxColor(partCount, dark), alpha: 0, hatch: false, outline: true });
 
   // The in-progress rubber band, drawn on top of everything it will replace.
   if (dragRegion)

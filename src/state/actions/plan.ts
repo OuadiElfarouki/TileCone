@@ -78,7 +78,7 @@ export const planActions = (set: SetState, get: GetState): Pick<
     if (!resolved?.tensors[tensorId]?.producer) return;
     const tile =
       state.planTiles[tensorId] ??
-      defaultPlanTile(resolved, tensorId, state.tileScale, state.graphPx, state.viewCfgs);
+      defaultPlanTile(resolved, tensorId, state.tileScale, state.viewCfgs);
     inspectTask(state, set, tensorId, tile, element);
   },
 
@@ -95,7 +95,7 @@ export const planActions = (set: SetState, get: GetState): Pick<
     if (!resolved?.tensors[tensorId]?.producer || state.planTiles[tensorId]) return;
     get().setPlanTile(
       tensorId,
-      defaultPlanTile(resolved, tensorId, state.tileScale, state.graphPx, state.viewCfgs)
+      defaultPlanTile(resolved, tensorId, state.tileScale, state.viewCfgs)
     );
   },
 

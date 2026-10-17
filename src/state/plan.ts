@@ -121,7 +121,7 @@ export function validateKeptTilings(tilings: readonly Record<string, number[]>[]
  * it. The extents are defaults like any other and can be changed or removed.
  */
 export function withProducedInputs(
-  state: Pick<State, "resolved" | "tileScale" | "graphPx" | "viewCfgs">,
+  state: Pick<State, "resolved" | "tileScale" | "viewCfgs">,
   tiles: Record<string, number[]>,
   tensorId: string
 ): Record<string, number[]> {
@@ -131,7 +131,7 @@ export function withProducedInputs(
   const next = { ...tiles };
   for (const input of node.inputs)
     if (resolved.tensors[input]?.producer && !next[input])
-      next[input] = defaultPlanTile(resolved, input, state.tileScale, state.graphPx, state.viewCfgs);
+      next[input] = defaultPlanTile(resolved, input, state.tileScale, state.viewCfgs);
   return next;
 }
 
