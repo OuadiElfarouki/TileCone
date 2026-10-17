@@ -375,3 +375,19 @@ describe("stipple rendering", () => {
     expect(arcs).toHaveLength(0);
   });
 });
+
+describe("an outline too thin to draw", () => {
+  it("fills the region in the border's ink instead of dropping it", () => {
+    vi.stubGlobal("window", { devicePixelRatio: 1 });
+    const { canvas, rectangles } = recordingCanvas();
+    const thin: Layer = {
+      region: fromBox(box([15, 16], [0, 16])), color: [10, 20, 30], alpha: 0.1, hatch: false, outline: true, lineWidth: 1,
+    };
+    // Zoomed out until one row is under the stroke's own floor on screen.
+    const scale = 2 / geom.cellH;
+    drawGrid(canvas, shape, cfg, geom, [thin], false, 1, scale);
+    // The fill at the layer's own faint alpha, then the same row again in ink.
+    const row = rectangles.filter(([, y, , h]) => y === 15 * geom.cellH && h === geom.cellH);
+    expect(row).toHaveLength(2);
+  });
+});

@@ -267,3 +267,29 @@ describe("replay depth on large and shared graphs", () => {
     expect(replayDepthLimit(tilePlan(resolved, { ...tiles, V: [1] }), "Y")).toBe(5);
   });
 });
+
+describe("what a deeper step walks", () => {
+  // A row of C per D task: the matmul is fused into D, and D2 reads D tile for tile.
+  const SOURCE = `M = 16\nN = 16\nK = 128\nE = M * N\nA = Tensor(M, K, dtype=fp16)\nB = Tensor(K, N, dtype=fp16)
+C = matmul(A, B)\nD = reshape(C, shape=[E])\nD2 = add(D, D)\n`;
+  const { resolved } = compileDSL(SOURCE);
+  const plan = tilePlan(resolved, { D2: [16], D: [16] });
+
+  it("walks nothing below the family at depth 1", () => {
+    const replay = familyReplay(plan, { tensorId: "D2", coord: [8] });
+    expect(replay.frames.every((f) => f.walked.size === 0)).toBe(true);
+  });
+
+  it("walks one producer tile per step at depth 2, with that task's own reads", () => {
+    const replay = familyReplay(plan, { tensorId: "D2", coord: [8] }, { depth: 2 });
+    expect(replay.stepTensors).toEqual(["D"]);
+    replay.frames.forEach((frame, i) => {
+      expect(frame.walked.get("D")?.boxes).toEqual([box([i * 16, i * 16 + 16])]);
+      expect(frame.reach.get("A")?.region.boxes).toEqual([box([i, i + 1], [0, 128])]);
+      expect(frame.reach.get("C")?.region.boxes).toEqual([box([i, i + 1], [0, 16])]);
+    });
+    // Only B is read by every D task, so only B is shared with the inspected one.
+    const last = replay.frames[15];
+    expect([...last.reach].filter(([, r]) => r.shared).map(([id]) => id)).toEqual(["B"]);
+  });
+});

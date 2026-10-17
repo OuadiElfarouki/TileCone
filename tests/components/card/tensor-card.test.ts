@@ -23,6 +23,7 @@ describe("plan replay paint", () => {
     lastPath: [{ tensorId: "Y", coord }],
     steps: 1,
     region: fromBox(tile),
+    walked: new Map(),
     reach: new Map([["X", reach(read, box([0, 2], [0, 4]))]]),
   });
   const playback = (visited = 3): ReplayPlayback => ({
@@ -66,6 +67,8 @@ describe("plan replay paint", () => {
     const [rest, shared] = active.layers;
     expect(rest.region.boxes).toEqual([box([2, 4], [0, 4])]); // reach minus the meeting
     expect(rest.alpha).toBe(0.26);
+    // Outlined, so a read too thin for its fill to show still does.
+    expect(rest).toMatchObject({ outline: true, lineWidth: 1 });
     expect(shared.region.boxes).toEqual([box([0, 2], [0, 4])]);
     expect(shared.alpha).toBe(0.62);
     expect(shared.seed).toBe(true);
@@ -99,6 +102,20 @@ describe("plan replay paint", () => {
     const input = buildReplayPaint({ tensorId: "X", dark: false, playback: playback() });
     expect(studied).not.toHaveProperty("lattice");
     expect(input).not.toHaveProperty("lattice");
+  });
+
+  /* Deeper than 1 a step is a producer task, and it walks its own tensor the
+     way depth 1 walks the family's: earlier steps as a trail, this one strong. */
+  it("draws the producer tasks a deeper replay steps through as a walk", () => {
+    const stepped = playback(3);
+    stepped.replay.frames.forEach((f, i) =>
+      Object.assign(f, { walked: new Map([["X", fromBox(box([i * 2, i * 2 + 2], [0, 2]))]]) }));
+    const paint = buildReplayPaint({ tensorId: "X", dark: false, playback: stepped });
+    expect(paint.layers[0]).toMatchObject({ alpha: 0.1 });
+    expect(paint.layers[0].region.boxes).toEqual([box([0, 2], [0, 2]), box([2, 4], [0, 2])]);
+    const step = paint.layers[paint.layers.length - 1];
+    expect(step).toMatchObject({ alpha: 0.68, seed: true });
+    expect(step.region.boxes).toEqual([box([4, 6], [0, 2])]);
   });
 
   /* A level reached through the plan's producers is drawn fainter, one step

@@ -63,6 +63,12 @@ export type ReplayFrame = {
   steps: number;
   /** The run's tiles on the family's tensor. */
   region: Region;
+  /**
+   * Deeper than 1, the tiles the run's steps walk below the family task, per
+   * tensor: the producer tasks on each path, which are what a step moves.
+   * Empty at depth 1, where the family task is the step.
+   */
+  walked: ReadonlyMap<string, Region>;
   /** What the run reads or computes, per tensor other than its own. */
   reach: ReadonlyMap<string, ReplayReach>;
 };
@@ -253,6 +259,7 @@ export function familyReplay(
       lastPath: [lastTask],
       steps: end - first,
       region,
+      walked: new Map(),
       reach,
     };
   });
@@ -414,6 +421,12 @@ function steppedReplay(
       reach.set(id, { ...part, shared: shared && !isEmpty(shared) ? shared : null });
     }
     const owners = [...new Map(run.map((path) => [path[0].coord.join(","), path[0]])).values()];
+    const walked = new Map<string, Region>();
+    for (const path of run)
+      for (const step of path.slice(1)) {
+        const prior = walked.get(step.tensorId);
+        walked.set(step.tensorId, prior ? merged(prior, tileOf(step)) : tileOf(step));
+      }
     return {
       first: run[0][0],
       last: run[run.length - 1][0],
@@ -422,6 +435,7 @@ function steppedReplay(
       lastPath: run[run.length - 1],
       steps: run.length,
       region: canonicalize({ boxes: owners.flatMap((t) => tileOf(t).boxes), exact: true, reasons: [] }),
+      walked,
       reach,
     };
   });

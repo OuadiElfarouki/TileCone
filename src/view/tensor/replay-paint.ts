@@ -2,14 +2,19 @@ import { type Box, canonicalize, isEmpty, type Region, subtractBox } from "../..
 import { boxColor } from "../palette";
 import { Layer } from "./grid";
 import { ReplayPlayback } from "../workspace";
-import type { FamilyReplay } from "../../core/plan/replay";
+import type { FamilyReplay, ReplayFrame } from "../../core/plan/replay";
 
 /** Boxes per trail layer, under the box budget a layer's fill is split within. */
 const TRAIL_LAYER_BOXES = 192;
-const trails = new WeakMap<FamilyReplay, { visited: number; regions: Region[] }>();
+const trails = new WeakMap<FamilyReplay, Map<string, { visited: number; regions: Region[] }>>();
+
+/** The tiles a frame walks on one tensor: the family's own tiles on the
+ * family's tensor, and deeper, the producer tasks its steps move through. */
+const walkedOn = (replay: FamilyReplay, frame: ReplayFrame | undefined, tensorId: string): Region | undefined =>
+  !frame ? undefined : tensorId === replay.task.tensorId ? frame.region : frame.walked.get(tensorId);
 
 /**
- * The family's trail: every tile the frames before the active one walked,
+ * A tensor's trail: every tile the frames before the active one walked on it,
  * each once, less the active frame's, as disjoint layers.
  *
  * Several steps of a deeper replay share one family task, so painting each
@@ -19,19 +24,21 @@ const trails = new WeakMap<FamilyReplay, { visited: number; regions: Region[] }>
  * region is whole tiles, and a tile walked twice is the same box. Cached per
  * replay and position, since fade ticks repaint without moving.
  */
-function trailOf(replay: FamilyReplay, visited: number): Region[] {
-  const cached = trails.get(replay);
+function trailOf(replay: FamilyReplay, visited: number, tensorId: string): Region[] {
+  const byTensor = trails.get(replay) ?? new Map<string, { visited: number; regions: Region[] }>();
+  trails.set(replay, byTensor);
+  const cached = byTensor.get(tensorId);
   if (cached && cached.visited === visited) return cached.regions;
-  const active = replay.frames[visited - 1]?.region;
+  const active = walkedOn(replay, replay.frames[visited - 1], tensorId);
   const seen = new Map<string, Box>();
   for (const frame of replay.frames.slice(0, Math.max(0, visited - 1)))
-    for (const b of frame.region.boxes) seen.set(b.map((i) => `${i.lo}:${i.hi}`).join(","), b);
+    for (const b of walkedOn(replay, frame, tensorId)?.boxes ?? []) seen.set(b.map((i) => `${i.lo}:${i.hi}`).join(","), b);
   const boxes = [...seen.values()].flatMap((b) =>
     (active?.boxes ?? []).reduce<Box[]>((parts, a) => parts.flatMap((p) => subtractBox(p, a)), [b]));
   const regions: Region[] = [];
   for (let i = 0; i < boxes.length; i += TRAIL_LAYER_BOXES)
     regions.push({ boxes: boxes.slice(i, i + TRAIL_LAYER_BOXES), exact: true, reasons: [] });
-  trails.set(replay, { visited, regions });
+  byTensor.set(tensorId, { visited, regions });
   return regions;
 }
 
@@ -89,16 +96,19 @@ export type ReplayTile = { box: Box; definite: boolean };
  * Paint a family replay over the plan, which recedes underneath it
  * (`buildPlanPaint`'s `recede`) and is otherwise unchanged.
  *
- * On the family's tensor the runs walked so far stay as a faint trail, and the
- * active run is drawn strongly. The runs are contiguous in listing order, so
- * the trail is one growing stretch of the grid with no gaps, and it is cleared
- * all at once when the replay ends. Everywhere else only the active run is
- * drawn, the way the Plan view draws the inspected task: what it reads or
- * computes in the solid fill, with the part the inspected task reads too at
- * full strength over the rest, and on a tiled tensor the producer tiles it
- * needs, outlined. Painting only the overlap would leave a run that shares
- * nothing painting nothing. Tensors reached through the plan's own producers
- * at a deeper level are drawn fainter, one step per level.
+ * What a step moves is drawn as a walk: on the family's tensor, and deeper
+ * on each tensor whose producer tasks the steps pass through, the tiles
+ * walked so far stay as a faint trail and the active step's are drawn
+ * strongly. At depth 2 of `D2 = f(D)` that is a walk along D's tiles, not
+ * only along D2's. Everywhere else only the active run is drawn, the way the
+ * Plan view draws the inspected task: what it reads or computes in the solid
+ * fill, with the part the inspected task reads too at full strength over the
+ * rest, and on a tiled tensor the producer tiles it needs, outlined. Painting
+ * only the overlap would leave a run that shares nothing painting nothing.
+ * Tensors reached through the plan's own producers at a deeper level are
+ * drawn fainter, one step per level, and the part the inspected task does not
+ * share is outlined in the hue, so a thin read - one row of a short card -
+ * stays visible however faint its fill.
  *
  * It draws no lattice: the plan's lattice is already on every tiled card.
  */
@@ -117,15 +127,21 @@ export function buildReplayPaint({
   const layers: Layer[] = [];
   if (!active) return { layers, tiles: [] };
 
-  if (tensorId === playback.replay.task.tensorId) {
-    for (const region of trailOf(playback.replay, playback.visited))
+  const walked = walkedOn(playback.replay, active, tensorId);
+  if (walked) {
+    for (const region of trailOf(playback.replay, playback.visited, tensorId))
       layers.push({ region, color, alpha: 0.1 * playback.opacity, hatch: false });
+  }
+  if (tensorId === playback.replay.task.tensorId) {
     layers.push({ region: active.region, color, alpha: 0.68 * playback.opacity, hatch: false, seed: true });
     return { layers, tiles: [] };
   }
 
   const reached = active.reach.get(tensorId);
-  if (!reached) return { layers, tiles: [] };
+  if (!reached) {
+    if (walked) layers.push({ region: walked, color, alpha: 0.68 * playback.opacity, hatch: false, seed: true });
+    return { layers, tiles: [] };
+  }
   const { region, shared, level, producers } = reached;
   const strength = levelStrength(level) * playback.opacity;
   /* Cache the display difference across fade ticks. Its splitting budget
@@ -133,9 +149,11 @@ export function buildReplayPaint({
      visible and overlap may darken. */
   const rest = shared ? playbackDifference(region, shared) : region;
   if (!isEmpty(rest))
-    layers.push({ region: rest, color, alpha: 0.26 * strength, hatch: !rest.exact });
+    layers.push({ region: rest, color, alpha: 0.26 * strength, hatch: !rest.exact, outline: true, lineWidth: 1 });
   if (shared)
     layers.push({ region: shared, color, alpha: 0.62 * strength, hatch: !shared.exact, seed: true });
+  // The step itself, over what it reads of its own tensor.
+  if (walked) layers.push({ region: walked, color, alpha: 0.68 * playback.opacity, hatch: false, seed: true });
   const tiles = playback.exiting || !producers
     ? []
     : producers.boxes.map((box) => ({ box, definite: region.exact }));

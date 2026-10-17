@@ -469,7 +469,14 @@ export function drawGrid(
       const screenLineWidth = layer.lineWidth ?? 1.5;
       ctx.lineWidth = screenLineWidth / viewScale;
       for (const q of boundRects) {
-        if (!outlineFitsRect(q, screenLineWidth, viewScale)) continue;
+        // Too thin for a border, which would invent area: fill the rectangle
+        // itself in the border's ink instead. That paints only what the region
+        // holds, and an outlined region one row tall stays visible.
+        if (!outlineFitsRect(q, screenLineWidth, viewScale)) {
+          ctx.fillStyle = `rgba(${r},${g},${b},0.95)`;
+          ctx.fillRect(q.x, q.y, q.w, q.h);
+          continue;
+        }
         const inset = ctx.lineWidth / 2;
         ctx.strokeRect(q.x + inset, q.y + inset, q.w - ctx.lineWidth, q.h - ctx.lineWidth);
       }
