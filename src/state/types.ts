@@ -89,7 +89,9 @@ export type State = {
   workspaceNotice: string | null;
   loadError: string | null;
   /**
-   * Every diagnostic from the last failed compile, in source order.
+   * Diagnostics from the last compile, in source order: warnings for a
+   * successful build, or errors for a failed draft. Source undo restores them
+   * with the exact source texts their spans describe.
    *
    * `loadError` remains the first one's message because callers outside the
    * source panel only want "did it fail, and why" in one line. This is the

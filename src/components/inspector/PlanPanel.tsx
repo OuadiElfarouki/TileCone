@@ -1136,12 +1136,12 @@ function LineageSection({
               const tensor = plan.graph.tensors[row.tensorId];
               const bytes = formatFigure(byteFigure(tensor, count(row.region), row.region), formatBytes);
               if (row.kind === "tasks") {
-                const first = [...coordinatePage(row.coordinates!, 0, 1)][0];
+                const first = [...coordinatePage(row.coordinates, 0, 1)][0];
                 return (
                   <li
                     key={row.tensorId}
                     onMouseEnter={() => setLineageFocus({
-                      tensorId: row.tensorId, coordinates: row.coordinates!, definite: row.definiteCoordinates!,
+                      tensorId: row.tensorId, coordinates: row.coordinates, definite: row.definiteCoordinates,
                     })}
                     onMouseLeave={() => setLineageFocus(null)}
                   >
@@ -1149,10 +1149,10 @@ function LineageSection({
                     <span
                       className="muted"
                       title={`${row.tasks} of the ${row.of} tasks of ${name(row)}${
-                        row.definiteTasks! < row.tasks! ? `, ${row.definiteTasks} of them definite and the rest only possible` : ""
+                        row.definiteTasks < row.tasks ? `, ${row.definiteTasks} of them definite and the rest only possible` : ""
                       }; point to outline them`}
                     >
-                      requires {row.definiteTasks! < row.tasks! ? FIGURE_MARK.upper : ""}{row.tasks}/{row.of} task{row.of === 1 ? "" : "s"} · {bytes}
+                      requires {row.definiteTasks < row.tasks ? FIGURE_MARK.upper : ""}{row.tasks}/{row.of} task{row.of === 1 ? "" : "s"} · {bytes}
                     </span>
                     {!row.region.exact && (
                       <span className="badge approx" title={row.region.reasons.join("; ")}>≈</span>

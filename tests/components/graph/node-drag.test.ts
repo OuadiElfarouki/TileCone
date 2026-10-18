@@ -75,7 +75,7 @@ const arrow = (key: string, shiftKey = false) => ({
 const pointer = (x: number, held: { ctrlKey?: boolean; metaKey?: boolean } = {}) => ({
   pointerId: 1, button: 0, clientX: x, clientY: 0, target: null,
   ctrlKey: false, metaKey: false, ...held,
-  currentTarget: { setPointerCapture: vi.fn(), contains: vi.fn(() => true), focus: vi.fn() },
+  currentTarget: { hasPointerCapture: vi.fn(() => true), releasePointerCapture: vi.fn(), setPointerCapture: vi.fn(), contains: vi.fn(() => true), focus: vi.fn() },
   preventDefault: vi.fn(), stopPropagation: vi.fn(),
 }) as unknown as React.PointerEvent<HTMLDivElement>;
 
@@ -352,4 +352,52 @@ describe("selecting operations on the canvas", () => {
     expect(useStore.getState().selectedOp).toBeNull();
     expect(event.preventDefault).not.toHaveBeenCalled();
   });
+});
+
+describe("node drag transaction boundaries", () => {
+  it.each(["onPointerUp", "onPointerCancel", "onLostPointerCapture"] as const)(
+    "ignores %s from another pointer", (finish) => {
+      useStore.getState().setCanvasTool("move");
+      const props = operationProps();
+      const press = pointer(0);
+      props.onPointerDownCapture!(press);
+      props.onPointerMove!(pointer(5));
+      const other = pointer(20);
+      Object.assign(other, { pointerId: 2 });
+      props[finish]!(other);
+      expect(useStore.getState().dragging).toBe(true);
+      expect(press.currentTarget.releasePointerCapture).not.toHaveBeenCalled();
+      props.onPointerCancel!(press);
+      expect(useStore.getState().nodeOffsets).toEqual({});
+      expect(press.currentTarget.releasePointerCapture).toHaveBeenCalledWith(1);
+    }
+  );
+
+  it("commits the release position even without a preceding move event", () => {
+    useStore.getState().setCanvasTool("move");
+    const props = operationProps();
+    const depth = useStore.getState().workspaceHistory.length;
+    props.onPointerDownCapture!(pointer(0));
+    props.onPointerUp!(pointer(5));
+    expect(Object.values(useStore.getState().nodeOffsets)[0].dx).toBeGreaterThan(0);
+    expect(useStore.getState().workspaceHistory).toHaveLength(depth + 1);
+    useStore.getState().undoWorkspace();
+    expect(useStore.getState().nodeOffsets).toEqual({});
+  });
+
+  it.each(["onPointerUp", "onPointerCancel"] as const)(
+    "does not apply an old drag to a replacement graph on %s", (finish) => {
+      useStore.getState().setCanvasTool("move");
+      const props = operationProps();
+      props.onPointerDownCapture!(pointer(0));
+      props.onPointerMove!(pointer(5));
+      useStore.getState().applyDSL("X = Tensor(16)\nY = relu(X)\n");
+      const before = useStore.getState();
+      props.onPointerMove!(pointer(10));
+      props[finish]!(pointer(10));
+      expect(useStore.getState().nodeOffsets).toEqual(before.nodeOffsets);
+      expect(useStore.getState().workspaceHistory).toEqual(before.workspaceHistory);
+      expect(useStore.getState().dragging).toBe(false);
+    }
+  );
 });

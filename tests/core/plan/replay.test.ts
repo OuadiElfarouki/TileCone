@@ -207,6 +207,30 @@ describe("replaying through the plan's own producers", () => {
       .toThrow(/more than 10 task queries; choose a smaller depth/);
   });
 
+  it("bounds paths independently of cached queries and displayed frames", () => {
+    let source = "X = Tensor(3,3)\nT0 = relu(X)\n";
+    const tiles: Record<string, number[]> = { T0: [1, 1] };
+    for (let i = 1; i <= 4; i++) {
+      source += `W${i} = Tensor(3,3)\nT${i} = matmul(T${i - 1},W${i})\n`;
+      tiles[`T${i}`] = [1, 1];
+    }
+    const plan = tilePlan(compileDSL(source).resolved, tiles);
+    const task = { tensorId: "T4", coord: [0, 0] };
+    const options = { depth: 5, stepCap: 1, budget: 45 };
+    expect(() => familyReplay(plan, task, { ...options, pathBudget: 100 })).toThrow(/100 task paths/);
+    expect(() => familyReplay(plan, task, { ...options, workBudget: 100 })).toThrow(/100 traversal work steps/);
+    const replay = familyReplay(plan, task, { ...options, pathBudget: 729 });
+    expect(replay.steps).toBe(729);
+    expect(replay.frames).toHaveLength(1);
+  });
+
+  it("can decline a huge producer frontier without enumerating all its coordinates", () => {
+    const graph = compileDSL("X = Tensor(1,1000000)\nF = relu(X)\nA = Tensor(1000000,1)\nZ = matmul(F,A)\n").resolved;
+    const plan = tilePlan(graph, { F: [1, 1], Z: [1, 1] });
+    expect(() => familyReplay(plan, { tensorId: "Z", coord: [0, 0] }, { depth: 2, pathBudget: 3 }))
+      .toThrow(/3 task paths/);
+  });
+
   it("clamps a depth beyond what the plan has", () => {
     expect(familyReplay(plan, { tensorId: "Y", coord: [0, 0] }, { depth: 5 }).depth).toBe(2);
     expect(familyReplay(plan, { tensorId: "Y", coord: [0, 0] }, { depth: 0 }).depth).toBe(1);
@@ -291,5 +315,31 @@ C = matmul(A, B)\nD = reshape(C, shape=[E])\nD2 = add(D, D)\n`;
     // Only B is read by every D task, so only B is shared with the inspected one.
     const last = replay.frames[15];
     expect([...last.reach].filter(([, r]) => r.shared).map(([id]) => id)).toEqual(["B"]);
+  });
+});
+
+describe("the cost of a deeper step", () => {
+  const replayOf = (unrelated: number) => {
+    const chain = unrelated
+      ? ["U0 = Tensor(4)", ...Array.from({ length: unrelated }, (_, i) => `U${i + 1} = relu(U${i})`)].join("\n")
+      : "";
+    const source = `A = Tensor(128, 128)\nB = Tensor(128, 128)\nP = relu(A)\nQ = relu(B)\nZ = matmul(P, Q)\n${chain}\n`;
+    const plan = tilePlan(compileDSL(source).resolved, { Z: [16, 16], P: [16, 16], Q: [16, 16] });
+    return (workBudget?: number) =>
+      familyReplay(plan, { tensorId: "Z", coord: [0, 0] }, { depth: 2, ...(workBudget ? { workBudget } : {}) });
+  };
+
+  it("does not grow with parts of the graph a step never passes through", () => {
+    const plain = replayOf(0)();
+    // An unrelated chain fifty times the size of the product changes nothing.
+    const crowded = replayOf(100)();
+    expect(crowded.steps).toBe(plain.steps);
+    expect(crowded.frames.map((f) => [...f.reach.keys()].sort())).toEqual(plain.frames.map((f) => [...f.reach.keys()].sort()));
+    // The budget that suffices without the chain suffices with it.
+    let budget = 1;
+    while (budget < 1 << 24) {
+      try { replayOf(0)(budget); break; } catch { budget *= 2; }
+    }
+    expect(() => replayOf(100)(budget)).not.toThrow();
   });
 });

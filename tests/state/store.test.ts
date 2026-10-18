@@ -1652,6 +1652,35 @@ Y = softmax(X, axis=-1)
     expect(S().resolved!.tensors.Y.resolved).toEqual([2, 4]);
   });
 
+  it("restores warnings and their source spans with the pre-expansion graph", () => {
+    const warned = "M = 4\nN = 4\nA = Tensor(2,M)\nB = Tensor(N,3)\nC = matmul(A,B)\nY = softmax(C,axis=-1)\n";
+    S().applyDSL(warned);
+    const diagnostics = S().diagnostics;
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].severity).toBe("warning");
+    expandFirstSoftmax();
+    S().undoWorkspace();
+    expect(S().dslText).toBe(warned);
+    expect(S().diagnostics).toEqual(diagnostics);
+    expect(S().loadError).toBeNull();
+    expect(S().resolved!.warnings).toHaveLength(1);
+  });
+
+  it("restores failed draft diagnostics without attributing them to the built source", () => {
+    S().applyDSL(source);
+    const draft = source + "Z = relu(Missing)\n";
+    S().applyDSL(draft);
+    const diagnostics = S().diagnostics;
+    const loadError = S().loadError;
+    expect(diagnostics[0].severity).toBe("error");
+    expandFirstSoftmax();
+    S().undoWorkspace();
+    expect(S().dslText).toBe(source);
+    expect(S().draftText).toBe(draft);
+    expect(S().diagnostics).toEqual(diagnostics);
+    expect(S().loadError).toBe(loadError);
+  });
+
   it("leaves an undo entry where there was none", () => {
     S().applyDSL(source);
     expect(S().workspaceHistory).toHaveLength(0);

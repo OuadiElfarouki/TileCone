@@ -7,6 +7,7 @@ import { NodeOffsets } from "../view/graph/node-layout";
 import { idRecord, type Selection } from "../view/workspace";
 import type { ViewCfg } from "../view/tensor/tensor-view";
 import { State } from "./types";
+import type { CompilerDiagnostic } from "../parse/compiler";
 
 /** What a plan edit changes: the tile extents per planned tensor, and the task inspected. */
 export type PlanEdit = { tiles: Record<string, number[]>; task: TaskRef | null };
@@ -34,6 +35,10 @@ export type WorkspaceSnapshot = {
   source?: {
     dslText: string;
     draftText: string;
+    /** Spans belong to these exact source texts. Restore the last build's
+     * warnings or failed draft's errors together with the source, not alone. */
+    diagnostics: CompilerDiagnostic[];
+    loadError: string | null;
     graph: Graph;
     resolved: ResolvedGraph;
     baseLayout: BaseGraphLayout | null;

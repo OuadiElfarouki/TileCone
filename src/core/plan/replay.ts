@@ -26,7 +26,7 @@
 
 import { linearRangeToBoxes } from "../ops/reshape";
 import { coaccessWithin } from "../entangle";
-import { producerNode } from "../graph";
+import { nodeById, producerNode, type Node } from "../graph";
 import type { BoundedCone } from "../propagate";
 import { getOp } from "../ops/index";
 import { canonicalize, count, fromBox, intersect, isEmpty, markInexact, Region } from "../region";
@@ -89,6 +89,9 @@ export type FamilyReplay = {
 
 /** Bounded queries a stepped replay may run before declining the depth. */
 export const STEP_QUERY_BUDGET = 4096;
+/** Independent limits: shared task queries do not bound paths through a DAG. */
+export const STEP_PATH_BUDGET = 16_384;
+export const STEP_WORK_BUDGET = 65_536;
 
 /**
  * Frames a stepped replay shows one step each before it cuts steps into runs.
@@ -224,12 +227,13 @@ function reachOf(plan: TilePlan, tensorId: string, region: Region, depth: number
 export function familyReplay(
   plan: TilePlan,
   task: TaskRef,
-  { sampleCap = REPLAY_FRAMES, stepCap = STEP_FRAMES, depth = 1, budget = STEP_QUERY_BUDGET }:
-    { sampleCap?: number; stepCap?: number; depth?: number; budget?: number } = {}
+  { sampleCap = REPLAY_FRAMES, stepCap = STEP_FRAMES, depth = 1, budget = STEP_QUERY_BUDGET,
+    pathBudget = STEP_PATH_BUDGET, workBudget = STEP_WORK_BUDGET }:
+    { sampleCap?: number; stepCap?: number; depth?: number; budget?: number; pathBudget?: number; workBudget?: number } = {}
 ): FamilyReplay {
   const family = familyOf(plan, task);
   const levels = Math.max(1, Math.min(Math.floor(depth), replayDepthLimit(plan, task.tensorId)));
-  if (levels > 1) return steppedReplay(plan, task, family, levels, stepCap, budget);
+  if (levels > 1) return steppedReplay(plan, task, family, levels, stepCap, budget, pathBudget, workBudget);
   const inspected = reachOf(plan, task.tensorId, fromBox(tileBox(family, task.coord)), levels);
   const frames = replayRuns(family.count, sampleCap).map(([first, end]): ReplayFrame => {
     const region: Region = {
@@ -282,9 +286,19 @@ function steppedReplay(
   family: TileFamily,
   levels: number,
   stepCap: number,
-  budget: number
+  budget: number,
+  pathBudget: number,
+  workBudget: number
 ): FamilyReplay {
   const graph = plan.graph;
+  for (const limit of [budget, pathBudget, workBudget])
+    if (!Number.isSafeInteger(limit) || limit < 1)
+      throw new PlanError("PLAN_BUDGET", "replay budgets must be positive safe integers");
+  let work = 0;
+  const spend = () => {
+    if (++work > workBudget)
+      throw new PlanError("PLAN_BUDGET", `stepping ${graph.tensors[task.tensorId].name} exceeds ${workBudget} traversal work steps; choose a smaller depth`);
+  };
   const cones = new Map<string, BoundedCone>();
   const tileOf = (t: TaskRef): Region => fromBox(tileBox(plan.families.get(t.tensorId)!, t.coord));
   const coneOf = (t: TaskRef): BoundedCone => {
@@ -302,29 +316,107 @@ function steppedReplay(
     return cone;
   };
   /** A task's producer tasks: per tiled tensor it reads, in operand order, each in listing order. */
-  const producersOf = (t: TaskRef): TaskRef[] => {
+  const producersOf = function* (t: TaskRef): Generator<TaskRef> {
     const cone = coneOf(t);
     const tiled = cone.crossings.filter((c) => plan.families.has(c.tensorId));
     const own = producerNode(graph, t.tensorId)?.id ?? "";
-    return readOrder(tiled, own, graph.topo).flatMap((tensorId) => {
+    for (const tensorId of readOrder(tiled, own, graph.topo)) {
       const producer = plan.families.get(tensorId)!;
       const coordinates: Region = {
         boxes: tiled.filter((c) => c.tensorId === tensorId).flatMap((c) => c.region.boxes.map((b) => tileRange(producer, b))),
         exact: true,
         reasons: [],
       };
-      return [...coordinatePage(coordinates, 0, count(coordinates))].map((coord) => ({ tensorId, coord }));
-    });
+      // Page lazily: a huge frontier must not allocate all its tasks before
+      // the traversal has a chance to enforce its limits.
+      for (const coord of coordinatePage(coordinates, 0, count(coordinates)))
+        yield { tensorId, coord };
+    }
   };
 
-  // Every step, depth first: each family task, then its producers, to depth - 1.
+  // Iterative depth-first traversal bounds stack and path storage, while
+  // retaining the same family/operand/listing order as the recursive walk.
   const paths: TaskRef[][] = [];
-  const walk = (path: TaskRef[]) => {
-    const producers = path.length < levels ? producersOf(path[path.length - 1]) : [];
-    if (!producers.length) paths.push(path);
-    else for (const p of producers) walk([...path, p]);
+  const roots = function* (): Generator<TaskRef> {
+    for (let i = 0; i < family.count; i++)
+      yield { tensorId: task.tensorId, coord: tileCoord(family, i) };
   };
-  for (let i = 0; i < family.count; i++) walk([{ tensorId: task.tensorId, coord: tileCoord(family, i) }]);
+  const stack: Iterator<TaskRef>[] = [roots()];
+  const path: TaskRef[] = [];
+  while (stack.length) {
+    const next = stack[stack.length - 1].next();
+    if (next.done) {
+      stack.pop();
+      path.pop();
+      continue;
+    }
+    spend();
+    path.push(next.value);
+    const producers = path.length < levels ? producersOf(next.value) : [][Symbol.iterator]();
+    const first = producers.next();
+    if (first.done) {
+      if (paths.length >= pathBudget)
+        throw new PlanError("PLAN_BUDGET", `stepping ${graph.tensors[task.tensorId].name} exceeds ${pathBudget} task paths; choose a smaller depth`);
+      // Count the references retained as well as the nodes visited.
+      for (let i = 0; i < path.length; i++) spend();
+      paths.push(path.slice());
+      path.pop();
+    } else {
+      stack.push((function* () { yield first.value; yield* producers; })());
+    }
+  }
+
+  /**
+   * The nodes a tile of `from` can pass through inside a task computing `to`,
+   * in topological order: reachable from `from` through fused tensors, and
+   * computing `to` or a fused tensor `to` is computed from. The walk below
+   * does nothing at any other node, so visiting only these gives the same
+   * frames; scanning the whole graph per step made a replay's cost grow with
+   * parts of the graph it never touches, and its budget decline replays an
+   * unrelated chain elsewhere had made no harder. Each pair's closure is
+   * computed once and charged once.
+   */
+  const topoIndex = new Map(graph.topo.map((node, index) => [node.id, index]));
+  const passages = new Map<string, Node[]>();
+  const passageOf = (from: string, to: string): Node[] => {
+    const key = JSON.stringify([from, to]);
+    const cached = passages.get(key);
+    if (cached) return cached;
+    const fused = (tensorId: string) => !plan.families.has(tensorId);
+    const ahead = new Set<string>();
+    const reached = new Set([from]);
+    for (const queue = [from]; queue.length; ) {
+      for (const { nodeId } of graph.consumers[queue.pop()!] ?? []) {
+        spend();
+        if (ahead.has(nodeId)) continue;
+        ahead.add(nodeId);
+        for (const out of nodeById(graph, nodeId)!.outputs)
+          if (fused(out) && !reached.has(out)) {
+            reached.add(out);
+            queue.push(out);
+          }
+      }
+    }
+    const behind = new Set<string>();
+    const sources = new Set([to]);
+    for (const queue = [to]; queue.length; ) {
+      const producer = graph.tensors[queue.pop()!].producer;
+      if (!producer || behind.has(producer.nodeId)) continue;
+      spend();
+      behind.add(producer.nodeId);
+      for (const input of nodeById(graph, producer.nodeId)!.inputs)
+        if (fused(input) && !sources.has(input)) {
+          sources.add(input);
+          queue.push(input);
+        }
+    }
+    const nodes = [...ahead]
+      .filter((id) => behind.has(id))
+      .sort((a, b) => topoIndex.get(a)! - topoIndex.get(b)!)
+      .map((id) => nodeById(graph, id)!);
+    passages.set(key, nodes);
+    return nodes;
+  };
 
   /** One step's frame content, per tensor other than the family's own. */
   const stepReach = (path: TaskRef[]): Map<string, StepReach> => {
@@ -352,7 +444,8 @@ function steppedReplay(
       // matmul, two operations after it is read.
       const cone = coneOf(consumer);
       const carried = new Map<string, Region>();
-      for (const node of graph.topo) {
+      for (const node of passageOf(step.tensorId, consumer.tensorId)) {
+        spend();
         const blocks = node.inputs.map((input, slot): Region | null => {
           if (input === step.tensorId) {
             const crossing = cone.crossings.find((c) => c.node === node.id && c.slot === slot);
@@ -439,7 +532,7 @@ function steppedReplay(
       reach,
     };
   });
-  const deepest = Math.max(...paths.map((path) => path.length));
+  const deepest = paths.reduce((max, path) => Math.max(max, path.length), 0);
   return {
     task: { tensorId: task.tensorId, coord: [...task.coord] },
     depth: levels,
@@ -459,21 +552,19 @@ export type LineageRow = {
    * and so on.
    */
   level: number;
-  /** A tiled tensor's producer tasks, a graph input read from memory, or an
-   *  untiled tensor the tasks one level down compute themselves. */
-  kind: "tasks" | "input" | "computed";
-  /** What is read or computed of it, exact for the plan or widened with reasons. */
+  /** What is read or computed, exact for the plan or widened with reasons. */
   region: Region;
-  /** On a tiled tensor, the producer tasks as an exact cover of tile coordinates. */
-  coordinates?: Region;
-  /** The producer tasks reached through exact demand; the rest are only possible. */
-  definiteCoordinates?: Region;
-  /** On a tiled tensor, how many of its family's tasks those are, of how many,
-   *  and how many of them are definite. */
-  tasks?: number;
-  definiteTasks?: number;
-  of?: number;
-};
+} & ({
+  kind: "tasks";
+  /** Exact covers of all possible and definite producer task coordinates. */
+  coordinates: Region;
+  definiteCoordinates: Region;
+  tasks: number;
+  definiteTasks: number;
+  of: number;
+} | {
+  kind: "input" | "computed";
+});
 
 /**
  * Everything one task depends on through the plan, to the graph's inputs: per

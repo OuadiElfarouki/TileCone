@@ -376,7 +376,7 @@ function evaluateFamily(plan: TilePlan, tensorId: string, budget: number): Famil
     flops,
     read: sumFigures(boundary.map((b) => b.summed)),
     readDistinct: sumFigures(boundary.map((b) => b.distinct)),
-    written: byteFigure(tensor, elementCount(tensor.resolved!), {
+    written: byteFigure(tensor, elementCount(tensor.resolved), {
       exact: true,
       reasons: [],
     }),

@@ -56,7 +56,10 @@ export type Graph = {
   derived?: Record<string, Sym>;
 };
 
-export type ResolvedGraph = Graph & {
+export type ResolvedTensor = Tensor & { resolved: number[]; symShape: Shape };
+
+export type ResolvedGraph = Omit<Graph, "tensors"> & {
+  tensors: Record<string, ResolvedTensor>;
   /** Bindings read while resolving declared dimensions and inferring shapes.
    * Includes operation shape attributes even when symbolic display falls back
    * to literals. Declaration order, distinct, and structured-cloneable. */
@@ -82,9 +85,7 @@ export function resolvedGraphData(graph: ResolvedGraph): ResolvedGraphData {
 /** Reattach the one executable field stripped by `resolvedGraphData`.
  * Validation and inference have already happened in the originating realm. */
 export function hydrateResolvedGraph(data: ResolvedGraphData): ResolvedGraph {
-  const graph = data as ResolvedGraph;
-  graph.shapesOf = (ids: string[]) => ids.map((id) => graph.tensors[id].resolved!);
-  return graph;
+  return { ...data, shapesOf: (ids) => ids.map((id) => data.tensors[id].resolved) };
 }
 
 function validateCardinality(
@@ -189,7 +190,7 @@ export function producerNode(graph: ResolvedGraph, tensorId: string): Node | und
  * no consumer is a result; an unused *input* is a loose end, not an output, so
  * it is not one of these.
  */
-export function graphOutputs(graph: ResolvedGraph): Tensor[] {
+export function graphOutputs(graph: ResolvedGraph): ResolvedTensor[] {
   return Object.values(graph.tensors).filter(
     (tensor) => tensor.producer && !graph.consumers[tensor.id]?.length
   );
@@ -948,12 +949,22 @@ export function resolveGraph(source: Graph): ResolvedGraph {
   for (const n of g.nodes)
     n.inputs.forEach((t, slot) => consumers[t].push({ nodeId: n.id, slot }));
 
+  // Refine once at the resolution boundary; consumers never need to guess
+  // whether inference populated a tensor's numeric and symbolic dimensions.
+  const tensors: Record<string, ResolvedTensor> = Object.create(null);
+  for (const [id, tensor] of Object.entries(g.tensors)) {
+    const { resolved, symShape } = tensor;
+    if (!resolved || !symShape) throw new Error(`Unresolved tensor after inference: ${id}`);
+    tensors[id] = { ...tensor, resolved, symShape };
+  }
+
   return {
     ...g,
+    tensors,
     shapeParameters: Object.keys(g.params).filter((name) => usedParameters.has(name)),
     warnings,
     topo,
     consumers,
-    shapesOf: (ids: string[]) => ids.map((id) => g.tensors[id].resolved!),
+    shapesOf: (ids: string[]) => ids.map((id) => tensors[id].resolved),
   };
 }

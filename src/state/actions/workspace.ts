@@ -211,6 +211,8 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
         viewCfgs: withCardScales(loaded.viewCfgs, prev.cardScales),
         dslText: source.dslText,
         draftText: source.draftText,
+        diagnostics: source.diagnostics,
+        loadError: source.loadError,
         exampleIndex: source.exampleIndex,
         nodeOffsets: prev.nodeOffsets,
         selection: prev.selection,
@@ -269,6 +271,8 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
         source: {
           dslText: state.dslText,
           draftText: state.draftText,
+          diagnostics: state.diagnostics,
+          loadError: state.loadError,
           graph,
           resolved,
           baseLayout: state.baseLayout,

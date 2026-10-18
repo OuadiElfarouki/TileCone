@@ -27,6 +27,19 @@
 
 import { DimNode, readDimExpr, Sym } from "./shapes";
 
+/** Bound allocation and arithmetic as well as expression visits. Exhaustion
+ * means unknown, never a partially computed equality. */
+const MAX_TERMS = 4096;
+const MAX_COEFFICIENT_BITS = 4096;
+const MAX_KEY_LENGTH = 65_536;
+const MAX_MONOMIAL_SYMBOLS = 1024;
+class DimLimit extends Error {}
+type Work = { left: number };
+function spend(work: Work, amount = 1): void {
+  work.left -= amount;
+  if (work.left < 0) throw new DimLimit();
+}
+
 /** Exact rational in lowest terms, denominator positive. */
 export type Rat = { n: bigint; d: bigint };
 
@@ -44,6 +57,8 @@ function rat(n: bigint, d = 1n): Rat {
     n = -n;
     d = -d;
   }
+  if (absBig(n).toString(2).length > MAX_COEFFICIENT_BITS || d.toString(2).length > MAX_COEFFICIENT_BITS)
+    throw new DimLimit();
   const g = gcdBig(n, d) || 1n;
   return { n: n / g, d: d / g };
 }
@@ -57,12 +72,19 @@ export type Term = { mono: Monomial; coef: Rat };
 /** Keyed by the monomial, so like terms combine on insertion. */
 export type Poly = Map<string, Term>;
 
-const monoKey = (mono: Monomial): string => mono.map(([name, pow]) => `${name}^${pow}`).join("*");
+const monoKey = (mono: Monomial): string => {
+  if (mono.length > MAX_MONOMIAL_SYMBOLS || mono.reduce((n, [name]) => n + name.length, 0) > MAX_KEY_LENGTH)
+    throw new DimLimit();
+  const key = JSON.stringify(mono);
+  if (key.length > MAX_KEY_LENGTH) throw new DimLimit();
+  return key;
+};
 
 function monoMul(a: Monomial, b: Monomial): Monomial {
   const powers = new Map(a);
   for (const [name, pow] of b) {
     const next = (powers.get(name) ?? 0) + pow;
+    if (!Number.isSafeInteger(next)) throw new DimLimit();
     if (next) powers.set(name, next);
     else powers.delete(name);
   }
@@ -74,6 +96,7 @@ function addTerm(poly: Poly, mono: Monomial, coef: Rat): void {
   const key = monoKey(mono);
   const prev = poly.get(key);
   if (!prev) {
+    if (poly.size >= MAX_TERMS) throw new DimLimit();
     poly.set(key, { mono, coef });
     return;
   }
@@ -88,9 +111,13 @@ const constant = (value: Rat): Poly => {
   return poly;
 };
 
-function polyAdd(a: Poly, b: Poly, sign: 1n | -1n = 1n): Poly {
+function polyAdd(a: Poly, b: Poly, work: Work, sign: 1n | -1n = 1n): Poly {
+  spend(work, a.size);
   const out: Poly = new Map(a);
-  for (const { mono, coef } of b.values()) addTerm(out, mono, rat(sign * coef.n, coef.d));
+  for (const { mono, coef } of b.values()) {
+    spend(work, 1 + mono.length);
+    addTerm(out, mono, rat(sign * coef.n, coef.d));
+  }
   return out;
 }
 
@@ -100,35 +127,31 @@ function polyAdd(a: Poly, b: Poly, sign: 1n | -1n = 1n): Poly {
  * is given up as `undecided`; the numeric check has already passed, so giving
  * up costs a missed warning and never a false one.
  */
-const MAX_TERMS = 4096;
-
-function polyMul(a: Poly, b: Poly): Poly | null {
+function polyMul(a: Poly, b: Poly, work: Work): Poly | null {
   if (a.size * b.size > MAX_TERMS) return null;
   const out: Poly = new Map();
   for (const x of a.values())
-    for (const y of b.values()) addTerm(out, monoMul(x.mono, y.mono), ratMul(x.coef, y.coef));
+    for (const y of b.values()) {
+      spend(work, 1 + x.mono.length + y.mono.length);
+      addTerm(out, monoMul(x.mono, y.mono), ratMul(x.coef, y.coef));
+    }
   return out;
 }
 
-/** The canonical text of a polynomial, also used to name an opaque quotient. */
-function formatPoly(poly: Poly): string {
-  if (!poly.size) return "0";
-  const terms = [...poly.values()].sort((x, y) =>
-    monoKey(x.mono) < monoKey(y.mono) ? -1 : monoKey(x.mono) > monoKey(y.mono) ? 1 : 0
-  );
-  return terms
-    .map(({ mono, coef }, i) => {
-      const up = mono.flatMap(([name, pow]) => Array<string>(Math.max(pow, 0)).fill(name));
-      const down = mono.flatMap(([name, pow]) => Array<string>(Math.max(-pow, 0)).fill(name));
-      const n = absBig(coef.n);
-      const numerator = [...(n !== 1n || !up.length ? [String(n)] : []), ...up].join("*");
-      const denominator = [...(coef.d !== 1n ? [String(coef.d)] : []), ...down].join("*");
-      const body = denominator ? `${numerator}/${denominator}` : numerator;
-      const negative = coef.n < 0n;
-      if (i === 0) return negative ? `-${body}` : body;
-      return negative ? ` - ${body}` : ` + ${body}`;
-    })
-    .join("");
+/** Structural identity, not display text: powers stay compact and fields
+ * are escaped, so nested opaque expressions cannot collide with delimiters. */
+function polyKey(poly: Poly, work: Work): string {
+  const terms = [...poly].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  const pieces: string[] = [];
+  let length = 2;
+  for (const [key, { coef }] of terms) {
+    spend(work, 1 + key.length);
+    const piece = JSON.stringify([key, String(coef.n), String(coef.d)]);
+    length += piece.length + 1;
+    if (length > MAX_KEY_LENGTH) throw new DimLimit();
+    pieces.push(piece);
+  }
+  return `[${pieces.join(",")}]`;
 }
 
 /** Marks an atom the algebra treats as an unknown quantity. */
@@ -156,7 +179,8 @@ export type DimContext = {
 };
 
 /**
- * Expression nodes one comparison may visit, counting each definition once.
+ * Expression visits and polynomial work one comparison may perform, counting
+ * each definition once. Polynomial loops charge their terms and monomials.
  * Shapes in a graph are a handful of nodes each; past this the answer is
  * `undecided`, which costs a missed warning and never a false one, rather
  * than letting an authored or imported program stall compilation.
@@ -166,7 +190,7 @@ const MAX_WORK = 100_000;
 type Scope = DimContext & { expanding: Set<string>; cache: DimCache; work: { left: number } };
 
 function canonical(node: DimNode, scope: Scope): Poly | null {
-  if (--scope.work.left < 0) return null;
+  spend(scope.work);
   switch (node.kind) {
     case "num": {
       if (!Number.isSafeInteger(node.value)) return null;
@@ -182,9 +206,9 @@ function canonical(node: DimNode, scope: Scope): Poly | null {
         expanding.add(node.name);
         const expanded = canonicalSym(definitions[node.name], scope);
         expanding.delete(node.name);
-        // A result cut short by the budget is not the definition's form, and
-        // caching it would hand the shortfall to every later comparison.
-        if (scope.work.left >= 0) cache.set(node.name, expanded);
+        // Limits throw before this point: an interrupted expansion must not
+        // poison later comparisons that share the completed definitions.
+        cache.set(node.name, expanded);
         return expanded;
       }
       const atom = scope.opaque?.has(node.name) ? OPAQUE_PREFIX + node.name : node.name;
@@ -194,15 +218,15 @@ function canonical(node: DimNode, scope: Scope): Poly | null {
     }
     case "neg": {
       const arg = canonical(node.arg, scope);
-      return arg && polyAdd(new Map(), arg, -1n);
+      return arg && polyAdd(new Map(), arg, scope.work, -1n);
     }
     case "bin": {
       const left = canonical(node.left, scope);
       const right = canonical(node.right, scope);
       if (!left || !right) return null;
-      if (node.op === "+") return polyAdd(left, right);
-      if (node.op === "-") return polyAdd(left, right, -1n);
-      if (node.op === "*") return polyMul(left, right);
+      if (node.op === "+") return polyAdd(left, right, scope.work);
+      if (node.op === "-") return polyAdd(left, right, scope.work, -1n);
+      if (node.op === "*") return polyMul(left, right, scope.work);
       if (!right.size) return null;
       // Dividing by one monomial is multiplying by its inverse. Dividing by a
       // sum has no polynomial form, so the quotient is named after both sides
@@ -216,12 +240,12 @@ function canonical(node: DimNode, scope: Scope): Poly | null {
           mono.map(([name, pow]) => [name, -pow]),
           rat(coef.d, coef.n)
         );
-        return polyMul(left, inverse);
+        return polyMul(left, inverse, scope.work);
       }
       const quotient: Poly = new Map();
       addTerm(
         quotient,
-        [[`${OPAQUE_PREFIX}(${formatPoly(left)})/(${formatPoly(right)})`, 1]],
+        [[`${OPAQUE_PREFIX}(${polyKey(left, scope.work)})/(${polyKey(right, scope.work)})`, 1]],
         rat(1n)
       );
       return quotient;
@@ -247,14 +271,19 @@ export type DimComparison = "same" | "different" | "undecided";
  */
 export function compareDims(a: Sym, b: Sym, context: DimContext = {}): DimComparison {
   const scope: Scope = { ...context, expanding: new Set(), cache: context.cache ?? dimCache(), work: { left: MAX_WORK } };
-  const left = canonicalSym(a, scope);
-  const right = canonicalSym(b, scope);
-  if (!left || !right) return "undecided";
-  const difference = polyAdd(left, right, -1n);
-  if (!difference.size) return "same";
-  for (const { mono } of difference.values())
-    if (mono.some(([name]) => name.startsWith(OPAQUE_PREFIX))) return "undecided";
-  return "different";
+  try {
+    const left = canonicalSym(a, scope);
+    const right = canonicalSym(b, scope);
+    if (!left || !right) return "undecided";
+    const difference = polyAdd(left, right, scope.work, -1n);
+    if (!difference.size) return "same";
+    for (const { mono } of difference.values())
+      if (mono.some(([name]) => name.startsWith(OPAQUE_PREFIX))) return "undecided";
+    return "different";
+  } catch (error) {
+    if (error instanceof DimLimit) return "undecided";
+    throw error;
+  }
 }
 
 /** Product of extents as one expression the dimension grammar reads back. */

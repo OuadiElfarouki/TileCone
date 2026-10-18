@@ -46,7 +46,7 @@ describe("the reads of a task, in operand order", () => {
 describe("a task's lineage, to the graph's inputs", () => {
   const lineage = (tiles: Record<string, number[]>) =>
     taskLineage(tilePlan(compileDSL(RESHAPED).resolved, tiles), Z00)
-      .map((r) => `${r.level} ${r.tensorId} ${r.kind}${r.tasks !== undefined ? ` ${r.tasks}/${r.of}` : ""} ${r.region.boxes.map(formatBoxIndices).join(";")}`);
+      .map((r) => `${r.level} ${r.tensorId} ${r.kind}${r.kind === "tasks" ? ` ${r.tasks}/${r.of}` : ""} ${r.region.boxes.map(formatBoxIndices).join(";")}`);
 
   it("names each upstream tensor at the nearest level, with tasks, inputs and fused work", () => {
     expect(lineage({ Y: [1, 1], Z: [1, 1] })).toEqual([
@@ -75,11 +75,13 @@ describe("how certain a lineage row's tasks are", () => {
     const plan = tilePlan(resolved, { W: [2, 4], E: [3, 4] });
     const [w] = taskLineage(plan, { tensorId: "E", coord: [0, 0] });
     expect(w).toMatchObject({ tensorId: "W", kind: "tasks", tasks: 4, definiteTasks: 0, of: 4 });
-    expect(w.definiteCoordinates!.boxes).toEqual([]);
+    if (w.kind !== "tasks") throw new Error("Expected task lineage");
+    expect(w.definiteCoordinates.boxes).toEqual([]);
   });
 
   it("counts every task definite where the demand is exact", () => {
     const [y] = taskLineage(tilePlan(compileDSL(RESHAPED).resolved, { Y: [1, 1], Z: [1, 1] }), Z00);
+    if (y.kind !== "tasks") throw new Error("Expected task lineage");
     expect([y.tasks, y.definiteTasks]).toEqual([8, 8]);
   });
 });

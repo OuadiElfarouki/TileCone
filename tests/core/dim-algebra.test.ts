@@ -64,6 +64,23 @@ describe("comparing dimension expressions for every binding", () => {
     expect(compareDims("S0", "Q", { definitions })).toBe("different");
   });
 
+  it("keeps large powers compact when identifying opaque quotients", () => {
+    const definitions: Record<string, string> = { D0: "N" };
+    for (let i = 1; i <= 32; i++) definitions[`D${i}`] = `D${i - 1}*D${i - 1}`;
+    expect(compareDims("D32/(A+B)", "D32/(B+A)", { definitions })).toBe("same");
+    expect(compareDims("D32/(A+B)", "C", { definitions })).toBe("undecided");
+  });
+
+  it("declines unsafe exponents and oversized coefficients before arithmetic loses precision", () => {
+    const definitions: Record<string, string> = { D0: "N", C0: "2" };
+    for (let i = 1; i <= 53; i++) definitions[`D${i}`] = `D${i - 1}*D${i - 1}`;
+    for (let i = 1; i <= 13; i++) definitions[`C${i}`] = `C${i - 1}*C${i - 1}`;
+    expect(compareDims("D32", "N", { definitions })).toBe("different");
+    expect(compareDims("D53", "N", { definitions })).toBe("undecided");
+    expect(compareDims("C10", 1, { definitions })).toBe("different");
+    expect(compareDims("C13", 1, { definitions })).toBe("undecided");
+  });
+
   it("does not loop on a cyclic definition", () => {
     expect(compareDims("A", "B", { definitions: { A: "B+1", B: "A-1" } })).toBe("undecided");
   });

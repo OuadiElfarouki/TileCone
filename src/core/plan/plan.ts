@@ -47,7 +47,7 @@ export function tilePlan(
         "PLAN_GRAPH_INPUT",
         `"${tensorId}" is a graph input; no task produces it, so it has no tiles to plan`
       );
-    families.set(tensorId, tileFamily(tensorId, tensor.resolved!, tiles[tensorId]));
+    families.set(tensorId, tileFamily(tensorId, tensor.resolved, tiles[tensorId]));
   }
   const frontier = Object.values(graph.tensors)
     .filter((t) => !t.producer || families.has(t.id))
