@@ -116,6 +116,11 @@ function LensLegend({ row, nameOf }: { row: OperandReads; nameOf: (tensorId: str
         element. A cell standing for several hidden indices shows the largest; hover the card to read
         a count.
       </p>
+      <p className="hint">
+        The shade runs from none to this result&apos;s own largest count, so it shows where reuse
+        varies within this result. Two results&apos; shades do not compare - a tile grown from 8 uses to
+        64 can look the same - so compare them by their counts.
+      </p>
       {!row.exact && (
         <p className="hint overlap">Upper bounds, hatched on the card: {row.reasons.join("; ")}.</p>
       )}

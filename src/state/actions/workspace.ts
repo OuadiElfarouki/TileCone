@@ -73,6 +73,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
         draftText: text,
         compiling: false,
         diagnostics: result.diagnostics,
+        diagnosticsSource: text,
         loadError: `line ${result.diagnostics[0].span.start.line}: ${result.diagnostics[0].message}`,
       });
       return;
@@ -106,6 +107,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
         set({
           compiling: false,
           diagnostics: result.diagnostics,
+          diagnosticsSource: text,
           loadError: `line ${result.diagnostics[0].span.start.line}: ${result.diagnostics[0].message}`,
         });
         return false;
@@ -142,6 +144,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
       set({
         ...restoredWorkspaceState(workspace, program.graph, resolved, undefined, restored),
         diagnostics: program.warnings,
+        diagnosticsSource: workspace.dsl,
       });
       return true;
     } catch {
@@ -178,6 +181,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
           graphPx: result.artifact.graphPx,
         }, result.restoredPlan),
         diagnostics: result.artifact.warnings,
+        diagnosticsSource: workspace.dsl,
       });
       return true;
     } catch {
@@ -212,6 +216,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
         dslText: source.dslText,
         draftText: source.draftText,
         diagnostics: source.diagnostics,
+        diagnosticsSource: source.diagnosticsSource,
         loadError: source.loadError,
         exampleIndex: source.exampleIndex,
         nodeOffsets: prev.nodeOffsets,
@@ -272,6 +277,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
           dslText: state.dslText,
           draftText: state.draftText,
           diagnostics: state.diagnostics,
+          diagnosticsSource: state.diagnosticsSource,
           loadError: state.loadError,
           graph,
           resolved,
@@ -288,6 +294,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
       ) => set({
           ...loadResolvedGraph(nextGraph, nextResolved, worker),
           diagnostics: warnings,
+          diagnosticsSource: source,
           dslText: source,
           draftText: source,
           exampleIndex: -1,
@@ -311,6 +318,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
           set({
             compiling: false,
             diagnostics: result.diagnostics,
+            diagnosticsSource: source,
             loadError: result.diagnostics[0]?.message ?? "expanded graph did not compile",
           });
           return;

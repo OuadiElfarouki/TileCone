@@ -100,6 +100,13 @@ export type State = {
    * fix-one-recompile loop the collecting phases exist to end.
    */
   diagnostics: CompilerDiagnostic[];
+  /**
+   * The exact source text `diagnostics` were computed from, whose offsets
+   * their spans are. Once the draft differs from it the spans describe text
+   * that is no longer there, and the editor stops navigating to them rather
+   * than select something unrelated. Meaningless while `diagnostics` is empty.
+   */
+  diagnosticsSource: string;
 
   /** `region.boxes` are the user's ordered PARTS (identity-stable, may overlap),
    * never a canonicalized set. See the note in core/region.ts. */

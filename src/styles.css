@@ -439,6 +439,8 @@ textarea.source.error-state { border-color: var(--err); }
   cursor: pointer;
 }
 .source-status button.diag:hover b { text-decoration: underline; }
+/* Out of date after an edit: still read, no longer a link. */
+.source-status .diag.stale { opacity: 0.7; }
 .source-status .diag + .diag { margin-top: 2px; }
 .workspace-status { font-size: var(--t-small); }
 .workspace-file-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }

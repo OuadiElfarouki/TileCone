@@ -33,10 +33,20 @@ test("a build warning is listed beside the build, and selects its operand", asyn
   expect(await selected(page)).toBe("B");
 });
 
-test("a diagnostic still lands on its line after an edit below it", async ({ page }) => {
-  await runSource(page, "X = Tensor(4, 4)\nY = relu(Q)\nZ = relu(X)\n");
-  await editor(page).press("Control+End");
-  await editor(page).type("# a comment added after the run\n");
-  await page.locator(".source-status button.diag").first().click();
+test("an edit makes diagnostics stop pointing into the source until the next run", async ({ page }) => {
+  await runSource(page, "X = Tensor(4, 4)\nY = relu(Q)\n");
+  const links = page.locator(".source-status button.diag");
+  await expect(links).toHaveCount(1);
+  // A line inserted above the error: its old offsets now fall on other code.
+  await editor(page).press("Control+Home");
+  await editor(page).type("# inserted above\n");
+  await expect(links).toHaveCount(0);
+  await expect(page.locator(".source-status .diag.stale")).toContainText("line 2");
+  await expect(page.getByText("Edited since this run")).toBeVisible();
+  // Running again re-anchors them to the text as it now stands.
+  await editor(page).press("Control+Enter");
+  await expect(links).toHaveCount(1);
+  await expect(links.first()).toContainText("line 3");
+  await links.first().click();
   expect(await selected(page)).toBe("Q");
 });

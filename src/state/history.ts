@@ -38,6 +38,7 @@ export type WorkspaceSnapshot = {
     /** Spans belong to these exact source texts. Restore the last build's
      * warnings or failed draft's errors together with the source, not alone. */
     diagnostics: CompilerDiagnostic[];
+    diagnosticsSource: string;
     loadError: string | null;
     graph: Graph;
     resolved: ResolvedGraph;

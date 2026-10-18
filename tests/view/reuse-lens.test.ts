@@ -191,6 +191,8 @@ describe("the lens in the workspace", () => {
     expect(html).toMatch(/aria-pressed="true"/);
     expect(html).toContain("0 → 4 uses per element");
     expect(html).toContain("Shaded on A&#x27;s card");
+    // The shade is relative to this result; the legend says results compare by count.
+    expect(html).toContain("shades do not compare");
   });
 
   it("keeps the shaded row listed, with its legend, once its count falls to one", () => {

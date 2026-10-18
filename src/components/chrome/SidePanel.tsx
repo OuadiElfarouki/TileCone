@@ -15,6 +15,7 @@ import { sameParameterizedSource, sourceParams } from "../../view/params";
 import { ParamControls } from "./ParamControls";
 import { graphIsInteractive, involvedTensorIds } from "../../view/workspace";
 import type { SourceSpan } from "../../parse/source";
+import type { CompilerDiagnostic } from "../../parse/compiler";
 
 /**
  * Copies a link that restores this workspace - source, selection, analysis views,
@@ -39,6 +40,32 @@ function ShareButton(): React.ReactElement {
   );
 }
 
+/** One diagnostic: a link to what it underlines while its source is the
+ * editor's text, plain text once the text has changed under it. */
+function DiagnosticEntry({ diagnostic, current, onShow }: {
+  diagnostic: CompilerDiagnostic;
+  current: boolean;
+  onShow: (span: SourceSpan) => void;
+}): React.ReactElement {
+  const body = (
+    <>
+      <b>line {diagnostic.span.start.line}: </b>
+      {diagnostic.message}
+    </>
+  );
+  return current ? (
+    <button type="button" className="diag" title="select this in the source" onClick={() => onShow(diagnostic.span)}>
+      {body}
+    </button>
+  ) : (
+    <span className="diag stale">{body}</span>
+  );
+}
+
+const StaleNote = (): React.ReactElement => (
+  <span className="diag muted">Edited since this run, so these no longer point into the source; run to update them.</span>
+);
+
 /** The graph source, editable in place. Ctrl/Cmd+Enter runs it. */
 function SourceEditor({ parametersActive }: { parametersActive: boolean }): React.ReactElement {
   const dslText = useStore((s) => s.dslText);
@@ -48,6 +75,7 @@ function SourceEditor({ parametersActive }: { parametersActive: boolean }): Reac
   const compiling = useStore((s) => s.compiling);
   const loadError = useStore((s) => s.loadError);
   const diagnostics = useStore((s) => s.diagnostics);
+  const diagnosticsSource = useStore((s) => s.diagnosticsSource);
   const built = useStore((s) => s.resolved !== null);
   const [ranAt, setRanAt] = useState(0);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -74,6 +102,9 @@ function SourceEditor({ parametersActive }: { parametersActive: boolean }): Reac
   // Errors belong to a run that failed; warnings to the program that built.
   const errors = diagnostics.filter((d) => d.severity === "error");
   const warnings = diagnostics.filter((d) => d.severity === "warning");
+  // Spans are offsets into the text that was run. After any edit they may
+  // point at different code, so they stop being links until the next run.
+  const current = text === diagnosticsSource;
   const run = () => {
     if (compiling) return;
     void applyDSLAsync(text).then((installed) => {
@@ -94,21 +125,17 @@ function SourceEditor({ parametersActive }: { parametersActive: boolean }): Reac
   };
   useLayoutEffect(syncScroll, [text]);
 
-  /* A diagnostic selects what it underlines. It is placed by line and column
-     in the text as it is now, since the author may have edited since the run;
-     an edit above the line can still move it, and the selection is clamped. */
+  /* A diagnostic selects what it underlines. Offered only while the editor
+     holds exactly the text that was run, so the span's offsets are the text's
+     own: selecting by position after an edit above it would select unrelated
+     code, which is worse than saying the diagnostic is out of date. */
   const showDiagnostic = (span: SourceSpan) => {
     const ta = taRef.current;
-    if (!ta) return;
-    const lines = ta.value.split("\n");
-    const line = Math.min(span.start.line, lines.length) - 1;
-    const lineStart = lines.slice(0, line).reduce((n, l) => n + l.length + 1, 0);
-    const start = Math.min(lineStart + span.start.column - 1, lineStart + lines[line].length);
-    const end = Math.min(start + Math.max(0, span.end.offset - span.start.offset), lineStart + lines[line].length);
+    if (!ta || ta.value !== diagnosticsSource) return;
     ta.focus();
-    ta.setSelectionRange(start, end);
+    ta.setSelectionRange(span.start.offset, span.end.offset);
     const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 16;
-    const top = line * lineHeight;
+    const top = (span.start.line - 1) * lineHeight;
     if (top < ta.scrollTop || top + lineHeight > ta.scrollTop + ta.clientHeight)
       ta.scrollTop = Math.max(0, top - ta.clientHeight / 3);
     syncScroll();
@@ -164,17 +191,9 @@ function SourceEditor({ parametersActive }: { parametersActive: boolean }): Reac
                 <b>{errors.length} errors · </b>
               )}
               {errors.map((d, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  className="diag"
-                  title="select this in the source"
-                  onClick={() => showDiagnostic(d.span)}
-                >
-                  <b>line {d.span.start.line}: </b>
-                  {d.message}
-                </button>
+                <DiagnosticEntry key={i} diagnostic={d} current={current} onShow={showDiagnostic} />
               ))}
+              {!current && <StaleNote />}
               {built && (
                 <span className="diag muted">The canvas still shows the last graph that built.</span>
               )}
@@ -194,17 +213,9 @@ function SourceEditor({ parametersActive }: { parametersActive: boolean }): Reac
             <span className="warning">
               <b>{warnings.length} warning{warnings.length === 1 ? "" : "s"}{dirty ? " in the built graph" : ""}</b>
               {warnings.map((d, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  className="diag"
-                  title="select this in the source"
-                  onClick={() => showDiagnostic(d.span)}
-                >
-                  <b>line {d.span.start.line}: </b>
-                  {d.message}
-                </button>
+                <DiagnosticEntry key={i} diagnostic={d} current={current} onShow={showDiagnostic} />
               ))}
+              {!current && <StaleNote />}
             </span>
           )}
         </span>

@@ -50,6 +50,7 @@ export const useStore = create<State>((set, get) => {
     workspaceNotice: null,
   loadError: null,
   diagnostics: [],
+  diagnosticsSource: "",
   showEntangled: false,
   inspectorTab: "dependencies",
   replayPlayback: null,

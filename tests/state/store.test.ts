@@ -1835,3 +1835,32 @@ describe("size-only runs", () => {
     expect(S().viewCfgs.X.projection).toBe(true);
   });
 });
+
+describe("the text diagnostics belong to", () => {
+  const S = () => useStore.getState();
+
+  it("is the text that was run, for errors and for warnings", () => {
+    S().applyDSL("X = Tensor(4)\nY = relu(Q)\n");
+    expect(S().diagnosticsSource).toBe("X = Tensor(4)\nY = relu(Q)\n");
+    const warned = "M = 4\nN = 4\nA = Tensor(3, M)\nB = Tensor(N, 5)\nC = matmul(A, B)\n";
+    S().applyDSL(warned);
+    expect(S().diagnostics.map((d) => d.severity)).toEqual(["warning"]);
+    expect(S().diagnosticsSource).toBe(warned);
+  });
+
+  it("does not follow the draft as it is edited", () => {
+    S().applyDSL("X = Tensor(4)\nY = relu(Q)\n");
+    S().setDraftText("# above\nX = Tensor(4)\nY = relu(Q)\n");
+    expect(S().diagnosticsSource).toBe("X = Tensor(4)\nY = relu(Q)\n");
+  });
+
+  it("is the built source when a workspace restores with an unrun draft", () => {
+    const built = "M = 4\nN = 4\nA = Tensor(3, M)\nB = Tensor(N, 5)\nC = matmul(A, B)\n";
+    expect(S().restoreWorkspace({
+      dsl: built, draftText: built + "# unrun\n",
+      direction: "both", tileScale: 0, snapToGrid: true, axisMode: "numeric", parts: null,
+    })).toBe(true);
+    expect(S().diagnosticsSource).toBe(built);
+    expect(S().draftText).not.toBe(S().diagnosticsSource);
+  });
+});

@@ -179,6 +179,7 @@ export function installedDSLState(
   }
   state.loadError = null;
   state.diagnostics = warnings;
+  state.diagnosticsSource = text;
   return state;
 }
 
