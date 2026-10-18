@@ -5,7 +5,6 @@ import { symProduct } from "../dim-algebra";
 import { DependencyNoteDraft, isRowMajor, NoteCtx, OpSpec, rowMajor, uniformDTypeOutputs } from "./types";
 import { DEFAULT_LIMITS, limitsOf } from "./limits";
 import { AxisNames } from "./types";
-import { Sym } from "../shapes";
 
 
 
@@ -273,24 +272,12 @@ export const reshapeOp: OpSpec = {
   inferAxisNames: (inNames, ctx) => [
     reshapeAxisNames(inNames[0], ctx.inShapes[0], ctx.outShapes[0]),
   ],
-  inferSymShapes: (inSyms, ctx) => {
-    const from = ctx.inShapes[0];
-    const to = ctx.outShapes[0];
-    const out: Sym[] = to.slice();
-    // A one-to-one group is the same axis on both sides, so its symbol carries.
-    let fi = 0;
-    let ti = 0;
-    for (const group of groupAxes(from, to)) {
-      if (group.from.length === 1 && group.to.length === 1) out[ti] = inSyms[0][fi];
-      fi += group.from.length;
-      ti += group.to.length;
-    }
-    // The target shape is the author's own statement of what the result is, so
-    // it outranks anything carried: `shape=[B, S, H, D]` names the split axes
-    // that no group could. The resolver checks each one before it is kept.
-    const target = (ctx.attrs as ReshapeAttrs).shape;
-    return [out.map((sym, axis) => (typeof target[axis] === "string" ? target[axis] : sym))];
-  },
+  // The target shape is the author's own statement of what the result is, a
+  // literal as much as an expression: `shape=[2, 4]` fixes the second axis at
+  // 4 whatever the input's axis was written as. Carrying `8/M` across a group
+  // that happens to match would claim the reshape preserves a relationship it
+  // fixes instead, and the symbolic checks would then hold the author to it.
+  inferSymShapes: (_inSyms, ctx) => [(ctx.attrs as ReshapeAttrs).shape.slice()],
   // A reshape keeps every element, so the two shapes must hold the same count
   // as expressions: `[M, N]` to `[N*N]` resolves when M == N and is wrong
   // otherwise.

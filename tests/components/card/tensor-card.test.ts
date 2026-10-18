@@ -118,6 +118,25 @@ describe("plan replay paint", () => {
     expect(step.region.boxes).toEqual([box([4, 6], [0, 2])]);
   });
 
+  /* With two tiled operands a walk alternates between them, and each one's
+     trail is where the walk has been, not only where the active step is. */
+  it("keeps a producer's trail while the active step is on another tensor", () => {
+    const stepped = playback(3);
+    const walked = [["X", box([0, 2], [0, 2])], ["W", box([0, 2], [0, 2])], ["X", box([2, 4], [0, 2])]] as const;
+    stepped.replay.frames.forEach((f, i) => Object.assign(f, { walked: new Map([[walked[i][0], fromBox(walked[i][1])]]) }));
+    const onW = { ...stepped, visited: 3 };
+    const paint = buildReplayPaint({ tensorId: "W", dark: false, playback: onW });
+    expect(paint.layers).toHaveLength(1);
+    expect(paint.layers[0]).toMatchObject({ alpha: 0.1 });
+    expect(paint.layers[0].region.boxes).toEqual([box([0, 2], [0, 2])]);
+  });
+
+  it("fades the outline of what a run reads with the replay", () => {
+    const fading = { ...playback(2), exiting: true, opacity: 0.5 };
+    const [rest] = buildReplayPaint({ tensorId: "X", dark: false, playback: fading }).layers;
+    expect(rest.outlineAlpha).toBeCloseTo(0.475);
+  });
+
   /* A level reached through the plan's producers is drawn fainter, one step
      per level, and a tiled tensor outlines the producer tiles the run needs. */
   it("draws deeper levels fainter, and outlines the producer tiles a run needs", () => {

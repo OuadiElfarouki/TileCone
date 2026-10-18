@@ -337,20 +337,22 @@ export const concatOp: OpSpec = {
       ),
     ];
   },
-  // Every axis but the joined one is shared by all the inputs.
+  // Every axis but the joined one is shared by all the inputs. Each pair is
+  // compared, so an input of unknown extent does not hide two that differ.
   symEqualities: (inSyms, ctx) => {
     const axis = normAxis(ctx.attrs.axis as number, ctx.inShapes[0].length);
     const equalities: SymEquality[] = [];
     for (let slot = 1; slot < inSyms.length; slot++)
-      inSyms[slot].forEach((sym, ax) => {
-        if (ax !== axis)
-          equalities.push({
-            left: inSyms[0][ax],
-            right: sym,
-            what: `axis ${ax} of input 0 and input ${slot}`,
-            input: slot,
-          });
-      });
+      for (let prior = 0; prior < slot; prior++)
+        inSyms[slot].forEach((sym, ax) => {
+          if (ax !== axis)
+            equalities.push({
+              left: inSyms[prior][ax],
+              right: sym,
+              what: `axis ${ax} of input ${prior} and input ${slot}`,
+              input: slot,
+            });
+        });
     return equalities;
   },
   inferDTypes: uniformDTypeOutputs("concat"),

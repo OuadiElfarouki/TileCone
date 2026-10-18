@@ -3,7 +3,7 @@
 import { ZodObject, ZodType, ZodIssue } from "zod";
 import { getOp } from "./ops/index";
 import { dimSymbols, GraphError, GraphErrorSubject, GraphWarning, resolveShape, Shape, Sym } from "./shapes";
-import { compareDims } from "./dim-algebra";
+import { compareDims, dimCache } from "./dim-algebra";
 import { DTYPES, DTYPE_BYTES, DType, type DTypeWidening } from "./dtypes";
 import type { AxisNames, Cardinality, OpCtx, SymEquality } from "./ops/types";
 
@@ -242,6 +242,8 @@ class FormalShapes {
   private readonly shapes = new Map<string, Shape>();
   /** Symbols standing for extents with no known expression. */
   readonly unknowns = new Set<string>();
+  /** Derived symbols' canonical forms, shared by every check in this graph. */
+  readonly cache = dimCache();
   /** The parameters and derived symbols, plus each unknown bound to its
    * actual extent. */
   private readonly values: Record<string, number>;
@@ -323,7 +325,7 @@ class FormalShapes {
  */
 function symEqualityWarnings(node: Node, equalities: SymEquality[], formal: FormalShapes): GraphWarning[] {
   const warnings: GraphWarning[] = [];
-  const context = { opaque: formal.unknowns, definitions: formal.definitions };
+  const context = { opaque: formal.unknowns, definitions: formal.definitions, cache: formal.cache };
   const isOne = (sym: Sym) => compareDims(sym, 1, context) === "same";
   for (const eq of equalities) {
     if (eq.orOne && (isOne(eq.left) || (eq.orOne === "either" && isOne(eq.right)))) continue;

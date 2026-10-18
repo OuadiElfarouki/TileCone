@@ -128,10 +128,10 @@ export function buildReplayPaint({
   if (!active) return { layers, tiles: [] };
 
   const walked = walkedOn(playback.replay, active, tensorId);
-  if (walked) {
-    for (const region of trailOf(playback.replay, playback.visited, tensorId))
-      layers.push({ region, color, alpha: 0.1 * playback.opacity, hatch: false });
-  }
+  // Where the walk has been, whichever path the active step is on: with A and
+  // B both tiled under `Z = add(A, B)`, A's trail stays through a B step.
+  for (const region of trailOf(playback.replay, playback.visited, tensorId))
+    layers.push({ region, color, alpha: 0.1 * playback.opacity, hatch: false });
   if (tensorId === playback.replay.task.tensorId) {
     layers.push({ region: active.region, color, alpha: 0.68 * playback.opacity, hatch: false, seed: true });
     return { layers, tiles: [] };
@@ -149,7 +149,10 @@ export function buildReplayPaint({
      visible and overlap may darken. */
   const rest = shared ? playbackDifference(region, shared) : region;
   if (!isEmpty(rest))
-    layers.push({ region: rest, color, alpha: 0.26 * strength, hatch: !rest.exact, outline: true, lineWidth: 1 });
+    layers.push({
+      region: rest, color, alpha: 0.26 * strength, hatch: !rest.exact,
+      outline: true, lineWidth: 1, outlineAlpha: 0.95 * playback.opacity,
+    });
   if (shared)
     layers.push({ region: shared, color, alpha: 0.62 * strength, hatch: !shared.exact, seed: true });
   // The step itself, over what it reads of its own tensor.

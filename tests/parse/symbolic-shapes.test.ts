@@ -90,6 +90,27 @@ Y = reshape(F, shape=[N/2, M*2])
     ).toContain("E and F agree");
   });
 
+  it("takes a literal reshape target as written, not the input's expression", () => {
+    const src = "M = 2\nX = Tensor(M, 8/M)\nY = reshape(X, shape=[2,4])\nA = Tensor(4,3)\nZ = matmul(Y,A)\n";
+    accepts(src);
+    expect(compileDSL(src).resolved.tensors.Y.symShape).toEqual([2, 4]);
+  });
+
+  it("compares every pair of operands, so an unknown first one hides nothing", () => {
+    const unknown = "X0 = Tensor(8, 2)\nX = slice(X0, starts=[0, 0], stops=[4, 2], steps=[1, 1])\n";
+    expect(warning(`M = 4\nN = 4\n${unknown}A = Tensor(M, 2)\nB = Tensor(N, 2)\nY = einsum("ij,ij,ij->ij", X, A, B)\n`).message)
+      .toContain("M and N agree");
+    expect(warning(`M = 4\nN = 4\n${unknown}A = Tensor(M, 3)\nB = Tensor(N, 5)\nY = concat(X, A, B, axis=1)\n`).message)
+      .toContain("M and N agree");
+  });
+
+  it("compiles a long chain of derived symbols promptly", () => {
+    const chain = Array.from({ length: 200 }, (_, i) => `D${i + 1} = D${i}+D${i}-D${i}`).join("\n");
+    const started = performance.now();
+    accepts(`D0 = 4\n${chain}\nX = Tensor(D200, 2)\nY = reshape(X, shape=[D0*2])\n`);
+    expect(performance.now() - started).toBeLessThan(2000);
+  });
+
   it("carries a symbolic split size downstream", () => {
     const { resolved } = compileDSL("H = 4\nD = 2\nX = Tensor(H*D+D)\nA, B = split(X, axis=0, sizes=[H*D, D])\n");
     expect(resolved.tensors.A.symShape).toEqual(["H*D"]);

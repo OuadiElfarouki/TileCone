@@ -28,7 +28,7 @@
 import { DimNode, readDimExpr, Sym } from "./shapes";
 
 /** Exact rational in lowest terms, denominator positive. */
-type Rat = { n: bigint; d: bigint };
+export type Rat = { n: bigint; d: bigint };
 
 const absBig = (v: bigint): bigint => (v < 0n ? -v : v);
 
@@ -52,10 +52,10 @@ const ratAdd = (a: Rat, b: Rat): Rat => rat(a.n * b.d + b.n * a.d, a.d * b.d);
 const ratMul = (a: Rat, b: Rat): Rat => rat(a.n * b.n, a.d * b.d);
 
 /** Atom name to power, sorted by name so equal monomials print equal keys. */
-type Monomial = [string, number][];
-type Term = { mono: Monomial; coef: Rat };
+export type Monomial = [string, number][];
+export type Term = { mono: Monomial; coef: Rat };
 /** Keyed by the monomial, so like terms combine on insertion. */
-type Poly = Map<string, Term>;
+export type Poly = Map<string, Term>;
 
 const monoKey = (mono: Monomial): string => mono.map(([name, pow]) => `${name}^${pow}`).join("*");
 
@@ -134,30 +134,57 @@ function formatPoly(poly: Poly): string {
 /** Marks an atom the algebra treats as an unknown quantity. */
 const OPAQUE_PREFIX = "\u0000";
 
+/**
+ * Canonical forms of derived symbols, computed once each. A definition is
+ * expanded wherever it is read, so without this a chain `D1 = D0+D0`,
+ * `D2 = D1+D1`, ... re-expands every link at every use and the work doubles
+ * per definition, though the result is one term. Valid while the definitions
+ * it was filled from are unchanged and name no opaque symbol, which holds for
+ * the resolver: its opaque symbols are minted under names nothing defines.
+ */
+export type DimCache = Map<string, Poly | null>;
+
+export const dimCache = (): DimCache => new Map();
+
 export type DimContext = {
   /** Symbols standing for unknown quantities rather than free parameters. */
   opaque?: ReadonlySet<string>;
   /** Derived symbols and the expressions that define them. */
   definitions?: Readonly<Record<string, Sym>>;
+  /** Shared across comparisons over the same definitions. */
+  cache?: DimCache;
 };
 
-type Scope = DimContext & { expanding: Set<string> };
+/**
+ * Expression nodes one comparison may visit, counting each definition once.
+ * Shapes in a graph are a handful of nodes each; past this the answer is
+ * `undecided`, which costs a missed warning and never a false one, rather
+ * than letting an authored or imported program stall compilation.
+ */
+const MAX_WORK = 100_000;
+
+type Scope = DimContext & { expanding: Set<string>; cache: DimCache; work: { left: number } };
 
 function canonical(node: DimNode, scope: Scope): Poly | null {
+  if (--scope.work.left < 0) return null;
   switch (node.kind) {
     case "num": {
       if (!Number.isSafeInteger(node.value)) return null;
       return constant(rat(BigInt(node.value)));
     }
     case "sym": {
-      const { definitions, expanding } = scope;
+      const { definitions, expanding, cache } = scope;
       if (definitions && Object.prototype.hasOwnProperty.call(definitions, node.name)) {
+        if (cache.has(node.name)) return cache.get(node.name)!;
         // A cyclic definition has no value; resolution rejects one, and here
         // it is simply not something to reason about.
         if (expanding.has(node.name)) return null;
         expanding.add(node.name);
         const expanded = canonicalSym(definitions[node.name], scope);
         expanding.delete(node.name);
+        // A result cut short by the budget is not the definition's form, and
+        // caching it would hand the shortfall to every later comparison.
+        if (scope.work.left >= 0) cache.set(node.name, expanded);
         return expanded;
       }
       const atom = scope.opaque?.has(node.name) ? OPAQUE_PREFIX + node.name : node.name;
@@ -219,8 +246,9 @@ export type DimComparison = "same" | "different" | "undecided";
  * a value, but not one this module can reason about.
  */
 export function compareDims(a: Sym, b: Sym, context: DimContext = {}): DimComparison {
-  const left = canonicalSym(a, { ...context, expanding: new Set() });
-  const right = canonicalSym(b, { ...context, expanding: new Set() });
+  const scope: Scope = { ...context, expanding: new Set(), cache: context.cache ?? dimCache(), work: { left: MAX_WORK } };
+  const left = canonicalSym(a, scope);
+  const right = canonicalSym(b, scope);
   if (!left || !right) return "undecided";
   const difference = polyAdd(left, right, -1n);
   if (!difference.size) return "same";

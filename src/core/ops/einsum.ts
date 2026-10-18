@@ -539,6 +539,10 @@ function einsumSymShape(eq: string, inSyms: Sym[][], ctx: OpCtx, nInputs: number
  * Every operand axis wearing a label must have the same extent: that is what
  * a shared label means. `labelled` says whether to name the label, which only
  * helps when the author wrote the equation; a matmul's labels are internal.
+ *
+ * Every pair is compared, not each against the first: a first operand whose
+ * extent is unknown would otherwise leave two provably different later ones
+ * unchecked, as in `einsum("i,i,i->i", X, A, B)` with A and B on M and N.
  */
 function einsumSymEqualities(
   eq: string,
@@ -547,24 +551,22 @@ function einsumSymEqualities(
   labelled: boolean
 ): SymEquality[] {
   const pe = parseEquation(eq, nInputs);
-  const first = new Map<string, { slot: number; axis: number }>();
+  const seen = new Map<string, { slot: number; axis: number }[]>();
   const equalities: SymEquality[] = [];
   pe.operands.forEach((labels, slot) =>
     labels.forEach((label, axis) => {
-      const seen = first.get(label);
-      if (!seen) {
-        first.set(label, { slot, axis });
-        return;
-      }
+      const earlier = seen.get(label) ?? [];
       const kind = pe.output.includes(label) ? "shared" : "contracted";
-      equalities.push({
-        left: inSyms[seen.slot][seen.axis],
-        right: inSyms[slot][axis],
-        what:
-          `the ${kind} axes${labelled ? ` "${label}"` : ""} ` +
-          `(input ${seen.slot} axis ${seen.axis}, input ${slot} axis ${axis})`,
-        input: slot,
-      });
+      for (const prior of earlier)
+        equalities.push({
+          left: inSyms[prior.slot][prior.axis],
+          right: inSyms[slot][axis],
+          what:
+            `the ${kind} axes${labelled ? ` "${label}"` : ""} ` +
+            `(input ${prior.slot} axis ${prior.axis}, input ${slot} axis ${axis})`,
+          input: slot,
+        });
+      seen.set(label, [...earlier, { slot, axis }]);
     })
   );
   return equalities;

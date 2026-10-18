@@ -224,7 +224,11 @@ The parser creates the structural graph. Declared inputs and weights already hav
     differ is a warning on `ResolvedGraph.warnings`, not an error: `M*2` against `N*2`
     resolves when `M == N` and fails for every other binding, so the graph is valid as bound
     but a parameter control can break it. A parameter against a literal is held to the same
-    rule. The compiler returns warnings with a successful build, as diagnostics of severity
+    rule. A derived symbol is expanded into its definition once per resolution and cached,
+    and each comparison visits at most a fixed number of expression nodes, past which it is
+    undecided, so a long chain of definitions cannot stall compilation. Pairs are compared
+    across every operand, not against the first, so an operand of unknown extent hides no
+    mismatch between the others. The compiler returns warnings with a successful build, as diagnostics of severity
     `warning` with their spans, and the Worker's compile artifact carries them to the editor. The check runs over a second set of symbolic shapes in
     which every extent with no known expression is an opaque symbol. That covers
     convolution spatial axes, `slice`, `pad` and barrier outputs, and a pair that depends on

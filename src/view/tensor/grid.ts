@@ -102,6 +102,10 @@ export type Layer = {
   outline?: boolean; // strong border (selection)
   /** Outline weight. Emphasis uses a heavier stroke than the 1.5 default. */
   lineWidth?: number;
+  /** Outline opacity, 0.95 by default. Separate from `alpha`, which is the
+   * fill's: a faint fill still takes a firm border, but a fading overlay has
+   * to fade both. */
+  outlineAlpha?: number;
   /**
    * Direction is fill geometry, not a perimeter: hue belongs to tile identity,
    * solid fill means "needs", and a diagonal ruling means "feeds". `density`

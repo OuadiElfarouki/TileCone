@@ -465,7 +465,8 @@ export function drawGrid(
           );
 
     if (layer.outline) {
-      ctx.strokeStyle = `rgba(${r},${g},${b},0.95)`;
+      const ink = `rgba(${r},${g},${b},${layer.outlineAlpha ?? 0.95})`;
+      ctx.strokeStyle = ink;
       const screenLineWidth = layer.lineWidth ?? 1.5;
       ctx.lineWidth = screenLineWidth / viewScale;
       for (const q of boundRects) {
@@ -473,7 +474,7 @@ export function drawGrid(
         // itself in the border's ink instead. That paints only what the region
         // holds, and an outlined region one row tall stays visible.
         if (!outlineFitsRect(q, screenLineWidth, viewScale)) {
-          ctx.fillStyle = `rgba(${r},${g},${b},0.95)`;
+          ctx.fillStyle = ink;
           ctx.fillRect(q.x, q.y, q.w, q.h);
           continue;
         }

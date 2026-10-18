@@ -390,4 +390,19 @@ describe("an outline too thin to draw", () => {
     const row = rectangles.filter(([, y, , h]) => y === 15 * geom.cellH && h === geom.cellH);
     expect(row).toHaveLength(2);
   });
+
+  it("draws the border, and its thin fallback, at the layer's outline opacity", () => {
+    vi.stubGlobal("window", { devicePixelRatio: 1 });
+    const styles: string[] = [];
+    const { canvas } = recordingCanvas();
+    const ctx = canvas.getContext("2d") as unknown as { fillRect: (...v: number[]) => void; fillStyle: string };
+    const fill = ctx.fillRect.bind(ctx);
+    ctx.fillRect = (...v: number[]) => { styles.push(ctx.fillStyle); fill(...v); };
+    const thin: Layer = {
+      region: fromBox(box([15, 16], [0, 16])), color: [10, 20, 30], alpha: 0.1, hatch: false,
+      outline: true, lineWidth: 1, outlineAlpha: 0.3,
+    };
+    drawGrid(canvas, shape, cfg, geom, [thin], false, 1, 2 / geom.cellH);
+    expect(styles).toContain("rgba(10,20,30,0.3)");
+  });
 });
