@@ -2,7 +2,7 @@ import { cardPx, MAX_GRAPH_H, MAX_GRAPH_W, planeExtents } from "./tiling";
 import { hiddenAxes, hiddenMode, MAX_CARD_SCALE, MIN_CARD_SCALE, projectedTileAxes, remapped, UNFOLD_MARK, viewAxes, type ViewCfg } from "./tensor-view";
 import { foldGeometry, foldScale } from "./fold";
 import { DECK_ROOM_PX } from "./deck";
-import type { Tensor } from "../../core/graph";
+import type { ResolvedTensor } from "../../core/graph";
 import { shapeLabel, symbolicExtentLabel } from "./shape-label";
 
 /** What of a tensor's view changes the size of its card. An absent
@@ -146,8 +146,8 @@ export function cardSize(
 }
 
 /** A graph tensor's card, wide enough for any of its shape labels. */
-export function tensorCardSize(tensor: Tensor, px: number, cfg?: CardShapeView): ReturnType<typeof cardSize> {
-  return cardSize(tensor.resolved!, px, tensor.name,
+export function tensorCardSize(tensor: ResolvedTensor, px: number, cfg?: CardShapeView): ReturnType<typeof cardSize> {
+  return cardSize(tensor.resolved, px, tensor.name,
     [shapeLabel(tensor, "symbolic"), symbolicExtentLabel(tensor)], cfg, tensor.axisNames);
 }
 

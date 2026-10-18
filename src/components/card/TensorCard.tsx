@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Tensor } from "../../core/graph";
+import { ResolvedTensor } from "../../core/graph";
 import { elementCount } from "../../core/shapes";
 import { DTYPE_BYTES } from "../../core/dtypes";
 import { useFrameThrottle } from "../hooks/useFrameThrottle";
@@ -73,7 +73,7 @@ function TensorCardView({
   onResizeKeyDown,
   onMakeRoom,
 }: {
-  tensor: Tensor;
+  tensor: ResolvedTensor;
   renderScale?: number;
   viewScale?: number;
   overviewWidth?: number;
@@ -85,7 +85,7 @@ function TensorCardView({
   onResizeKeyDown?: (event: React.KeyboardEvent, id: string, corner: ResizeCorner) => void;
   onMakeRoom?: (id: string) => void;
 }): React.ReactElement {
-  const shape = tensor.resolved!;
+  const shape = tensor.resolved;
   const rank = shape.length;
   const interactive = useStore(graphIsInteractive);
   const graph = useStore((s) => s.resolved);

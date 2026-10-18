@@ -1,5 +1,5 @@
 import dagre from "dagre";
-import type { ResolvedGraph, Tensor } from "../../core/graph";
+import type { ResolvedGraph, ResolvedTensor } from "../../core/graph";
 import { opLabel } from "../../core/ops/index";
 import {
   cubicPath,
@@ -58,7 +58,7 @@ export type GraphScene = {
   height: number;
 };
 
-export type TensorMeasure = (tensor: Tensor) => Pick<Rect, "w" | "h"> & { port?: Rect };
+export type TensorMeasure = (tensor: ResolvedTensor) => Pick<Rect, "w" | "h"> & { port?: Rect };
 
 /** The rect a node's connectors attach to, in world space. */
 export function anchorRect(node: PlacedGraphNode): Rect {

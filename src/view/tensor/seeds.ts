@@ -10,7 +10,7 @@ import { planeExtents } from "./tiling";
 /** The 2-D planes every card will draw, in the fixed row-major projection. */
 export function planesOf(resolved: ResolvedGraph): { rows: number; cols: number }[] {
   return Object.values(resolved.tensors).map((t) => {
-    const shape = t.resolved!;
+    const shape = t.resolved;
     const { rowAxis, colAxis } = viewAxes(shape);
     return planeExtents(shape, rowAxis, colAxis);
   });
@@ -39,7 +39,7 @@ export function startingTiles(
     { tensor: output, label: "the output" },
     ...(previous ? [{ tensor: previous, label: "one step back" }] : []),
   ].map(({ tensor, label }) => {
-    const shape = tensor.resolved!;
+    const shape = tensor.resolved;
     const tile = seedTile(shape, viewCfgs[tensor.id], displayTile(shape, tileScale));
     return {
       label,
@@ -64,6 +64,6 @@ export function defaultPlanTile(
   tileScale: number,
   viewCfgs: Record<string, ViewCfg> = {}
 ): number[] {
-  const shape = resolved.tensors[tensorId].resolved!;
+  const shape = resolved.tensors[tensorId].resolved;
   return seedTile(shape, viewCfgs[tensorId], displayTile(shape, tileScale));
 }

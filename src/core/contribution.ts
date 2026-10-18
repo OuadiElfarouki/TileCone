@@ -105,7 +105,7 @@ export function contributions(
         residueClause(
           name,
           graph.tensors[seedId].name,
-          graph.tensors[seedId].resolved ?? [],
+          graph.tensors[seedId].resolved,
           needed,
           seed,
           residue

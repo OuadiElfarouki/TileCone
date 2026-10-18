@@ -67,7 +67,7 @@ export function growthDelta(graph: ResolvedGraph, tensorId: string, baseBox: Box
   const tensors: GrowthDelta["tensors"] = [];
   for (const [id, result] of now.tensors) {
     if (id === tensorId) continue;
-    const before = base.tensors.get(id)?.region ?? empty(graph.tensors[id].resolved!.length);
+    const before = base.tensors.get(id)?.region ?? empty(graph.tensors[id].resolved.length);
     if (!result.region.exact || !before.exact) exact = false;
     const added = subtract(result.region, before);
     tensors.push({ tensorId: id, added, elements: count(added) });

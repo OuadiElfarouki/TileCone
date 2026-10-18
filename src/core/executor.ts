@@ -58,7 +58,7 @@ export function validateSelection(graph: ResolvedGraph, selection: Selection): S
   if (!tensor)
     throw new ExecutionError("EXEC_UNKNOWN_TENSOR", `unknown tensor "${selection.tensorId}"`);
 
-  const shape = tensor.resolved!;
+  const shape = tensor.resolved;
   if (!selection.region.exact && selection.region.reasons.length === 0)
     throw new ExecutionError(
       "EXEC_REGION_PRECISION",

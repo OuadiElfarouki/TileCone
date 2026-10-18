@@ -16,7 +16,7 @@ import { viewAxes } from "../view/tensor/tensor-view";
 
 const graphPlanes = (resolved: ResolvedGraph): { rows: number; cols: number }[] =>
   Object.values(resolved.tensors).map((tensor) => {
-    const shape = tensor.resolved!;
+    const shape = tensor.resolved;
     const { rowAxis, colAxis } = viewAxes(shape);
     return planeExtents(shape, rowAxis, colAxis);
   });

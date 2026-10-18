@@ -80,7 +80,7 @@ export function TileIdentity({
   // tile at the top of a readout about all of them.
   const merged = group.length > 1 && focusedBox === null;
   const tensor = resolved.tensors[anchorId];
-  const shape = tensor.resolved!;
+  const shape = tensor.resolved;
   const { rowAxis, colAxis } = viewAxes(shape, viewCfg);
   const axisLabel = (axis: number) => axisName(tensor, axis);
   const measured = measuredParts(selection.parts, anchorId, hiddenBoxes, focusedBox, !!perBox);
@@ -249,7 +249,7 @@ export function RegionEditor({ activeTensorId, onSelectGroup }: {
           const active = focusedBox === i;
           const hidden = hiddenBoxes.has(i);
           const t = resolved.tensors[tensorId];
-          const shape = t.resolved!;
+          const shape = t.resolved;
           return (
             <div
               className={`box-row${active ? " active" : ""}${pinned === i ? " pinned" : ""}${hidden ? " hidden-cone" : ""}`}

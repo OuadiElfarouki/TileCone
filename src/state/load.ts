@@ -33,7 +33,7 @@ export function loadResolvedGraph(
   | "replayPlayback" | "reuseLens" | "replayDepth" | "placementCarry" | "resizingTensor"
 > {
   const viewCfgs = Object.create(null) as Record<string, ViewCfg>;
-  for (const t of Object.values(resolved.tensors)) viewCfgs[t.id] = defaultViewCfg(t.resolved!);
+  for (const t of Object.values(resolved.tensors)) viewCfgs[t.id] = defaultViewCfg(t.resolved);
   return {
     graph,
     resolved,
@@ -150,7 +150,7 @@ export function installedDSLState(
      Building the very text already built is a reload, and starts fresh. */
   if (previous?.graph && previous.dslText !== text && sameStructure(previous.graph, graph)) {
     for (const t of Object.values(resolved.tensors))
-      base.viewCfgs[t.id] = carriedViewCfg(t.resolved!, previous.viewCfgs[t.id]);
+      base.viewCfgs[t.id] = carriedViewCfg(t.resolved, previous.viewCfgs[t.id]);
     base.placementCarry = true;
   }
   const exampleIndex = EXAMPLES.findIndex((example) => example.dsl === text);

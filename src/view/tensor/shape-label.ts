@@ -7,26 +7,25 @@
  * (`512`) as three related but distinct facts.
  */
 
-import { Tensor } from "../../core/graph";
+import type { ResolvedTensor, Tensor } from "../../core/graph";
 
 export type AxisMode = "symbolic" | "numeric";
 
 /**
- * The symbolic reading of one axis: the name the source gave it, else the
- * dimension it was declared with, else its extent. The fallbacks matter - a
- * produced tensor has no declared shape, and propagated names have holes where
- * an operation invented an axis - so a symbolic shape may be partly numeric.
- * That is honest: those axes have no symbol to show.
+ * The symbolic reading of one axis: the name the source gave it, else its
+ * verified symbolic extent, else its numeric one. Propagated names have holes
+ * where an operation invented an axis, and an operation may carry no symbol,
+ * so a symbolic shape may be partly numeric. That is honest: those axes have
+ * no symbol to show.
  */
-export function axisLabel(tensor: Tensor, axis: number): string {
+export function axisLabel(tensor: ResolvedTensor, axis: number): string {
   const named = tensor.axisNames?.[axis];
   if (named !== undefined) return named;
   // `symShape` is what resolution established and verified: a declared
   // tensor's own dimensions, or whatever its producing operation could carry
   // across. It is full length, so it also holds the literal where nothing did.
-  const symbolic = tensor.symShape?.[axis] ?? tensor.shape[axis];
-  if (typeof symbolic === "string") return symbolic;
-  return String(tensor.resolved?.[axis] ?? symbolic ?? "");
+  const symbolic = tensor.symShape[axis];
+  return typeof symbolic === "string" ? symbolic : String(tensor.resolved[axis]);
 }
 
 /**
@@ -38,8 +37,8 @@ export function axisLabel(tensor: Tensor, axis: number): string {
 export const axisName = (tensor: Pick<Tensor, "axisNames">, axis: number): string =>
   tensor.axisNames?.[axis] ?? `ax${axis}`;
 
-export function shapeLabel(tensor: Tensor, mode: AxisMode): string {
-  const extents = tensor.resolved ?? [];
+export function shapeLabel(tensor: ResolvedTensor, mode: AxisMode): string {
+  const extents = tensor.resolved;
   const parts =
     mode === "numeric"
       ? extents.map(String)
@@ -50,10 +49,10 @@ export function shapeLabel(tensor: Tensor, mode: AxisMode): string {
 /** The verified symbolic extent expression for every axis, without allowing an
  * axis name to hide it. This is the middle reading between semantic labels and
  * resolved numeric extents in the tensor details. */
-export function symbolicExtentLabel(tensor: Tensor): string {
-  const extents = tensor.resolved ?? [];
+export function symbolicExtentLabel(tensor: ResolvedTensor): string {
+  const extents = tensor.resolved;
   return `[${extents.map((extent, axis) => {
-    const symbolic = tensor.symShape?.[axis];
+    const symbolic = tensor.symShape[axis];
     return typeof symbolic === "string" ? symbolic : String(extent);
   }).join(" × ")}]`;
 }
@@ -67,7 +66,7 @@ export function symbolicExtentLabel(tensor: Tensor): string {
  * identical rows the first of which claims to be labels.
  */
 /** @internal Pure seam exported so the collapse rule is asserted directly. */
-export function shapeReadings(tensor: Tensor): { label: string; value: string }[] {
+export function shapeReadings(tensor: ResolvedTensor): { label: string; value: string }[] {
   const readings = [
     { label: "labels", value: shapeLabel(tensor, "symbolic") },
     { label: "symbols", value: symbolicExtentLabel(tensor) },
@@ -80,6 +79,6 @@ export function shapeReadings(tensor: Tensor): { label: string; value: string }[
 
 /** True when the symbolic reading says nothing the numeric one does not, so a
  * caller can skip offering a toggle that would change nothing. */
-export function hasSymbolicShape(tensor: Tensor): boolean {
+export function hasSymbolicShape(tensor: ResolvedTensor): boolean {
   return shapeLabel(tensor, "symbolic") !== shapeLabel(tensor, "numeric");
 }

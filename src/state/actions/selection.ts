@@ -240,7 +240,7 @@ export const selectionActions = (set: SetState, get: GetState): Pick<
     const index = chosen ?? keyboardTile(state);
     if (!parts || index === null || index >= parts.length || !state.resolved) return;
     const part = parts[index];
-    const shape = state.resolved.tensors[part.tensorId].resolved!;
+    const shape = state.resolved.tensors[part.tensorId].resolved;
     if (!Number.isSafeInteger(axis) || axis < 0 || axis >= shape.length) return;
     // The step is the arrows' unit: a tile while snapping, an element when not.
     const unit = nudgeUnit(shape, state.viewCfgs[part.tensorId], state.tileScale, state.snapToGrid, axis);

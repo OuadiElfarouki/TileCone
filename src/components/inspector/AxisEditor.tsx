@@ -38,7 +38,7 @@ export function AxisEditor({ index }: { index: number }): React.ReactElement | n
 
   if (!resolved || !part) return null;
   const tensor = resolved.tensors[part.tensorId];
-  const shape = tensor.resolved!;
+  const shape = tensor.resolved;
   if (!shape.length) return null;
   const box = part.box;
   const tile = gestureTile(shape, cfg, displayTile(shape, tileScale));

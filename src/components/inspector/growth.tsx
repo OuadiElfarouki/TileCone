@@ -23,7 +23,7 @@ export function GrowthSummary(): React.ReactElement | null {
   const viewCfgs = useStore((s) => s.viewCfgs);
   const growSelection = useStore((s) => s.growSelection);
   if (!resolved || !growth) return null;
-  const shape = resolved.tensors[growth.tensorId].resolved!;
+  const shape = resolved.tensors[growth.tensorId].resolved;
   const { rowAxis, colAxis } = viewAxes(shape, viewCfgs[growth.tensorId]);
   // One step back on each edge the growth moved; the arrows do the same.
   const shrinkable = [

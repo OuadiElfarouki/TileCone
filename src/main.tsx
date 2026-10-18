@@ -9,6 +9,10 @@ import "./styles.css";
 // start in agreement rather than flashing through the light palette.
 document.documentElement.dataset.theme = useStore.getState().theme;
 
+// The browser tests (`e2e/`) set up state and read results through the store.
+// `MODE` is replaced at build time, so other builds carry none of this.
+if (import.meta.env.MODE === "e2e") Object.assign(window, { __TILECONE__: useStore });
+
 const startupHash = location.hash;
 const session = startWorkspaceSession(useStore, startupHash, () => localStorage);
 void session.initialized.then((savedLink) => {

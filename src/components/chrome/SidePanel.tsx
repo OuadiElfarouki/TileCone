@@ -242,7 +242,7 @@ function Operations(): React.ReactElement {
   // begin - the two were the same request while only tensors could be focused.
   const probe = (nodeId: string, tensorId: string) => {
     if (!graphIsInteractive(useStore.getState())) return;
-    const shape = resolved.tensors[tensorId].resolved!;
+    const shape = resolved.tensors[tensorId].resolved;
     setFocusNode({ kind: "op", id: nodeId });
     // `setSelection` below lights the row for whatever produced the tensor it
     // lands on, which for an operation's own output is this row - but only when
@@ -268,7 +268,7 @@ function Operations(): React.ReactElement {
           .map((id) => resolved.tensors[id].name)
           .join(", ")})`;
         const meta = outputs
-          .map((t) => `[${t.resolved!.join(" × ")}] ${t.dtype}`)
+          .map((t) => `[${t.resolved.join(" × ")}] ${t.dtype}`)
           .join(" · ");
         return (
           <button

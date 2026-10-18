@@ -206,12 +206,12 @@ function noteCtx(
     outNames: node.outputs.map((id) => graph.tensors[id].name),
     inDims: node.inputs.map((id) => {
       const tensor = graph.tensors[id];
-      return tensor.symShape ?? tensor.shape;
+      return tensor.symShape;
     }),
     inAxisNames: node.inputs.map((id) => {
       const tensor = graph.tensors[id];
       const names = tensor.axisNames ?? [];
-      return Array.from({ length: tensor.resolved!.length }, (_, axis) => names[axis]);
+      return Array.from({ length: tensor.resolved.length }, (_, axis) => names[axis]);
     }),
     inRegions: node.inputs.map((id) => back.tensors.get(id)?.region),
     outRegions: node.outputs.map((id) => back.tensors.get(id)?.region),

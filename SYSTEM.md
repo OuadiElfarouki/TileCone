@@ -869,7 +869,9 @@ The suite verifies both local contracts and the relations they form across the s
 - **Figures and findings:** sums retain the weakest status, unknown work loses its number, and ratios of bounds stay approximate. Barriers retain all declared dependencies and output dtypes. Notes claim only proven constraints, merge by key, retain severe findings under the cap, and use source axis names. Contribution may over-warn but never under-warn.
 - **Plans and multiplicity:** independent task oracles walk through untiled tensors and stop at tiled tensors/inputs, checking slot demand, computed regions, complete producer sets, and family/plan totals. Widened demand may add possible producers but never omit true ones or call uncertain ones definite. Tile families cover each element once, including tails. Read tallies match pointwise output-reader counts, with capped tallies never below truth; hook-free fallback paths are checked too. Fixed two-matmul chains exercise fusion, sharing, misaligned tilings, and recomputation.
 - **State and interaction:** selection composition, active groups, focus/enablement, plan edits, undo, transactional links, and invalid payload rejection. UI tests cover pointer-task mapping, plan retile/fuse behaviour, view-dependent footprints, projection/slice/unfold controls, cross-panel commits, and slice-raster cleanup. Frame coalescing keeps the latest call and trailing clears.
-- **Rendering and replay:** element-precise marks, distinct needs/feeds/co-access textures, approximation hatching, and focus fading. Replay runs cover every task once; each run's reach equals the union of its tasks' bounded cones. Trails remain only on the family's tensor and retire together. Geometry, raster limits, layout workers, and layering rules are checked independently of a DOM rasterizer.
+- **Rendering and replay:** element-precise marks, distinct needs/feeds/co-access textures, approximation hatching, and focus fading. Replay runs cover every task once; each run's reach equals the union of its tasks' bounded cones. Trails remain on the tensors the walk passed through - the family's, and deeper the producers' it stepped - whichever path the active step is on, and retire together. Geometry, raster limits, layout workers, and layering rules are checked independently of a DOM rasterizer.
+
+- **Browser journeys:** `e2e/` runs Playwright against the dev server in the `e2e` mode, which exposes the store on `window` (`main.tsx`) so a journey can set up state and assert on it; `MODE` is replaced at build time, so no other build carries it. Journeys drive the real UI for what a server render cannot: a card resize with pointer capture, its live room-making, Escape cancellation and Ctrl+Z undo; a diagnostic selecting its span in the editor, including after an edit below it; a depth-2 replay retired by inspecting another task from the card; and a shared link copied through the clipboard and restored in a fresh browser context, colour slots included. Every journey fails on a page error or console error.
 
 `tests/corpus/` owns the oracle, fixtures, randomized graph checks, and layering laws. `docs/UI_CONTRACTS.md` supplies the manual scenarios for behaviour that depends on pixels, timing, and gestures.
 
@@ -879,6 +881,7 @@ Normal verification:
 
 ```bash
 npm test
+npm run test:e2e
 npm run build
 ```
 

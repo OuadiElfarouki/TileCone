@@ -54,7 +54,7 @@ export function expandNode(g: Graph, nodeId: string): Graph {
 
   const x = out.tensors[node.inputs[0]];
   const y = node.outputs[0];
-  const rank = resolved.tensors[x.id].resolved!.length;
+  const rank = resolved.tensors[x.id].resolved.length;
 
   if (node.op === "softmax") {
     const axis = normAxis(node.attrs.axis as number, rank);

@@ -259,7 +259,7 @@ export function GraphView(): React.ReactElement {
   const footprintKey = useStore((s) => {
     if (!s.resolved) return "";
     return Object.entries(s.viewCfgs)
-      .map(([id, cfg]) => [id, s.resolved!.tensors[id] && cardShapeView(s.resolved!.tensors[id].resolved!, cfg)] as const)
+      .map(([id, cfg]) => [id, s.resolved!.tensors[id] && cardShapeView(s.resolved!.tensors[id].resolved, cfg)] as const)
       .filter(([, view]) => !!view)
       .map(([id, view]) => `${id}:${JSON.stringify(view)}`)
       .sort()
@@ -268,7 +268,7 @@ export function GraphView(): React.ReactElement {
   const layoutViews = useMemo(() => {
     const views: Record<string, CardShapeView> = {};
     for (const [id, cfg] of Object.entries(useStore.getState().viewCfgs)) {
-      const view = resolved?.tensors[id] && cardShapeView(resolved.tensors[id].resolved!, cfg);
+      const view = resolved?.tensors[id] && cardShapeView(resolved.tensors[id].resolved, cfg);
       if (view) views[id] = view;
     }
     return views;

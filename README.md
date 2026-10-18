@@ -25,6 +25,7 @@ and `B[:, 0:64]`: a row band and a column band, and nothing else.
 npm install
 npm run dev      # http://localhost:5173
 npm test         # unit and integration suite
+npm run test:e2e # browser journeys (Playwright, Chromium)
 npm run build    # typecheck + production bundle
 ```
 
@@ -322,6 +323,13 @@ The oracle covers:
 A separate registry-wide law checks that `forward` and `backward` agree about whether the dependency
 relation between a given input box and output box is empty, which needs no oracle and so applies to
 every operation at any size.
+
+A few journeys also run in a real browser (`e2e/`, Playwright): resizing a card and cancelling or
+undoing it, selecting a diagnostic in the editor, replaying while the inspected task changes, and
+restoring a shared link in a fresh browser. They cover what the unit suite cannot reach - pointer
+capture, real key events, textarea selection, the analysis Worker and the clipboard - and
+complement it rather than repeat it. `npm run test:e2e` starts the dev server in the `e2e` mode,
+which exposes the store to the page for setup and assertions; no other build carries it.
 
 ## Layout
 

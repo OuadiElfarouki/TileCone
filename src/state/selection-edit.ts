@@ -69,7 +69,7 @@ export function editSelection(
     entangled,
   } = get();
   if (!selection || !resolved) return;
-  const shapeOf = (tensorId: string) => resolved.tensors[tensorId].resolved!;
+  const shapeOf = (tensorId: string) => resolved.tensors[tensorId].resolved;
   const parts = withHues(fn(selection.parts, shapeOf));
   const sel = parts.length === 0 ? null : { parts };
   const nextFocus =
