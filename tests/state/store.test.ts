@@ -195,7 +195,7 @@ B = Tensor(4, 5, dtype=fp32)
 C = matmul(A, B)
 `;
     S().applyDSL(invalid);
-    expect(S().loadError).toMatch(/^line 3: node "matmul_C".*shape inference failed/);
+    expect(S().loadError).toBe("line 3: matmul: the contracted axis differs: axis 1 of x1 (A) is 3, axis 0 of x2 (B) is 4");
     expect(S().draftText).toBe(invalid);
     expect(S().dslText).toBe(builtSource);
     expect(S().resolved).toBe(resolved);
@@ -803,7 +803,7 @@ describe("the graph's render scale", () => {
   });
 
   it("is recomputed for a different graph", () => {
-    S().applyDSL("X = Tensor(4, 4, dtype=fp32)\nY = reshape(X, shape=[16])\n");
+    S().applyDSL("X = Tensor(4, 4, dtype=fp32)\nY = reshape(X, [16])\n");
     const small = S().graphPx;
     S().applyDSL("X = Tensor(1024, 1024, dtype=fp16)\nW = Tensor(1024, 1024, dtype=fp16)\nZ = matmul(X, W)\n");
     expect(S().graphPx).toBeLessThan(small);
@@ -1579,7 +1579,7 @@ describe("source diagnostics reach the store intact", () => {
 B = Tensor(9, 7)
 C = matmul(A, B)
 D = relu(Q)
-E = sum(C)
+E = softmax(C)
 `);
     expect(S().diagnostics.map((d) => d.span.start.line)).toEqual([3, 4, 5]);
     expect(S().diagnostics[1].message).toMatch(/unknown tensor "Q"/);
@@ -1653,7 +1653,7 @@ Y = softmax(X, axis=-1)
   });
 
   it("restores warnings and their source spans with the pre-expansion graph", () => {
-    const warned = "M = 4\nN = 4\nA = Tensor(2,M)\nB = Tensor(N,3)\nC = matmul(A,B)\nY = softmax(C,axis=-1)\n";
+    const warned = "M = 4\nN = 4\nA = Tensor(2, M)\nB = Tensor(N, 3)\nC = matmul(A, B)\nY = softmax(C, axis=-1)\n";
     S().applyDSL(warned);
     const diagnostics = S().diagnostics;
     expect(diagnostics).toHaveLength(1);
@@ -1727,7 +1727,7 @@ describe("the operations list tracks where the reader is working", () => {
     });
 
     it("is nothing when several operations read the input", () => {
-      S().applyDSL("X = Tensor(4, 4)\nY = relu(X)\nZ = neg(X)\n");
+      S().applyDSL("X = Tensor(4, 4)\nY = relu(X)\nZ = negative(X)\n");
       // Lighting one of two would be a guess shown as a fact. No highlight is a
       // true statement; an arbitrary one is not.
       expect(operationForTensor(S().resolved, "X")).toBeNull();

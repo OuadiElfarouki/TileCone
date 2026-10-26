@@ -19,7 +19,7 @@ vi.mock("../../../src/state/store", async (importOriginal) => {
 });
 
 const S = () => useStore.getState();
-const RESHAPED = "X = Tensor(4, 4)\nF = reshape(X, shape=[16])\nY = reshape(F, shape=[2, 8])\nA = Tensor(8,4)\nZ = matmul(Y,A)\n";
+const RESHAPED = "X = Tensor(4, 4)\nF = reshape(X, [16])\nY = reshape(F, [2, 8])\nA = Tensor(8, 4)\nZ = matmul(Y, A)\n";
 const render = () => renderToStaticMarkup(createElement(Inspector));
 const Z00 = { tensorId: "Z", coord: [0, 0] };
 
@@ -70,7 +70,7 @@ describe("a task's lineage, to the graph's inputs", () => {
 describe("how certain a lineage row's tasks are", () => {
   it("keeps tasks reached only through a widened demand apart from definite ones", () => {
     const { resolved } = compileDSL(
-      "W0 = Tensor(8, 4)\nW = relu(W0)\nIdx = Tensor(3, dtype=int32)\nE = gather(W, Idx, axis=0)\n"
+      "W0 = Tensor(8, 4)\nW = relu(W0)\nIdx = Tensor(3, dtype=int32)\nE = take(W, Idx, axis=0)\n"
     );
     const plan = tilePlan(resolved, { W: [2, 4], E: [3, 4] });
     const [w] = taskLineage(plan, { tensorId: "E", coord: [0, 0] });

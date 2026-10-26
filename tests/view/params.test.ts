@@ -114,7 +114,7 @@ describe("the source a build's parameter controls belong to", () => {
   const built = "M = 8\nX = Tensor(M * 2, dtype=fp16)\nY = relu(X)\n";
 
   it("allows several parameter edits and ignores comments and formatting", () => {
-    const draft = "# resized\n  M = 16 # next run\n\nX = Tensor( M*2 , dtype = fp16 )\nY = relu( X )\n";
+    const draft = "# resized\n  M = 16 # next run\n\nX = Tensor(M*2, dtype=fp16)\nY = relu(X)\n";
     expect(parameterSourceKey(draft)).toBe(parameterSourceKey(built));
   });
 

@@ -29,9 +29,9 @@ describe("parameters used by shape resolution", () => {
   it.each([
     // The input's extent comes from a barrier, so it is unknown rather than a
     // literal 8 that `P*Q` would only coincide with.
-    ["reshape", 'P = 4\nQ = 2\nUnused = 8\nX = opaque(op="Src", shapes=[[8]], dtypes=[fp32])\nY = reshape(X, shape=[P, Q])\n', ["P", "Q"]],
-    ["split", 'P = 2\nQ = 6\nUnused = 8\nX = opaque(op="Src", shapes=[[8]], dtypes=[fp32])\nY, Z = split(X, axis=0, sizes=[P, Q])\n', ["P", "Q"]],
-    ["expand", "N = 8\nUnused = 8\nX = Tensor(1)\nY = expand(X, shape=[N])\n", ["N"]],
+    ["reshape", 'P = 4\nQ = 2\nUnused = 8\nX = opaque(op="Src", shapes=[[8]], dtypes=[fp32])\nY = reshape(X, [P, Q])\n', ["P", "Q"]],
+    ["split", 'P = 2\nQ = 6\nUnused = 8\nX = opaque(op="Src", shapes=[[8]], dtypes=[fp32])\nY, Z = split(X, [P, Q], axis=0)\n', ["P", "Q"]],
+    ["expand", "N = 8\nUnused = 8\nX = Tensor(1)\nY = broadcast_to(X, [N])\n", ["N"]],
     ["opaque", 'N = 8\nUnused = 8\nY = opaque(op="Foreign", shapes=[[N]], dtypes=[fp32])\n', ["N"]],
   ])("includes bindings used only by %s output-shape attributes", (_op, source, expected) => {
     expect(compileDSL(source as string).resolved.shapeParameters).toEqual(expected);

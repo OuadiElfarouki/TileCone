@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { axis, intList, optional } from "./kinds";
 import { Box, Interval, canonicalize, empty, fromBox, full, iv, markInexact } from "../region";
 import { normAxis } from "./reduce";
 import { OpCtx, OpSpec } from "./types";
@@ -30,11 +30,8 @@ function toIntervals(vals: number[]): Interval[] {
  * it is `full()` with `exact: false`; with them the exact preimage is computed.
  */
 export const gatherOp: OpSpec = {
-  name: "gather",
-  attrSchema: z.object({
-    axis: z.number().int(),
-    indexValues: z.array(z.number().int().min(0)).optional(),
-  }),
+  name: "take",
+  attrs: { axis: axis(), indexValues: optional(intList({ min: 0 })) },
   arity: { inputs: 2, outputs: 1 },
   inferAxisNames: (inNames, ctx) => {
     const axis = normAxis((ctx.attrs as GatherAttrs).axis, ctx.inShapes[0].length);
@@ -53,17 +50,17 @@ export const gatherOp: OpSpec = {
   inferDTypes: (inDTypes, _attrs, outShapes) => {
     const [data, indices] = inDTypes;
     if (indices !== "i32" && indices !== "i64")
-      throw new Error(`gather: indices must be i32 or i64, got ${indices}`);
+      throw new Error(`take: indices must be i32 or i64, got ${indices}`);
     return outShapes.map(() => data);
   },
   inferShapes: (inShapes, attrs) => {
     const [dataSh, idxSh] = inShapes;
-    if (idxSh.length !== 1) throw new Error("gather: indices must be rank-1");
+    if (idxSh.length !== 1) throw new Error("take: indices must be rank-1");
     const ax = normAxis((attrs as GatherAttrs).axis, dataSh.length);
     const vals = (attrs as GatherAttrs).indexValues;
     if (vals && vals.length !== idxSh[0])
-      throw new Error(`gather: indexValues length ${vals.length} != indices extent ${idxSh[0]}`);
-    if (vals && vals.some((v) => v >= dataSh[ax])) throw new Error("gather: index out of range");
+      throw new Error(`take: indexValues length ${vals.length} != indices extent ${idxSh[0]}`);
+    if (vals && vals.some((v) => v >= dataSh[ax])) throw new Error("take: index out of range");
     return [dataSh.map((e, i) => (i === ax ? idxSh[0] : e))];
   },
   backward: (_s, outBox, ctx) => {

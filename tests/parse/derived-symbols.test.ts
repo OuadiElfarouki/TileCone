@@ -19,8 +19,8 @@ E = H*D
 X = Tensor(B, S, E, dtype=fp16)
 W = Parameter(E, E, dtype=fp16)
 Q = einsum("bse,ef->bsf", X, W)
-Q4 = reshape(Q, shape=[B, S, H, D])
-Z = reshape(Q4, shape=[B, S, E])
+Q4 = reshape(Q, [B, S, H, D])
+Z = reshape(Q4, [B, S, E])
 `;
 
 describe("derived symbols", () => {
@@ -41,7 +41,7 @@ describe("derived symbols", () => {
   it("is the same expression as its definition", () => {
     // E against B*S*H*D is the reshape's element count check.
     expect(tryCompileDSL(heads).ok).toBe(true);
-    const result = tryCompileDSL("M = 4\nN = 4\nE = M*N\nX = Tensor(E)\nY = reshape(X, shape=[N*N])\n");
+    const result = tryCompileDSL("M = 4\nN = 4\nE = M*N\nX = Tensor(E)\nY = reshape(X, [N*N])\n");
     expect(result.ok).toBe(true);
     expect(result.diagnostics[0].code).toBe("SEM_SYMBOLIC_SHAPE");
     expect(result.diagnostics[0].message).toContain("agree for M=4, N=4, where E = M*N");
@@ -49,7 +49,7 @@ describe("derived symbols", () => {
 
   it("chains over earlier derived symbols", () => {
     const { resolved } = compileDSL(
-      "N = 8\nHALF = N/2\nQ = HALF/2\nX = Tensor(N)\nA, B = split(X, axis=0, sizes=[HALF, Q*2])\n"
+      "N = 8\nHALF = N/2\nQ = HALF/2\nX = Tensor(N)\nA, B = split(X, [HALF, Q*2], axis=0)\n"
     );
     expect(resolved.tensors.A.resolved).toEqual([4]);
     expect(resolved.shapeParameters).toEqual(["N"]);

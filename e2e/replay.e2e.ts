@@ -8,7 +8,7 @@ E = M * N
 A = Tensor(M, K, dtype=fp16)
 B = Tensor(K, N, dtype=fp16)
 C = matmul(A, B)
-D = reshape(C, shape=[E])
+D = reshape(C, [E])
 D2 = add(D, D)
 `;
 

@@ -161,7 +161,7 @@ describe("read multiplicity along a cone", () => {
   });
 
   it("marks a count over an unknown index as bounds, and the single-use count as approximate", () => {
-    const dsl = "W = Tensor(10, 4)\nIdx = Tensor(3, dtype=int32)\nE = gather(W, Idx, axis=0)\n";
+    const dsl = "W = Tensor(10, 4)\nIdx = Tensor(3, dtype=int32)\nE = take(W, Idx, axis=0)\n";
     const { rows } = readsFor(dsl, "E", fromBox(box([0, 2], [0, 4])));
     const w = row(rows, "W");
     expect(w.exact).toBe(false);

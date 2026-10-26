@@ -5,7 +5,8 @@ import { DSLError, parseDSL, toDSL } from "../../src/parse/dsl";
 import { graphToJSON, parseGraphJSON } from "../../src/parse/json";
 import { propagateBackward } from "../../src/core/propagate";
 import { box, fromBox } from "../../src/core/region";
-import { checkGraph } from "../corpus/harness";
+import { checkGraph, G } from "../corpus/harness";
+import { parseProgram } from "../../src/parse/parser";
 
 const exampleNamed = (name: string) => {
   const example = EXAMPLES.find((candidate) => candidate.name === name);
@@ -38,9 +39,9 @@ D = softmax(C, axis=-1)
 
   it("supports multi-output split and sugar names", () => {
     const g = parseDSL(`X = Tensor(6, 4, dtype=fp16)
-A, B = split(X, axis=0, sizes=[2, 4])
+A, B = split(X, [2, 4], axis=0)
 C = add(A, A)
-S = sum(C, axes=[1], keepdim=true)
+S = sum(C, axis=1, keepdims=true)
 `);
     const rg = resolveGraph(g);
     expect(rg.tensors["A"].resolved).toEqual([2, 4]);
@@ -72,7 +73,7 @@ D = add(C, Bias)
   it("reduce accepts the singular axis= spelling", () => {
     const g = resolveGraph(parseDSL(`X = Tensor(4, 6, dtype=fp32)
 s = sum(X, axis=-1)
-m = mean(X, axes=[0])
+m = mean(X, axis=0)
 `));
     expect(g.tensors["s"].resolved).toEqual([4]);
     expect(g.tensors["m"].resolved).toEqual([6]);
@@ -86,8 +87,8 @@ m = mean(X, axes=[0])
     }
   });
 
-  it("says which axis attribute a reduce is missing", () => {
-    expect(() => parseDSL("X = Tensor(4, 6, dtype=fp32)\ns = sum(X)\n")).toThrow(/sum\(\) needs an axis/);
+  it("says which parameter a call is missing", () => {
+    expect(() => parseDSL("X = Tensor(4, 6, dtype=fp32)\ns = softmax(X)\n")).toThrow(/softmax\(\) is missing axis/);
   });
 
   it("reports line numbers on errors", () => {
@@ -101,20 +102,20 @@ m = mean(X, axes=[0])
 KVH = 2
 D = 32
 X = Tensor(4, H*D+2*KVH*D, dtype=fp16)
-Q, K, V = split(X, axis=-1, sizes=[H*D, KVH*D, KVH*D])
+Q, K, V = split(X, [H*D, KVH*D, KVH*D], axis=-1)
 `;
     const g = resolveGraph(parseDSL(text));
     expect(g.tensors.Q.resolved).toEqual([4, 256]);
     expect(g.tensors.K.resolved).toEqual([4, 64]);
     expect(g.tensors.V.resolved).toEqual([4, 64]);
-    expect(toDSL(parseDSL(text))).toContain("sizes=[H*D, KVH*D, KVH*D]");
+    expect(toDSL(parseDSL(text))).toContain("split(X, [H*D, KVH*D, KVH*D], axis=-1)");
   });
 
   it("reports symbolic sizes that do not cut up the axis", () => {
     const bad = () => resolveGraph(parseDSL(`H = 8
 D = 32
 X = Tensor(4, 100, dtype=fp16)
-A, B = split(X, axis=-1, sizes=[H*D, D])
+A, B = split(X, [H*D, D], axis=-1)
 `));
     expect(bad).toThrow(/don't sum to extent 100/);
   });
@@ -128,9 +129,9 @@ E = 4
 X = Tensor(B, E, dtype=fp16)
 W = Tensor(E, E, dtype=fp16)
 Y = einsum("be,ef->bf", X, W)
-Z = reshape(Y, shape=[B, E*1])
+Z = reshape(Y, [B, E*1])
 `));
-    expect(out).toContain("shape=[B, E*1]");
+    expect(out).toContain("reshape(Y, [B, E*1])");
     expect(out).toContain('einsum("be,ef->bf"');
   });
 
@@ -247,7 +248,7 @@ describe("built-in examples", () => {
     expect(unknown.region.exact).toBe(false);
 
     const declared = cone(
-      source.replace(/gather\((W[12]), Idx, axis=0\)/g, "gather($1, Idx, axis=0, indexValues=[3, 5])")
+      source.replace(/take\((W[12]), Idx, axis=0\)/g, "take($1, Idx, axis=0, index_values=[3, 5])")
     ).get("W1")!;
     expect(declared.region.boxes).toEqual([
       box([3, 4], [0, 128], [0, 256]),
@@ -264,14 +265,14 @@ E = 6
 X = Tensor(S, E, dtype=fp32)
 W = Tensor(E, dtype=fp32)
 Bb = Tensor(E, dtype=fp32)
-H = layernorm(X, W, Bb, axes=[-1])
+H = layer_norm(X, W, Bb)
 Y = add(H, X)
 `);
     checkGraph(miniLN, { perTensorElementCap: 12 });
     const miniCumsum = parseDSL(`S = 7
 X = Tensor(S, dtype=fp32)
-Y = cumsum(X, axis=0, reverse=false)
-Z = cumsum(Y, axis=0, reverse=false)
+Y = cumulative_sum(X, axis=0, reverse=false)
+Z = cumulative_sum(Y, axis=0, reverse=false)
 `);
     checkGraph(miniCumsum);
     const miniAttn = parseDSL(`B = 1
@@ -286,17 +287,17 @@ Wo = Tensor(H*D, H*D, dtype=fp32)
 Qp = einsum("bse,ef->bsf", X, Wq)
 Kp = einsum("bse,ef->bsf", X, Wk)
 Vp = einsum("bse,ef->bsf", X, Wv)
-Q4 = reshape(Qp, shape=[B, S, H, D])
-K4 = reshape(Kp, shape=[B, S, H, D])
-V4 = reshape(Vp, shape=[B, S, H, D])
-Qh = transpose(Q4, perm=[0, 2, 1, 3])
-Kh = transpose(K4, perm=[0, 2, 1, 3])
-Vh = transpose(V4, perm=[0, 2, 1, 3])
+Q4 = reshape(Qp, [B, S, H, D])
+K4 = reshape(Kp, [B, S, H, D])
+V4 = reshape(Vp, [B, S, H, D])
+Qh = permute_dims(Q4, [0, 2, 1, 3])
+Kh = permute_dims(K4, [0, 2, 1, 3])
+Vh = permute_dims(V4, [0, 2, 1, 3])
 Scores = einsum("bhqd,bhkd->bhqk", Qh, Kh)
 P = softmax(Scores, axis=-1)
 Z = einsum("bhqk,bhkd->bhqd", P, Vh)
-Zt = transpose(Z, perm=[0, 2, 1, 3])
-Zm = reshape(Zt, shape=[B, S, H*D])
+Zt = permute_dims(Z, [0, 2, 1, 3])
+Zm = reshape(Zt, [B, S, H*D])
 Out = einsum("bse,ef->bsf", Zm, Wo)
 `);
     checkGraph(miniAttn, { perTensorElementCap: 3, boxSelections: 1, forward: false });
@@ -309,8 +310,8 @@ W = 6
 X = Tensor(N, C, H, W, dtype=fp32)
 W1 = Tensor(F1, C, 3, 3, dtype=fp32)
 W2 = Tensor(F2, F1, 3, 3, dtype=fp32)
-Y1 = conv(X, W1, stride=[2, 2], pads=[[1, 1], [1, 1]], dilation=[1, 1], groups=1)
-Y2 = conv(Y1, W2, stride=[2, 2], pads=[[1, 1], [1, 1]], dilation=[1, 1], groups=1)
+Y1 = conv2d(X, W1, stride=2, padding=1)
+Y2 = conv2d(Y1, W2, stride=2, padding=1)
 `);
     checkGraph(miniConv, { perTensorElementCap: 4, boxSelections: 1, forward: false });
     const miniGemm = parseDSL(`M = 4
@@ -384,7 +385,7 @@ describe("what the parser refuses", () => {
   it.each([
     ["Tensor = Tensor(4, dtype=fp32)\n"],
     ["X = Tensor(4, dtype=fp32)\nParameter = relu(X)\n"],
-    ["X = Tensor(4, 4, dtype=fp32)\nA, Tensor = split(X, axis=0, sizes=[2, 2])\n"],
+    ["X = Tensor(4, 4, dtype=fp32)\nA, Tensor = split(X, [2, 2], axis=0)\n"],
   ])("refuses a constructor name as a tensor name: %s", (source) => {
     expect(parseFails(source).detail).toContain("cannot name a tensor");
   });
@@ -396,17 +397,29 @@ describe("what the parser refuses", () => {
 });
 
 describe("numeric literals", () => {
-  it("reads scientific notation in attributes", () => {
-    // Asserted on the unresolved graph: no operation declares a float attribute
-    // today, and whether one is accepted is the resolver's business, not the
-    // lexer's.
-    const graph = parseDSL('X = Tensor(4, dtype=fp32)\nY = identity(X, probe=1e-5)');
-    expect(graph.nodes[0].attrs.probe).toBe(1e-5);
+  /* Asserted on the syntax tree: no operation declares a float parameter
+     today, and whether a function accepts one is its signature's business,
+     not the lexer's. */
+  const argValues = (source: string) => {
+    const { program, errors } = parseProgram(source);
+    expect(errors).toEqual([]);
+    const call = program.stmts[program.stmts.length - 1];
+    if (call.kind !== "call") throw new Error("expected a call");
+    return Object.fromEntries(
+      call.args.flatMap((arg) => (arg.kind === "named" && arg.value.kind === "number" ? [[arg.name.value, arg.value.value]] : []))
+    );
+  };
+
+  it("reads scientific notation in arguments", () => {
+    expect(argValues("X = Tensor(4, dtype=fp32)\nY = f(X, probe=1e-5)")).toEqual({ probe: 1e-5 });
   });
 
   it("reads exponents and leading-dot decimals", () => {
-    const graph = parseDSL('X = Tensor(4, dtype=fp32)\nY = identity(X, a=2.5E+3, b=.5, c=-1.5e-2)');
-    expect(graph.nodes[0].attrs).toMatchObject({ a: 2500, b: 0.5, c: -0.015 });
+    expect(argValues("X = Tensor(4, dtype=fp32)\nY = f(X, a=2.5E+3, b=.5, c=-1.5e-2)")).toEqual({
+      a: 2500,
+      b: 0.5,
+      c: -0.015,
+    });
   });
 
   it("reads scientific notation in dimensions and shapes", () => {
@@ -417,11 +430,10 @@ describe("numeric literals", () => {
 });
 
 describe("toDSL keeps what the call does not already say", () => {
-  it("writes out elementwise attributes beyond fn and nary", () => {
-    // `fn` and `nary` are recovered from the call itself; anything else has to
-    // be serialized, or expanding a composite and recompiling loses it.
-    const graph = parseDSL("X = Tensor(4, dtype=fp32)\nY = relu(X, alpha=0.2)\n");
-    expect(toDSL(graph)).toContain("relu(X, alpha=0.2)");
-    expect(parseDSL(toDSL(graph)).nodes[0].attrs).toMatchObject({ alpha: 0.2 });
+  it("refuses to print a node with an attribute no parameter writes", () => {
+    // `fn` and `nary` are recovered from the call itself; anything else must
+    // have a parameter, or expanding a composite and recompiling would lose it.
+    const graph = G({ X: [4] }, [["n", "elementwise", ["X"], ["Y"], { fn: "relu", nary: 1, alpha: 0.2 }]]);
+    expect(() => toDSL(graph)).toThrow('relu() has no parameter for the elementwise attribute "alpha"');
   });
 });

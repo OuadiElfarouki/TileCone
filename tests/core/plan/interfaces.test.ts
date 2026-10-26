@@ -143,7 +143,7 @@ Q = exp(X)
     const { resolved } = compileDSL(`E = Tensor(16, 8)
 I = Tensor(4, dtype=int32)
 F = relu(E)
-Y = gather(F, I, axis=0)
+Y = take(F, I, axis=0)
 `);
     const plan = tilePlan(resolved, { F: [4, 8], Y: [2, 8] });
     const s = supplyOf(plan, { tensorId: "Y", coord: [0, 0] });

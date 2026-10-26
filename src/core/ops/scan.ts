@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { axis, bool } from "./kinds";
 import { Box, Region, canonicalize, count, fromBox, iv } from "../region";
 import { normAxis } from "./reduce";
 import { DependencyNoteDraft, NoteCtx, OpCtx, OpSpec, uniformDTypeOutputs } from "./types";
@@ -56,7 +56,7 @@ function cumsumDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
       },
     ],
     text:
-      `cumsum is a prefix scan along axis ${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)} ` +
+      `cumulative_sum is a prefix scan along axis ${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)} ` +
       `(${extent} wide), so element i of ${ctx.outNames[0]} depends on ` +
       `${reverse ? "every later" : "every earlier"} element of ${ctx.inNames[0]} - the cone is ` +
       `triangular, not rectangular. Tiles along axis ${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)} must ` +
@@ -65,13 +65,13 @@ function cumsumDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
 }
 
 export const cumsumOp: OpSpec = {
-  name: "cumsum",
-  attrSchema: z.object({ axis: z.number().int(), reverse: z.boolean().default(false) }),
+  name: "cumulative_sum",
+  attrs: { axis: axis(), reverse: bool({ default: false }) },
   arity: { inputs: 1, outputs: 1 },
   inferAxisNames: sameAxisNames,
   inferSymShapes: sameSymShape,
   dependencyNote: cumsumDependencyNote,
-  inferDTypes: uniformDTypeOutputs("cumsum"),
+  inferDTypes: uniformDTypeOutputs("cumulative_sum"),
   inferShapes: (inShapes, attrs) => {
     normAxis(attrs.axis as number, inShapes[0].length);
     return [inShapes[0].slice()];

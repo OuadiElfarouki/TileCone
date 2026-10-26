@@ -40,7 +40,7 @@ describe("dimensions written as arithmetic", () => {
   it("reads arithmetic in a shape-valued attribute", () => {
     const src =
       heads +
-      "X = Tensor(B, S, H*D, dtype=fp16)\nY = reshape(X, shape=[B, S, H, (H*D)/H])\n";
+      "X = Tensor(B, S, H*D, dtype=fp16)\nY = reshape(X, [B, S, H, (H*D)/H])\n";
     expect(shapeOf(src, "Y")).toEqual([1, 128, 4, 32]);
   });
 
@@ -86,8 +86,8 @@ describe("dimensions written as arithmetic", () => {
   });
 
   it("leaves scalar attributes alone", () => {
-    const attrs = parseDSL("X = Tensor(2, 4, dtype=fp32)\nY = sum(X, axes=[-1], keepdim=true)\n").nodes[0]
+    const attrs = parseDSL("X = Tensor(2, 4, dtype=fp32)\nY = sum(X, axis=-1, keepdims=true)\n").nodes[0]
       .attrs;
-    expect(attrs).toMatchObject({ axes: [-1], keepdim: true, fn: "sum" });
+    expect(attrs).toMatchObject({ axes: -1, keepdim: true, fn: "sum" });
   });
 });

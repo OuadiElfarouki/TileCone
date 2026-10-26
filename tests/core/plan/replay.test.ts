@@ -187,7 +187,7 @@ describe("replaying through the plan's own producers", () => {
 
   it("carries the second split output even when the first is materialized", () => {
     const { resolved } = compileDSL(
-      "X = Tensor(8)\nC = relu(X)\nU, V = split(C, axis=0, sizes=[4,4])\nW = Tensor(4)\nY = add(V,W)\n"
+      "X = Tensor(8)\nC = relu(X)\nU, V = split(C, [4,4], axis=0)\nW = Tensor(4)\nY = add(V, W)\n"
     );
     const tilings: Record<string, number[]>[] = [{ C: [1], Y: [1] }, { C: [1], U: [1], Y: [1] }];
     for (const tiles of tilings) {
@@ -208,7 +208,7 @@ describe("replaying through the plan's own producers", () => {
   });
 
   it("bounds paths independently of cached queries and displayed frames", () => {
-    let source = "X = Tensor(3,3)\nT0 = relu(X)\n";
+    let source = "X = Tensor(3, 3)\nT0 = relu(X)\n";
     const tiles: Record<string, number[]> = { T0: [1, 1] };
     for (let i = 1; i <= 4; i++) {
       source += `W${i} = Tensor(3,3)\nT${i} = matmul(T${i - 1},W${i})\n`;
@@ -225,7 +225,7 @@ describe("replaying through the plan's own producers", () => {
   });
 
   it("can decline a huge producer frontier without enumerating all its coordinates", () => {
-    const graph = compileDSL("X = Tensor(1,1000000)\nF = relu(X)\nA = Tensor(1000000,1)\nZ = matmul(F,A)\n").resolved;
+    const graph = compileDSL("X = Tensor(1, 1000000)\nF = relu(X)\nA = Tensor(1000000, 1)\nZ = matmul(F, A)\n").resolved;
     const plan = tilePlan(graph, { F: [1, 1], Z: [1, 1] });
     expect(() => familyReplay(plan, { tensorId: "Z", coord: [0, 0] }, { depth: 2, pathBudget: 3 }))
       .toThrow(/3 task paths/);
@@ -282,7 +282,7 @@ describe("replay depth on large and shared graphs", () => {
 
   it("counts each tiled output separately across branches of a multi-output operation", () => {
     const { resolved } = compileDSL("X = Tensor(8)\nA = relu(X)\nB = relu(A)\n" +
-      "U, V = split(B, axis=0, sizes=[4, 4])\nT = relu(V)\nY = concat(U, T, axis=0)\n");
+      "U, V = split(B, [4, 4], axis=0)\nT = relu(V)\nY = concat([U, T], axis=0)\n");
     const tiles = { A: [1], B: [1], U: [1], T: [1], Y: [1] };
     const plan = tilePlan(resolved, tiles);
     expect(replayDepthLimit(plan, "U")).toBe(3);
@@ -295,7 +295,7 @@ describe("replay depth on large and shared graphs", () => {
 describe("what a deeper step walks", () => {
   // A row of C per D task: the matmul is fused into D, and D2 reads D tile for tile.
   const SOURCE = `M = 16\nN = 16\nK = 128\nE = M * N\nA = Tensor(M, K, dtype=fp16)\nB = Tensor(K, N, dtype=fp16)
-C = matmul(A, B)\nD = reshape(C, shape=[E])\nD2 = add(D, D)\n`;
+C = matmul(A, B)\nD = reshape(C, [E])\nD2 = add(D, D)\n`;
   const { resolved } = compileDSL(SOURCE);
   const plan = tilePlan(resolved, { D2: [16], D: [16] });
 

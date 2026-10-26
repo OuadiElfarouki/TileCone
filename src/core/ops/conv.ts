@@ -1,7 +1,7 @@
-import { z } from "zod";
+import { int, oneOf, padding, spatial, spatialRankOf } from "./kinds";
 import { Box, Interval, Region, canonicalize, empty, fromBox, iv } from "../region";
 import { productBoxes } from "./shape-ops";
-import { DependencyNoteDraft, floatingDTypeOutputs, NoteCtx, OpCtx, OpSpec, promotingDTypeOutputs, uniformDTypeOutputs } from "./types";
+import { Attrs, DependencyNoteDraft, floatingDTypeOutputs, NoteCtx, OpCtx, OpSpec, promotingDTypeOutputs, uniformDTypeOutputs } from "./types";
 import { limitsOf } from "./limits";
 import { sameAxisNames } from "./axis-names";
 import { separableTally, type Step, type Tally, uniformTally } from "../tally";
@@ -397,14 +397,21 @@ function convOracleTerms(outIndex: number[], ctx: OpCtx): (number[] | null)[][] 
   return terms;
 }
 
+/** `conv2d` for two spatial axes, as the author wrote it; `conv` before the
+ * operands have told resolution how many there are. */
+const spatialName = (base: string, attrs: Attrs) =>
+  typeof attrs.spatialRank === "number" ? `${base}${attrs.spatialRank}d` : base;
+
 export const convOp: OpSpec = {
   name: "conv",
-  attrSchema: z.object({
-    stride: z.array(z.number().int().min(1)),
-    pads: z.array(z.tuple([z.number().int().min(0), z.number().int().min(0)])),
-    dilation: z.array(z.number().int().min(1)),
-    groups: z.number().int().min(1).default(1),
-  }),
+  displayName: (attrs) => spatialName("conv", attrs),
+  attrs: {
+    stride: spatial({ min: 1, default: 1 }),
+    pads: padding({ default: 0 }),
+    dilation: spatial({ min: 1, default: 1 }),
+    groups: int({ min: 1, default: 1 }),
+    spatialRank: spatialRankOf(),
+  },
   arity: { inputs: 2, outputs: 1 },
   inferAxisNames: (inNames) => [
     [
@@ -618,13 +625,16 @@ const avgPoolDTypes = floatingDTypeOutputs("average pool");
 
 export const poolOp: OpSpec = {
   name: "pool",
-  attrSchema: z.object({
-    kind: z.enum(["max", "avg"]).default("max"),
-    kernelShape: z.array(z.number().int().min(1)),
-    stride: z.array(z.number().int().min(1)),
-    pads: z.array(z.tuple([z.number().int().min(0), z.number().int().min(0)])),
-    dilation: z.array(z.number().int().min(1)).optional(),
-  }),
+  displayName: (attrs) => spatialName(`${(attrs.kind as string | undefined) ?? "max"}_pool`, attrs),
+  attrs: {
+    kind: oneOf(["max", "avg"], { default: "max" }),
+    kernelShape: spatial({ min: 1 }),
+    // A window that is not told to step moves by its own size, as in PyTorch.
+    stride: spatial({ min: 1, default: (ctx) => ctx.written.kernelShape }),
+    pads: padding({ default: 0 }),
+    dilation: spatial({ min: 1, default: 1 }),
+    spatialRank: spatialRankOf(),
+  },
   arity: { inputs: 1, outputs: 1 },
   inferAxisNames: sameAxisNames,
   inferSymShapes: (inSyms, ctx) => [

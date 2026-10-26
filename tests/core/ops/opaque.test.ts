@@ -24,7 +24,7 @@ describe("an operation carried as a barrier", () => {
     const unknown = tryCompileDSL(chain("batch_norm(X, S)"));
     expect(unknown.ok).toBe(false);
     if (unknown.ok) throw new Error("unreachable");
-    expect(unknown.diagnostics.map((d) => d.code)).toContain("SEM_UNKNOWN_OP");
+    expect(unknown.diagnostics.map((d) => d.code)).toContain("DSL_UNKNOWN_FUNCTION");
 
     const barrier = compileDSL(chain('opaque(X, S, op="BatchNorm", shapes=[[M, K]])'));
     expect(barrier.resolved.topo.map((n) => n.op)).toEqual(["opaque", "elementwise"]);
@@ -177,11 +177,11 @@ C = opaque(op="ConstantOfShape", shapes=[[M, K]])
     const source = `M = 4
 K = 6
 X = Tensor(rows=M, cols=K, dtype=fp16)
-V, I = opaque(X, op="TopK", domain="com.microsoft", opset=17, sourceName="/head/TopK", shapes=[[M, 3], [M, 3]], dtypes=[null, int64])
+V, I = opaque(X, op="TopK", domain="com.microsoft", opset=17, source_name="/head/TopK", shapes=[[M, 3], [M, 3]], dtypes=[null, int64])
 `;
     const printed = toDSL(compileDSL(source).graph);
     expect(printed).toContain("dtypes=[null, int64]");
-    expect(printed).toContain('sourceName="/head/TopK"');
+    expect(printed).toContain('source_name="/head/TopK"');
 
     const again = compileDSL(printed).resolved;
     expect(again.tensors.V.dtype).toBe("f16");

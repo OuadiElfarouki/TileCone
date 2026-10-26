@@ -16,7 +16,7 @@ import {
   scanStringLiteral,
   stripComment,
 } from "./lexical";
-import { Arg, Expr, Program, Spanned, Stmt } from "./ast";
+import { Arg, Expr, Program, Spanned, Stmt, SubscriptItem } from "./ast";
 import { documentSpan, lineSpan, SourceSpan } from "./source";
 
 export class DSLError extends Error {
@@ -175,6 +175,35 @@ class LineParser {
     return args;
   }
 
+  /** The items of a subscript, after its `[` and up to and including its `]`. */
+  subscriptItems(): SubscriptItem[] {
+    if (this.eat("]")) this.error("expected an index or a range");
+    const items: SubscriptItem[] = [];
+    do items.push(this.subscriptItem());
+    while (this.eat(","));
+    this.expect("]");
+    return items;
+  }
+
+  /** `a:b:c` with any part left out, or a lone value. */
+  subscriptItem(): SubscriptItem {
+    this.ws();
+    const from = this.pos;
+    const part = (): Expr | undefined => {
+      this.ws();
+      const next = this.src[this.pos];
+      return next === undefined || next === ":" || next === "," || next === "]" ? undefined : this.expr();
+    };
+    const start = part();
+    if (!this.eat(":")) {
+      if (!start) this.error("expected an index or a range");
+      return { kind: "index", value: start!, span: this.spanFrom(from) };
+    }
+    const stop = part();
+    const step = this.eat(":") ? part() : undefined;
+    return { kind: "range", start, stop, step, span: this.spanFrom(from) };
+  }
+
   atEnd(): boolean {
     this.ws();
     return this.pos >= this.src.length;
@@ -204,7 +233,7 @@ function parseStatement(p: LineParser, statementSpan: SourceSpan, outs: Spanned<
       );
   if (!p.eat("="))
     throw new DSLError(
-      "expected an assignment: NAME = number, NAME = expression, Tensor(...), Parameter(...), or op(...)",
+      "expected an assignment: NAME = number, NAME = expression, Tensor(...), Parameter(...), function(...), or X[...]",
       statementSpan,
       "DSL_UNKNOWN_STATEMENT"
     );
@@ -248,6 +277,15 @@ function parseStatement(p: LineParser, statementSpan: SourceSpan, outs: Spanned<
   }
 
   const callee = p.identReq("op name");
+  if (p.eat("[")) {
+    const from = p.pos - 1;
+    if (outs.length !== 1)
+      throw new DSLError("a subscript produces exactly one tensor", statementSpan);
+    const items = p.subscriptItems();
+    const brackets = p.spanFrom(from);
+    if (!p.atEnd()) p.error("trailing input");
+    return { kind: "subscript", outs, target: callee, items, brackets, span: statementSpan };
+  }
   p.expect("(");
   const args = p.argList();
   if (!p.atEnd()) p.error("trailing input");

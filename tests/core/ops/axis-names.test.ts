@@ -22,8 +22,8 @@ describe("declaring axis names", () => {
   it("refuses a partly named declaration", () => {
     // Propagation produces holes legitimately; a hand-written half-naming is a
     // slip, so the two cases are treated differently on purpose.
-    expect(() => parseDSL("X = Tensor(batch=2, 8, dtype=fp16)\n")).toThrow(DSLError);
-    expect(() => parseDSL("X = Tensor(batch=2, 8, dtype=fp16)\n")).toThrow(/name every axis or none/);
+    expect(() => parseDSL("X = Tensor(8, batch=2, dtype=fp16)\n")).toThrow(DSLError);
+    expect(() => parseDSL("X = Tensor(8, batch=2, dtype=fp16)\n")).toThrow(/name every axis or none/);
   });
 
   it("refuses a repeated axis name", () => {
@@ -64,8 +64,8 @@ D = 32
 X = Tensor(batch=B, seq=S, emb=H*D, dtype=fp16)
 Wq = Tensor(emb=H*D, proj=H*D, dtype=fp16)
 Qp = einsum("bse,ef->bsf", X, Wq)
-Q4 = reshape(Qp, shape=[B, S, H, D])
-Qh = transpose(Q4, perm=[0, 2, 1, 3])
+Q4 = reshape(Qp, [B, S, H, D])
+Qh = permute_dims(Q4, [0, 2, 1, 3])
 `;
 
   it("carries a label through an einsum contraction", () => {
@@ -86,7 +86,7 @@ Qh = transpose(Q4, perm=[0, 2, 1, 3])
   it("drops a reduced axis and keeps it under keepdim", () => {
     const src = "X = Tensor(batch=2, seq=4, emb=8, dtype=fp16)\n";
     expect(namesOf(src + "Y = sum(X, axis=1)\n", "Y")).toEqual(["batch", "emb"]);
-    expect(namesOf(src + "Y = sum(X, axis=1, keepdim=true)\n", "Y")).toEqual([
+    expect(namesOf(src + "Y = sum(X, axis=1, keepdims=true)\n", "Y")).toEqual([
       "batch",
       "seq",
       "emb",
@@ -108,7 +108,7 @@ C = add(A, B)
 
   it("keeps the layout of every piece of a split", () => {
     const program = compileDSL(`X = Tensor(batch=2, feat=8, dtype=fp32)
-A, B = split(X, axis=1, sizes=[3, 5])
+A, B = split(X, [3, 5], axis=1)
 `);
     expect(program.resolved.tensors.A.axisNames).toEqual(["batch", "feat"]);
     expect(program.resolved.tensors.B.axisNames).toEqual(["batch", "feat"]);
@@ -118,7 +118,7 @@ A, B = split(X, axis=1, sizes=[3, 5])
     const names = namesOf(
       `X = Tensor(batch=2, in_channel=3, height=8, width=8, dtype=fp32)
 W = Parameter(out_channel=5, kernel_in=3, kernel_h=3, kernel_w=3, dtype=fp32)
-Y = conv(X, W, stride=[1, 1], pads=[[1, 1], [1, 1]], dilation=[1, 1])
+Y = conv2d(X, W, padding=1)
 `,
       "Y"
     );
@@ -129,7 +129,7 @@ Y = conv(X, W, stride=[1, 1], pads=[[1, 1], [1, 1]], dilation=[1, 1])
     const names = namesOf(
       `D = Tensor(vocab=16, embedding=8, dtype=fp32)
 I = Tensor(token=4, dtype=int32)
-Y = gather(D, I, axis=0, indexValues=[1, 5, 2, 7])
+Y = take(D, I, axis=0, index_values=[1, 5, 2, 7])
 `,
       "Y"
     );

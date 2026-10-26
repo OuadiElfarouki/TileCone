@@ -18,7 +18,7 @@ D = 8
 X = Tensor(batch=B, seq=S, emb=H*D, dtype=fp16)
 Wq = Tensor(emb=H*D, proj=H*D, dtype=fp16)
 Qp = einsum("bse,ef->bsf", X, Wq)
-Q4 = reshape(Qp, shape=[B, S, H, D])
+Q4 = reshape(Qp, [B, S, H, D])
 `;
 
   it("names every axis of a declared tensor", () => {
@@ -40,7 +40,7 @@ Q4 = reshape(Qp, shape=[B, S, H, D])
 
   it("falls back to the extent for an axis with nothing to say", () => {
     // A literal target leaves nothing symbolic behind.
-    const SPLIT = "X = Tensor(2, 12, dtype=fp32)\nY = reshape(X, shape=[2, 3, 4])\n";
+    const SPLIT = "X = Tensor(2, 12, dtype=fp32)\nY = reshape(X, [2, 3, 4])\n";
     expect(shapeLabel(tensorIn(SPLIT, "Y"), "symbolic")).toBe("[2 × 3 × 4]");
   });
 
@@ -79,7 +79,7 @@ A = Tensor(M, K, dtype=fp32)
 B = Tensor(K, N, dtype=fp32)
 C = matmul(A, B)
 D = relu(C)
-E = transpose(D, perm=[1, 0])
+E = permute_dims(D, [1, 0])
 F = sum(E, axis=1)
 `;
 
@@ -101,7 +101,7 @@ F = sum(E, axis=1)
 T = 2
 A = Tensor(4, P, dtype=fp32)
 B = Tensor(4, T, dtype=fp32)
-C = concat(A, B, axis=1)
+C = concat([A, B], axis=1)
 `;
     expect(tensorIn(CAT, "C").symShape).toEqual([4, "P+T"]);
     expect(shapeLabel(tensorIn(CAT, "C"), "symbolic")).toBe("[4 × P+T]");
@@ -114,9 +114,9 @@ C = concat(A, B, axis=1)
 P = 6
 T = 2
 A0 = Tensor(8, P, dtype=fp32)
-A = slice(A0, starts=[0, 0], stops=[4, 6], steps=[1, 1])
+A = A0[0:4, 0:6]
 B = Tensor(Rows, T, dtype=fp32)
-C = concat(A, B, axis=1)
+C = concat([A, B], axis=1)
 `;
     expect(tensorIn(CAT, "C").symShape).toEqual(["Rows", "6+T"]);
   });
@@ -131,8 +131,8 @@ KH = 3
 KW = 3
 X = Tensor(N, Cin, H, W, dtype=fp32)
 K = Tensor(Cout, Cin, KH, KW, dtype=fp32)
-Y = conv(X, K, stride=[1, 1], pads=[[1, 1], [1, 1]], dilation=[1, 1])
-Z = pool(Y, kind=max, kernelShape=[2, 2], stride=[2, 2], pads=[[0, 0], [0, 0]])
+Y = conv2d(X, K, padding=1)
+Z = max_pool2d(Y, 2)
 `;
     expect(tensorIn(SPATIAL, "Y").symShape).toEqual(["N", "Cout", 8, 8]);
     expect(tensorIn(SPATIAL, "Z").symShape).toEqual(["N", "Cout", 4, 4]);
@@ -144,7 +144,7 @@ Cols = 4
 Picked = 3
 D = Tensor(Rows, Cols, dtype=fp32)
 I = Tensor(Picked, dtype=int32)
-Y = gather(D, I, axis=0, indexValues=[1, 5, 2])
+Y = take(D, I, axis=0, index_values=[1, 5, 2])
 `;
     expect(tensorIn(GATHER, "Y").symShape).toEqual(["Picked", "Cols"]);
   });

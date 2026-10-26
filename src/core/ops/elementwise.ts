@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { int, oneOf } from "./kinds";
 import { Box, fromBox, iv } from "../region";
 import { OpCtx, OpSpec } from "./types";
 import { DType, dtypeFamily, promoteDTypes } from "../dtypes";
@@ -10,7 +10,7 @@ import { uniformTally } from "../tally";
  * The elementwise functions this graph understands, with what each one costs
  * and how many operands it takes.
  *
- * This table is the definition, not a convenience: `attrSchema` enumerates its
+ * This table is the definition, not a convenience: the `fn` kind enumerates its
  * keys, so an unrecognized `fn` is a hard error with a did-you-mean rather than
  * a silently accepted string that quietly costs one FLOP. The DSL's call-name
  * sugar reads the same table, so the two cannot drift.
@@ -35,16 +35,16 @@ export type ElementwiseFnSpec = {
 export const ELEMENTWISE_FNS: Record<string, ElementwiseFnSpec> = {
   // associative binary-or-more
   add: { minInputs: 2, maxInputs: null, unitCost: 0, dtype: "promote" },
-  mul: { minInputs: 2, maxInputs: null, unitCost: 0, dtype: "promote" },
+  multiply: { minInputs: 2, maxInputs: null, unitCost: 0, dtype: "promote" },
   maximum: { minInputs: 2, maxInputs: null, unitCost: 0, dtype: "promote" },
   minimum: { minInputs: 2, maxInputs: null, unitCost: 0, dtype: "promote" },
   // strictly binary
-  sub: { minInputs: 2, maxInputs: 2, unitCost: 0, dtype: "promote" },
-  div: { minInputs: 2, maxInputs: 2, unitCost: 0, dtype: "real" },
+  subtract: { minInputs: 2, maxInputs: 2, unitCost: 0, dtype: "promote" },
+  divide: { minInputs: 2, maxInputs: 2, unitCost: 0, dtype: "real" },
   pow: { minInputs: 2, maxInputs: 2, unitCost: 4, dtype: "real" },
   // unary
   relu: { minInputs: 1, maxInputs: 1, unitCost: 0, dtype: "promote" },
-  neg: { minInputs: 1, maxInputs: 1, unitCost: 0, dtype: "promote" },
+  negative: { minInputs: 1, maxInputs: 1, unitCost: 0, dtype: "promote" },
   abs: { minInputs: 1, maxInputs: 1, unitCost: 0, dtype: "promote" },
   exp: { minInputs: 1, maxInputs: 1, unitCost: 4, dtype: "real" },
   log: { minInputs: 1, maxInputs: 1, unitCost: 4, dtype: "real" },
@@ -113,10 +113,7 @@ export function broadcastOracleIndex(outIndex: number[], inShape: number[]): num
 export const elementwiseOp: OpSpec = {
   name: "elementwise",
   displayName: (attrs) => attrs.fn as string,
-  attrSchema: z.object({
-    fn: z.enum(ELEMENTWISE_FN_NAMES),
-    nary: z.number().int().min(1),
-  }),
+  attrs: { fn: oneOf(ELEMENTWISE_FN_NAMES), nary: int({ min: 1 }) },
   arity: { inputs: { min: 1 }, outputs: 1 },
   inferAxisNames: (inNames, ctx) => [
     broadcastAxisNames(inNames, ctx.inShapes, ctx.outShapes[0]),

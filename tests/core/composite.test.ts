@@ -80,14 +80,14 @@ describe("composite expansion equivalence", () => {
 
   it("layernorm with weight and bias", () => {
     const graph = G({ X: [2, 3, 4], W: [4], B: [4] }, [
-      ["ln", "normalize", ["X", "W", "B"], ["Y"], { kind: "layernorm", axes: [-1], hasWeight: true, hasBias: true }],
+      ["ln", "normalize", ["X", "W", "B"], ["Y"], { kind: "layer_norm", axes: [-1], hasWeight: true, hasBias: true }],
     ]);
     assertEquivalent(graph, "ln", "Y");
   });
 
   it("rmsnorm with weight", () => {
     const graph = G({ X: [3, 4], W: [4] }, [
-      ["rn", "normalize", ["X", "W"], ["Y"], { kind: "rmsnorm", axes: [-1], hasWeight: true, hasBias: false }],
+      ["rn", "normalize", ["X", "W"], ["Y"], { kind: "rms_norm", axes: [-1], hasWeight: true, hasBias: false }],
     ]);
     assertEquivalent(graph, "rn", "Y");
   });
@@ -137,7 +137,7 @@ describe("composite expansion equivalence", () => {
         "normalize",
         ["X", "W", "B"],
         ["Y"],
-        { kind: "layernorm", axes: [-1], hasWeight: true, hasBias: true },
+        { kind: "layer_norm", axes: [-1], hasWeight: true, hasBias: true },
       ],
     ]);
     const primitive = resolveGraph(graph);

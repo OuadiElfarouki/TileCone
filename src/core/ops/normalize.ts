@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { axes, bool, oneOf } from "./kinds";
 import { Box, Region, canonicalize, count, coversAxisFully, fromBox, iv } from "../region";
 import { normAxes } from "./reduce";
 import {
@@ -14,7 +14,7 @@ import { sameAxisNames } from "./axis-names";
 import { axisWord } from "./axis-names";
 import { sameSymShape } from "./sym-shape";
 
-type NAttrs = { kind: "layernorm" | "rmsnorm"; axes: number[]; hasWeight: boolean; hasBias: boolean };
+type NAttrs = { kind: "layer_norm" | "rms_norm"; axes: number[]; hasWeight: boolean; hasBias: boolean };
 
 function cfg(ctx: OpCtx) {
   const a = ctx.attrs as NAttrs;
@@ -42,7 +42,7 @@ function normalizeFlops(outRegion: Region, ctx: OpCtx): number {
   });
   const selected = count(outRegion);
   const affineOps = Number(hasWeight) + Number(hasBias);
-  if (kind === "layernorm")
+  if (kind === "layer_norm")
     return 4 * count(expanded) + 4 * count(statistics) + (1 + affineOps) * selected;
   return 2 * count(expanded) + 4 * count(statistics) + (1 + affineOps) * selected;
 }
@@ -95,12 +95,12 @@ export const normalizeOp: OpSpec = {
   name: "normalize",
   displayName: (attrs) => attrs.kind as string,
   dependencyNote: normalizeDependencyNote,
-  attrSchema: z.object({
-    kind: z.enum(["layernorm", "rmsnorm"]),
-    axes: z.array(z.number().int()).nonempty(),
-    hasWeight: z.boolean().default(false),
-    hasBias: z.boolean().default(false),
-  }),
+  attrs: {
+    kind: oneOf(["layer_norm", "rms_norm"]),
+    axes: axes({ default: -1 }),
+    hasWeight: bool({ default: false }),
+    hasBias: bool({ default: false }),
+  },
   arity: { inputs: { min: 1, max: 3 }, outputs: 1 },
   inferAxisNames: sameAxisNames,
   inferSymShapes: sameSymShape,

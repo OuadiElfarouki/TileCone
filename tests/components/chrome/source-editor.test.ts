@@ -17,7 +17,7 @@ const SOURCES: [string, string][] = [
   ["empty", ""],
   ["one line, no newline", "A = 1"],
   ["one line, trailing newline", "A = 1\n"],
-  ["blank line in the middle", "A = Tensor(M,K, dtype=fp16)\n\nB = relu(A)\n"],
+  ["blank line in the middle", "A = Tensor(M, K, dtype=fp16)\n\nB = relu(A)\n"],
   ["blank lines at the end", "A = 1\n\n\n"],
   ["only newlines", "\n\n\n"],
   ["trailing spaces", "A = 1   \n   \nB = 2\n"],

@@ -1,7 +1,7 @@
 /** Graph IR: types, validation, topological sort, symbolic shape resolution. */
 
-import { ZodObject, ZodType, ZodIssue } from "zod";
 import { getOp } from "./ops/index";
+import { canonicalAttrs, checkAttrs } from "./ops/kinds";
 import { dimSymbols, GraphError, GraphErrorSubject, GraphWarning, resolveShape, Shape, Sym } from "./shapes";
 import { compareDims, dimCache } from "./dim-algebra";
 import { DTYPES, DTYPE_BYTES, DType, type DTypeWidening } from "./dtypes";
@@ -107,11 +107,8 @@ function validateCardinality(
     typeof contract === "number"
       ? contract === 1
       : contract.max === undefined && contract.min === 1;
-  throw new GraphError(
-    `node "${node.id}" (${node.op}): expected ${expected} ${side}${singular ? "" : "s"}, got ${count}`,
-    "GRAPH_ARITY",
-    { kind: "node", id: node.id }
-  );
+  const detail = `expected ${expected} ${side}${singular ? "" : "s"}, got ${count}`;
+  throw new GraphError(`node "${node.id}" (${node.op}): ${detail}`, "GRAPH_ARITY", { kind: "node", id: node.id }, detail);
 }
 
 /**
@@ -332,12 +329,14 @@ function symEqualityWarnings(node: Node, equalities: SymEquality[], formal: Form
     if (eq.orOne && (isOne(eq.left) || (eq.orOne === "either" && isOne(eq.right)))) continue;
     if (compareDims(eq.left, eq.right, context) !== "different") continue;
     const bindings = formal.bindings([eq.left, eq.right]);
+    const detail =
+      `${eq.what} must be equal; ` +
+      `${formal.readable(eq.left)} and ${formal.readable(eq.right)} agree ` +
+      `${bindings ? `for ${bindings}` : "here"} but are different expressions, so other ` +
+      `values can break this. Write both with one symbol, or a derived one, to keep them equal`;
     warnings.push({
-      message:
-        `node "${node.id}" (${node.op}): ${eq.what} must be equal; ` +
-        `${formal.readable(eq.left)} and ${formal.readable(eq.right)} agree ` +
-        `${bindings ? `for ${bindings}` : "here"} but are different expressions, so other ` +
-        `values can break this. Write both with one symbol, or a derived one, to keep them equal`,
+      message: `node "${node.id}" (${node.op}): ${detail}`,
+      detail,
       code: "GRAPH_SYMBOLIC_SHAPE",
       subject: {
         kind: "node",
@@ -374,75 +373,6 @@ function validateTensorCardinality(shape: number[], dtype: DType, subject: Graph
       "GRAPH_SHAPE",
       subject
     );
-}
-
-/** Narrow an object attribute schema so unknown keys are rejected instead of
- * stripped. Done here rather than in each `OpSpec` so a new operation cannot
- * forget it; see the note on `OpSpec.attrSchema` for the escape hatch. */
-function strictAttrs(schema: ZodType<unknown>): ZodType<unknown> {
-  return schema instanceof ZodObject ? schema.strict() : schema;
-}
-
-function editDistance(a: string, b: string): number {
-  const row = Array.from({ length: b.length + 1 }, (_, j) => j);
-  for (let i = 1; i <= a.length; i++) {
-    let diagonal = row[0];
-    row[0] = i;
-    for (let j = 1; j <= b.length; j++) {
-      const above = row[j];
-      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, diagonal + (a[i - 1] === b[j - 1] ? 0 : 1));
-      diagonal = above;
-    }
-  }
-  return row[b.length];
-}
-
-/** The nearest attribute the operation actually declares, when the unknown one
- * is close enough to be a misspelling rather than a different idea. */
-function nearestKey(unknown: string, known: string[]): string | null {
-  let best: string | null = null;
-  let bestDistance = Infinity;
-  for (const candidate of known) {
-    const d = editDistance(unknown.toLowerCase(), candidate.toLowerCase());
-    if (d < bestDistance) {
-      best = candidate;
-      bestDistance = d;
-    }
-  }
-  return best !== null && bestDistance <= 2 && bestDistance < unknown.length ? best : null;
-}
-
-/** An unrecognized attribute is the failure worth explaining well: `keepdims`
- * for `keepdim` used to resolve to a different shape without a word.
- *
- * Returns the attribute the issue is about alongside the prose, so a caller
- * with source spans can underline that attribute instead of re-deriving its
- * name from the sentence this function just wrote. */
-function describeAttrIssue(
-  issue: ZodIssue,
-  schema: ZodType<unknown>
-): { message: string; attribute?: string } {
-  if (issue.code === "unrecognized_keys") {
-    const known = schema instanceof ZodObject ? Object.keys(schema.shape as object) : [];
-    return {
-      // The written key, not a declared one: it is what the author can see.
-      attribute: issue.keys[0],
-      message: issue.keys
-        .map((key) => {
-          const suggestion = nearestKey(key, known);
-          if (suggestion) return `unknown attribute "${key}" (did you mean "${suggestion}"?)`;
-          return known.length
-            ? `unknown attribute "${key}"; this op takes ${known.join(", ")}`
-            : `unknown attribute "${key}"; this op takes no attributes`;
-        })
-        .join("; "),
-    };
-  }
-  const path = issue.path.join(".");
-  return {
-    attribute: typeof issue.path[0] === "string" ? issue.path[0] : undefined,
-    message: path ? `${path}: ${issue.message}` : issue.message,
-  };
 }
 
 /**
@@ -611,27 +541,16 @@ export function resolveGraph(source: Graph): ResolvedGraph {
         );
     validateCardinality(n, "input", n.inputs.length, spec.arity.inputs);
     validateCardinality(n, "output", n.outputs.length, spec.arity.outputs);
-    const parsed = strictAttrs(spec.attrSchema).safeParse(n.attrs ?? {});
-    if (!parsed.success) {
-      const described = parsed.error.issues.map((issue) =>
-        describeAttrIssue(issue, spec.attrSchema)
-      );
+    // Only what can be checked without the operands: canonical values need
+    // the inputs' shapes and are made during inference below.
+    const problem = checkAttrs(spec.attrs, n.attrs ?? {});
+    if (problem)
       throw new GraphError(
-        `node "${n.id}" (${n.op}): bad attrs: ${described.map((d) => d.message).join("; ")}`,
+        `node "${n.id}" (${n.op}): bad attrs: ${problem.message}`,
         "GRAPH_INVALID_ATTRIBUTES",
-        { kind: "node", id: n.id, attribute: described.find((d) => d.attribute)?.attribute }
+        { kind: "node", id: n.id, attribute: problem.attribute },
+        problem.message
       );
-    }
-    n.attrs = parsed.data as Record<string, unknown>;
-    try {
-      spec.validateArity?.(n.inputs.length, n.outputs.length, n.attrs);
-    } catch (e) {
-      throw new GraphError(
-        `node "${n.id}" (${n.op}): ${(e as Error).message}`,
-        "GRAPH_ARITY",
-        { kind: "node", id: n.id }
-      );
-    }
     for (let s = 0; s < n.outputs.length; s++) {
       const t = n.outputs[s];
       if (producers.has(t))
@@ -753,6 +672,34 @@ export function resolveGraph(source: Graph): ResolvedGraph {
         );
       return r;
     });
+    const inAxisNames = n.inputs.map((id, slot) => axisNamesOf(g.tensors[id], inShapes[slot].length));
+    // The written attributes become the canonical ones every later step and
+    // every analysis reads. The source graph keeps what was written.
+    const canonical = canonicalAttrs(spec.attrs, {
+      inShapes,
+      inAxisNames,
+      written: n.attrs ?? {},
+      params: shapeParams,
+      outputCount: n.outputs.length,
+    });
+    if ("problem" in canonical)
+      throw new GraphError(
+        `node "${n.id}" (${n.op}): bad attrs: ${canonical.problem.message}`,
+        "GRAPH_INVALID_ATTRIBUTES",
+        { kind: "node", id: n.id, attribute: canonical.problem.attribute },
+        canonical.problem.message
+      );
+    n.attrs = canonical.attrs;
+    try {
+      spec.validateArity?.(n.inputs.length, n.outputs.length, n.attrs);
+    } catch (e) {
+      throw new GraphError(
+        `node "${n.id}" (${n.op}): ${(e as Error).message}`,
+        "GRAPH_ARITY",
+        { kind: "node", id: n.id },
+        (e as Error).message
+      );
+    }
     let outShapes: number[][];
     try {
       outShapes = spec.inferShapes(inShapes, n.attrs, shapeParams);
@@ -760,7 +707,8 @@ export function resolveGraph(source: Graph): ResolvedGraph {
       throw new GraphError(
         `node "${n.id}" (${n.op}): shape inference failed: ${(e as Error).message}`,
         "GRAPH_SHAPE",
-        { kind: "node", id: n.id }
+        { kind: "node", id: n.id },
+        (e as Error).message
       );
     }
     if (outShapes.length !== n.outputs.length)
@@ -783,7 +731,8 @@ export function resolveGraph(source: Graph): ResolvedGraph {
           throw new GraphError(
             `node "${n.id}" (${n.op}): inferred output ${slot}, axis ${axis} has invalid extent ${String(extent)}`,
             "GRAPH_SHAPE",
-            { kind: "node", id: n.id }
+            { kind: "node", id: n.id },
+            `inferred output ${slot}, axis ${axis} has invalid extent ${String(extent)}`
           );
       }
     }
@@ -793,7 +742,7 @@ export function resolveGraph(source: Graph): ResolvedGraph {
       // the same way a bad `inferShapes` is rather than silently dropping names.
       try {
         outNames = spec.inferAxisNames(
-          n.inputs.map((id, slot) => axisNamesOf(g.tensors[id], inShapes[slot].length)),
+          inAxisNames,
           { inShapes, outShapes, attrs: n.attrs }
         );
       } catch (e) {
@@ -897,7 +846,8 @@ export function resolveGraph(source: Graph): ResolvedGraph {
       throw new GraphError(
         `node "${n.id}" (${n.op}): dtype inference failed: ${(e as Error).message}`,
         "GRAPH_DTYPE",
-        { kind: "node", id: n.id }
+        { kind: "node", id: n.id },
+        (e as Error).message
       );
     }
     if (outDTypes.length !== n.outputs.length)

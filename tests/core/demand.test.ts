@@ -45,7 +45,7 @@ describe("input sharing across the enabled tiles", () => {
   it("counts only tiles whose cone reaches a given input", () => {
     const { resolved } = compileDSL(`A = Tensor(2, dtype=fp16)
 B = Tensor(2, dtype=fp16)
-C = concat(A, B, axis=0)
+C = concat([A, B], axis=0)
 `);
     const rows = inputSharing(resolved, [
       coneOf(resolved, "C", fromBox(box([0, 2]))),

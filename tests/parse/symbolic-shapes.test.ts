@@ -29,8 +29,8 @@ describe("extents that agree only for the current bindings", () => {
 N = 4
 K = 38
 X = Tensor(M, N)
-F = reshape(X, shape=[M*N])
-Y = reshape(F, shape=[N/2, M*2])
+F = reshape(X, [M*N])
+Y = reshape(F, [N/2, M*2])
 `;
 
   it("builds a contraction whose sides are equal only because M == N, and warns", () => {
@@ -55,10 +55,10 @@ Y = reshape(F, shape=[N/2, M*2])
   });
 
   it("checks a reshape's element count as an expression", () => {
-    const src = "M = 4\nN = 4\nX = Tensor(M, N)\nY = reshape(X, shape=[N*N])\n";
+    const src = "M = 4\nN = 4\nX = Tensor(M, N)\nY = reshape(X, [N*N])\n";
     expect(warning(src).message).toContain("M*N and N*N agree");
-    expect(underlined(src)).toBe("shape=[N*N]");
-    accepts("H = 4\nD = 8\nX = Tensor(H*D, 3)\nY = reshape(X, shape=[(H*D)/H, H*3])\n");
+    expect(underlined(src)).toBe("[N*N]");
+    accepts("H = 4\nD = 8\nX = Tensor(H*D, 3)\nY = reshape(X, [(H*D)/H, H*3])\n");
   });
 
   it("treats a parameter matching a literal as a coincidence", () => {
@@ -80,39 +80,39 @@ Y = reshape(F, shape=[N/2, M*2])
 
   it("checks split sizes, concat axes and normalization weights", () => {
     expect(
-      warning("H = 4\nD = 2\nX = Tensor(H*D)\nA, B = split(X, axis=0, sizes=[D*2, H])\n").message
+      warning("H = 4\nD = 2\nX = Tensor(H*D)\nA, B = split(X, [D*2, H], axis=0)\n").message
     ).toContain("D*2+H and H*D agree");
     expect(
-      warning("R = 4\nC = 4\nA = Tensor(R, 2)\nB = Tensor(C, 3)\nY = concat(A, B, axis=1)\n").message
+      warning("R = 4\nC = 4\nA = Tensor(R, 2)\nB = Tensor(C, 3)\nY = concat([A, B], axis=1)\n").message
     ).toContain("R and C agree");
     expect(
-      warning("S = 4\nE = 8\nF = 8\nX = Tensor(S, E)\nW = Tensor(F)\nY = layernorm(X, W)\n").message
+      warning("S = 4\nE = 8\nF = 8\nX = Tensor(S, E)\nW = Tensor(F)\nY = layer_norm(X, W)\n").message
     ).toContain("E and F agree");
   });
 
   it("takes a literal reshape target as written, not the input's expression", () => {
-    const src = "M = 2\nX = Tensor(M, 8/M)\nY = reshape(X, shape=[2,4])\nA = Tensor(4,3)\nZ = matmul(Y,A)\n";
+    const src = "M = 2\nX = Tensor(M, 8/M)\nY = reshape(X, [2,4])\nA = Tensor(4, 3)\nZ = matmul(Y, A)\n";
     accepts(src);
     expect(compileDSL(src).resolved.tensors.Y.symShape).toEqual([2, 4]);
   });
 
   it("compares every pair of operands, so an unknown first one hides nothing", () => {
-    const unknown = "X0 = Tensor(8, 2)\nX = slice(X0, starts=[0, 0], stops=[4, 2], steps=[1, 1])\n";
+    const unknown = "X0 = Tensor(8, 2)\nX = X0[0:4, 0:2]\n";
     expect(warning(`M = 4\nN = 4\n${unknown}A = Tensor(M, 2)\nB = Tensor(N, 2)\nY = einsum("ij,ij,ij->ij", X, A, B)\n`).message)
       .toContain("M and N agree");
-    expect(warning(`M = 4\nN = 4\n${unknown}A = Tensor(M, 3)\nB = Tensor(N, 5)\nY = concat(X, A, B, axis=1)\n`).message)
+    expect(warning(`M = 4\nN = 4\n${unknown}A = Tensor(M, 3)\nB = Tensor(N, 5)\nY = concat([X, A, B], axis=1)\n`).message)
       .toContain("M and N agree");
   });
 
   it("compiles a long chain of derived symbols promptly", () => {
     const chain = Array.from({ length: 200 }, (_, i) => `D${i + 1} = D${i}+D${i}-D${i}`).join("\n");
     const started = performance.now();
-    accepts(`D0 = 4\n${chain}\nX = Tensor(D200, 2)\nY = reshape(X, shape=[D0*2])\n`);
+    accepts(`D0 = 4\n${chain}\nX = Tensor(D200, 2)\nY = reshape(X, [D0*2])\n`);
     expect(performance.now() - started).toBeLessThan(2000);
   });
 
   it("carries a symbolic split size downstream", () => {
-    const { resolved } = compileDSL("H = 4\nD = 2\nX = Tensor(H*D+D)\nA, B = split(X, axis=0, sizes=[H*D, D])\n");
+    const { resolved } = compileDSL("H = 4\nD = 2\nX = Tensor(H*D+D)\nA, B = split(X, [H*D, D], axis=0)\n");
     expect(resolved.tensors.A.symShape).toEqual(["H*D"]);
     expect(resolved.tensors.B.symShape).toEqual(["D"]);
   });
@@ -127,8 +127,8 @@ C = 4
 H = 16
 X = Tensor(N, C, H, H)
 W = Tensor(C, C, 3, 3)
-Y = conv(X, W, stride=[2, 2], pads=[[1, 1], [1, 1]], dilation=[1, 1])
-Z = reshape(Y, shape=[N, C*H/2*H/2])
+Y = conv2d(X, W, stride=2, padding=1)
+Z = reshape(Y, [N, C*H/2*H/2])
 `);
   });
 
@@ -138,13 +138,13 @@ C = 4
 G = 4
 X = Tensor(N, C, 8, 8)
 W = Tensor(C, G, 3, 3)
-Y = conv(X, W, stride=[1, 1], pads=[[1, 1], [1, 1]], dilation=[1, 1])
+Y = conv2d(X, W, padding=1)
 `;
     expect(warning(src).message).toContain("C and G agree");
   });
 
   it("does not refute what a barrier produced", () => {
-    accepts('P = 2\nQ = 4\nX = opaque(op="Src", shapes=[[8]], dtypes=[fp32])\nY = reshape(X, shape=[P, Q])\n');
+    accepts('P = 2\nQ = 4\nX = opaque(op="Src", shapes=[[8]], dtypes=[fp32])\nY = reshape(X, [P, Q])\n');
   });
 
   it("keeps the canonical display of a lost axis", () => {
@@ -153,7 +153,7 @@ C = 4
 H = 16
 X = Tensor(N, C, H, H)
 W = Tensor(C, C, 3, 3)
-Y = conv(X, W, stride=[2, 2], pads=[[1, 1], [1, 1]], dilation=[1, 1])
+Y = conv2d(X, W, stride=2, padding=1)
 `);
     expect(resolved.tensors.Y.symShape).toEqual(["N", "C", 8, 8]);
   });

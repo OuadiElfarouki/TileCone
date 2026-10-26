@@ -36,6 +36,9 @@ export type GraphErrorSubject = {
  */
 export type GraphWarning = {
   message: string;
+  /** The message without the node it is about, for a front end that names
+   * the node in its own terms. */
+  detail?: string;
   /** Extents that agree for the current bindings but not as expressions. */
   code: "GRAPH_SYMBOLIC_SHAPE";
   subject: GraphErrorSubject;
@@ -45,7 +48,13 @@ export class GraphError extends Error {
   constructor(
     message: string,
     public code: GraphErrorCode = "GRAPH_INVALID",
-    public subject?: GraphErrorSubject
+    public subject?: GraphErrorSubject,
+    /**
+     * For an error about a node: the message without the node's id and
+     * operation, which a front end replaces with what the author wrote. Absent
+     * where the error is about the operation's own implementation.
+     */
+    public detail?: string
   ) {
     super(message);
     this.name = "GraphError";
@@ -212,6 +221,23 @@ function evalDimExpr(node: DimNode, params: Record<string, number>): number {
   }
 }
 
+/** Evaluate the dimension-expression grammar without requiring a positive extent.
+ * Slice bounds may be zero or negative; arithmetic and bindings stay checked. */
+export function resolveInteger(s: Sym, params: Record<string, number>): number {
+  if (typeof s === "number") {
+    if (!Number.isSafeInteger(s))
+      throw new GraphError(`bad dimension ${s}`, "GRAPH_SHAPE");
+    return s;
+  }
+  const parsed = readDimExpr(s);
+  if (!parsed || skipWs(s, parsed.end) !== s.length)
+    throw new GraphError(`bad dimension expression "${s}"`, "GRAPH_SHAPE");
+  const value = evalDimExpr(parsed.node, params);
+  if (!Number.isSafeInteger(value))
+    throw new GraphError(`dimension "${s}" resolves to ${value}`, "GRAPH_SHAPE");
+  return value;
+}
+
 /* Zero is rejected on the same terms as a negative extent, and on the same
    terms a parameter binding of 0 is already rejected above. A tensor with an
    empty axis has no elements, so it has no regions, and this tool exists to
@@ -220,17 +246,12 @@ function evalDimExpr(node: DimNode, params: Record<string, number>): number {
    through here - declarations and reshape targets - so an operation that
    genuinely infers an empty result is unaffected. */
 function resolveDim(s: Sym, params: Record<string, number>): number {
-  if (typeof s === "number") {
-    if (!Number.isSafeInteger(s) || s <= 0)
-      throw new GraphError(`bad dimension ${s}`, "GRAPH_SHAPE");
-    return s;
-  }
-  const parsed = readDimExpr(s);
-  if (!parsed || skipWs(s, parsed.end) !== s.length)
-    throw new GraphError(`bad dimension expression "${s}"`, "GRAPH_SHAPE");
-  const value = evalDimExpr(parsed.node, params);
-  if (!Number.isSafeInteger(value) || value <= 0)
-    throw new GraphError(`dimension "${s}" resolves to ${value}`, "GRAPH_SHAPE");
+  const value = resolveInteger(s, params);
+  if (value <= 0)
+    throw new GraphError(
+      typeof s === "number" ? `bad dimension ${s}` : `dimension "${s}" resolves to ${value}`,
+      "GRAPH_SHAPE"
+    );
   return value;
 }
 

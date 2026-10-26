@@ -7,6 +7,7 @@ import { workspaceToLink, shareTarget } from "../../state/share";
 import { CopyButton } from "./CopyButton";
 import { WorkspaceFiles } from "./WorkspaceFiles";
 import { opLabel } from "../../core/ops/index";
+import { SUBSCRIPT_OP } from "../../parse/signatures";
 import { useStore } from "../../state/store";
 import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
 import { seedTile } from "../../view/tensor/tile-spec";
@@ -275,9 +276,10 @@ function Operations(): React.ReactElement {
       {resolved.topo.map((node) => {
         const outputs = node.outputs.map((id) => resolved.tensors[id]);
         const hot = [...node.inputs, ...node.outputs].some((id) => involved.has(id));
-        const signature = `${outputs.map((t) => t.name).join(", ")} = ${opLabel(node)}(${node.inputs
-          .map((id) => resolved.tensors[id].name)
-          .join(", ")})`;
+        const inputs = node.inputs.map((id) => resolved.tensors[id].name);
+        // A slice is written as a subscript, so it is listed as one.
+        const call = node.op === SUBSCRIPT_OP ? `${inputs[0]}[…]` : `${opLabel(node)}(${inputs.join(", ")})`;
+        const signature = `${outputs.map((t) => t.name).join(", ")} = ${call}`;
         const meta = outputs
           .map((t) => `[${t.resolved.join(" × ")}] ${t.dtype}`)
           .join(" · ");

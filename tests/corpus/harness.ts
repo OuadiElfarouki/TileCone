@@ -216,7 +216,7 @@ export function randomGraph(r: () => number, nNodes: number) {
         const j = randInt(r, 0, i + 1);
         [perm[i], perm[j]] = [perm[j], perm[i]];
       }
-      emit("transpose", [t], perm.map((p) => sh[p]), { perm });
+      emit("permute_dims", [t], perm.map((p) => sh[p]), { perm });
     } else if (choice === 1) {
       // diamond: t + t
       emit("elementwise", [t, t], sh.slice(), { fn: "add", nary: 2 });
@@ -244,7 +244,7 @@ export function randomGraph(r: () => number, nNodes: number) {
       emit("reshape", [t], dims, { shape: dims });
     } else if (choice === 5 && sh.length >= 1) {
       const axis = randInt(r, 0, sh.length);
-      emit("cumsum", [t], sh.slice(), { axis, reverse: r() < 0.5 });
+      emit("cumulative_sum", [t], sh.slice(), { axis, reverse: r() < 0.5 });
     } else if (choice === 6 && sh.length >= 1) {
       const axis = randInt(r, 0, sh.length);
       const out = sh.slice();
@@ -269,7 +269,7 @@ export function randomGraph(r: () => number, nNodes: number) {
     } else if (choice === 9 && sh.length >= 1) {
       const axis = randInt(r, 0, sh.length);
       const pads: [number, number][] = sh.map(() => [0, 0]);
-      const mode = ["constant", "replicate", "reflect"][randInt(r, 0, 3)];
+      const mode = ["constant", "edge", "reflect"][randInt(r, 0, 3)];
       // reflect cannot pad wider than extent-1
       const cap = mode === "reflect" ? Math.max(0, sh[axis] - 1) : 2;
       pads[axis] = [randInt(r, 0, Math.min(2, cap) + 1), randInt(r, 0, Math.min(2, cap) + 1)];
@@ -293,10 +293,10 @@ export function randomGraph(r: () => number, nNodes: number) {
       // expand a fresh degenerate axis up to t's shape
       const axis = randInt(r, 0, sh.length);
       const src = newInput(sh.map((e, i) => (i === axis ? 1 : e)));
-      emit("expand", [src], sh.slice(), { shape: sh.slice() });
+      emit("broadcast_to", [src], sh.slice(), { shape: sh.slice() });
     } else if (choice === 12 && sh.length >= 1) {
       const perm = sh.map((_, i) => i);
-      emit("transpose", [t], perm.map((p) => sh[p]), { perm });
+      emit("permute_dims", [t], perm.map((p) => sh[p]), { perm });
     } else if (choice === 13 && sh.length >= 1) {
       const axes = [randInt(r, 0, sh.length)];
       const wShape = axes.map((a) => sh[a]);
@@ -305,7 +305,7 @@ export function randomGraph(r: () => number, nNodes: number) {
       if (axes[0] === sh.length - 1) {
         const w = newInput(wShape);
         emit("normalize", [t, w], sh.slice(), {
-          kind: r() < 0.5 ? "layernorm" : "rmsnorm",
+          kind: r() < 0.5 ? "layer_norm" : "rms_norm",
           axes,
           hasWeight: true,
           hasBias: false,

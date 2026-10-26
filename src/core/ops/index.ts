@@ -1,5 +1,5 @@
 import { Attrs, OpSpec } from "./types";
-import { einsumOp, matmulOp, bmmOp, linearOp } from "./einsum";
+import { einsumOp, matmulOp, linearOp } from "./einsum";
 import { elementwiseOp } from "./elementwise";
 import { reduceOp } from "./reduce";
 import { softmaxOp } from "./softmax";
@@ -52,7 +52,6 @@ export function listOps(): OpSpec[] {
 [
   einsumOp,
   matmulOp,
-  bmmOp,
   linearOp,
   elementwiseOp,
   reduceOp,

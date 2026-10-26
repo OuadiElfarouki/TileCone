@@ -62,7 +62,7 @@ describe("a frontier bounds the cone", () => {
      removes the second route only, so A keeps what the direct route supplies. */
   it("cuts paths through the frontier, not tensors reachable around it", () => {
     const { executor } = compileDSL(`A = Tensor(3, 3)
-B = transpose(A, perm=[1, 0])
+B = permute_dims(A, [1, 0])
 D = add(B, A)
 `);
     const up = executor.upstreamWithin("D", fromBox(box([0, 1], [1, 2])), ["B"]);

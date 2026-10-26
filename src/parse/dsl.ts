@@ -1,30 +1,33 @@
-/** Text DSL (IDEA.md §6.2):
+/** Text DSL:
  *   M = 512
  *   K = 2048
  *   A = Tensor(M, K, dtype=fp16)
  *   C = einsum("mk,kn->mn", A, B)
- *   Y0, Y1 = split(X, axis=0, sizes=[2, 2])
- * One statement per line, `#` comments.
+ *   Y0, Y1 = split(X, [2, 2], axis=0)
+ *   Z = Y0[:, 0:K/2]
+ * One statement per line, `#` comments. The functions and their parameters are
+ * the signatures in `signatures.ts`.
  *
- * This module is now a facade. Text becomes an AST in `parser.ts` and a graph
- * in `lower.ts`; both collect errors rather than stopping at the first, and
+ * This module is a facade. Text becomes an AST in `parser.ts` and a graph in
+ * `lower.ts`; both collect errors rather than stopping at the first, and
  * `compiler.ts` is the entry point that surfaces all of them. The functions
- * here keep their old throwing contract for callers that want one graph or one
- * error, and `toDSL` still lives here because printing is the inverse of the
- * whole pipeline rather than of either half.
+ * here keep a throwing contract for callers that want one graph or one error,
+ * and `toDSL` lives here because printing is the inverse of the whole pipeline
+ * rather than of either half.
  */
 
-import { Graph } from "../core/graph";
-import { readDimExpr } from "../core/shapes";
+import { Graph, Node, resolveGraphCollecting } from "../core/graph";
 import { DType } from "../core/dtypes";
-import { lowerProgram, DTYPE_TO_DSL } from "./lower";
+import type { Kind } from "../core/ops/kinds";
+import type { Attrs } from "../core/ops/types";
+import { DTYPE_TO_DSL } from "./bind";
+import { lowerProgram } from "./lower";
 import { parseProgram } from "./parser";
-import { sugarForNode } from "./sugar";
+import { kindOf, signatureForNode, SUBSCRIPT_OP, type Signature } from "./signatures";
 import { DSLSourceMap } from "./source";
-import { isDSLBooleanLiteral } from "./lexical";
 
 export { DSLError } from "./parser";
-export { DSL_DTYPES } from "./lower";
+export { DSL_DTYPES } from "./bind";
 
 export function parseDSL(text: string): Graph {
   return parseDSLWithSource(text).graph;
@@ -43,33 +46,98 @@ export function parseDSLWithSource(text: string): ParsedDSL {
 
 // ------------------------------------------------------------------- toDSL
 
-/** Whether this attribute string is a dimension expression in full: a bare
- *  symbol, or arithmetic over symbols and literals. An einsum equation and any
- *  other free text are not, and stay quoted. */
-function isDimExpr(v: string): boolean {
-  if (!v) return false;
-  const read = readDimExpr(v);
-  return read !== null && read.end === v.length;
+/** A value as source text, spelled for its kind as the binder reads it. */
+function valueText(v: unknown, kind: Kind): string {
+  switch (kind.type) {
+    case "text":
+      return JSON.stringify(v);
+    case "dtype":
+      return DTYPE_TO_DSL[v as DType];
+    case "dtypes":
+      return `[${(v as (DType | null)[]).map((d) => (d === null ? "null" : DTYPE_TO_DSL[d])).join(", ")}]`;
+    default:
+      return plainText(v);
+  }
 }
 
-function attrValueToDSL(v: unknown, name?: string): string {
-  // The attribute's name travels into its items: a per-output `dtypes` list
-  // holds canonical dtypes that have to come back out in the DSL's spellings,
-  // and dropping the name on the way in printed `f16` where only `fp16` parses.
-  if (Array.isArray(v)) return `[${v.map((item) => attrValueToDSL(item, name)).join(", ")}]`;
-  if (
-    (name === "dtype" || name === "dtypes") &&
-    typeof v === "string" &&
-    Object.prototype.hasOwnProperty.call(DTYPE_TO_DSL, v)
-  )
-    return DTYPE_TO_DSL[v as DType];
-  // A symbolic dimension is source the author wrote - `H*D`, `P+T` - and has to
-  // come back out that way. Quoting it printed `shape=[B, "KVH*G", D]`, which
-  // parses back to the same graph but is not what anyone typed, and expanding a
-  // composite writes this text into the editor.
-  if (typeof v === "string")
-    return isDimExpr(v) && !isDSLBooleanLiteral(v) ? v : JSON.stringify(v);
+/** Numbers, booleans, lists, and words or dimension expressions, which are bare. */
+function plainText(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(plainText).join(", ")}]`;
   return String(v);
+}
+
+/** `X[a:b, :, ::2]` from a slice's starts, stops and steps as written. */
+function subscriptText(target: string, attrs: Attrs): string {
+  const starts = (attrs.starts as unknown[]) ?? [];
+  const stops = (attrs.stops as unknown[]) ?? [];
+  const steps = (attrs.steps as unknown[]) ?? [];
+  const n = Math.max(starts.length, stops.length, steps.length, 1);
+  const part = (v: unknown) => (v === null || v === undefined ? "" : String(v));
+  const items = Array.from({ length: n }, (_, i) => {
+    const step = steps[i];
+    return `${part(starts[i])}:${part(stops[i])}${step === null || step === undefined || step === 1 ? "" : `:${step}`}`;
+  });
+  return `${target}[${items.join(", ")}]`;
+}
+
+/**
+ * A node as a call to its function. Tensors are positional; an attribute is
+ * positional while every parameter before it was, and by name after the first
+ * that was left out or is keyword-only. Values are shortened by their kind.
+ */
+function callText(sig: Signature, node: Node, inNames: string[]): string {
+  const hidden = new Set([...Object.keys(sig.implied), ...(sig.inputAttrs ?? [])]);
+  const covered = new Set(hidden);
+  const parts: string[] = [];
+  let positional = true;
+  let next = 0;
+  const later = (i: number) => sig.params.slice(i + 1).filter((p) => "role" in p && p.role !== "variadic").length;
+
+  sig.params.forEach((param, i) => {
+    const inOrder = positional && i < sig.keywordOnly;
+    if ("role" in param) {
+      if (param.role === "optional-input" && param.present && node.attrs[param.present] !== true) {
+        positional = false;
+        return;
+      }
+      if (param.role === "inputs" || param.role === "variadic") {
+        const taken = inNames.slice(next, inNames.length - later(i));
+        next += taken.length;
+        if (param.role === "inputs") parts.push(`[${taken.join(", ")}]`);
+        else parts.push(...taken);
+        return;
+      }
+      const name = inNames[next++];
+      parts.push(inOrder ? name : `${param.name}=${name}`);
+      return;
+    }
+    covered.add(param.attr);
+    if (!(param.attr in node.attrs)) {
+      positional = false;
+      return;
+    }
+    const kind = kindOf(sig, param);
+    const value = node.attrs[param.attr];
+    const text = valueText(kind.shorten ? kind.shorten(value) : value, kind);
+    parts.push(inOrder ? text : `${param.name}=${text}`);
+  });
+
+  // Every attribute is written by some parameter, or implied by the name.
+  // Dropping one would print a different graph.
+  for (const key of Object.keys(node.attrs))
+    if (!covered.has(key))
+      throw new Error(`${sig.name}() has no parameter for the ${node.op} attribute "${key}"`);
+  return `${sig.name}(${parts.join(", ")})`;
+}
+
+/**
+ * Canonical attributes for every node resolution reaches. Which function a
+ * node is written as can depend on a value the source left to a default - a
+ * convolution's spatial rank - and that value is only known once resolved.
+ */
+function canonicalAttrsByNode(g: Graph): Map<string, Attrs> {
+  const resolved = resolveGraphCollecting(g).resolved;
+  return new Map((resolved?.topo ?? []).map((node) => [node.id, node.attrs]));
 }
 
 export function toDSL(g: Graph): string {
@@ -89,26 +157,17 @@ export function toDSL(g: Graph): string {
       `${t.name} = ${constructor}(${[...dims, `dtype=${DTYPE_TO_DSL[t.dtype]}`].join(", ")})`
     );
   }
+  const canonical = canonicalAttrsByNode(g);
   for (const n of g.nodes) {
     const outNames = n.outputs.map((o) => g.tensors[o].name);
     const inNames = n.inputs.map((i) => g.tensors[i].name);
-    const attrs = { ...n.attrs };
-    // einsum's equation is positional rather than named: it leads the call, in
-    // front of the operands, the way the author wrote it.
-    const leading: string[] = [];
-    if (n.op === "einsum" && typeof attrs.equation === "string") {
-      leading.push(`"${attrs.equation}"`);
-      delete attrs.equation;
+    if (n.op === SUBSCRIPT_OP) {
+      lines.push(`${outNames[0]} = ${subscriptText(inNames[0], n.attrs)}`);
+      continue;
     }
-    // The sugared call name carries some attributes itself; every *other* one
-    // must still be written, or expanding a composite and recompiling drops it.
-    const sugar = sugarForNode(n.op, attrs);
-    const hidden = new Set(sugar?.implied ?? []);
-    const named = Object.entries(attrs)
-      .filter(([k]) => !hidden.has(k))
-      .map(([k, v]) => `${k}=${attrValueToDSL(v, k)}`);
-    const call = `${sugar?.call ?? n.op}(${[...leading, ...inNames, ...named].join(", ")})`;
-    lines.push(`${outNames.join(", ")} = ${call}`);
+    const sig = signatureForNode(n.op, { ...n.attrs, ...(canonical.get(n.id) ?? {}) });
+    if (!sig) throw new Error(`no DSL function writes node "${n.id}" (${n.op})`);
+    lines.push(`${outNames.join(", ")} = ${callText(sig, n, inNames)}`);
   }
   return lines.join("\n") + "\n";
 }

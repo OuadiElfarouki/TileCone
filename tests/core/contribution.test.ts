@@ -61,7 +61,7 @@ Z = relu(Y)
     // whole prefix -- so the honest statement is the axis, not a count
     const dsl = `S = 16
 X = Tensor(S, dtype=fp32)
-Y = cumsum(X, axis=0, reverse=false)
+Y = cumulative_sum(X, axis=0, reverse=false)
 `;
     const { byTensor } = report(dsl, [["X", tile([4, 8])]]);
     const y = byTensor.get("Y")!;
@@ -74,7 +74,7 @@ Y = cumsum(X, axis=0, reverse=false)
     // consumed in full, so a count is the only true thing to say
     const dsl = `X = Tensor(1, 1, 16, 16, dtype=fp32)
 Kw = Tensor(1, 1, 3, 3, dtype=fp32)
-Y = conv(X, Kw, stride=[1, 1], pads=[[1, 1], [1, 1]], dilation=[1, 1], groups=1)
+Y = conv2d(X, Kw, padding=1)
 `;
     const { byTensor } = report(dsl, [["X", tile([0, 1], [0, 1], [6, 10], [6, 10])]]);
     const y = byTensor.get("Y")!;
@@ -105,7 +105,7 @@ Y = conv(X, Kw, stride=[1, 1], pads=[[1, 1], [1, 1]], dilation=[1, 1], groups=1)
   });
 
   it("marks a verdict drawn from an over-approximated region", () => {
-    const graph = G({ D: [6, 3], I: [4] }, [["n", "gather", ["D", "I"], ["Y"], { axis: 0 }]]);
+    const graph = G({ D: [6, 3], I: [4] }, [["n", "take", ["D", "I"], ["Y"], { axis: 0 }]]);
     graph.tensors.I.dtype = "i32";
     const resolved = resolveGraph(graph);
     const seed = tile([0, 2], [0, 3]);

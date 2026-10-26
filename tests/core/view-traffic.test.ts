@@ -12,11 +12,11 @@ S = 8
 H = 2
 D = 4
 X = Tensor(B, S, H*D, dtype=fp32)
-Q4 = reshape(X, shape=[B, S, H, D])
-Qh = transpose(Q4, perm=[0, 2, 1, 3])
+Q4 = reshape(X, [B, S, H, D])
+Qh = permute_dims(Q4, [0, 2, 1, 3])
 Y = relu(Qh)
-Yt = transpose(Y, perm=[0, 2, 1, 3])
-Ym = reshape(Yt, shape=[B, S, H*D])
+Yt = permute_dims(Y, [0, 2, 1, 3])
+Ym = reshape(Yt, [B, S, H*D])
 `).resolved;
 
 describe("views a layout allows", () => {
@@ -35,9 +35,9 @@ describe("views a layout allows", () => {
 
   it("brings a transpose followed by its inverse back to row-major", () => {
     const resolved = compileDSL(`X = Tensor(8, 4, dtype=fp32)
-T = transpose(X, perm=[1, 0])
-U = transpose(T, perm=[1, 0])
-R = reshape(U, shape=[32])
+T = permute_dims(X, [1, 0])
+U = permute_dims(T, [1, 0])
+R = reshape(U, [32])
 `).resolved;
     const { views, layouts } = viewLayouts(resolved);
     expect(layouts.get("T")).toEqual({ order: [1, 0] });
@@ -48,12 +48,12 @@ R = reshape(U, shape=[32])
 
   it("composes non-trivial permutations and only calls the result row-major when it is", () => {
     const resolved = compileDSL(`X = Tensor(2, 3, 4, dtype=fp32)
-A = transpose(X, perm=[1, 2, 0])
-B = transpose(A, perm=[2, 0, 1])
-C = transpose(X, perm=[2, 0, 1])
-D = transpose(C, perm=[2, 0, 1])
-RB = reshape(B, shape=[24])
-RD = reshape(D, shape=[24])
+A = permute_dims(X, [1, 2, 0])
+B = permute_dims(A, [2, 0, 1])
+C = permute_dims(X, [2, 0, 1])
+D = permute_dims(C, [2, 0, 1])
+RB = reshape(B, [24])
+RD = reshape(D, [24])
 `).resolved;
     const { views, layouts } = viewLayouts(resolved);
     // [1, 2, 0] then [2, 0, 1] is the identity; applying [2, 0, 1] twice is not.
@@ -84,7 +84,7 @@ RD = reshape(D, shape=[24])
       const shape = Array.from({ length: rank }, () => 1 + rand(3));
       const perms = Array.from({ length: 1 + rand(3) }, () => shuffle(rank));
       const lines = [`X = Tensor(${shape.join(", ")}, dtype=fp32)`];
-      perms.forEach((perm, i) => lines.push(`T${i} = transpose(${i ? `T${i - 1}` : "X"}, perm=[${perm}])`));
+      perms.forEach((perm, i) => lines.push(`T${i} = permute_dims(${i ? `T${i - 1}` : "X"}, [${perm}])`));
       const resolved = compileDSL(lines.join("\n") + "\n").resolved;
       const last = `T${perms.length - 1}`;
       const finalShape = resolved.tensors[last].resolved!;
@@ -117,8 +117,8 @@ RD = reshape(D, shape=[24])
 
   it("keeps a transpose that only moves unit axes contiguous", () => {
     const resolved = compileDSL(`X = Tensor(1, 8, 4, dtype=fp32)
-T = transpose(X, perm=[1, 0, 2])
-R = reshape(T, shape=[32])
+T = permute_dims(X, [1, 0, 2])
+R = reshape(T, [32])
 `).resolved;
     const { views } = viewLayouts(resolved);
     expect(views.has(resolved.tensors.R.producer!.nodeId)).toBe(true);

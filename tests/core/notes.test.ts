@@ -71,7 +71,7 @@ Y = softmax(X, axis=-1)
       `X = Tensor(16, 32, dtype=fp16)
 W = Tensor(32, dtype=fp16)
 Bb = Tensor(32, dtype=fp16)
-H = layernorm(X, W, Bb, axes=[-1])
+H = layer_norm(X, W, Bb)
 `,
       "H",
       [[0, 4], [0, 32]]
@@ -87,7 +87,7 @@ H = layernorm(X, W, Bb, axes=[-1])
       `X = Tensor(4, 8, 32, dtype=fp16)
 W = Tensor(32, dtype=fp16)
 Bb = Tensor(32, dtype=fp16)
-H = layernorm(X, W, Bb, axes=[-1])
+H = layer_norm(X, W, Bb)
 `,
       "H",
       [[0, 2], [0, 2], [0, 32]]
@@ -98,7 +98,7 @@ H = layernorm(X, W, Bb, axes=[-1])
   it("a reduction names its collapsed axes", () => {
     const { notes } = notesFor(
       `X = Tensor(8, 16, dtype=fp32)
-Y = sum(X, axes=[1])
+Y = sum(X, axis=1)
 `,
       "Y",
       [[0, 4]]
@@ -167,7 +167,7 @@ H = 32
 W = 32
 X = Tensor(N, C, H, W, dtype=fp16)
 W1 = Tensor(F, C, 3, 3, dtype=fp16)
-Y = conv(X, W1, stride=[2, 2], pads=[[1, 1], [1, 1]], dilation=[1, 1], groups=1)
+Y = conv2d(X, W1, stride=2, padding=1)
 `,
       "Y",
       [[0, 1], [0, 1], [0, 4], [0, 4]]
@@ -187,7 +187,7 @@ H = 33
 W = 33
 X = Tensor(N, C, H, W, dtype=fp16)
 W1 = Tensor(F, C, 3, 3, dtype=fp16)
-Y = conv(X, W1, stride=[3, 3], pads=[[0, 0], [0, 0]], dilation=[1, 1], groups=1)
+Y = conv2d(X, W1, stride=3)
 `,
       "Y",
       [[0, 1], [0, 1], [0, 4], [0, 4]]
@@ -198,7 +198,7 @@ Y = conv(X, W1, stride=[3, 3], pads=[[0, 0], [0, 0]], dilation=[1, 1], groups=1)
   it("a scan is described as triangular, and knows its direction", () => {
     const forward = notesFor(
       `X = Tensor(32, dtype=fp32)
-Y = cumsum(X, axis=0, reverse=false)
+Y = cumulative_sum(X, axis=0, reverse=false)
 `,
       "Y",
       [[8, 16]]
@@ -208,7 +208,7 @@ Y = cumsum(X, axis=0, reverse=false)
 
     const backward = notesFor(
       `X = Tensor(32, dtype=fp32)
-Y = cumsum(X, axis=0, reverse=true)
+Y = cumulative_sum(X, axis=0, reverse=true)
 `,
       "Y",
       [[8, 16]]
@@ -219,7 +219,7 @@ Y = cumsum(X, axis=0, reverse=true)
 
 describe("reshape, the op that looks free and is not", () => {
   const TRAP = `X = Tensor(4, 4, dtype=fp32)
-F = reshape(X, shape=[16])
+F = reshape(X, [16])
 `;
 
   it("warns when a contiguous tile lands on several runs of the input", () => {
@@ -255,7 +255,7 @@ Wv = Tensor(E, E, dtype=fp16)
 Q = matmul(X, Wq)
 K = matmul(X, Wk)
 V = matmul(X, Wv)
-Kt = transpose(K, perm=[1, 0])
+Kt = permute_dims(K, [1, 0])
 S1 = matmul(Q, Kt)
 Y = matmul(S1, V)
 `;
@@ -309,10 +309,10 @@ X = Tensor(S, E, dtype=fp16)
 W = Tensor(E, dtype=fp16)
 Bb = Tensor(E, dtype=fp16)
 V = Tensor(E, E, dtype=fp16)
-C1 = cumsum(X, axis=0, reverse=false)
-C2 = cumsum(C1, axis=0, reverse=true)
+C1 = cumulative_sum(X, axis=0, reverse=false)
+C2 = cumulative_sum(C1, axis=0, reverse=true)
 P = softmax(C2, axis=-1)
-H = layernorm(P, W, Bb, axes=[-1])
+H = layer_norm(P, W, Bb)
 Y = matmul(H, V)
 `;
 
@@ -359,7 +359,7 @@ Wq = Tensor(E, E, dtype=fp16)
 Wk = Tensor(E, E, dtype=fp16)
 Q = matmul(X, Wq)
 K = matmul(X, Wk)
-Kt = transpose(K, perm=[1, 0])
+Kt = permute_dims(K, [1, 0])
 Y = matmul(Q, Kt)
 `;
     const { resolved, back, findings } = findingsFor(QKV, "Y", [[0, 4], [0, 8]]);
@@ -405,7 +405,7 @@ Wv = Tensor(E, E, dtype=fp16)
 Q = matmul(X, Wq)
 K = matmul(X, Wk)
 V = matmul(X, Wv)
-Kt = transpose(K, perm=[1, 0])
+Kt = permute_dims(K, [1, 0])
 S1 = matmul(Q, Kt)
 Y = matmul(S1, V)
 `;
@@ -450,8 +450,8 @@ X = Tensor(batch=B, seq=S, emb=H*D, dtype=fp16)
 Wq = Tensor(emb=H*D, proj=H*D, dtype=fp16)
 Kc = Tensor(batch=B, head=H, kv=S, dim=D, dtype=fp16)
 Qp = einsum("bse,ef->bsf", X, Wq)
-Q4 = reshape(Qp, shape=[B, S, H, D])
-Qh = transpose(Q4, perm=[0, 2, 1, 3])
+Q4 = reshape(Qp, [B, S, H, D])
+Qh = permute_dims(Q4, [0, 2, 1, 3])
 Sc = einsum("bhqd,bhkd->bhqk", Qh, Kc)
 Pr = softmax(Sc, axis=-1)
 `;

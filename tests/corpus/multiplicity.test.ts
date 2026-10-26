@@ -125,9 +125,9 @@ const VARIANTS: [string, Graph][] = [
   ],
   ["einsum outer product", G({ a: [3], b: [4] }, [["n", "einsum", ["a", "b"], ["Y"], { equation: "i,j->ij" }]])],
   ["matmul of a tensor with itself", G({ A: [4, 4] }, [["n", "matmul", ["A", "A"], ["Y"]]])],
-  ["elementwise of a tensor with itself", G({ X: [3, 4] }, [["n", "elementwise", ["X", "X"], ["Y"], { fn: "mul", nary: 2 }]])],
-  ["elementwise rank-0 operand", G({ X: [3, 4], s: [] }, [["n", "elementwise", ["X", "s"], ["Y"], { fn: "mul", nary: 2 }]])],
-  ["pad replicate", G({ X: [4, 3] }, [["n", "pad", ["X"], ["Y"], { pads: [[2, 3], [1, 0]], mode: "replicate" }]])],
+  ["elementwise of a tensor with itself", G({ X: [3, 4] }, [["n", "elementwise", ["X", "X"], ["Y"], { fn: "multiply", nary: 2 }]])],
+  ["elementwise rank-0 operand", G({ X: [3, 4], s: [] }, [["n", "elementwise", ["X", "s"], ["Y"], { fn: "multiply", nary: 2 }]])],
+  ["pad replicate", G({ X: [4, 3] }, [["n", "pad", ["X"], ["Y"], { pads: [[2, 3], [1, 0]], mode: "edge" }]])],
   ["pad constant", G({ X: [4, 3] }, [["n", "pad", ["X"], ["Y"], { pads: [[2, 1], [0, 2]], mode: "constant" }]])],
   [
     "conv stride 1, padded",
@@ -145,10 +145,10 @@ const VARIANTS: [string, Graph][] = [
     "pool overlapping windows",
     G({ X: [1, 1, 7, 6] }, [["n", "pool", ["X"], ["Y"], { kind: "avg", kernelShape: [3, 2], stride: [1, 1], pads: [[1, 1], [0, 0]] }]]),
   ],
-  ["cumsum forward", G({ X: [5, 3] }, [["n", "cumsum", ["X"], ["Y"], { axis: 0, reverse: false }]])],
+  ["cumsum forward", G({ X: [5, 3] }, [["n", "cumulative_sum", ["X"], ["Y"], { axis: 0, reverse: false }]])],
   ["slice with steps", G({ X: [9, 4] }, [["n", "slice", ["X"], ["Y"], { starts: [1, 0], stops: [9, 4], steps: [3, 1] }]])],
-  ["normalize without affine params", G({ X: [3, 4, 2] }, [["n", "normalize", ["X"], ["Y"], { kind: "rmsnorm", axes: [1, 2] }]])],
-  ["expand with a new leading axis", G({ X: [1, 3] }, [["n", "expand", ["X"], ["Y"], { shape: [4, 2, 3] }]])],
+  ["normalize without affine params", G({ X: [3, 4, 2] }, [["n", "normalize", ["X"], ["Y"], { kind: "rms_norm", axes: [1, 2] }]])],
+  ["expand with a new leading axis", G({ X: [1, 3] }, [["n", "broadcast_to", ["X"], ["Y"], { shape: [4, 2, 3] }]])],
   ["reduce with keepdim", G({ X: [3, 4] }, [["n", "reduce", ["X"], ["Y"], { fn: "max", axes: [1], keepdim: true }]])],
 ];
 
@@ -160,7 +160,7 @@ describe("read multiplicity: variants", () => {
     });
 
   it("a gather that is not told its index values bounds every row", () => {
-    const graph = G({ D: [6, 3], I: [5] }, [["n", "gather", ["D", "I"], ["Y"], { axis: 0 }]]);
+    const graph = G({ D: [6, 3], I: [5] }, [["n", "take", ["D", "I"], ["Y"], { axis: 0 }]]);
     graph.tensors.I.dtype = "i32";
     const { inexact } = checkNode(graph, "n", undefined, undefined, { indexValues: [5, 0, 2, 2, 2] });
     expect(inexact).toBeGreaterThan(0);

@@ -4,6 +4,7 @@ import { GraphError, GraphErrorSubject, GraphWarning } from "../core/shapes";
 import { lowerProgram } from "./lower";
 import { DSLError, parseProgram } from "./parser";
 import { documentSpan, DSLSourceMap, SourceSpan } from "./source";
+import { inSourceTerms } from "./wording";
 
 export type DiagnosticPhase = "parse" | "semantic";
 /** An error refuses the program; a warning comes with a program that built. */
@@ -98,11 +99,25 @@ function semanticSpan(
   return sourceMap.document;
 }
 
-const warningDiagnostic = (warning: GraphWarning, sourceMap: DSLSourceMap): CompilerDiagnostic => ({
+/** A resolver message in the source's terms where it is about a node the
+ * source wrote, and as the resolver put it otherwise. */
+const messageOf = (
+  problem: { message: string; detail?: string; subject?: GraphErrorSubject },
+  sourceMap: DSLSourceMap,
+  graph: Graph
+): string =>
+  (problem.detail !== undefined && inSourceTerms(problem.detail, problem.subject, sourceMap, graph)) ||
+  problem.message;
+
+const warningDiagnostic = (
+  warning: GraphWarning,
+  sourceMap: DSLSourceMap,
+  graph: Graph
+): CompilerDiagnostic => ({
   severity: "warning",
   phase: "semantic",
   code: "SEM_SYMBOLIC_SHAPE",
-  message: warning.message,
+  message: messageOf(warning, sourceMap, graph),
   span: semanticSpan(warning, sourceMap),
 });
 
@@ -150,7 +165,7 @@ function tryCompileDSLUnchecked(source: string): CompilationResult {
       severity: "error",
       phase: "semantic",
       code: semanticCode(error),
-      message: error.message,
+      message: messageOf(error, lowered.sourceMap, lowered.graph),
       span: semanticSpan(error, lowered.sourceMap),
     });
 
@@ -173,7 +188,7 @@ function tryCompileDSLUnchecked(source: string): CompilationResult {
     };
 
   const warnings = inSourceOrder(
-    resolved.warnings.map((warning) => warningDiagnostic(warning, lowered.sourceMap))
+    resolved.warnings.map((warning) => warningDiagnostic(warning, lowered.sourceMap, lowered.graph))
   );
   const program: CompiledDSL = {
     source,

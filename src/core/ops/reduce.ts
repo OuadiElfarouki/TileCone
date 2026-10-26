@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { axes, bool, oneOf } from "./kinds";
 import { coversAxisFully, fromBox, iv } from "../region";
 import { DependencyNoteDraft, OpCtx, OpSpec, NoteCtx } from "./types";
 import { dtypeFamily } from "../dtypes";
@@ -54,16 +54,15 @@ function reduceDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
 
 export const reduceOp: OpSpec = {
   name: "reduce",
-  /** `max`/`min` are the op's names; the DSL spells them `amax`/`amin`. */
-  displayName: (attrs) => ({ max: "amax", min: "amin" }[attrs.fn as string] ?? (attrs.fn as string)),
+  displayName: (attrs) => attrs.fn as string,
   dependencyNote: reduceDependencyNote,
-  attrSchema: z.object({
-    fn: z.enum(["sum", "max", "min", "mean", "prod", "logsumexp"]),
+  attrs: {
+    fn: oneOf(["sum", "max", "min", "mean", "prod", "logsumexp"]),
     // A reduce over no axes returns its input unchanged, which is never what
     // the author meant by writing a reduction.
-    axes: z.array(z.number().int()).nonempty(),
-    keepdim: z.boolean().default(false),
-  }),
+    axes: axes({ all: true }),
+    keepdim: bool({ default: false }),
+  },
   arity: { inputs: 1, outputs: 1 },
   inferSymShapes: (inSyms, ctx) => {
     const { axes, keepdim } = attrs(ctx);

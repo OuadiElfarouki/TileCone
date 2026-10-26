@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { shape } from "./kinds";
 import { Box, Region, boundingBox, canonicalize, iv } from "../region";
 import { resolveShape } from "../shapes";
 import { symProduct } from "../dim-algebra";
@@ -267,7 +267,7 @@ export const reshapeOp: OpSpec = {
 
   name: "reshape",
   dependencyNote: reshapeDependencyNote,
-  attrSchema: z.object({ shape: z.array(z.union([z.string(), z.number().int().min(1)])) }),
+  attrs: { shape: shape() },
   arity: { inputs: 1, outputs: 1 },
   inferAxisNames: (inNames, ctx) => [
     reshapeAxisNames(inNames[0], ctx.inShapes[0], ctx.outShapes[0]),

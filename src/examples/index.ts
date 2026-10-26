@@ -60,17 +60,17 @@ Wo = Parameter(emb=H*D, out=H*D, dtype=fp16)
 Qp = einsum("bse,ef->bsf", X, Wq)
 Kp = einsum("bse,ef->bsf", X, Wk)
 Vp = einsum("bse,ef->bsf", X, Wv)
-Q4 = reshape(Qp, shape=[B, S, H, D])
-K4 = reshape(Kp, shape=[B, S, H, D])
-V4 = reshape(Vp, shape=[B, S, H, D])
-Qh = transpose(Q4, perm=[0, 2, 1, 3])
-Kh = transpose(K4, perm=[0, 2, 1, 3])
-Vh = transpose(V4, perm=[0, 2, 1, 3])
+Q4 = reshape(Qp, [B, S, H, D])
+K4 = reshape(Kp, [B, S, H, D])
+V4 = reshape(Vp, [B, S, H, D])
+Qh = permute_dims(Q4, [0, 2, 1, 3])
+Kh = permute_dims(K4, [0, 2, 1, 3])
+Vh = permute_dims(V4, [0, 2, 1, 3])
 Scores = einsum("bhqd,bhkd->bhqk", Qh, Kh)
 P = softmax(Scores, axis=-1)
 Z = einsum("bhqk,bhkd->bhqd", P, Vh)
-Zt = transpose(Z, perm=[0, 2, 1, 3])
-Zm = reshape(Zt, shape=[B, S, H*D])
+Zt = permute_dims(Z, [0, 2, 1, 3])
+Zm = reshape(Zt, [B, S, H*D])
 Out = einsum("bse,ef->bsf", Zm, Wo)
 `,
     defaultSelection: { tensor: "Out", box: [[0, 1], [17, 18], [0, 128]] },
@@ -101,20 +101,20 @@ Qp = einsum("bse,ef->bsf", X, Wq)
 Qb = add(Qp, Bq)
 Kp = einsum("bse,ef->bsf", X, Wk)
 Vp = einsum("bse,ef->bsf", X, Wv)
-Q4 = reshape(Qb, shape=[B, T, H, D])
-K4 = reshape(Kp, shape=[B, T, H, D])
-V4 = reshape(Vp, shape=[B, T, H, D])
-Qh = transpose(Q4, perm=[0, 2, 1, 3])
-Kh = transpose(K4, perm=[0, 2, 1, 3])
-Vh = transpose(V4, perm=[0, 2, 1, 3])
-Kf = concat(Kc, Kh, axis=2)
-Vf = concat(Vc, Vh, axis=2)
+Q4 = reshape(Qb, [B, T, H, D])
+K4 = reshape(Kp, [B, T, H, D])
+V4 = reshape(Vp, [B, T, H, D])
+Qh = permute_dims(Q4, [0, 2, 1, 3])
+Kh = permute_dims(K4, [0, 2, 1, 3])
+Vh = permute_dims(V4, [0, 2, 1, 3])
+Kf = concat([Kc, Kh], axis=2)
+Vf = concat([Vc, Vh], axis=2)
 Sc = einsum("bhqd,bhkd->bhqk", Qh, Kf)
 Sm = add(Sc, Mk)
 Pr = softmax(Sm, axis=-1)
 Z  = einsum("bhqk,bhkd->bhqd", Pr, Vf)
-Zt = transpose(Z, perm=[0, 2, 1, 3])
-Out = reshape(Zt, shape=[B, T, H*D])
+Zt = permute_dims(Z, [0, 2, 1, 3])
+Out = reshape(Zt, [B, T, H*D])
 `,
     defaultSelection: { tensor: "Out", box: [[0, 1], [31, 32], [0, 128]] },
   },
@@ -128,7 +128,7 @@ T = 4
 D = 32
 
 # Grouped-query attention: KVH*G query heads share KVH key/value heads, G query
-# heads to each one. expand is where that sharing is written down - the cache is
+# heads to each one. broadcast_to is where that sharing is written down - the cache is
 # stored once per KV head and read by G query heads. So a tile of Out covering
 # one query head pulls one KV head band of the cache, and the four heads in
 # columns 0..4*D pull the same band rather than four of them.
@@ -143,26 +143,26 @@ X = Tensor(batch=B, seq=T, emb=KVH*G*D, dtype=fp16)
 Wqkv = Parameter(emb=KVH*G*D, qkv=KVH*G*D+2*KVH*D, dtype=fp16)
 
 QKV = einsum("bse,ef->bsf", X, Wqkv)
-Qp, Kp, Vp = split(QKV, axis=-1, sizes=[KVH*G*D, KVH*D, KVH*D])
-Q4 = reshape(Qp, shape=[B, T, KVH*G, D])
-K4 = reshape(Kp, shape=[B, T, KVH, D])
-V4 = reshape(Vp, shape=[B, T, KVH, D])
-Qh = transpose(Q4, perm=[0, 2, 1, 3])
-Kh = transpose(K4, perm=[0, 2, 1, 3])
-Vh = transpose(V4, perm=[0, 2, 1, 3])
-Kf = concat(Kc, Kh, axis=2)
-Vf = concat(Vc, Vh, axis=2)
-K5 = reshape(Kf, shape=[B, KVH, 1, P+T, D])
-V5 = reshape(Vf, shape=[B, KVH, 1, P+T, D])
-Kg = expand(K5, shape=[B, KVH, G, P+T, D])
-Vg = expand(V5, shape=[B, KVH, G, P+T, D])
-Kx = reshape(Kg, shape=[B, KVH*G, P+T, D])
-Vx = reshape(Vg, shape=[B, KVH*G, P+T, D])
+Qp, Kp, Vp = split(QKV, [KVH*G*D, KVH*D, KVH*D], axis=-1)
+Q4 = reshape(Qp, [B, T, KVH*G, D])
+K4 = reshape(Kp, [B, T, KVH, D])
+V4 = reshape(Vp, [B, T, KVH, D])
+Qh = permute_dims(Q4, [0, 2, 1, 3])
+Kh = permute_dims(K4, [0, 2, 1, 3])
+Vh = permute_dims(V4, [0, 2, 1, 3])
+Kf = concat([Kc, Kh], axis=2)
+Vf = concat([Vc, Vh], axis=2)
+K5 = reshape(Kf, [B, KVH, 1, P+T, D])
+V5 = reshape(Vf, [B, KVH, 1, P+T, D])
+Kg = broadcast_to(K5, [B, KVH, G, P+T, D])
+Vg = broadcast_to(V5, [B, KVH, G, P+T, D])
+Kx = reshape(Kg, [B, KVH*G, P+T, D])
+Vx = reshape(Vg, [B, KVH*G, P+T, D])
 Sc = einsum("bhqd,bhkd->bhqk", Qh, Kx)
 Pr = softmax(Sc, axis=-1)
 Z = einsum("bhqk,bhkd->bhqd", Pr, Vx)
-Zt = transpose(Z, perm=[0, 2, 1, 3])
-Out = reshape(Zt, shape=[B, T, KVH*G*D])
+Zt = permute_dims(Z, [0, 2, 1, 3])
+Out = reshape(Zt, [B, T, KVH*G*D])
 `,
     defaultSelection: { tensor: "Out", box: [[0, 1], [3, 4], [0, 32]] },
   },
@@ -184,11 +184,11 @@ Wg = Parameter(emb=E, ff=F, dtype=fp16)
 Wu = Parameter(emb=E, ff=F, dtype=fp16)
 Wd = Parameter(ff=F, emb=E, dtype=fp16)
 
-Xn = rmsnorm(X, Wn, axes=[-1])
+Xn = rms_norm(X, Wn)
 G = matmul(Xn, Wg)
 U = matmul(Xn, Wu)
 Ga = silu(G)
-Hd = mul(Ga, U)
+Hd = multiply(Ga, U)
 Y = matmul(Hd, Wd)
 Out = add(Y, X)
 `,
@@ -204,10 +204,10 @@ K = 2
 
 # A mixture-of-experts step. The expert weights are one stacked tensor and the
 # routing picks slabs out of it, which is the only place in these examples where
-# a dependency is not decidable from the graph: gather's indices are data, so
+# a dependency is not decidable from the graph: take's indices are data, so
 # every expert is reported as needed and the cone is marked inexact.
 #
-# Declaring the choice makes it exact - add indexValues=[3, 5] to both gathers
+# Declaring the choice makes it exact - add index_values=[3, 5] to both takes
 # and the same tile narrows to those two slabs. The router's own top-k cannot be
 # written here (no argmax), so Idx arrives as an input and Pr is left as an
 # output of its own: what the graph can state is that the choice is data.
@@ -221,14 +221,14 @@ Gate = Tensor(seq=T, chosen=K, dtype=fp16)
 
 Sc = einsum("se,en->sn", X, Wr)
 Pr = softmax(Sc, axis=-1)
-E1 = gather(W1, Idx, axis=0)
-E2 = gather(W2, Idx, axis=0)
+E1 = take(W1, Idx, axis=0)
+E2 = take(W2, Idx, axis=0)
 Hd = einsum("se,kef->skf", X, E1)
 Ac = silu(Hd)
 Yk = einsum("skf,kfe->ske", Ac, E2)
-Gw = reshape(Gate, shape=[T, K, 1])
-Yg = mul(Yk, Gw)
-Y = sum(Yg, axis=1, keepdim=false)
+Gw = reshape(Gate, [T, K, 1])
+Yg = multiply(Yk, Gw)
+Y = sum(Yg, axis=1, keepdims=false)
 `,
     defaultSelection: { tensor: "Y", box: [[3, 4], [0, 64]] },
   },
@@ -245,8 +245,8 @@ X = Tensor(N, C, H, W, dtype=fp16)
 W1 = Parameter(F1, C, 3, 3, dtype=fp16)
 W2 = Parameter(F2, F1, 3, 3, dtype=fp16)
 
-Y1 = conv(X, W1, stride=[2, 2], pads=[[1, 1], [1, 1]], dilation=[1, 1], groups=1)
-Y2 = conv(Y1, W2, stride=[2, 2], pads=[[1, 1], [1, 1]], dilation=[1, 1], groups=1)
+Y1 = conv2d(X, W1, stride=2, padding=1)
+Y2 = conv2d(Y1, W2, stride=2, padding=1)
 `,
     defaultSelection: { tensor: "Y2", box: [[0, 1], [0, 1], [7, 9], [7, 9]] },
   },
@@ -254,8 +254,8 @@ Y2 = conv(Y1, W2, stride=[2, 2], pads=[[1, 1], [1, 1]], dilation=[1, 1], groups=
     name: "Reshape trap",
     dsl: `X = Tensor(4, 4, dtype=fp32)
 
-F = reshape(X, shape=[16])
-Y = reshape(F, shape=[2, 8])
+F = reshape(X, [16])
+Y = reshape(F, [2, 8])
 `,
     defaultSelection: { tensor: "F", box: [[6, 10]] },
   },
@@ -268,19 +268,19 @@ X = Tensor(S, E, dtype=fp16)
 W = Parameter(E, dtype=fp16)
 Bb = Parameter(E, dtype=fp16)
 
-H = layernorm(X, W, Bb, axes=[-1])
+H = layer_norm(X, W, Bb)
 Y = add(H, X)
 `,
     defaultSelection: { tensor: "Y", box: [[10, 11], [20, 24]] },
   },
   {
-    name: "Cumsum",
+    name: "Cumulative sum",
     dsl: `S = 48
 
 X = Tensor(S, dtype=fp32)
 
-Y = cumsum(X, axis=0, reverse=false)
-Z = cumsum(Y, axis=0, reverse=false)
+Y = cumulative_sum(X, axis=0)
+Z = cumulative_sum(Y, axis=0)
 `,
     defaultSelection: { tensor: "Z", box: [[20, 24]] },
   },
@@ -363,7 +363,7 @@ E = 64
 
 # Question: why does splitting the normalised axis repeat statistics?
 #
-# layernorm needs a whole row of X for the mean and variance of any element in
+# layer_norm needs a whole row of X for the mean and variance of any element in
 # that row. P1 tiles Y in 16x64 row bands with H fused: 33.0K FLOPs, nothing
 # recomputed. P2 splits each band into four 16x16 tiles, still fused: each of
 # the four computes the same row statistics, so 49.9K of its 82.9K FLOPs are
@@ -375,7 +375,7 @@ X = Tensor(S, E, dtype=fp16)
 W = Parameter(E, dtype=fp16)
 Bb = Parameter(E, dtype=fp16)
 
-H = layernorm(X, W, Bb, axes=[-1])
+H = layer_norm(X, W, Bb)
 Y = add(H, X)
 `,
     defaultSelection: { tensor: "Y", box: [[16, 32], [16, 32]] },

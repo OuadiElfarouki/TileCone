@@ -63,7 +63,7 @@ src/
 │   ├── shapes.ts         symbolic dimensions and shape errors
 │   ├── dim-algebra.ts    canonical forms of dimension expressions, and equality for every binding
 │   ├── dtypes.ts         canonical dtypes, byte widths, and the promotion lattice
-│   ├── ops/              operation semantics, registry, barriers, and fallback thresholds
+│   ├── ops/              operation semantics, attribute kinds, registry, barriers, and fallback thresholds
 │   └── plan/
 │       ├── tile-family.ts  regular tilings: tails, lazy coordinates, the tiles a box meets
 │       ├── plan.ts         tile families checked against a graph, and each task's demand
@@ -73,8 +73,10 @@ src/
 │   ├── lexical.ts        identifier, string, and comment rules, shared with the highlighter
 │   ├── ast.ts            DSL syntax tree
 │   ├── parser.ts         text -> AST, recovering per line
-│   ├── sugar.ts          call-name sugar, read by lowering and the printer
-│   ├── lower.ts          AST -> Graph, desugaring and name resolution
+│   ├── signatures.ts     the DSL's functions, as signatures over the registry
+│   ├── bind.ts           a call's arguments bound to a signature, and the DSL's dtype spellings
+│   ├── lower.ts          AST -> Graph: binding, subscripts and name resolution
+│   ├── wording.ts        resolver messages restated in the source's terms
 │   ├── dsl.ts            facade over the above, plus the serializer
 │   ├── compiler.ts       three-phase facade and collected diagnostics
 │   ├── source.ts         source spans, source maps, per-argument spans
@@ -199,13 +201,16 @@ The parser creates the structural graph. Declared inputs and weights already hav
    the names before them, to positive safe integers.
 2. Node and tensor IDs are unique and all references exist.
 3. Every operation exists in the registry.
-4. Static and attribute-dependent arity constraints hold.
-5. Attributes pass the operation's schema, which is **closed**: an attribute the schema does
-   not name is an error, not a stripped key. A misspelling such as NumPy's `keepdims` for
-   torch's `keepdim` would otherwise resolve to a different shape without a diagnostic, and
-   every region and metric downstream would describe a graph the user did not write. The
-   narrowing happens once at the registry boundary rather than in each `OpSpec`, so a new
-   operation cannot forget it.
+4. Static arity constraints hold. Arity that depends on attributes is checked once the
+   attributes are canonical (item 8).
+5. Attributes pass the operation's kinds (`ops/kinds.ts`), and the set is **closed**: an
+   attribute the operation does not declare is an error, not an ignored key. A misspelling
+   would otherwise resolve to a different graph without a diagnostic, and every region and
+   metric downstream would describe a graph the user did not write. The check happens once
+   at the registry boundary rather than in each `OpSpec`, so a new operation cannot forget
+   it. Only the context-free half of a kind runs here - is the value one of its written
+   forms - because what a value means can depend on the operands: `axis=seq` names an axis
+   of an input, and `stride=2` is one stride per spatial axis.
 6. Tensor producers are unique and the node graph is acyclic.
 7. Symbolic dimensions resolve to concrete shapes. A dimension may be arithmetic over
    parameters (`H*D`, `E/H`, `(H+D)*2`), so a relationship holds where it is used rather
@@ -214,8 +219,15 @@ The parser creates the structural graph. Declared inputs and weights already hav
    relationship does not actually hold. An authored dimension is at least 1, whether it is
    written as a literal, bound to a parameter, or falls out of arithmetic: a tensor with an
    empty axis holds no elements, so it has no regions to relate, and declaring one is a slip
-   rather than a question with an answer.
-8. Each operation infers the expected number of output shapes and dtypes.
+   rather than a question with an answer. Slice bounds are evaluated by the same grammar
+   (`resolveInteger`) but may be zero or negative, since `X[-S:]` counts from the end.
+8. In topological order, each node's attributes are made canonical from its inputs'
+   resolved shapes, axis names and the bound parameters: non-negative axis indices, one
+   entry per spatial axis, `[lo, hi]` pairs, and defaults filled in. The resolved node
+   carries these and the source graph keeps what was written, so `toDSL` writes `axis=seq`
+   and `padding=1` back unchanged; operation code reads only canonical values.
+   Attribute-dependent arity is checked against them, and each operation then infers the
+   expected number of output shapes and dtypes.
 9. All inferred extents are non-negative safe integers and all dtypes are supported.
 10. Extents an operation requires to be equal are checked as expressions, not only as
     numbers. Each operation lists them (`symEqualities`): a contraction's two sides, a
@@ -313,9 +325,13 @@ The store retains structured diagnostics and the source panel displays every rep
 
 A `GraphError`'s subject carries the attribute it is about when it is about one, so a diagnostic can underline that attribute rather than recovering its name by parsing the sentence the error already built from it.
 
-Diagnostics carry the narrowest span that is certainly about the error. `SourceMap.nodeArgs` records a span per input and per named attribute, so an unknown tensor underlines that tensor reference, a misspelled attribute underlines that attribute, and an unknown op underlines the call name. A statement span is the fallback, used when the error is genuinely about the statement - a shape mismatch is about the pairing of two operands, not either one.
+Diagnostics carry the narrowest span that is certainly about the error. `SourceMap.nodeArgs` records a span per input and per named attribute, so an unknown tensor underlines that tensor reference, an unknown keyword underlines the keyword, a value its kind refuses underlines the value, and an unknown function underlines the call name. A statement span is the fallback, used when the error is genuinely about the statement - a shape mismatch is about the pairing of two operands, not either one.
 
-The AST describes syntax; lowering owns operation desugaring. `parse/sugar.ts` supplies both the call-to-operation mapping and its printer inverse, including which attributes a call name already encodes. The printer omits only those attributes, preserving every other one through expansion and recompilation. Lexical rules live in `parse/lexical.ts`, shared by the parser and editor highlighter, so syntax colouring follows the grammar.
+The AST describes syntax; binding gives it meaning. `parse/signatures.ts` lists every function the DSL has, each a signature over a registry operation: its parameters in order, which of them are keyword-only, the operation attribute each one sets, and the attributes the name itself implies (`subtract` is `elementwise` with `fn: "subtract"`, `conv2d` is `conv` with `spatialRank: 2`). The values a parameter accepts are its attribute's kind, read from the registry, so the DSL defines no value rules of its own. `parse/bind.ts` binds a call with Python's rules and spells each value for its kind: free text quoted, a dtype or an enum member a bare word, everything else numbers, words and lists. Lowering and `toDSL` read the same table, so whatever the DSL accepts it can write back; the printer leaves out only the attributes a name implies, and refuses a node with an attribute no parameter writes rather than dropping it.
+
+A resolver message about a node is in graph terms: the node id, registry attribute names, "input 1". `parse/wording.ts` restates it at the DSL boundary from the node's signature - the function as called, the keyword for the attribute, each operand as the parameter it was passed for with its tensor, and the DSL's dtype spellings - using `GraphError.detail`, the message without the node prefix. A graph built by other tooling keeps the resolver's wording. Another library's name for a function or keyword (`transpose`, `dim`) is never accepted, but `FOREIGN_NAMES` and `FOREIGN_KEYWORDS` let the error name the one to write.
+
+Lexical rules live in `parse/lexical.ts`, shared by the parser and editor highlighter, so syntax colouring follows the grammar.
 
 ### DSL surface
 
@@ -333,25 +349,32 @@ The DSL is line-oriented and intentionally small:
   names every axis or none, because a half-named declaration is a slip rather than a
   statement; propagated names may legitimately have holes.
 - Assignments create operation nodes and one or more output tensors.
-- Positional arguments refer to tensors; named arguments become operation attributes.
+- A call binds by its function's signature: parameters before `*` by position or by name,
+  those after it by name only. Function names and keywords follow the Python Array API
+  Standard, and `torch.nn.functional` for the network operations it does not cover, with one
+  spelling per concept: `axis`, `keepdims`, `permute_dims`, `conv2d`.
 - A dimension is an expression over parameters, not just a name: `X = Tensor(B, S, H*D)`, and
-  the same language works in shape-valued attributes: `reshape(X, shape=[B, S, H, E/H])`,
-  `expand(X, shape=[B, KVH, G, S, D])`, `split(X, sizes=[H*D, KVH*D, KVH*D])`.
+  the same language works in shape-valued arguments: `reshape(X, [B, S, H, E/H])`,
+  `broadcast_to(X, [B, KVH, G, S, D])`, `split(X, [H*D, KVH*D, KVH*D])`.
   `Sym` remains `string | number` - the string simply holds the expression, a bare parameter
   being the one-symbol case - so nothing downstream had to learn a new shape type and the
   text the author wrote is what `notes.ts` and `toDSL` see. `toDSL` prints such an attribute
   as the expression it is rather than as a quoted string: expanding a composite writes that
-  text into the editor, and `sizes=["H*D"]` is not what anyone typed. Only shape inference
+  text into the editor, and `split(X, ["H*D"])` is not what anyone typed. Only shape inference
   resolves these; every later pass reads the extents it produced, so `split` derives its cut
   offsets from its own output shapes rather than re-reading the attribute.
-- Lists, numbers, booleans, strings, and identifiers are accepted attribute values. Numbers
-  accept decimals and scientific notation, so `toDSL` cannot emit a literal the parser then
-  rejects.
+- `Y = X[a:b:c, ...]` slices with NumPy's rules: an omitted part takes its default, a negative
+  bound counts from the end and bounds are clipped to the axis, and axes past the last item are
+  taken whole. Bounds are dimension expressions. An integer index would drop its axis and is
+  refused with the range that keeps it.
+- Values are lists, numbers, booleans, quoted strings and bare words; which of them a parameter
+  accepts is its kind's. Numbers accept decimals and scientific notation, so `toDSL` cannot emit
+  a literal the parser then rejects.
 - Dtypes use the familiar external spellings `fp32`, `fp16`, `bf16`, `fp8`, `int64`, `int32`,
   `uint8`, `int8` and `bool`; the graph IR retains its compact internal dtype names.
 - `#` introduces a comment.
 
-Lowering normalizes convenient spellings into a smaller internal operation set. For example, `relu(...)` becomes an `elementwise` node with `fn: "relu"`, reduction names become `reduce` nodes, and layer/RMS normalization become `normalize` nodes with explicit attributes.
+Several functions lower to one operation: `relu` and `subtract` are `elementwise` nodes, `sum` and `max` are `reduce` nodes, `layer_norm` and `rms_norm` are `normalize` nodes, `conv1d` to `conv3d` are `conv`, and a subscript is `slice`. Operation names are not callable themselves; a node is written as the function whose implied attributes it carries.
 
 Every statement is an assignment and is closed at the end, so
 `X = Tensor(4, 8, dtype=fp32) garbage` is a syntax error rather than a tensor whose malformed
@@ -366,6 +389,7 @@ The source map connects compiler errors back to declarations or operation calls.
 `listOps()` exposes the registry, and two suite-wide properties are driven off it rather than off a hand-kept list:
 
 - **Coverage.** `tests/corpus/op-fixtures.ts` holds one representative instance of every op; `registry.test.ts` asserts the table covers `listOps()`, so registering an operation without a fixture fails the suite instead of shipping untested. Each fixture is also run against the brute-force oracle, so "registered" implies "oracle-checked".
+- **Expressibility.** Every fixture graph prints as DSL and recompiles to the same canonical attributes and the same cones, so no operation, and no value an operation accepts, is out of the language's reach.
 - **Adjointness.** `forward` and `backward` are two implementations of one relation, and for exact regions they must agree about whether it is empty: `forward(inBox) ∩ outBox ≠ ∅` iff `backward(outBox) ∩ inBox ≠ ∅`. This needs no oracle, so it runs on every op at every fixture size, covering the ops the random-graph corpus does not compose.
 
 ### Barriers
@@ -378,26 +402,27 @@ The one quantity a barrier cannot bound is its own arithmetic. `flopsFor` return
 
 A barrier declares its outputs one at a time: `shapes` and a parallel `dtypes`, because real operations do not have a single output type - `TopK` returns f32 values beside i64 indices, `MaxPool` an optional index tensor, `LayerNormalization` a mean and an inverse standard deviation. Bytes are measured per tensor from that tensor's own dtype, so one declared type for all outputs would misreport the footprint of whichever it did not fit. The list may be omitted, or an entry left `null`, to take the promotion of the inputs. The two lists are parallel rather than a list of `{ shape, dtype }` records because the DSL has no record literal and adding one to the grammar to serve a single attribute is not a trade this codebase makes; their lengths are checked against the output count instead.
 
-It also carries `domain`, `opset` and `sourceName` as provenance. None of it changes what the barrier claims; it is what a reader needs in order to decide whether implementing the operation is worth it, and `domain` qualifies the displayed name where it is not the default one, so a vendor's `Attention` is distinguishable from anyone else's on the card, in the approximation reason, and in the note.
+It also carries `domain`, `opset` and `sourceName` (`source_name` in the DSL) as provenance. None of it changes what the barrier claims; it is what a reader needs in order to decide whether implementing the operation is worth it, and `domain` qualifies the displayed name where it is not the default one, so a vendor's `Attention` is distinguishable from anyone else's on the card, in the approximation reason, and in the note.
 
 Zero inputs is allowed, and is the one place the registry-wide "every op reads something" rule is exempted by name. A node that reads nothing and produces a value is constant-like and is usually better written as a declared tensor, but the metadata has to be able to express it: the fallback from "no representation" is dropping the node, which shortens the graph.
 
 ### Display names
 
-An operation's registry name is its identity for dispatch and frequently not what the author wrote: `relu` and `gelu` are both `elementwise`, `sum` and `amax` are both `reduce`, and a barrier is `opaque` standing in for something with a name of its own. `OpSpec.displayName(attrs)` derives the name to show, `opLabel(node)` resolves it once for every surface that names an operation (graph cards, their layout measurement, the operations list), and an explicit `node.label` still wins for a caller that has a better name. Derived rather than stored, on the same principle as resolved shapes: an edit to the attributes cannot leave a stale label behind.
+An operation's registry name is its identity for dispatch and frequently not what the author wrote: `relu` and `gelu` are both `elementwise`, `sum` and `max` are both `reduce`, and a barrier is `opaque` standing in for something with a name of its own. An operation with one function takes that function's name as its registry name (`permute_dims`, `take`), and `conv` and `pool` derive `conv2d` or `max_pool2d` from their canonical spatial rank. `OpSpec.displayName(attrs)` derives the name to show, `opLabel(node)` resolves it once for every surface that names an operation (graph cards, their layout measurement, the operations list), and an explicit `node.label` still wins for a caller that has a better name. Derived rather than stored, on the same principle as resolved shapes: an edit to the attributes cannot leave a stale label behind.
 
 ### Dtypes
 
-Operations that *compute* from several tensors promote (`promotingDTypeOutputs`); operations that *move* data require a match (`uniformDTypeOutputs`). The lattice follows PyTorch rather than NumPy's older value-based rule: category dominates width across families, so `f16` with `i32` is `f16` and not a widening to `f64` that no inference kernel performs. Mixed precision is ordinary inference practice and has an obvious result for an add or a matmul; a `concat` of fp16 and fp32 has none, since the output is one buffer, so it stays an error that names the cast to insert. `f16` with `bf16` widens to `f32`: same width, neither contains the other, and picking either would silently discard range or precision.
+Operations that *compute* from several tensors promote (`promotingDTypeOutputs`); operations that *move* data require a match (`uniformDTypeOutputs`). The lattice follows PyTorch rather than NumPy's older value-based rule: category dominates width across families, so `f16` with `i32` is `f16` and not a widening to `f64` that no inference kernel performs. Mixed precision is ordinary inference practice and has an obvious result for an add or a matmul; a `concat` of fp16 and fp32 has none, since the output is one buffer, so it stays an error that names the `astype` to insert. `f16` with `bf16` widens to `f32`: same width, neither contains the other, and picking either would silently discard range or precision.
 
 `i64` and `u8` are in the lattice because index and quantisation tensors need them, not because the DSL wanted more ways to write an integer. An index, axis or shape tensor is int64 wherever it comes from, and holding one as `i32` would halve its byte count in every footprint that counted it; `u8` is the same argument for a quantised model's `zero_point`. A tensor whose source storage was narrower than its canonical dtype carries `dtypeWidening`: tensor and aggregate byte figures then include its note and report `upper`, so a two-byte source element held as four bytes cannot become an exact footprint claim. Nothing sets that marker today - it exists so a later converter cannot introduce a widening without the figures noticing.
 
-The elementwise function table in `ops/elementwise.ts` is the definition of what `fn` may be - the attribute schema enumerates its keys, and the DSL's call-name sugar reads the same table. It also carries each function's own arity, so `relu(a, b)` and `div(a, b, c)` are rejected rather than quietly computing something else.
+The elementwise function table in `ops/elementwise.ts` is the definition of what `fn` may be - the `fn` kind enumerates its keys, and the DSL's signatures are generated from the same table. It also carries each function's own arity, so a node with `fn: "relu"` and two inputs is rejected by the registry even when no signature built it.
 
 
 Every operation is described by an `OpSpec` in `src/core/ops/types.ts` and registered in `src/core/ops/index.ts`. An operation owns all semantics specific to that operator:
 
-- attribute schema;
+- attribute kinds: each attribute is one of the closed set in `ops/kinds.ts`, which defines its
+  written forms, its canonical form and its default once for every operation;
 - static input and output cardinality;
 - optional attribute-dependent arity validation;
 - output shape inference;
@@ -417,7 +442,7 @@ Every operation is described by an `OpSpec` in `src/core/ops/types.ts` and regis
 
 This is the main extensibility seam. The graph resolver and propagation engine do not switch on operation names; they dispatch through the registry.
 
-Operations currently cover LLM-oriented primitives such as matrix multiplication, linear layers, elementwise functions, reductions, normalization, softmax, reshape/transpose, indexing, gather, concatenation/splitting, expansion, scans, and layout operations.
+Operations currently cover LLM-oriented primitives such as matrix multiplication, linear layers, elementwise functions, reductions, normalization, softmax, reshape and `permute_dims`, slicing, `take`, concatenation/splitting, broadcasting, scans, and layout operations.
 
 Elementwise operations broadcast under the usual trailing-aligned rule, rank 0 included, and
 the region mappings broadcast with them: an axis of extent 1 maps back to `[0, 1)` and forward
@@ -443,7 +468,7 @@ Queries may request upstream, downstream, or both directions. Low-level propagat
 
 A transitive cone answers "what does this tile ultimately depend on". Planning a stage asks something narrower: what does this tile demand of the stage's own boundary. `propagateWithin(graph, seed, direction, frontier)` - checked as `executor.upstreamWithin` and `downstreamWithin` - answers it by stopping at a set of frontier tensors.
 
-The definition is one sentence: a bounded cone relates the seed to the elements joined to it by a dependency path whose *interior* avoids the frontier. The endpoints of a path - the seed, and the tensor a region is reported on - may lie on it. A frontier tensor is therefore reached and carries its demand, but nothing is followed through it. A tensor also reachable *around* the frontier keeps exactly the part that route supplies: for `D = add(transpose(A), A)` bounded at the transpose's output, `D[0,1]` demands `A[0,1]` and not `A[1,0]`. The frontier cuts paths, not tensors.
+The definition is one sentence: a bounded cone relates the seed to the elements joined to it by a dependency path whose *interior* avoids the frontier. The endpoints of a path - the seed, and the tensor a region is reported on - may lie on it. A frontier tensor is therefore reached and carries its demand, but nothing is followed through it. A tensor also reachable *around* the frontier keeps exactly the part that route supplies: for `D = add(permute_dims(A, [1, 0]), A)` bounded at the permutation's output, `D[0,1]` demands `A[0,1]` and not `A[1,0]`. The frontier cuts paths, not tensors.
 
 Two consequences fall out of the definition rather than being added to it. The seed is never blocked, even when it is on the frontier, because it is where every path starts. And so one boundary serves both directions: a stage's inputs and outputs together bound a backward walk from one of its outputs and a forward walk from one of its inputs, with no need to say which side the seed is on. `stoppedAt` lists the frontier tensors a cone reached other than its seed - where its demand lands on the boundary.
 
@@ -463,7 +488,7 @@ In the UI it is a separate toggle (`e`), not a fourth `Direction`: what a tile r
 
 It is not a view over the other two, and the difference is the point. For `C = A @ B` and a block `A[0:4, 0:4]`, the downstream cone is `C[0:4, :]` and what that cone reads of `B` is *all* of `B` - correctly, since every `C[m,n]` in the band reads every row. But that block of `A` is only ever multiplied against `B[0:4, :]`. Composing `forward` with `backward` cannot recover this: the correlation between which input element produced which output element is discarded at the region boundary, where a set of elements becomes a shape.
 
-`einsum` (so `matmul`, `bmm`, `linear`), elementwise, `conv`, `concat` and `gather` answer exactly. `concat` answers *empty*, which is information rather than a gap: its operands are placed side by side and never combined, so a kernel may write the pieces independently. `normalize` deliberately does not answer - its output is not a sum of products, so "the same term" has no single reading there, and an honest bound is better than a hook with mushy semantics.
+`einsum` (so `matmul` and `linear`), elementwise, `conv`, `concat` and `take` answer exactly. `concat` answers *empty*, which is information rather than a gap: its operands are placed side by side and never combined, so a kernel may write the pieces independently. `normalize` deliberately does not answer - its output is not a sum of products, so "the same term" has no single reading there, and an honest bound is better than a hook with mushy semantics.
 
 Operations answer through `OpSpec.coaccess`, with `OpSpec.oracleTerms` as its ground truth - the terms an output element evaluates, each naming what every input contributes. That is strictly finer than `oracleDeps`, which flattens terms away and says only that a whole row of `A` and a whole column of `B` reach one output. `registry.test.ts` requires the two hooks together: `coaccess` without `oracleTerms` would be an analytic claim nothing can check.
 
@@ -484,7 +509,7 @@ These are what the drawn tiles need, not a claim about how they are executed. Wh
 written and which are computed where they are needed is a plan's decision (§8b), and the Plan view
 is where it is made and costed.
 
-`OpSpec.layout` identifies views: transpose, slice, and expand always, and reshape when its input is row-major. Layouts track dense axis order, allowing composed transposes to become row-major again; slice and expand produce `strided` layouts. A reshape of any other layout is conservatively treated as a copy. `viewLayouts` derives this in topological order. `flopsOver` skips views, but a plan charges a tiled view as a written copy.
+`OpSpec.layout` identifies views: `permute_dims`, `slice`, and `broadcast_to` always, and reshape when its input is row-major. Layouts track dense axis order, allowing composed permutations to become row-major again; `slice` and `broadcast_to` produce `strided` layouts. A reshape of any other layout is conservatively treated as a copy. `viewLayouts` derives this in topological order. `flopsOver` skips views, but a plan charges a tiled view as a written copy.
 
 `analysisGroup` names the tensor whose drawn tiles the readout describes. A draw, pin, or group-header choice sets it; hover does not. `groupFocus` narrows within that group, while hovering another group's tile only emphasises its canvas mark. Drawing releases the pin, and deleting a group's last tile retires it and falls back to the anchor tensor.
 
@@ -495,7 +520,7 @@ Symbolic extents travel that path too, and are a **separate** propagation from a
 of extent; a symbol says how *wide* it is and does not. A convolution's height axis is still `h`
 after striding but is no longer `H` elements, so conv names it while leaving the derived spatial
 extent literal. It can still carry unchanged batch and output-channel symbols; pooling similarly
-carries batch/channel, and gather takes the replacement-axis extent from its indices input.
+carries batch/channel, and `take` carries the replaced axis's extent from its indices input.
 A contraction carries its free axes (`[M, K] × [K, N] → [M, N]`), a transpose permutes symbols with
 their axes, a reduction drops the symbol of an axis it collapses, a concatenation states the joined
 axis as the sum that met there (`P+T`, which the dimension grammar can read back), and a reshape
@@ -662,14 +687,14 @@ measures.
 
 Operations declare their count through `OpSpec.multiplicity(outSlot, outBox, inSlot)`. Most have
 one of two forms:
-- **The same count on every element `backward` names** (`uniformTally`): einsum and its sugar
-  (the box's extent over the output labels the operand does not carry), elementwise and expand (the
-  broadcast fan-out), softmax, normalize, conv's weights, and gather's indices.
-- **A product of one count per axis** (`separableTally`): pad, conv and pool activations, gather's
-  data, and cumsum. Each axis is a list of steps that add where they overlap.
+- **The same count on every element `backward` names** (`uniformTally`): einsum and the operations
+  built on it (the box's extent over the output labels the operand does not carry), elementwise and
+  `broadcast_to` (the broadcast fan-out), softmax, normalize, conv's weights, and `take`'s indices.
+- **A product of one count per axis** (`separableTally`): pad, conv and pool activations, `take`'s
+  data, and `cumulative_sum`. Each axis is a list of steps that add where they overlap.
 
 An operation that reads each input element into at most one output element declares `readsOnce`
-instead of writing a hook. These are reduce, transpose, slice, concat, split, reshape, and the
+instead of writing a hook. These are reduce, `permute_dims`, slice, concat, split, reshape, and the
 identity family.
 
 Without either, `operandTally` falls back to the box's element count on `backward`'s region, marked
@@ -677,7 +702,7 @@ inexact. No element can be read by more outputs than the box holds. The barrier 
 
 An inexact tally is an upper bound at every element, so its support contains the true support. This
 is the region contract stated per element. It is where a widened `backward` region, a strided
-enumeration past `stridedEnum`, a gather without index values, or a count past
+enumeration past `stridedEnum`, a `take` without index values, or a count past
 `Limits.tallyPieces` lands. A separable count over that cap merges neighbouring steps at the larger
 count. The cap is separate from `maxBoxes` and larger (4096 against 256), because a tally is
 measured but never drawn or propagated, and a strided window's count alternates along each axis.
@@ -864,7 +889,7 @@ The core jobs remain deterministic and usable synchronously in headless code. Br
 The suite verifies both local contracts and the relations they form across the system:
 
 - **Region algebra:** canonicalization preserves the point set and operand bands; disjointification partitions the same set; counts measure unions once; conservative caps never omit true elements. Shared-operand cases such as `matmul(A, A)` check reporting and costs end to end.
-- **Compiler and registry:** shapes, dtypes, attributes, ranks, arity, and executor boundaries reject malformed input. Diagnostics collect independent failures in source order without downstream cascades and use the narrowest reliable span. Dtype promotion obeys the join laws; sugar and printing round-trip to a fixpoint. Every registered op must have a fixture checked against its oracle and the forward/backward adjointness law.
+- **Compiler and registry:** shapes, dtypes, attributes, ranks, arity, and executor boundaries reject malformed input. Diagnostics collect independent failures in source order without downstream cascades and use the narrowest reliable span. Dtype promotion obeys the join laws. Every kind reads each of its written forms to the documented canonical value and refuses the rest with one message naming the attribute; binding follows Python's rules; every signature round-trips through printing to a fixpoint, and every operation fixture prints as DSL and recompiles to the same attributes and cones. Resolver messages are checked in the source's terms. Every registered op must have a fixture checked against its oracle and the forward/backward adjointness law.
 - **Dependency semantics:** pointwise `oracleDeps` independently checks exact propagation for equality and inexact propagation for containment. Lowered limits force fallback branches on small tensors, with assertions proving those branches ran. Random graphs exercise transitive cones and frontiers that actually shorten walks. `oracleTerms` checks co-access separately from the broader forward/backward fallback.
 - **Figures and findings:** sums retain the weakest status, unknown work loses its number, and ratios of bounds stay approximate. Barriers retain all declared dependencies and output dtypes. Notes claim only proven constraints, merge by key, retain severe findings under the cap, and use source axis names. Contribution may over-warn but never under-warn.
 - **Plans and multiplicity:** independent task oracles walk through untiled tensors and stop at tiled tensors/inputs, checking slot demand, computed regions, complete producer sets, and family/plan totals. Widened demand may add possible producers but never omit true ones or call uncertain ones definite. Tile families cover each element once, including tails. Read tallies match pointwise output-reader counts, with capped tallies never below truth; hook-free fallback paths are checked too. Fixed two-matmul chains exercise fusion, sharing, misaligned tilings, and recomputation.
@@ -892,7 +917,9 @@ npm run build
 ### Add an operation
 
 1. Implement an `OpSpec` under `src/core/ops/`.
-2. Define its attribute schema and static or dependent arity.
+2. Declare each attribute as a kind from `ops/kinds.ts`, with its default, and define static or
+   dependent arity. A value form no kind has is added to a kind, where every operation using it
+   gains it, not handled inside one operation.
 3. Implement shape and dtype inference.
 3a. Map axis names where an output axis is genuinely the input's own axis, and leave it
     unnamed otherwise. A borrowed name is worse than none: the inspector prints it as the
@@ -903,7 +930,8 @@ npm run build
     each input element reaches at most one output element. Without either, the operation's reads
     are bounded by its box and marked inexact. The multiplicity corpus checks whichever applies
     against the oracle.
-6. Register the spec in `src/core/ops/index.ts`.
+6. Register the spec in `src/core/ops/index.ts`, and give it a function in `parse/signatures.ts`:
+   the expressibility check fails for an operation the DSL cannot write.
 7. Add an entry to `tests/corpus/op-fixtures.ts`. This is not optional: `registry.test.ts` checks the
    table against `listOps()`, so a registered operation without a fixture fails the suite. The
    fixture is then run against the oracle and against the adjointness law automatically.
@@ -913,7 +941,7 @@ No executor or UI dispatch changes should be necessary unless the operation requ
 
 ### Add DSL syntax
 
-Prefer lowering syntax sugar into an existing canonical operation. Syntax belongs in `parser.ts` and the tree it builds; the mapping from a call name to an operation and its attributes belongs in `lower.ts`. Keeping that split is what lets the parser stay ignorant of the operation registry, and it is where the printer's inverse mapping should be checked against. If syntax introduces new semantics, first add those semantics to the operation registry, then update lowering, serialization, and diagnostic source mapping.
+A new function is a signature in `parse/signatures.ts` over an operation the registry has: its parameters in order, the attribute each sets, and the attributes its name implies. Its name and keywords follow the Array API and `torch.nn.functional`, one spelling per concept; another library's spelling goes in `FOREIGN_NAMES` or `FOREIGN_KEYWORDS` so an error can name the right one, and is never accepted. Grammar belongs in `parser.ts` and the tree it builds - the subscript is the one form beyond assignments and calls - which keeps the parser ignorant of the registry. If syntax introduces new semantics, first add those semantics to the registry, then the signature; lowering, printing and diagnostic wording follow from the table.
 
 A new lexical rule - a character an identifier may contain, a new escape - goes in `parse/lexical.ts`, never in the parser or the highlighter alone. Both derive from it so that colours cannot drift from the grammar.
 

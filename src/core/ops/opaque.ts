@@ -1,7 +1,7 @@
-import { z } from "zod";
+import { dtypeList, int, optional, shapeList, text } from "./kinds";
 import { fromBox, Region } from "../region";
 import { resolveShape, Shape } from "../shapes";
-import { promoteDTypes, DTYPES, DType } from "../dtypes";
+import { promoteDTypes, DType } from "../dtypes";
 import { OpSpec, Attrs } from "./types";
 
 /**
@@ -28,8 +28,6 @@ import { OpSpec, Attrs } from "./types";
  * not the bound the other figures are. The dependency note says so where a
  * reader will see it.
  */
-
-const shapeSchema = z.array(z.union([z.string(), z.number().int().min(1)]));
 
 export type OpaqueAttrs = {
   /** The operation this stands in for, in its source vocabulary. */
@@ -77,14 +75,14 @@ export type OpaqueAttrs = {
   sourceName?: string;
 };
 
-const attrSchema = z.object({
-  op: z.string().min(1),
-  shapes: z.array(shapeSchema).min(1),
-  dtypes: z.array(z.enum(DTYPES).nullable()).optional(),
-  domain: z.string().optional(),
-  opset: z.number().int().min(1).optional(),
-  sourceName: z.string().optional(),
-});
+const attrs = {
+  op: text({ nonEmpty: true }),
+  shapes: shapeList(),
+  dtypes: optional(dtypeList()),
+  domain: optional(text()),
+  opset: optional(int({ min: 1 })),
+  sourceName: optional(text()),
+};
 
 /** ONNX's default domain, written either way, where an operation needs no qualifier. */
 const DEFAULT_DOMAINS = ["", "ai.onnx"];
@@ -114,7 +112,7 @@ const reasonFor = (attrs: Attrs) => `opaque op "${qualifiedName(attrs)}"`;
 
 export const opaqueOp: OpSpec = {
   name: "opaque",
-  attrSchema,
+  attrs,
   /* Zero inputs is allowed, not encouraged. A node that reads nothing and
      produces a value is constant-like, and a converter is nearly always better
      off importing it as a declared tensor - which is a thing the graph

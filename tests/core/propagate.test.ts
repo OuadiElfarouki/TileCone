@@ -29,7 +29,7 @@ describe("diamond merging (tensor-level union before further propagation)", () =
     // X -> norm -> H;  Y = H + X  (X consumed twice)
     const g = resolveGraph(
       G({ X: [4, 6] }, [
-        ["n0", "normalize", ["X"], ["H"], { kind: "layernorm", axes: [-1], hasWeight: false, hasBias: false }],
+        ["n0", "normalize", ["X"], ["H"], { kind: "layer_norm", axes: [-1], hasWeight: false, hasBias: false }],
         ["n1", "elementwise", ["H", "X"], ["Y"], { fn: "add", nary: 2 }],
       ])
     );
@@ -42,7 +42,7 @@ describe("diamond merging (tensor-level union before further propagation)", () =
   it("diamond correctness against oracle", () => {
     checkGraph(
       G({ X: [3, 4] }, [
-        ["n0", "normalize", ["X"], ["H"], { kind: "layernorm", axes: [-1], hasWeight: false, hasBias: false }],
+        ["n0", "normalize", ["X"], ["H"], { kind: "layer_norm", axes: [-1], hasWeight: false, hasBias: false }],
         ["n1", "elementwise", ["H", "X"], ["Y"], { fn: "add", nary: 2 }],
       ])
     );
@@ -83,7 +83,7 @@ describe("performance", () => {
       inputs[`Wk${l}`] = [512, 512];
       inputs[`Wv${l}`] = [512, 512];
       inputs[`Wo${l}`] = [512, 512];
-      nodes.push([`ln${l}`, "normalize", [cur], [`h${l}`], { kind: "layernorm", axes: [-1], hasWeight: false, hasBias: false }]);
+      nodes.push([`ln${l}`, "normalize", [cur], [`h${l}`], { kind: "layer_norm", axes: [-1], hasWeight: false, hasBias: false }]);
       nodes.push([`q${l}`, "einsum", [`h${l}`, `Wq${l}`], [`Q${l}`], { equation: "sd,de->se" }]);
       nodes.push([`k${l}`, "einsum", [`h${l}`, `Wk${l}`], [`K${l}`], { equation: "sd,de->se" }]);
       nodes.push([`v${l}`, "einsum", [`h${l}`, `Wv${l}`], [`V${l}`], { equation: "sd,de->se" }]);
@@ -132,6 +132,6 @@ describe("built-in style examples at miniature shapes", () => {
   });
 
   it("cumsum cone", () => {
-    checkGraph(G({ X: [7] }, [["c", "cumsum", ["X"], ["Y"], { axis: 0, reverse: false }]]));
+    checkGraph(G({ X: [7] }, [["c", "cumulative_sum", ["X"], ["Y"], { axis: 0, reverse: false }]]));
   });
 });

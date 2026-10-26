@@ -60,7 +60,7 @@ describe("headless symbolic executor", () => {
 
   it("counts the shared prefix work required by a partial scan selection", () => {
     const { executor } = compileDSL(`X = Tensor(128, dtype=fp32)
-Y = cumsum(X, axis=0)
+Y = cumulative_sum(X, axis=0)
 `);
     const region = {
       boxes: [box([3, 4]), box([127, 128])],
@@ -90,8 +90,8 @@ C = matmul(A, B)
 
   it("uses inferred cast dtypes for output and intermediate byte metrics", () => {
     const { executor } = compileDSL(`X = Tensor(4, dtype=fp32)
-Y = cast(X, dtype=fp8)
-Z = cast(Y, dtype=fp16)
+Y = astype(X, fp8)
+Z = astype(Y, fp16)
 `);
     const region = fromBox(box([0, 4]));
 

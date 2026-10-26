@@ -33,7 +33,7 @@ describe("a tensor read through two operand slots", () => {
     // overlapping boxes. Summing per box would over-count where they meet.
     const src = `N = 64
 A = Tensor(N, N, dtype=fp16)
-T = transpose(A, perm=[1,0])
+T = permute_dims(A, [1,0])
 S = add(A, T)
 U = matmul(S, S)
 `;

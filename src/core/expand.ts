@@ -55,31 +55,34 @@ export function expandNode(g: Graph, nodeId: string): Graph {
   const x = out.tensors[node.inputs[0]];
   const y = node.outputs[0];
   const rank = resolved.tensors[x.id].resolved.length;
+  // What the author wrote may be an axis name or a short form; the resolved
+  // node holds the canonical values.
+  const attrs = resolved.topo.find((candidate) => candidate.id === nodeId)!.attrs;
 
   if (node.op === "softmax") {
-    const axis = normAxis(node.attrs.axis as number, rank);
+    const axis = normAxis(attrs.axis as number, rank);
     const m = mk("max", [], x);
     const xm = mk("sub", [], x);
     const e = mk("exp", [], x);
     const s = mk("sum", [], x);
     op("n0", "reduce", [x.id], [m.id], { fn: "max", axes: [axis], keepdim: true });
-    op("n1", "elementwise", [x.id, m.id], [xm.id], { fn: "sub", nary: 2 });
+    op("n1", "elementwise", [x.id, m.id], [xm.id], { fn: "subtract", nary: 2 });
     op("n2", "elementwise", [xm.id], [e.id], { fn: "exp", nary: 1 });
     op("n3", "reduce", [e.id], [s.id], { fn: "sum", axes: [axis], keepdim: true });
-    op("n4", "elementwise", [e.id, s.id], [y], { fn: "div", nary: 2 });
+    op("n4", "elementwise", [e.id, s.id], [y], { fn: "divide", nary: 2 });
   } else if (node.op === "normalize") {
-    const kind = node.attrs.kind as string;
-    const axes = normAxes(node.attrs.axes as number[], rank);
+    const kind = attrs.kind as string;
+    const axes = normAxes(attrs.axes as number[], rank);
     // elementwise broadcasting is trailing-aligned, so expansion requires trailing axes
     const trailing = axes.every((a, i) => a === rank - axes.length + i);
     if (!trailing) throw new Error("expand normalize: only trailing axes supported");
-    const hasWeight = node.attrs.hasWeight as boolean;
-    const hasBias = node.attrs.hasBias as boolean;
+    const hasWeight = attrs.hasWeight as boolean;
+    const hasBias = attrs.hasBias as boolean;
     const wid = hasWeight ? node.inputs[1] : undefined;
     const bid = hasBias ? node.inputs[hasWeight ? 2 : 1] : undefined;
 
     let xn: Tensor;
-    if (kind === "layernorm") {
+    if (kind === "layer_norm") {
       const mean = mk("mean", [], x);
       const xc = mk("xc", [], x);
       const sq = mk("sq", [], x);
@@ -87,26 +90,26 @@ export function expandNode(g: Graph, nodeId: string): Graph {
       const rstd = mk("rstd", [], x);
       xn = mk("xn", [], x);
       op("n0", "reduce", [x.id], [mean.id], { fn: "mean", axes, keepdim: true });
-      op("n1", "elementwise", [x.id, mean.id], [xc.id], { fn: "sub", nary: 2 });
-      op("n2", "elementwise", [xc.id, xc.id], [sq.id], { fn: "mul", nary: 2 });
+      op("n1", "elementwise", [x.id, mean.id], [xc.id], { fn: "subtract", nary: 2 });
+      op("n2", "elementwise", [xc.id, xc.id], [sq.id], { fn: "multiply", nary: 2 });
       op("n3", "reduce", [sq.id], [vr.id], { fn: "mean", axes, keepdim: true });
       op("n4", "elementwise", [vr.id], [rstd.id], { fn: "rsqrt", nary: 1 });
-      op("n5", "elementwise", [xc.id, rstd.id], [xn.id], { fn: "mul", nary: 2 });
+      op("n5", "elementwise", [xc.id, rstd.id], [xn.id], { fn: "multiply", nary: 2 });
     } else {
       const sq = mk("sq", [], x);
       const ms = mk("ms", [], x);
       const rstd = mk("rstd", [], x);
       xn = mk("xn", [], x);
-      op("n0", "elementwise", [x.id, x.id], [sq.id], { fn: "mul", nary: 2 });
+      op("n0", "elementwise", [x.id, x.id], [sq.id], { fn: "multiply", nary: 2 });
       op("n1", "reduce", [sq.id], [ms.id], { fn: "mean", axes, keepdim: true });
       op("n2", "elementwise", [ms.id], [rstd.id], { fn: "rsqrt", nary: 1 });
-      op("n3", "elementwise", [x.id, rstd.id], [xn.id], { fn: "mul", nary: 2 });
+      op("n3", "elementwise", [x.id, rstd.id], [xn.id], { fn: "multiply", nary: 2 });
     }
     let cur = xn.id;
     if (wid) {
       const scaled = hasBias ? mk("scaled", [], x) : undefined;
       const target = scaled ? scaled.id : y;
-      op("n6", "elementwise", [cur, wid], [target], { fn: "mul", nary: 2 });
+      op("n6", "elementwise", [cur, wid], [target], { fn: "multiply", nary: 2 });
       cur = target;
     }
     if (bid) op("n7", "elementwise", [cur, bid], [y], { fn: "add", nary: 2 });

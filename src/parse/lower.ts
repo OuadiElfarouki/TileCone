@@ -1,9 +1,9 @@
 /**
  * AST -> Graph.
  *
- * This is where the DSL's call-name sugar becomes operations and attributes,
- * and where names are resolved. It collects errors instead of throwing at the
- * first one, and it *poisons* rather than cascades: a statement that fails
+ * This is where a call is bound to its signature and becomes an operation with
+ * attributes, and where names are resolved. It collects errors instead of
+ * throwing at the first one, and it *poisons* rather than cascades: a statement that fails
  * still registers the names it was going to bind, and a later statement reading
  * a poisoned name is skipped in silence. Reporting `unknown tensor "Y"` on
  * every subsequent line because line 3 failed would bury the one error the
@@ -13,38 +13,14 @@
 import { Graph, Node, Tensor } from "../core/graph";
 import { DType } from "../core/dtypes";
 import { dimSymbols, Sym } from "../core/shapes";
-import { Arg, Expr, Program, Spanned, Stmt } from "./ast";
+import { nearestName } from "../core/ops/kinds";
+import { Expr, Program, Spanned, Stmt } from "./ast";
+import { bindCall, dtypeFromWord, DSL_DTYPES } from "./bind";
 import { DSLError } from "./parser";
-import { sugarForCall } from "./sugar";
-import { DSLSourceMap, SourceSpan } from "./source";
+import { foreignName, SIGNATURES, signatureFor, SUBSCRIPT_OP } from "./signatures";
+import { DSLSourceMap, NodeArgSpans, SourceSpan } from "./source";
 
-export const DSL_DTYPES = [
-  "fp32", "fp16", "bf16", "fp8", "int64", "int32", "uint8", "int8", "bool",
-] as const;
-
-const DTYPE_FROM_DSL: Record<(typeof DSL_DTYPES)[number], DType> = {
-  fp32: "f32",
-  fp16: "f16",
-  bf16: "bf16",
-  fp8: "f8",
-  int64: "i64",
-  int32: "i32",
-  uint8: "u8",
-  int8: "i8",
-  bool: "bool",
-};
-
-export const DTYPE_TO_DSL: Record<DType, (typeof DSL_DTYPES)[number]> = {
-  f32: "fp32",
-  f16: "fp16",
-  bf16: "bf16",
-  f8: "fp8",
-  i64: "int64",
-  i32: "int32",
-  u8: "uint8",
-  i8: "int8",
-  bool: "bool",
-};
+export { DSL_DTYPES, DTYPE_TO_DSL } from "./bind";
 
 export type LowerResult = {
   graph: Graph;
@@ -52,23 +28,8 @@ export type LowerResult = {
   errors: DSLError[];
 };
 
-/** An attribute value, with symbolic dimensions kept as their written text. */
-function exprToAttr(e: Expr): unknown {
-  switch (e.kind) {
-    case "list":
-      return e.items.map(exprToAttr);
-    case "dim":
-      return e.text;
-    default:
-      return e.value;
-  }
-}
-
 function dtypeFromExpr(e: Expr): DType | null {
-  if (e.kind !== "dim") return null;
-  return Object.prototype.hasOwnProperty.call(DTYPE_FROM_DSL, e.text)
-    ? DTYPE_FROM_DSL[e.text as keyof typeof DTYPE_FROM_DSL]
-    : null;
+  return e.kind === "dim" ? dtypeFromWord(e.text) : null;
 }
 
 export function lowerProgram(program: Program): LowerResult {
@@ -133,6 +94,11 @@ export function lowerProgram(program: Program): LowerResult {
 
     if (stmt.kind === "declare") {
       lowerDeclare(stmt);
+      continue;
+    }
+
+    if (stmt.kind === "subscript") {
+      lowerSubscript(stmt);
       continue;
     }
 
@@ -243,7 +209,7 @@ export function lowerProgram(program: Program): LowerResult {
       // was a trailing positional word. Read as a dimension it is a symbol that
       // happens to be spelled like a dtype, and the failure would surface much
       // later as an unbound symbol - naming a real mistake something it is not.
-      if (Object.prototype.hasOwnProperty.call(DTYPE_FROM_DSL, e.text)) {
+      if (dtypeFromWord(e.text)) {
         fail(`dtype is an attribute here: write dtype=${e.text}`, e.span, "DSL_SYNTAX");
         return null;
       }
@@ -253,173 +219,147 @@ export function lowerProgram(program: Program): LowerResult {
     return null;
   }
 
-  function lowerCall(stmt: Stmt & { kind: "call" }): void {
-    const callee = stmt.callee.value;
-    const attrs = dictionary<unknown>();
-    const inputs: string[] = [];
-    const inputSpans: SourceSpan[] = [];
-    let bad = false;
-    const seenAttrs = new Set<string>();
-
-    for (const arg of stmt.args) {
-      if (arg.kind === "named") {
-        if (seenAttrs.has(arg.name.value)) {
-          fail(
-            `attribute "${arg.name.value}" specified more than once`,
-            arg.span,
-            "DSL_DUPLICATE_ATTRIBUTE"
-          );
-          bad = true;
-          continue;
-        }
-        seenAttrs.add(arg.name.value);
-        if (arg.name.value === "dtype") {
-          const d = dtypeFromExpr(arg.value);
-          if (!d) {
-            fail(`dtype must be one of ${DSL_DTYPES.join(", ")}`, arg.value.span, "DSL_SYNTAX");
-            bad = true;
-            continue;
-          }
-          attrs.dtype = d;
-          continue;
-        }
-        // A per-output dtype list, written in the DSL's own spellings like the
-        // singular is. `null` is a hole - an output that takes whatever the
-        // operation would have inferred - so a barrier naming one unusual
-        // output need not restate the ordinary ones beside it.
-        if (arg.name.value === "dtypes") {
-          if (arg.value.kind !== "list") {
-            fail("dtypes must be a list", arg.value.span, "DSL_SYNTAX");
-            bad = true;
-            continue;
-          }
-          const items: (DType | null)[] = [];
-          let ok = true;
-          for (const item of arg.value.items) {
-            if (item.kind === "dim" && item.text === "null") {
-              items.push(null);
-              continue;
-            }
-            const d = dtypeFromExpr(item);
-            if (!d) {
-              fail(
-                `dtype must be one of ${DSL_DTYPES.join(", ")}, or null`,
-                item.span,
-                "DSL_SYNTAX"
-              );
-              ok = false;
-              break;
-            }
-            items.push(d);
-          }
-          if (!ok) {
-            bad = true;
-            continue;
-          }
-          attrs.dtypes = items;
-          continue;
-        }
-        if (readsPoisoned(arg.value)) {
-          bad = true;
-          continue;
-        }
-        attrs[arg.name.value] = exprToAttr(arg.value);
-        continue;
-      }
-      // positional: a tensor reference, or einsum's equation
-      const e = arg.value;
-      if (e.kind === "string") {
-        if (callee === "einsum" && attrs.equation === undefined) attrs.equation = e.value;
-        else {
-          fail("unexpected string argument", e.span, "DSL_SYNTAX");
-          bad = true;
-        }
-        continue;
-      }
-      if (e.kind === "dim") {
-        inputs.push(e.text);
-        inputSpans.push(e.span);
-        continue;
-      }
-      fail("positional args must be tensors or an einsum equation", e.span, "DSL_SYNTAX");
-      bad = true;
-    }
-
-    // Desugaring is table-driven, and the printer reads the same table, so a
-    // call the DSL accepts is a call the DSL can write back.
-    const sugar = sugarForCall(callee);
-    let op = callee;
-    if (sugar) {
-      op = sugar.op;
-      // The singular spelling, which is what softmax and cumsum take.
-      if (sugar.axisAlias && attrs.axes === undefined && attrs.axis !== undefined) {
-        attrs.axes = [attrs.axis];
-        delete attrs.axis;
-      }
-      for (const [key, value] of Object.entries(sugar.defaults ?? {}))
-        if (attrs[key] === undefined) attrs[key] = value;
-      Object.assign(attrs, sugar.attrsFor(inputs.length));
-      for (const key of sugar.requires ?? [])
-        if (attrs[key] === undefined) {
-          fail(
-            `${callee}() needs an axis, e.g. ${callee}(X, axis=-1)`,
-            stmt.span,
-            "DSL_MISSING_ATTRIBUTE"
-          );
-          bad = true;
-        }
-    }
-
-    // Unknown inputs are reported per reference, on the reference's own span.
-    // A reference to a name that a *failed* statement would have bound is not
-    // reported at all: the author has one error there, not two.
+  /**
+   * The node a statement builds, once its inputs and attributes are known.
+   * Unknown inputs are reported per reference, on the reference's own span. A
+   * reference to a name that a *failed* statement would have bound is not
+   * reported at all: the author has one error there, not two.
+   */
+  function emit(
+    outs: Spanned<string>[],
+    op: string,
+    inputs: Spanned<string>[],
+    attrs: Record<string, unknown>,
+    spans: {
+      statement: SourceSpan;
+      callee: SourceSpan;
+      attrs: Record<string, SourceSpan>;
+      written: NodeArgSpans["written"];
+    },
+    bad: boolean
+  ): void {
     let missing = false;
-    inputs.forEach((name, i) => {
-      if (tensors[name]) return;
-      if (poisoned.has(name)) {
-        missing = true;
-        return;
-      }
-      fail(`unknown tensor "${name}"`, inputSpans[i], "DSL_UNKNOWN_TENSOR");
+    for (const ref of inputs) {
+      if (tensors[ref.value]) continue;
       missing = true;
-    });
+      if (poisoned.has(ref.value)) continue;
+      fail(`unknown tensor "${ref.value}"`, ref.span, "DSL_UNKNOWN_TENSOR");
+    }
 
-    const claimed = stmt.outs.filter((out) => claim(out, "DSL_DUPLICATE_TENSOR"));
-    if (claimed.length !== stmt.outs.length) return;
+    const claimed = outs.filter((out) => claim(out, "DSL_DUPLICATE_TENSOR"));
+    if (claimed.length !== outs.length) return;
     if (bad || missing) {
-      for (const out of stmt.outs) poisoned.add(out.value);
+      for (const out of outs) poisoned.add(out.value);
       return;
     }
 
-    for (const out of stmt.outs) {
+    for (const out of outs) {
       tensors[out.value] = {
         id: out.value,
         name: out.value,
         shape: [],
-        dtype: tensors[inputs[0]]?.dtype ?? "f32",
+        dtype: tensors[inputs[0]?.value]?.dtype ?? "f32",
       };
-      sourceMap.tensors[out.value] = stmt.span;
+      sourceMap.tensors[out.value] = spans.statement;
     }
     const node: Node = {
-      id: `${op}_${stmt.outs[0].value}`,
+      id: `${op}_${outs[0].value}`,
       op,
-      inputs,
-      outputs: stmt.outs.map((o) => o.value),
+      inputs: inputs.map((ref) => ref.value),
+      outputs: outs.map((o) => o.value),
       attrs,
     };
     nodes.push(node);
-    sourceMap.nodes[node.id] = stmt.span;
+    sourceMap.nodes[node.id] = spans.statement;
     // Argument-level spans, so a diagnostic about one operand or one attribute
     // can underline it rather than the whole statement.
     sourceMap.nodeArgs[node.id] = {
-      inputs: inputSpans,
-      attrs: Object.fromEntries(
-        stmt.args
-          .filter((a): a is Arg & { kind: "named" } => a.kind === "named")
-          .map((a) => [a.name.value, a.span])
-      ),
-      callee: stmt.callee.span,
+      inputs: inputs.map((ref) => ref.span),
+      attrs: spans.attrs,
+      callee: spans.callee,
+      written: spans.written,
     };
+  }
+
+  function lowerCall(stmt: Stmt & { kind: "call" }): void {
+    const callee = stmt.callee.value;
+    const sig = signatureFor(callee);
+    if (!sig) {
+      const near = foreignName(callee) ?? nearestName(callee, SIGNATURES.map((s) => s.name));
+      fail(
+        `unknown function "${callee}"${near ? ` (did you mean ${near}?)` : ""}`,
+        stmt.callee.span,
+        "DSL_UNKNOWN_FUNCTION"
+      );
+      for (const out of stmt.outs) if (claim(out, "DSL_DUPLICATE_TENSOR")) poisoned.add(out.value);
+      return;
+    }
+    // A value reading a symbol that a failed statement would have bound is
+    // skipped in silence, like a poisoned tensor.
+    const silent = stmt.args.some((arg) => arg.kind === "named" && readsPoisoned(arg.value));
+    const { bound, errors: bindErrors } = bindCall(sig, stmt.args, stmt.span);
+    errors.push(...bindErrors);
+    emit(
+      stmt.outs,
+      sig.op,
+      bound?.inputs ?? [],
+      bound?.attrs ?? {},
+      {
+        statement: stmt.span,
+        callee: stmt.callee.span,
+        attrs: bound?.attrSpans ?? {},
+        written: { function: callee },
+      },
+      !bound || silent
+    );
+  }
+
+  /**
+   * `X[a:b, :, ::2]` as a slice: one start, stop and step per written axis,
+   * null where a part is left out. An integer index would drop its axis, which
+   * the slice operation does not do, so it is refused with the range to write.
+   */
+  function lowerSubscript(stmt: Stmt & { kind: "subscript" }): void {
+    const starts: unknown[] = [];
+    const stops: unknown[] = [];
+    const steps: unknown[] = [];
+    let bad = false;
+    const bound = (e: Expr | undefined): unknown => {
+      if (e === undefined) return null;
+      if (readsPoisoned(e)) {
+        bad = true;
+        return null;
+      }
+      if (e.kind === "number") return e.value;
+      if (e.kind === "dim") return e.text;
+      fail("a slice bound is an int or a dimension expression", e.span, "DSL_SYNTAX");
+      bad = true;
+      return null;
+    };
+    for (const item of stmt.items) {
+      if (item.kind === "index") {
+        const text = item.value.kind === "dim" ? item.value.text : String((item.value as { value?: unknown }).value);
+        fail(
+          `an index would drop the axis, which slicing here does not do; write ${text}:${text}+1 to keep it`,
+          item.span,
+          "DSL_UNSUPPORTED_INDEX"
+        );
+        bad = true;
+        continue;
+      }
+      starts.push(bound(item.start));
+      stops.push(bound(item.stop));
+      steps.push(bound(item.step));
+    }
+    const at = { starts: stmt.brackets, stops: stmt.brackets, steps: stmt.brackets };
+    emit(
+      stmt.outs,
+      SUBSCRIPT_OP,
+      [stmt.target],
+      { starts, stops, steps },
+      { statement: stmt.span, callee: stmt.brackets, attrs: at, written: { subscript: stmt.target.value } },
+      bad
+    );
   }
 
   return {

@@ -67,7 +67,7 @@ describe("oracle corpus: single ops", () => {
     checkGraph(G({ A: [3, 4], B: [4, 5] }, [["n", "matmul", ["A", "B"], ["C"]]])));
 
   it("einsum bmm", () =>
-    checkGraph(G({ A: [2, 3, 4], B: [2, 4, 3] }, [["n", "bmm", ["A", "B"], ["C"]]])));
+    checkGraph(G({ A: [2, 3, 4], B: [2, 4, 3] }, [["n", "matmul", ["A", "B"], ["C"]]])));
 
   it("einsum outer + trace + transpose", () => {
     checkGraph(G({ a: [4], b: [5] }, [["n", "einsum", ["a", "b"], ["o"], { equation: "i,j->ij" }]]));
@@ -87,7 +87,7 @@ describe("oracle corpus: single ops", () => {
 
   it("elementwise with broadcasting", () => {
     checkGraph(G({ A: [3, 4], B: [3, 4] }, [["n", "elementwise", ["A", "B"], ["C"], { fn: "add", nary: 2 }]]));
-    checkGraph(G({ A: [3, 4], B: [1, 4] }, [["n", "elementwise", ["A", "B"], ["C"], { fn: "mul", nary: 2 }]]));
+    checkGraph(G({ A: [3, 4], B: [1, 4] }, [["n", "elementwise", ["A", "B"], ["C"], { fn: "multiply", nary: 2 }]]));
     checkGraph(G({ A: [2, 3, 4], B: [4] }, [["n", "elementwise", ["A", "B"], ["C"], { fn: "add", nary: 2 }]]));
     checkGraph(G({ A: [2, 1, 4], B: [1, 3, 1] }, [["n", "elementwise", ["A", "B"], ["C"], { fn: "add", nary: 2 }]]));
     // A rank-2 operand trailing-aligned against rank 4: how an attention mask
@@ -95,7 +95,7 @@ describe("oracle corpus: single ops", () => {
     checkGraph(G({ A: [2, 2, 3, 4], B: [3, 4] }, [["n", "elementwise", ["A", "B"], ["C"], { fn: "add", nary: 2 }]]));
     // Rank 0 on either side, and on both. The offset arithmetic in the
     // broadcast box mappings is at its most degenerate here.
-    checkGraph(G({ A: [2, 3], s: [] }, [["n", "elementwise", ["A", "s"], ["C"], { fn: "mul", nary: 2 }]]));
+    checkGraph(G({ A: [2, 3], s: [] }, [["n", "elementwise", ["A", "s"], ["C"], { fn: "multiply", nary: 2 }]]));
     checkGraph(G({ s: [], A: [2, 3, 2] }, [["n", "elementwise", ["s", "A"], ["C"], { fn: "add", nary: 2 }]]));
     checkGraph(G({ s: [], t: [] }, [["n", "elementwise", ["s", "t"], ["C"], { fn: "add", nary: 2 }]]));
   });
@@ -116,24 +116,24 @@ describe("oracle corpus: single ops", () => {
   it("normalize", () => {
     checkGraph(
       G({ X: [3, 4], W: [4], B: [4] }, [
-        ["n", "normalize", ["X", "W", "B"], ["Y"], { kind: "layernorm", axes: [-1], hasWeight: true, hasBias: true }],
+        ["n", "normalize", ["X", "W", "B"], ["Y"], { kind: "layer_norm", axes: [-1], hasWeight: true, hasBias: true }],
       ])
     );
     checkGraph(
       G({ X: [2, 3, 4], W: [4] }, [
-        ["n", "normalize", ["X", "W"], ["Y"], { kind: "rmsnorm", axes: [2], hasWeight: true, hasBias: false }],
+        ["n", "normalize", ["X", "W"], ["Y"], { kind: "rms_norm", axes: [2], hasWeight: true, hasBias: false }],
       ])
     );
     checkGraph(
       G({ X: [2, 3, 4] }, [
-        ["n", "normalize", ["X"], ["Y"], { kind: "layernorm", axes: [1, 2], hasWeight: false, hasBias: false }],
+        ["n", "normalize", ["X"], ["Y"], { kind: "layer_norm", axes: [1, 2], hasWeight: false, hasBias: false }],
       ])
     );
   });
 
   it("transpose", () => {
-    checkGraph(G({ X: [3, 4] }, [["n", "transpose", ["X"], ["Y"], { perm: [1, 0] }]]));
-    checkGraph(G({ X: [2, 3, 4] }, [["n", "transpose", ["X"], ["Y"], { perm: [2, 0, 1] }]]));
+    checkGraph(G({ X: [3, 4] }, [["n", "permute_dims", ["X"], ["Y"], { perm: [1, 0] }]]));
+    checkGraph(G({ X: [2, 3, 4] }, [["n", "permute_dims", ["X"], ["Y"], { perm: [2, 0, 1] }]]));
   });
 
   it("slice incl. strided", () => {
@@ -145,7 +145,7 @@ describe("oracle corpus: single ops", () => {
   });
 
   it("pad all modes", () => {
-    for (const mode of ["constant", "reflect", "replicate"] as const)
+    for (const mode of ["constant", "reflect", "edge"] as const)
       checkGraph(
         G({ X: [5, 4] }, [["n", "pad", ["X"], ["Y"], { pads: [[2, 1], [1, 3]], mode }]])
       );
@@ -161,8 +161,8 @@ describe("oracle corpus: single ops", () => {
   });
 
   it("expand", () => {
-    checkGraph(G({ X: [1, 4] }, [["n", "expand", ["X"], ["Y"], { shape: [3, 4] }]]));
-    checkGraph(G({ X: [3, 1] }, [["n", "expand", ["X"], ["Y"], { shape: [2, 3, 5] }]]));
+    checkGraph(G({ X: [1, 4] }, [["n", "broadcast_to", ["X"], ["Y"], { shape: [3, 4] }]]));
+    checkGraph(G({ X: [3, 1] }, [["n", "broadcast_to", ["X"], ["Y"], { shape: [2, 3, 5] }]]));
   });
 
   it("conv variants", () => {
@@ -200,19 +200,19 @@ describe("oracle corpus: single ops", () => {
   });
 
   it("cumsum both directions", () => {
-    checkGraph(G({ X: [6] }, [["n", "cumsum", ["X"], ["Y"], { axis: 0, reverse: false }]]));
-    checkGraph(G({ X: [4, 5] }, [["n", "cumsum", ["X"], ["Y"], { axis: 1, reverse: true }]]));
+    checkGraph(G({ X: [6] }, [["n", "cumulative_sum", ["X"], ["Y"], { axis: 0, reverse: false }]]));
+    checkGraph(G({ X: [4, 5] }, [["n", "cumulative_sum", ["X"], ["Y"], { axis: 1, reverse: true }]]));
   });
 
   it("gather with concrete indices", () => {
     const axis0 = G({ D: [6, 3], I: [4] }, [
-      ["n", "gather", ["D", "I"], ["Y"], { axis: 0, indexValues: [5, 0, 2, 2] }],
+      ["n", "take", ["D", "I"], ["Y"], { axis: 0, indexValues: [5, 0, 2, 2] }],
     ]);
     axis0.tensors.I.dtype = "i32";
     checkGraph(axis0);
 
     const axis1 = G({ D: [2, 5], I: [3] }, [
-      ["n", "gather", ["D", "I"], ["Y"], { axis: 1, indexValues: [4, 4, 1] }],
+      ["n", "take", ["D", "I"], ["Y"], { axis: 1, indexValues: [4, 4, 1] }],
     ]);
     axis1.tensors.I.dtype = "i32";
     checkGraph(axis1);
@@ -220,7 +220,7 @@ describe("oracle corpus: single ops", () => {
 
   it("identity family", () => {
     checkGraph(G({ X: [3, 4] }, [["n", "identity", ["X"], ["Y"]]]));
-    checkGraph(G({ X: [3, 4] }, [["n", "cast", ["X"], ["Y"], { dtype: "f16" }]]));
+    checkGraph(G({ X: [3, 4] }, [["n", "astype", ["X"], ["Y"], { dtype: "f16" }]]));
   });
 });
 
@@ -246,7 +246,7 @@ describe("inexact fallbacks are marked and are supersets", () => {
   it("data-dependent gather is full + inexact", () => {
     const graph = G(
       { D: [6, 3], I: [4] },
-      [["n", "gather", ["D", "I"], ["Y"], { axis: 0 }]]
+      [["n", "take", ["D", "I"], ["Y"], { axis: 0 }]]
     );
     graph.tensors.I.dtype = "i32";
     const g = resolveGraph(graph);

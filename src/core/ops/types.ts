@@ -1,4 +1,4 @@
-import type { ZodType } from "zod";
+import type { Kind } from "./kinds";
 import type { Box, Region } from "../region";
 import type { Tally } from "../tally";
 import type { Sym } from "../shapes";
@@ -129,16 +129,17 @@ export type NoteCtx = OpCtx & {
 
 export interface OpSpec {
   name: string;
-  /** Attribute schema. A plain object schema is narrowed to `.strict()` at graph
-   * resolution, so an attribute this schema does not name is a hard error rather
-   * than silently stripped: a misspelling must not quietly change what the graph
-   * computes. `.passthrough()` is therefore not honoured on an object schema :
-   * an operation that genuinely accepts open attributes needs a non-object
-   * schema such as `z.record(...)`. */
-  attrSchema: ZodType<unknown>;
+  /**
+   * Every attribute this operation takes, each as one of the kinds in
+   * `kinds.ts`. An attribute not named here is a hard error rather than
+   * ignored: a misspelling must not quietly change what the graph computes.
+   * Operation code reads only canonical values, which resolution produces from
+   * these kinds with the operands in hand.
+   */
+  attrs: Record<string, Kind>;
   arity: { inputs: Cardinality; outputs: Cardinality };
 
-  /** Validate counts that depend on parsed attributes rather than static ranges. */
+  /** Validate counts that depend on canonical attributes rather than static ranges. */
   validateArity?(inputCount: number, outputCount: number, attrs: Attrs): void;
 
   inferShapes(inShapes: number[][], attrs: Attrs, params?: Record<string, number>): number[][];
@@ -381,7 +382,7 @@ export const DIAG_ENUM_CAP = DEFAULT_LIMITS.diagEnum;
  *
  * Correct for the ops that move data rather than compute with it: a `concat` of
  * an fp16 and an fp32 tensor has no single representation to produce, and the
- * author almost certainly meant to cast one of them. For single-input ops this
+ * author almost certainly meant to convert one of them. For single-input ops this
  * is simply "carry the dtype through". Compute ops use `promotingDTypeOutputs`.
  */
 export function uniformDTypeOutputs(op: string) {
@@ -392,7 +393,7 @@ export function uniformDTypeOutputs(op: string) {
     if (mismatch)
       throw new Error(
         `${op}: input dtypes must match, got [${inDTypes.join(", ")}]` +
-          ` - insert a cast(...) to choose the one you want`
+          ` - insert an astype(...) to choose the one you want`
       );
     return outShapes.map(() => dtype);
   };

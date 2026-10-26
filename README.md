@@ -64,9 +64,8 @@ The Co-access Surface is not the Forward Cone read backwards. For `C = A @ B`, t
 `A[0:4, 0:4]` is `C[0:4, :]`, and that band reads all of `B`. But the block only ever meets
 `B[0:4, :]` in a term of the product: those are the elements it is multiplied against. Whether they
 must be held at the same time depends on how an execution stages the computation, which co-access
-does not assume. It is exact for `einsum`
-(so `matmul`, `bmm`, `linear`), elementwise operations, `conv`, `concat` and `gather`; `normalize`
-falls back to a marked bound.
+does not assume. It is exact for `einsum` (so `matmul` and `linear`), elementwise operations,
+convolutions, `concat` and `take`; `layer_norm` and `rms_norm` fall back to a marked bound.
 
 ### Plan
 
@@ -88,7 +87,7 @@ element ("64 uses per element"). Clicking those figures, here or under Dependenc
 **reuse lens**: the operand's card is shaded by that count per element, one violet ramp from zero
 to the largest, with a legend under the row and the count at the pointer in the card's tooltip.
 A GEMM band reads as one flat shade; a convolution's overlapping windows, a shared operand's
-crossing bands or a gather's widened counts show where elements are used more. Escape, or clicking
+crossing bands or a `take`'s widened counts show where elements are used more. Escape, or clicking
 the figures again, turns it off. A producer found only through an
 over-approximated region is marked as a possible dependency rather than a definite one. For each
 tiled tensor and for the whole plan it reports:
@@ -165,11 +164,51 @@ X  = Tensor(batch=B, seq=S, emb=E, dtype=fp16)
 Wq = Parameter(emb=E, proj=E, dtype=fp16)
 
 Qp = einsum("bse,ef->bsf", X, Wq)
-Q4 = reshape(Qp, shape=[B, S, H, D])
-Qh = transpose(Q4, perm=[0, 2, 1, 3])
+Q4 = reshape(Qp, [B, S, H, D])
+Qh = permute_dims(Q4, [0, 2, 1, 3])
 Sc = einsum("bhqd,bhkd->bhqk", Qh, Qh)
 P  = softmax(Sc, axis=-1)
+Pq = P[:, :, 0:S/2]
+Y  = sum(X, axis=emb)
 ```
+
+### Functions and their parameters
+
+Function names and keywords follow the [Python Array API Standard](https://data-apis.org/array-api/)
+(the part NumPy, PyTorch, JAX and CuPy share), and `torch.nn.functional` for the network operations
+the standard does not cover. Each concept has one spelling: `axis`, not `dim`; `keepdims`, not
+`keepdim`. An error for another library's spelling names this one.
+
+Every function has a signature, read like a Python one:
+
+```
+conv2d(input, weight, *, stride=…, padding=…, dilation=…, groups=…)
+sum(x, *, axis=…, keepdims=…)
+layer_norm(x, weight=None, bias=None, *, axis=…)
+```
+
+Parameters before `*` may be given by position or by name; those after it only by name.
+Arguments bind by Python's rules, and a parameter given twice, a keyword the function does not
+take, or a required one left out is an error that names it and shows the signature.
+
+A value is written in one of a few forms, and the form is defined once for every function that
+takes it:
+
+| Value | Written as | Example |
+|---|---|---|
+| axis | an int, negative from the end, or an axis name | `axis=-1`, `axis=seq` |
+| axes | one axis or a list; left out means every axis where a function says so | `sum(X)`, `axis=[0, seq]` |
+| spatial | one int for every spatial axis, or one per axis | `stride=2`, `stride=[2, 1]` |
+| padding | one int, one per spatial axis, or a `[lo, hi]` pair per spatial axis | `padding=1`, `padding=[[0, 1], [1, 1]]` |
+| pad_width | NumPy's forms: one int, one `[lo, hi]` pair, or a pair per axis | `pad(X, 1)`, `pad(X, [0, 2])` |
+| extent | an int or an expression over the size symbols | `[B, S, H*D]`, `split(X, D)` |
+| dtype | a bare word | `astype(X, bf16)` |
+| free text | a quoted string | `einsum("ij,jk->ik", A, B)` |
+
+Slicing uses subscript notation, `X[a:b:c, ...]`, with NumPy's rules: a part left out takes its
+default, a negative bound counts from the end, and axes past the last item are taken whole.
+Bounds may be expressions (`X[:, 0:S/2]`). An integer index, which would drop its axis, is an
+error that names the range keeping it.
 
 Ctrl/Cmd+Enter runs the source. Every independent error is reported in one pass, in source order,
 each underlining the part it is about. Extents an operation needs to match are checked as
@@ -181,7 +220,7 @@ values by 32 and odd ones by 1; a run that only changes sizes keeps
 the cards where you placed them, their views, and the viewport. The source panel carries built-in examples, among them
 multi-head attention, KV-cache and grouped-query decode steps, a SwiGLU feed-forward block and MoE
 expert dispatch. Three of them are worked experiments: tile size and reuse in a GEMM, fusion and
-recomputation in an MLP, and splitting a layernorm's normalised axis. Running one opens the Plan
+recomputation in an MLP, and splitting a layer_norm's normalised axis. Running one opens the Plan
 view on a plan with two others kept beside it, and the source's comments state the question and
 what the figures show. The share button encodes the source, the tiles and the view settings in a link.
 
@@ -200,21 +239,25 @@ column block of a GEMM tile needs no more of A and a whole band of B.
 
 | | |
 |---|---|
-| **Contraction** | `einsum` (incl. diagonals and traces), `matmul`, `bmm`, `linear` |
-| **Elementwise** | `add` `sub` `mul` `div` `pow` `maximum` `minimum`, `relu` `gelu` `silu` `sigmoid` `tanh` `exp` `log` `sqrt` `rsqrt` `neg` `abs`, with NumPy broadcasting |
-| **Reduction** | `sum` `mean` `prod` `amax` `amin`, multi-axis, `keepdim` |
-| **Normalisation** | `softmax`, `layernorm`, `rmsnorm` (optional weight and bias) |
-| **Shape** | `reshape`, `transpose`, `slice` (strided), `pad` (constant/reflect/replicate), `concat`, `split`, `expand`, `identity`, `contiguous` |
-| **Spatial** | `conv` (1–3D, grouped, strided, dilated, padded), `pool` (max/avg) |
-| **Other** | `cumsum` (forward and reverse), `gather`, `cast` |
+| | |
+|---|---|
+| **Contraction** | `einsum(subscripts, *operands)` (incl. diagonals and traces), `matmul(x1, x2)` (rank 2, 3 or 4), `linear(input, weight)` |
+| **Elementwise** | `add` `multiply` `maximum` `minimum` (two or more operands), `subtract` `divide` `pow`, `relu` `gelu` `silu` `sigmoid` `tanh` `exp` `log` `sqrt` `rsqrt` `negative` `abs`, with NumPy broadcasting |
+| **Reduction** | `sum` `mean` `prod` `max` `min` `logsumexp`, each `(x, *, axis, keepdims)` |
+| **Normalisation** | `softmax(x, *, axis)`, `layer_norm(x, weight, bias, *, axis)`, `rms_norm(x, weight, *, axis)` |
+| **Shape** | `reshape(x, shape)`, `permute_dims(x, axes)`, `X[a:b:c]`, `pad(x, pad_width, *, mode)` (constant/reflect/edge), `concat(arrays, *, axis)`, `split(x, sizes, *, axis)`, `broadcast_to(x, shape)`, `identity`, `contiguous` |
+| **Spatial** | `conv1d` `conv2d` `conv3d` (grouped, strided, dilated, padded), `max_pool1d…3d`, `avg_pool1d…3d` |
+| **Other** | `cumulative_sum(x, *, axis, reverse)`, `take(x, indices, *, axis, index_values)`, `astype(x, dtype)` |
 | **Barrier** | `opaque`: an operation whose shapes are known and whose semantics are not |
 
-Dtypes are `fp32` `fp16` `bf16` `fp8` `int64` `int32` `uint8` `int8` `bool`. Operations that compute
-from several tensors promote (`fp16 + fp32 → fp32`, following PyTorch); operations that only move
-data require a match, since one output buffer has no result type to infer.
+Dtypes are `fp32` `fp16` `bf16` `fp8` `int64` `int32` `uint8` `int8` `bool`.
+Operations that compute from several tensors promote (`fp16 + fp32 → fp32`, following
+PyTorch); operations that only move data require a match, since one output buffer has no result
+type to infer.
 
 **Not supported yet.** `matmul` needs matching ranks (no 3D @ 2D, no batch broadcast); einsum has
-no ellipsis; `reshape` takes no `-1`; slices have no negative steps; there is no `conv_transpose`,
+no ellipsis; `reshape` takes no `-1`; slices have no negative steps or integer indices; there is no
+infix arithmetic (`A @ B`); there is no `conv_transpose`,
 batch/group norm, `where`, `argmax`/`topk`, or comparison operator; a name is bound once, so
 `X = relu(X)` is an error.
 
@@ -340,9 +383,12 @@ src/
     graph.ts     IR, validation, topological order, shape inference
     propagate.ts backward/forward walk, transitive or stopped at a frontier
     ops/         the operation registry; einsum carries the contractions
+      kinds.ts   the value kinds every attribute is declared as
     metrics.ts   FLOPs, bytes, intensity
     plan/        tile families, tasks, producer/consumer joins
   parse/         lexer -> AST -> graph, JSON front end, compiler facade
+    signatures.ts  the DSL's functions, as signatures over the registry
+    bind.ts      binding a call's arguments to a signature
   examples/      built-in graphs
   view/          presentation model shared by the Worker and the store; no React
   worker/        compilation, layout and plan/reuse analysis off the UI thread

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { text } from "./kinds";
 import { Box, Region, coversAxisFully, empty, fromBox, iv, canonicalize } from "../region";
 import {
   Attrs,
@@ -574,7 +574,7 @@ function einsumSymEqualities(
 
 export const einsumOp: OpSpec = {
   name: "einsum",
-  attrSchema: z.object({ equation: z.string() }),
+  attrs: { equation: text() },
   arity: { inputs: { min: 1 }, outputs: 1 },
   inferAxisNames: (inNames, ctx) =>
     einsumAxisNames(eqOf(ctx.attrs), inNames, ctx.inShapes.length),
@@ -606,6 +606,35 @@ export const einsumOp: OpSpec = {
   dependencyNote: (ctx) => einsumDependencyNote(eqOf(ctx.attrs), ctx),
 };
 
+/**
+ * For an operation that is an einsum underneath, the first pair of axes that
+ * must agree and do not, said by operand and axis rather than by the label of
+ * an equation the author never wrote.
+ */
+function operandMismatch(eq: string, inShapes: number[][]): string | null {
+  const [lhs, out] = eq.replace(/\s+/g, "").split("->");
+  const seen = new Map<string, { input: number; axis: number; extent: number }>();
+  const terms = lhs.split(",");
+  for (let input = 0; input < terms.length; input++)
+    for (let axis = 0; axis < terms[input].length; axis++) {
+      const label = terms[input][axis];
+      const extent = inShapes[input]?.[axis];
+      if (extent === undefined) continue;
+      const first = seen.get(label);
+      if (!first) {
+        seen.set(label, { input, axis, extent });
+        continue;
+      }
+      if (first.extent === extent) continue;
+      const role = out.includes(label) ? "a batch axis" : "the contracted axis";
+      return (
+        `${role} differs: axis ${first.axis} of input ${first.input} is ${first.extent}, ` +
+        `axis ${axis} of input ${input} is ${extent}`
+      );
+    }
+  return null;
+}
+
 /** Sugar: build an OpSpec that lowers to a fixed-arity einsum with a shape-derived equation. */
 function einsumSugar(
   name: string,
@@ -615,7 +644,7 @@ function einsumSugar(
   const eqFor = (ctx: OpCtx) => makeEq(ctx.inShapes);
   return {
     name,
-    attrSchema: z.object({}),
+    attrs: {},
     arity: { inputs: nInputs, outputs: 1 },
     inferAxisNames: (inNames, ctx) =>
       einsumAxisNames(makeEq(ctx.inShapes), inNames, ctx.inShapes.length),
@@ -624,7 +653,12 @@ function einsumSugar(
     symEqualities: (inSyms, ctx) =>
       einsumSymEqualities(makeEq(ctx.inShapes), inSyms, ctx.inShapes.length, false),
     inferDTypes: promotingDTypeOutputs(name),
-    inferShapes: (inShapes) => einsumInferShapes(makeEq(inShapes), inShapes),
+    inferShapes: (inShapes) => {
+      const eq = makeEq(inShapes);
+      const mismatch = operandMismatch(eq, inShapes);
+      if (mismatch) throw new Error(mismatch);
+      return einsumInferShapes(eq, inShapes);
+    },
     backward: (_s, outBox, ctx) => einsumBackward(eqFor(ctx), outBox, ctx),
     forward: (inSlot, inBox, ctx) => einsumForward(eqFor(ctx), inSlot, inBox, ctx),
     oracleDeps: (_s, outIndex, ctx) => einsumOracleDeps(eqFor(ctx), outIndex, ctx),
@@ -643,15 +677,15 @@ export const matmulOp = einsumSugar("matmul", 2, (sh) => {
   if (a.length === 2 && b.length === 2) return "mk,kn->mn";
   if (a.length === 3 && b.length === 3) return "bmk,bkn->bmn";
   if (a.length === 4 && b.length === 4) return "bhmk,bhkn->bhmn";
-  throw new Error(`matmul: unsupported ranks ${a.length}/${b.length}`);
+  throw new Error(
+    `input 0 has rank ${a.length} and input 1 rank ${b.length}; both must have rank 2, 3 or 4`
+  );
 });
-
-export const bmmOp = einsumSugar("bmm", 2, () => "bmk,bkn->bmn");
 
 export const linearOp = einsumSugar("linear", 2, (sh) => {
   // x[..., K] @ W[N, K]^T
   const r = sh[0].length;
   if (r === 2) return "mk,nk->mn";
   if (r === 3) return "bsk,nk->bsn";
-  throw new Error(`linear: unsupported input rank ${r}`);
+  throw new Error(`input 0 has rank ${r}; it must have rank 2 or 3`);
 });

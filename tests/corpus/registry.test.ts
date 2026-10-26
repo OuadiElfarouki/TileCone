@@ -2,7 +2,7 @@
  * Properties that must hold for EVERY registered operation, driven off the
  * registry itself rather than a hand-kept list.
  *
- * Two are checked here:
+ * Three are checked here:
  *
  * 1. Coverage - the fixture table names every registered op, so a new op cannot
  *    ship untested.
@@ -10,13 +10,19 @@
  *    relation, and nothing else in the suite makes them agree directly. The
  *    oracle checks each against truth, but only where the oracle runs; this law
  *    needs no oracle and so runs on every op at every fixture size.
+ * 3. Expressibility - every fixture graph prints as DSL and compiles back to
+ *    the same canonical attributes and the same cones, so no operation, and no
+ *    value an operation accepts, is out of the language's reach.
  */
 
 import { describe, expect, it } from "vitest";
 import { listOps, opLabel } from "../../src/core/ops/index";
 import { OpCtx } from "../../src/core/ops/types";
 import { resolveGraph } from "../../src/core/graph";
-import { Box, Region, intersect, isEmpty, iv } from "../../src/core/region";
+import { Box, Region, full, intersect, isEmpty, iv } from "../../src/core/region";
+import { propagateBackward } from "../../src/core/propagate";
+import { toDSL } from "../../src/parse/dsl";
+import { compileDSL } from "../../src/parse/compiler";
 import { OP_FIXTURES } from "./op-fixtures";
 import { checkGraph, rng, randInt } from "./harness";
 
@@ -39,9 +45,9 @@ describe("registry coverage", () => {
      `opaque` is the one exception, and it is exempted by name rather than by
      loosening the rule: a converter meeting a constant-like node has to be able
      to represent it, and the alternative to representing it is dropping it. */
-  it("every op declares an attribute schema and a positive input arity", () => {
+  it("every op declares its attribute kinds and a positive input arity", () => {
     for (const spec of listOps()) {
-      expect(spec.attrSchema, `${spec.name} has no attrSchema`).toBeDefined();
+      expect(spec.attrs, `${spec.name} declares no attribute kinds`).toBeDefined();
       if (spec.name === "opaque") continue;
       const min =
         typeof spec.arity.inputs === "number" ? spec.arity.inputs : spec.arity.inputs.min;
@@ -61,8 +67,10 @@ describe("registry coverage", () => {
 describe("what an operation is called on screen", () => {
   it("prefers the written name to the implementation's", () => {
     expect(opLabel({ op: "elementwise", attrs: { fn: "relu", nary: 1 } })).toBe("relu");
-    expect(opLabel({ op: "reduce", attrs: { fn: "max", axes: [0] } })).toBe("amax");
-    expect(opLabel({ op: "normalize", attrs: { kind: "layernorm" } })).toBe("layernorm");
+    expect(opLabel({ op: "reduce", attrs: { fn: "max", axes: [0] } })).toBe("max");
+    expect(opLabel({ op: "normalize", attrs: { kind: "layer_norm" } })).toBe("layer_norm");
+    expect(opLabel({ op: "conv", attrs: { spatialRank: 2 } })).toBe("conv2d");
+    expect(opLabel({ op: "pool", attrs: { kind: "avg", spatialRank: 1 } })).toBe("avg_pool1d");
     expect(opLabel({ op: "opaque", attrs: { op: "BatchNormalization" } })).toBe("BatchNormalization");
   });
 
@@ -205,4 +213,25 @@ describe("entanglement hooks", () => {
         });
     }
   });
+});
+
+describe("every operation is expressible in the DSL", () => {
+  for (const fixture of OP_FIXTURES)
+    it(`${fixture.op}${fixture.note ? ` (${fixture.note.split(":")[0]})` : ""}`, () => {
+      const direct = resolveGraph(fixture.graph);
+      const printed = toDSL(fixture.graph);
+      const program = compileDSL(printed);
+      // Node ids differ - the DSL names a node after its output - so the node
+      // is found by what it produces.
+      const original = direct.topo.find((n) => n.id === fixture.nodeId)!;
+      expect(program.resolved.topo.find((n) => n.outputs[0] === original.outputs[0])!.attrs).toEqual(original.attrs);
+      // And the cone of every output is the same region either way.
+      for (const out of original.outputs) {
+        const seed = { tensorId: out, region: full(direct.tensors[out].resolved) };
+        const a = propagateBackward(direct, seed).tensors;
+        const b = propagateBackward(program.resolved, seed).tensors;
+        expect([...b.keys()].sort()).toEqual([...a.keys()].sort());
+        for (const [id, value] of a) expect(b.get(id)!.region).toEqual(value.region);
+      }
+    });
 });

@@ -143,7 +143,7 @@ describe("controls for parameters used by the graph", () => {
 
   it("offers controls for symbolic split sizes over an input of unknown extent", () => {
     useStore.getState().applyDSL('N = 2\nL = 4\nUnused = 16\nX = opaque(op="Src", shapes=[[6]], dtypes=[fp32])\n' +
-      "Y, Z = split(X, axis=0, sizes=[N, L])\n");
+      "Y, Z = split(X, [N, L], axis=0)\n");
     const html = renderToStaticMarkup(createElement(SidePanel));
     expect(html).toContain('id="param-N"');
     expect(html).toContain('id="param-L"');

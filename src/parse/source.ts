@@ -26,6 +26,9 @@ export type NodeArgSpans = {
   attrs: Record<string, SourceSpan>;
   /** The call name itself. */
   callee: SourceSpan;
+  /** The function the author called, or the tensor a subscript slices, for
+   * a message that names the node the way the source does. */
+  written: { function: string } | { subscript: string };
 };
 
 export type DSLSourceMap = {

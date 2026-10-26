@@ -1,5 +1,5 @@
-import { z } from "zod";
-import { DTYPES, DType } from "../dtypes";
+import { axis, dtype, oneOf, padWidth, permutation, shape, sliceBounds, splitSizes as splitSizesKind } from "./kinds";
+import { DType } from "../dtypes";
 import { Box, Interval, Region, canonicalize, empty, fromBox, iv } from "../region";
 import { resolveShape, Shape } from "../shapes";
 import {
@@ -44,8 +44,8 @@ function mergeIntervalList(list: Interval[]): Interval[] {
 // ---------------------------------------------------------------- transpose
 
 export const transposeOp: OpSpec = {
-  name: "transpose",
-  attrSchema: z.object({ perm: z.array(z.number().int()) }),
+  name: "permute_dims",
+  attrs: { perm: permutation() },
   arity: { inputs: 1, outputs: 1 },
   inferAxisNames: (inNames, ctx) => [
     (ctx.attrs as { perm: number[] }).perm.map((axis) => inNames[0][axis]),
@@ -53,12 +53,12 @@ export const transposeOp: OpSpec = {
   inferSymShapes: (inSyms, ctx) => [
     (ctx.attrs as { perm: number[] }).perm.map((axis) => inSyms[0][axis]),
   ],
-  inferDTypes: uniformDTypeOutputs("transpose"),
+  inferDTypes: uniformDTypeOutputs("permute_dims"),
   inferShapes: (inShapes, attrs) => {
     const perm = attrs.perm as number[];
     const sh = inShapes[0];
     if (perm.length !== sh.length || [...perm].sort((x, y) => x - y).some((v, i) => v !== i))
-      throw new Error(`transpose: bad perm [${perm}] for rank ${sh.length}`);
+      throw new Error(`permute_dims: bad perm [${perm}] for rank ${sh.length}`);
     return [perm.map((p) => sh[p])];
   },
   backward: (_s, outBox, ctx) => {
@@ -98,11 +98,11 @@ type SliceAttrs = { starts: number[]; stops: number[]; steps: number[] };
 
 export const sliceOp: OpSpec = {
   name: "slice",
-  attrSchema: z.object({
-    starts: z.array(z.number().int().min(0)),
-    stops: z.array(z.number().int().min(0)),
-    steps: z.array(z.number().int().min(1)),
-  }),
+  attrs: {
+    starts: sliceBounds({ part: "start" }),
+    stops: sliceBounds({ part: "stop" }),
+    steps: sliceBounds({ part: "step" }),
+  },
   arity: { inputs: 1, outputs: 1 },
   inferAxisNames: sameAxisNames,
   inferDTypes: uniformDTypeOutputs("slice"),
@@ -180,23 +180,23 @@ export const sliceOp: OpSpec = {
 
 // ---------------------------------------------------------------------- pad
 
-type PadAttrs = { pads: [number, number][]; mode: "constant" | "reflect" | "replicate" };
+type PadAttrs = { pads: [number, number][]; mode: "constant" | "reflect" | "edge" };
 
 /** Per-axis input indices an output index depends on; null => padding constant (no dep). */
 function padAxisPreimage(o: number, lo: number, n: number, mode: PadAttrs["mode"]): number | null {
   const j = o - lo;
   if (j >= 0 && j < n) return j;
   if (mode === "constant") return null;
-  if (mode === "replicate") return j < 0 ? 0 : n - 1;
+  if (mode === "edge") return j < 0 ? 0 : n - 1;
   return j < 0 ? -j : 2 * n - 2 - j; // reflect
 }
 
 export const padOp: OpSpec = {
   name: "pad",
-  attrSchema: z.object({
-    pads: z.array(z.tuple([z.number().int().min(0), z.number().int().min(0)])),
-    mode: z.enum(["constant", "reflect", "replicate"]).default("constant"),
-  }),
+  attrs: {
+    pads: padWidth(),
+    mode: oneOf(["constant", "reflect", "edge"], { default: "constant" }),
+  },
   arity: { inputs: 1, outputs: 1 },
   inferAxisNames: sameAxisNames,
   inferDTypes: uniformDTypeOutputs("pad"),
@@ -227,13 +227,13 @@ export const padOp: OpSpec = {
       // left pad segment [o0, min(o1, lo))
       const l1 = Math.min(o1, lo);
       if (l1 > o0) {
-        if (mode === "replicate") list.push(iv(0, 1));
+        if (mode === "edge") list.push(iv(0, 1));
         else if (mode === "reflect") list.push(iv(lo - (l1 - 1), lo - o0 + 1));
       }
       // right pad segment [max(o0, lo+n), o1)
       const r0 = Math.max(o0, lo + n);
       if (o1 > r0) {
-        if (mode === "replicate") list.push(iv(n - 1, n));
+        if (mode === "edge") list.push(iv(n - 1, n));
         else if (mode === "reflect")
           list.push(iv(2 * n - 2 - (o1 - 1 - lo), 2 * n - 2 - (r0 - lo) + 1));
       }
@@ -252,7 +252,7 @@ export const padOp: OpSpec = {
       const n = inShape[ax];
       const { lo: i0, hi: i1 } = inBox[ax];
       const list: Interval[] = [iv(i0 + lo, i1 + lo)];
-      if (mode === "replicate") {
+      if (mode === "edge") {
         if (i0 === 0 && lo > 0) list.push(iv(0, lo));
         if (i1 === n && hi > 0) list.push(iv(lo + n, lo + n + hi));
       } else if (mode === "reflect") {
@@ -281,7 +281,7 @@ export const padOp: OpSpec = {
     return [[idx]];
   },
   /* Per axis, the interior reads each element once and a padded segment reads
-     according to the mode: replicate reads the edge element once per padded
+     according to the mode: edge reads the edge element once per padded
      position, reflect reads a mirrored run once more, and constant reads
      nothing. The axes are independent, so the counts multiply. */
   multiplicity: (_s, outBox, _inSlot, ctx) => {
@@ -296,12 +296,12 @@ export const padOp: OpSpec = {
       if (b > a) steps.push({ lo: a, hi: b, count: 1 });
       const l1 = Math.min(o1, lo);
       if (l1 > o0) {
-        if (mode === "replicate") steps.push({ lo: 0, hi: 1, count: l1 - o0 });
+        if (mode === "edge") steps.push({ lo: 0, hi: 1, count: l1 - o0 });
         else if (mode === "reflect") steps.push({ lo: lo - (l1 - 1), hi: lo - o0 + 1, count: 1 });
       }
       const r0 = Math.max(o0, lo + n);
       if (o1 > r0) {
-        if (mode === "replicate") steps.push({ lo: n - 1, hi: n, count: o1 - r0 });
+        if (mode === "edge") steps.push({ lo: n - 1, hi: n, count: o1 - r0 });
         else if (mode === "reflect")
           steps.push({ lo: 2 * n - 2 - (o1 - 1 - lo), hi: 2 * n - 2 - (r0 - lo) + 1, count: 1 });
       }
@@ -317,7 +317,7 @@ export const padOp: OpSpec = {
 
 export const concatOp: OpSpec = {
   name: "concat",
-  attrSchema: z.object({ axis: z.number().int() }),
+  attrs: { axis: axis({ default: 0 }) },
   arity: { inputs: { min: 1 }, outputs: 1 },
   inferAxisNames: (inNames, ctx) => [firstNamedAxis(inNames, ctx.outShapes[0].length)],
   inferSymShapes: (inSyms, ctx) => {
@@ -445,12 +445,12 @@ const splitSizes = (ctx: OpCtx, axis: number): number[] =>
 
 export const splitOp: OpSpec = {
   name: "split",
-  attrSchema: z.object({
-    axis: z.number().int(),
-    // Symbolic like `reshape` and `expand`: `sizes=[H*D, KVH*D]` is the point of
+  attrs: {
+    axis: axis({ default: 0 }),
+    // Symbolic like `reshape` and `broadcast_to`: `sizes=[H*D, KVH*D]` is the point of
     // writing a fused projection with named dimensions at all.
-    sizes: z.array(z.union([z.string(), z.number().int().min(1)])).min(1),
-  }),
+    sizes: splitSizesKind({ axisAttr: "axis" }),
+  },
   arity: { inputs: 1, outputs: { min: 1 } },
   inferAxisNames: (inNames, ctx) => ctx.outShapes.map(() => inNames[0].slice()),
   // Only the axis being cut changes, and it becomes the size written for it.
@@ -525,8 +525,8 @@ export const splitOp: OpSpec = {
 // ------------------------------------------------------------------- expand
 
 export const expandOp: OpSpec = {
-  name: "expand",
-  attrSchema: z.object({ shape: z.array(z.union([z.string(), z.number().int().min(1)])) }),
+  name: "broadcast_to",
+  attrs: { shape: shape() },
   arity: { inputs: 1, outputs: 1 },
   inferAxisNames: (inNames, ctx) => [
     broadcastAxisNames(inNames, ctx.inShapes, ctx.outShapes[0]),
@@ -548,15 +548,15 @@ export const expandOp: OpSpec = {
       orOne: "left",
     }));
   },
-  inferDTypes: uniformDTypeOutputs("expand"),
+  inferDTypes: uniformDTypeOutputs("broadcast_to"),
   inferShapes: (inShapes, attrs, params) => {
     const target = resolveShape(attrs.shape as (string | number)[], params ?? {});
     const inSh = inShapes[0];
     const off = target.length - inSh.length;
-    if (off < 0) throw new Error("expand: target rank below input rank");
+    if (off < 0) throw new Error("broadcast_to: target rank below input rank");
     inSh.forEach((e, i) => {
       if (e !== 1 && e !== target[i + off])
-        throw new Error(`expand: cannot expand extent ${e} to ${target[i + off]}`);
+        throw new Error(`broadcast_to: cannot broadcast extent ${e} to ${target[i + off]}`);
     });
     return [target];
   },
@@ -580,7 +580,7 @@ export const expandOp: OpSpec = {
 export function identityLike(name: string): OpSpec {
   return {
     name,
-    attrSchema: z.object({}),
+    attrs: {},
     arity: { inputs: 1, outputs: 1 },
     inferAxisNames: sameAxisNames,
     inferSymShapes: sameSymShape,
@@ -596,8 +596,8 @@ export function identityLike(name: string): OpSpec {
 }
 
 export const castOp: OpSpec = {
-  ...identityLike("cast"),
-  attrSchema: z.object({ dtype: z.enum(DTYPES) }),
+  ...identityLike("astype"),
+  attrs: { dtype: dtype() },
   inferDTypes: (_inDTypes, attrs, outShapes) =>
     outShapes.map(() => attrs.dtype as DType),
 };

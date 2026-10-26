@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { axis } from "./kinds";
 import { Box, Region, canonicalize, count, coversAxisFully, fromBox, iv } from "../region";
 import { normAxis } from "./reduce";
 import { DependencyNoteDraft, OpCtx, OpSpec, floatingDTypeOutputs, NoteCtx } from "./types";
@@ -56,7 +56,7 @@ function softmaxDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
 export const softmaxOp: OpSpec = {
   name: "softmax",
   dependencyNote: softmaxDependencyNote,
-  attrSchema: z.object({ axis: z.number().int() }),
+  attrs: { axis: axis() },
   arity: { inputs: 1, outputs: 1 },
   inferAxisNames: sameAxisNames,
   inferSymShapes: sameSymShape,

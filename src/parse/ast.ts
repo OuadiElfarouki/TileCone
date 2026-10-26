@@ -74,6 +74,19 @@ export type Stmt =
       span: SourceSpan;
     }
   /**
+   * `Y = X[0:64, :, ::2]`: a slice, in the notation every array library uses
+   * and the inspector prints regions in. Lowered to the `slice` operation.
+   */
+  | {
+      kind: "subscript";
+      outs: Spanned<string>[];
+      target: Spanned<string>;
+      items: SubscriptItem[];
+      /** The bracketed part, for a diagnostic about the slice as a whole. */
+      brackets: SourceSpan;
+      span: SourceSpan;
+    }
+  /**
    * A line that could not be parsed.
    *
    * `outs` holds whatever names the parser had already read before it failed.
@@ -82,5 +95,14 @@ export type Stmt =
    * invented error about a name the author did write.
    */
   | { kind: "error"; outs: Spanned<string>[]; span: SourceSpan };
+
+/**
+ * One axis of a subscript. `a:b:c` with any part left out is a range; a lone
+ * value is an index, which the grammar reads so that lowering can say why it
+ * is not supported rather than calling it a syntax error.
+ */
+export type SubscriptItem =
+  | { kind: "range"; start?: Expr; stop?: Expr; step?: Expr; span: SourceSpan }
+  | { kind: "index"; value: Expr; span: SourceSpan };
 
 export type Program = { stmts: Stmt[]; span: SourceSpan };

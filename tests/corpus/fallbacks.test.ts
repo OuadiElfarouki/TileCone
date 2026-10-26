@@ -95,7 +95,7 @@ describe("conservative branches stay supersets, checked against the oracle", () 
     checkGraph(
       G({ M: [6, 6], v: [6] }, [
         ["e", "einsum", ["M"], ["d"], { equation: "ii->i" }],
-        ["a", "elementwise", ["d", "v"], ["z"], { fn: "mul", nary: 2 }],
+        ["a", "elementwise", ["d", "v"], ["z"], { fn: "multiply", nary: 2 }],
       ]),
       { limits: TIGHT }
     ));

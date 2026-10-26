@@ -59,7 +59,7 @@ describe("einsum entanglement matches brute force", () => {
     checkEntanglement(G({ A: [5, 4], B: [4, 6] }, [["n", "matmul", ["A", "B"], ["C"]]])));
 
   it("batched matmul", () =>
-    checkEntanglement(G({ A: [2, 3, 4], B: [2, 4, 3] }, [["n", "bmm", ["A", "B"], ["C"]]])));
+    checkEntanglement(G({ A: [2, 3, 4], B: [2, 4, 3] }, [["n", "matmul", ["A", "B"], ["C"]]])));
 
   it("attention scores: a shared batch and head, contracted depth", () =>
     checkEntanglement(
@@ -99,7 +99,7 @@ describe("elementwise entanglement matches brute force", () => {
 
   it("a broadcast axis", () =>
     checkEntanglement(
-      G({ A: [4, 5], B: [4, 1] }, [["n", "elementwise", ["A", "B"], ["C"], { fn: "mul", nary: 2 }]])
+      G({ A: [4, 5], B: [4, 1] }, [["n", "elementwise", ["A", "B"], ["C"], { fn: "multiply", nary: 2 }]])
     ));
 
   it("unequal ranks", () =>
@@ -242,8 +242,8 @@ describe("conv entanglement matches brute force", () => {
     // X of 7, kernel 3, stride 1, no padding: 5 output positions, so tap k
     // covers input positions [k, k+5).
     const p = compileDSL(
-      "X = Tensor(1,1,7)\nW = Parameter(1,1,3)\n" +
-        "Y = conv(X,W,stride=[1],pads=[[0,0]],dilation=[1],groups=1)\n"
+      "X = Tensor(1, 1, 7)\nW = Parameter(1, 1, 3)\n" +
+        "Y = conv1d(X, W)\n"
     );
     const [e] = p.executor.entangled("X", fromBox(box([0, 1], [0, 1], [lo, hi])));
     expect(e.region.exact).toBe(true);
@@ -255,7 +255,7 @@ describe("conv entanglement matches brute force", () => {
     // of the activation meets output channels 0..1 and nothing above them.
     const p = compileDSL(
       "X = Tensor(1, 4, 6)\nW = Parameter(4, 2, 3)\n" +
-        "Y = conv(X, W, stride=[1], pads=[[0,0]], dilation=[1], groups=2)\n"
+        "Y = conv1d(X, W, groups=2)\n"
     );
     const [e] = p.executor.entangled("X", fromBox(box([0, 1], [0, 1], [0, 6])));
     expect(e.tensorId).toBe("W");
@@ -266,7 +266,7 @@ describe("conv entanglement matches brute force", () => {
 
 describe("concat and gather", () => {
   it("concat combines nothing: its operands sit side by side", () => {
-    const p = compileDSL("A = Tensor(2, 3)\nB = Tensor(4, 3)\nC = concat(A, B, axis=0)\n");
+    const p = compileDSL("A = Tensor(2, 3)\nB = Tensor(4, 3)\nC = concat([A, B], axis=0)\n");
     // Not "unknown" and not a bound: genuinely empty, which says a kernel can
     // write the two pieces independently.
     expect(p.executor.entangled("A", fromBox(box([0, 2], [0, 3])))).toEqual([]);
@@ -274,7 +274,7 @@ describe("concat and gather", () => {
 
   it("gather pairs each index with the row it names", () => {
     const graph = G({ D: [6, 3], I: [4] }, [
-      ["n", "gather", ["D", "I"], ["Y"], { axis: 0, indexValues: [5, 0, 2, 2] }],
+      ["n", "take", ["D", "I"], ["Y"], { axis: 0, indexValues: [5, 0, 2, 2] }],
     ]);
     graph.tensors.I.dtype = "i32";
     checkEntanglement(graph);
@@ -283,7 +283,7 @@ describe("concat and gather", () => {
   it("gather names the positions that select a block of rows", () => {
     const p = compileDSL(
       "D = Tensor(6, 3)\nI = Tensor(4, dtype=int32)\n" +
-        "Y = gather(D, I, axis=0, indexValues=[5, 0, 2, 2])\n"
+        "Y = take(D, I, axis=0, index_values=[5, 0, 2, 2])\n"
     );
     // Rows 2..3 are named by positions 2 and 3 only.
     const [e] = p.executor.entangled("D", fromBox(box([2, 4], [0, 3])));
@@ -294,7 +294,7 @@ describe("concat and gather", () => {
 
 describe("operations without the hook fall back, and say so", () => {
   it("normalize composes forward and backward, marked inexact", () => {
-    const p = compileDSL("X = Tensor(2, 4)\nW = Parameter(4)\nY = layernorm(X, W)\n");
+    const p = compileDSL("X = Tensor(2, 4)\nW = Parameter(4)\nY = layer_norm(X, W)\n");
     const [entangled] = p.executor.entangled("X", fromBox(box([0, 1], [0, 2])));
     expect(entangled.tensorId).toBe("W");
     expect(entangled.region.exact).toBe(false);

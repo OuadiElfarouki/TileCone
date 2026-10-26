@@ -92,7 +92,6 @@ export const OP_FIXTURES: OpFixture[] = [
     { equation: "mk,kn->mn" }
   ),
   one("matmul", { A: f([3, 4]), B: f([4, 5]) }, ["A", "B"], ["C"]),
-  one("bmm", { A: f([2, 3, 4]), B: f([2, 4, 5]) }, ["A", "B"], ["C"]),
   one("linear", { X: f([3, 4]), W: f([5, 4]) }, ["X", "W"], ["Y"]),
   one(
     "elementwise",
@@ -116,10 +115,10 @@ export const OP_FIXTURES: OpFixture[] = [
     { X: f([2, 3, 4]), W: f([4]), B: f([4]) },
     ["X", "W", "B"],
     ["Y"],
-    { kind: "layernorm", axes: [-1], hasWeight: true, hasBias: true },
+    { kind: "layer_norm", axes: [-1], hasWeight: true, hasBias: true },
     "both affine params present, so slots 1 and 2 are covered"
   ),
-  one("transpose", { X: f([2, 3, 4]) }, ["X"], ["Y"], { perm: [2, 0, 1] }),
+  one("permute_dims", { X: f([2, 3, 4]) }, ["X"], ["Y"], { perm: [2, 0, 1] }),
   one(
     "slice",
     { X: f([7, 9]) },
@@ -145,7 +144,7 @@ export const OP_FIXTURES: OpFixture[] = [
     { axis: 0, sizes: [2, 3, 1] },
     "the only multi-output op, so output-slot handling is only covered here"
   ),
-  one("expand", { X: f([3, 1]) }, ["X"], ["Y"], { shape: [2, 3, 5] }),
+  one("broadcast_to", { X: f([3, 1]) }, ["X"], ["Y"], { shape: [2, 3, 5] }),
   one(
     "reshape",
     { X: f([4, 4]) },
@@ -169,9 +168,9 @@ export const OP_FIXTURES: OpFixture[] = [
     ["Y"],
     { kind: "max", kernelShape: [2, 3], stride: [2, 2], pads: [[0, 0], [1, 1]] }
   ),
-  one("cumsum", { X: f([4, 5]) }, ["X"], ["Y"], { axis: 1, reverse: true }),
+  one("cumulative_sum", { X: f([4, 5]) }, ["X"], ["Y"], { axis: 1, reverse: true }),
   one(
-    "gather",
+    "take",
     { D: f([6, 3]), I: i32([4]) },
     ["D", "I"],
     ["Y"],
@@ -179,7 +178,7 @@ export const OP_FIXTURES: OpFixture[] = [
     "concrete indices, including a repeat: without them the op is inexact by design"
   ),
   one("identity", { X: f([3, 4]) }, ["X"], ["Y"]),
-  one("cast", { X: f([3, 4]) }, ["X"], ["Y"], { dtype: "f16" }),
+  one("astype", { X: f([3, 4]) }, ["X"], ["Y"], { dtype: "f16" }),
   one("contiguous", { X: f([3, 4]) }, ["X"], ["Y"]),
   one(
     "opaque",

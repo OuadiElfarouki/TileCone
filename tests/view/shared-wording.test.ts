@@ -54,15 +54,15 @@ describe("a read-multiplicity row in words", () => {
   });
 
   it("names single-use operands by what they become, and their operations in the detail", () => {
-    const { resolved } = compileDSL("X = Tensor(4, 8)\nY = transpose(X, perm=[1, 0])\nZ = relu(Y)\n");
+    const { resolved } = compileDSL("X = Tensor(4, 8)\nY = permute_dims(X, [1, 0])\nZ = relu(Y)\n");
     const back = executeQuery(resolved, { tensorId: "Z", region: fromBox(box([0, 2], [0, 2])), direction: "backward" }).backward!;
     const line = readOnceLine(operandReads(resolved, back.tensors), (id) => id);
     expect(line.text).toBe("X → Y, Y → Z");
-    expect(line.detail).toBe("X via transpose → Y\nY via relu → Z");
+    expect(line.detail).toBe("X via permute_dims → Y\nY via relu → Z");
   });
 
   it("marks a count over an unknown index as every figure is marked", () => {
-    const dsl = "W = Tensor(10, 4)\nIdx = Tensor(3, dtype=int32)\nE = gather(W, Idx, axis=0)\n";
+    const dsl = "W = Tensor(10, 4)\nIdx = Tensor(3, dtype=int32)\nE = take(W, Idx, axis=0)\n";
     const row = readsOf(dsl, "E", fromBox(box([0, 2], [0, 4])), "W");
     expect(readsSummary(row)).toBe(`${FIGURE_MARK.upper}2 uses per element · ${FIGURE_MARK.upper}160 B`);
     expect(readsDetail(row)).toBe(
