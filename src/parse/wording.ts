@@ -18,7 +18,7 @@ import type { GraphErrorSubject } from "../core/shapes";
 import { signatureFor, type Signature } from "./signatures";
 import type { DSLSourceMap } from "./source";
 
-/** The registry's dtype names, which the DSL spells `fp16` and so on. */
+/** The registry's dtype names, which the DSL spells `float16` and so on. */
 const IR_DTYPE = new RegExp(`\\b(${DTYPES.filter((d) => d !== "bool").join("|")})\\b`, "g");
 
 /** `x2 (B)`, `arrays[1] (B)`: how each input of `node` was passed. */

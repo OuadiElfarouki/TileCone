@@ -31,7 +31,7 @@ vi.mock("../../src/state/store", async (importOriginal) => {
 });
 
 const S = () => useStore.getState();
-const GEMM = "A = Tensor(16, 32, dtype=fp16)\nB = Tensor(32, 16, dtype=fp16)\nC = matmul(A, B)\n";
+const GEMM = "A = Tensor(16, 32, dtype=float16)\nB = Tensor(32, 16, dtype=float16)\nC = matmul(A, B)\n";
 const SHARED = "A = Tensor(4, 4)\nC = matmul(A, A)\n";
 const coneOf = (dsl: string, tensorId: string, b: ReturnType<typeof box>) => {
   const { resolved } = compileDSL(dsl);

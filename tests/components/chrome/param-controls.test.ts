@@ -105,7 +105,7 @@ describe("parameter controls follow the source being edited", () => {
 describe("controls for parameters used by the graph", () => {
   it("shows M, N and K but no control or hint for the unused L declaration", () => {
     useStore.getState().applyDSL("M = 256\nN = 128\nK = 512\nL = 32\n" +
-      "A = Tensor(M, K, dtype=fp16)\nB = Tensor(K, N, dtype=fp16)\nC = matmul(A, B)\n");
+      "A = Tensor(M, K, dtype=float16)\nB = Tensor(K, N, dtype=float16)\nC = matmul(A, B)\n");
     const html = renderToStaticMarkup(createElement(SidePanel));
     for (const name of ["M", "N", "K"]) expect(html).toContain(`id="param-${name}"`);
     expect(html).not.toContain('id="param-L"');
@@ -133,7 +133,7 @@ describe("controls for parameters used by the graph", () => {
   });
 
   it("offers the parameters behind a derived symbol, not the derived symbol", () => {
-    useStore.getState().applyDSL("H = 4\nD = 8\nE = H*D\nX = Tensor(E, dtype=fp16)\nY = relu(X)\n");
+    useStore.getState().applyDSL("H = 4\nD = 8\nE = H*D\nX = Tensor(E, dtype=float16)\nY = relu(X)\n");
     const html = renderToStaticMarkup(createElement(SidePanel));
     expect(html).toContain('id="param-H"');
     expect(html).toContain('id="param-D"');
@@ -142,7 +142,7 @@ describe("controls for parameters used by the graph", () => {
   });
 
   it("offers controls for symbolic split sizes over an input of unknown extent", () => {
-    useStore.getState().applyDSL('N = 2\nL = 4\nUnused = 16\nX = opaque(op="Src", shapes=[[6]], dtypes=[fp32])\n' +
+    useStore.getState().applyDSL('N = 2\nL = 4\nUnused = 16\nX = opaque(op="Src", shapes=[[6]], dtypes=[float32])\n' +
       "Y, Z = split(X, [N, L], axis=0)\n");
     const html = renderToStaticMarkup(createElement(SidePanel));
     expect(html).toContain('id="param-N"');

@@ -23,13 +23,13 @@ const metricsOf = (source: string, tensorId: string, region: ReturnType<typeof f
 };
 
 /** An exact chain: modelled operations, no widening anywhere. */
-const EXACT = `X = Tensor(8, dtype=fp32)
+const EXACT = `X = Tensor(8, dtype=float32)
 Y = relu(X)
 Z = relu(Y)
 `;
 
 /** The same chain with one operation nobody described in the middle. */
-const BARRIER = `X = Tensor(8, dtype=fp32)
+const BARRIER = `X = Tensor(8, dtype=float32)
 H = opaque(X, op="Resize", shapes=[[8]])
 Z = relu(H)
 `;
@@ -82,7 +82,7 @@ describe("the figure algebra", () => {
 
 describe("cost figures over a real cone", () => {
   it("marks the bytes of a region the caller bounded as upper, with the reason", () => {
-    const { executor } = compileDSL("X = Tensor(8, dtype=fp16)\nY = relu(X)\n");
+    const { executor } = compileDSL("X = Tensor(8, dtype=float16)\nY = relu(X)\n");
     const metrics = executor.metrics("Y", {
       boxes: [box([0, 4])],
       exact: false,
@@ -166,7 +166,7 @@ describe("cost figures over a real cone", () => {
 
   it("names the operation whose arithmetic is missing", () => {
     const m = metricsOf(
-      `X = Tensor(8, dtype=fp32)
+      `X = Tensor(8, dtype=float32)
 H = opaque(X, op="Attention", domain="com.microsoft", shapes=[[8]])
 Z = relu(H)
 `,
@@ -180,9 +180,9 @@ Z = relu(H)
 
   it("counts unknown nodes independently even when their labels are identical", () => {
     const m = metricsOf(
-      `X = Tensor(8, dtype=fp32)
-A = opaque(X, op="Resize", shapes=[[8]], dtypes=[fp32])
-B = opaque(A, op="Resize", shapes=[[8]], dtypes=[fp32])
+      `X = Tensor(8, dtype=float32)
+A = opaque(X, op="Resize", shapes=[[8]], dtypes=[float32])
+B = opaque(A, op="Resize", shapes=[[8]], dtypes=[float32])
 Z = relu(B)
 `,
       "Z",

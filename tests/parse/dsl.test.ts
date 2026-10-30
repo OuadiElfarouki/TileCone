@@ -25,8 +25,8 @@ N = 8
 K = 16
 
 # a comment
-A = Tensor(M, K, dtype=fp16)
-B = Tensor(K, N, dtype=fp16)
+A = Tensor(M, K, dtype=float16)
+B = Tensor(K, N, dtype=float16)
 
 C = einsum("mk,kn->mn", A, B)
 D = softmax(C, axis=-1)
@@ -38,7 +38,7 @@ D = softmax(C, axis=-1)
   });
 
   it("supports multi-output split and sugar names", () => {
-    const g = parseDSL(`X = Tensor(6, 4, dtype=fp16)
+    const g = parseDSL(`X = Tensor(6, 4, dtype=float16)
 A, B = split(X, [2, 4], axis=0)
 C = add(A, A)
 S = sum(C, axis=1, keepdims=true)
@@ -56,9 +56,9 @@ S = sum(C, axis=1, keepdims=true)
     const g = resolveGraph(parseDSL(`M = 4
 K = 6
 N = 8
-A = Tensor(M, K, dtype=fp16)
-B = Parameter(K, N, dtype=fp16)
-Bias = Parameter(N, dtype=fp16)
+A = Tensor(M, K, dtype=float16)
+B = Parameter(K, N, dtype=float16)
+Bias = Parameter(N, dtype=float16)
 C = matmul(A, B)
 D = add(C, Bias)
 `));
@@ -71,7 +71,7 @@ D = add(C, Bias)
   });
 
   it("reduce accepts the singular axis= spelling", () => {
-    const g = resolveGraph(parseDSL(`X = Tensor(4, 6, dtype=fp32)
+    const g = resolveGraph(parseDSL(`X = Tensor(4, 6, dtype=float32)
 s = sum(X, axis=-1)
 m = mean(X, axis=0)
 `));
@@ -88,11 +88,11 @@ m = mean(X, axis=0)
   });
 
   it("says which parameter a call is missing", () => {
-    expect(() => parseDSL("X = Tensor(4, 6, dtype=fp32)\ns = softmax(X)\n")).toThrow(/softmax\(\) is missing axis/);
+    expect(() => parseDSL("X = Tensor(4, 6, dtype=float32)\ns = softmax(X)\n")).toThrow(/softmax\(\) is missing axis/);
   });
 
   it("reports line numbers on errors", () => {
-    expect(() => parseDSL(`X = Tensor(4, dtype=fp32)\nY = bogus_op_name(X`)).toThrow(/line 2/);
+    expect(() => parseDSL(`X = Tensor(4, dtype=float32)\nY = bogus_op_name(X`)).toThrow(/line 2/);
   });
 
   /* A fused projection is the reason `sizes` exists in named dimensions: with
@@ -101,7 +101,7 @@ m = mean(X, axis=0)
     const text = `H = 8
 KVH = 2
 D = 32
-X = Tensor(4, H*D+2*KVH*D, dtype=fp16)
+X = Tensor(4, H*D+2*KVH*D, dtype=float16)
 Q, K, V = split(X, [H*D, KVH*D, KVH*D], axis=-1)
 `;
     const g = resolveGraph(parseDSL(text));
@@ -114,7 +114,7 @@ Q, K, V = split(X, [H*D, KVH*D, KVH*D], axis=-1)
   it("reports symbolic sizes that do not cut up the axis", () => {
     const bad = () => resolveGraph(parseDSL(`H = 8
 D = 32
-X = Tensor(4, 100, dtype=fp16)
+X = Tensor(4, 100, dtype=float16)
 A, B = split(X, [H*D, D], axis=-1)
 `));
     expect(bad).toThrow(/don't sum to extent 100/);
@@ -126,8 +126,8 @@ A, B = split(X, [H*D, D], axis=-1)
   it("prints dimension expressions bare and other strings quoted", () => {
     const out = toDSL(parseDSL(`B = 2
 E = 4
-X = Tensor(B, E, dtype=fp16)
-W = Tensor(E, E, dtype=fp16)
+X = Tensor(B, E, dtype=float16)
+W = Tensor(E, E, dtype=float16)
 Y = einsum("be,ef->bf", X, W)
 Z = reshape(Y, [B, E*1])
 `));
@@ -262,15 +262,15 @@ describe("built-in examples", () => {
     checkGraph(parseDSL(exampleNamed("Reshape trap").dsl), { perTensorElementCap: 16 });
     const miniLN = parseDSL(`S = 4
 E = 6
-X = Tensor(S, E, dtype=fp32)
-W = Tensor(E, dtype=fp32)
-Bb = Tensor(E, dtype=fp32)
+X = Tensor(S, E, dtype=float32)
+W = Tensor(E, dtype=float32)
+Bb = Tensor(E, dtype=float32)
 H = layer_norm(X, W, Bb)
 Y = add(H, X)
 `);
     checkGraph(miniLN, { perTensorElementCap: 12 });
     const miniCumsum = parseDSL(`S = 7
-X = Tensor(S, dtype=fp32)
+X = Tensor(S, dtype=float32)
 Y = cumulative_sum(X, axis=0, reverse=false)
 Z = cumulative_sum(Y, axis=0, reverse=false)
 `);
@@ -279,11 +279,11 @@ Z = cumulative_sum(Y, axis=0, reverse=false)
 H = 2
 S = 4
 D = 3
-X = Tensor(B, S, H*D, dtype=fp32)
-Wq = Tensor(H*D, H*D, dtype=fp32)
-Wk = Tensor(H*D, H*D, dtype=fp32)
-Wv = Tensor(H*D, H*D, dtype=fp32)
-Wo = Tensor(H*D, H*D, dtype=fp32)
+X = Tensor(B, S, H*D, dtype=float32)
+Wq = Tensor(H*D, H*D, dtype=float32)
+Wk = Tensor(H*D, H*D, dtype=float32)
+Wv = Tensor(H*D, H*D, dtype=float32)
+Wo = Tensor(H*D, H*D, dtype=float32)
 Qp = einsum("bse,ef->bsf", X, Wq)
 Kp = einsum("bse,ef->bsf", X, Wk)
 Vp = einsum("bse,ef->bsf", X, Wv)
@@ -307,9 +307,9 @@ F1 = 2
 F2 = 2
 H = 6
 W = 6
-X = Tensor(N, C, H, W, dtype=fp32)
-W1 = Tensor(F1, C, 3, 3, dtype=fp32)
-W2 = Tensor(F2, F1, 3, 3, dtype=fp32)
+X = Tensor(N, C, H, W, dtype=float32)
+W1 = Tensor(F1, C, 3, 3, dtype=float32)
+W2 = Tensor(F2, F1, 3, 3, dtype=float32)
 Y1 = conv2d(X, W1, stride=2, padding=1)
 Y2 = conv2d(Y1, W2, stride=2, padding=1)
 `);
@@ -317,8 +317,8 @@ Y2 = conv2d(Y1, W2, stride=2, padding=1)
     const miniGemm = parseDSL(`M = 4
 N = 4
 K = 5
-A = Tensor(M, K, dtype=fp32)
-B = Tensor(K, N, dtype=fp32)
+A = Tensor(M, K, dtype=float32)
+B = Tensor(K, N, dtype=float32)
 C = matmul(A, B)
 `);
     checkGraph(miniGemm);
@@ -338,7 +338,7 @@ describe("what the parser refuses", () => {
   };
 
   it("rejects trailing input after a constructor", () => {
-    const error = parseFails("X = Tensor(4, 8, dtype=fp32) THIS_IS_GARBAGE\n");
+    const error = parseFails("X = Tensor(4, 8, dtype=float32) THIS_IS_GARBAGE\n");
     expect(error).toBeInstanceOf(DSLError);
     expect(error.detail).toContain("trailing input");
     expect(error.line).toBe(1);
@@ -354,10 +354,10 @@ describe("what the parser refuses", () => {
      land on its internal name, and `toDSL` must put the external one back or a
      saved graph reopens as a source the parser rejects. */
   it.each([
-    ["fp32", "f32"],
-    ["fp16", "f16"],
-    ["bf16", "bf16"],
-    ["fp8", "f8"],
+    ["float32", "f32"],
+    ["float16", "f16"],
+    ["bfloat16", "bf16"],
+    ["float8", "f8"],
     ["int32", "i32"],
     ["int8", "i8"],
     ["bool", "bool"],
@@ -372,20 +372,20 @@ describe("what the parser refuses", () => {
      three phases later as `unbound symbolic dim "fp16"` - a true statement
      about a graph nobody meant to write. */
   it("names the mistake when a dtype is written where a dimension belongs", () => {
-    expect(parseFails("X = Tensor(4, fp16)\n").detail).toContain("write dtype=fp16");
-    expect(parseFails("X = Tensor(a=4, b=fp16)\n").detail).toContain("write dtype=fp16");
+    expect(parseFails("X = Tensor(4, float16)\n").detail).toContain("write dtype=float16");
+    expect(parseFails("X = Tensor(a=4, b=float16)\n").detail).toContain("write dtype=float16");
     // Only an exact spelling: a symbol may still be named after one.
-    expect(parseDSL("fp16x = 4\nX = Tensor(fp16x, dtype=fp32)\n").tensors.X.shape).toEqual([
-      "fp16x",
+    expect(parseDSL("float16x = 4\nX = Tensor(float16x, dtype=float32)\n").tensors.X.shape).toEqual([
+      "float16x",
     ]);
   });
 
   /* The constructor always wins in call position, so a tensor bound to one of
      these names could never be read back. */
   it.each([
-    ["Tensor = Tensor(4, dtype=fp32)\n"],
-    ["X = Tensor(4, dtype=fp32)\nParameter = relu(X)\n"],
-    ["X = Tensor(4, 4, dtype=fp32)\nA, Tensor = split(X, [2, 2], axis=0)\n"],
+    ["Tensor = Tensor(4, dtype=float32)\n"],
+    ["X = Tensor(4, dtype=float32)\nParameter = relu(X)\n"],
+    ["X = Tensor(4, 4, dtype=float32)\nA, Tensor = split(X, [2, 2], axis=0)\n"],
   ])("refuses a constructor name as a tensor name: %s", (source) => {
     expect(parseFails(source).detail).toContain("cannot name a tensor");
   });
@@ -411,11 +411,11 @@ describe("numeric literals", () => {
   };
 
   it("reads scientific notation in arguments", () => {
-    expect(argValues("X = Tensor(4, dtype=fp32)\nY = f(X, probe=1e-5)")).toEqual({ probe: 1e-5 });
+    expect(argValues("X = Tensor(4, dtype=float32)\nY = f(X, probe=1e-5)")).toEqual({ probe: 1e-5 });
   });
 
   it("reads exponents and leading-dot decimals", () => {
-    expect(argValues("X = Tensor(4, dtype=fp32)\nY = f(X, a=2.5E+3, b=.5, c=-1.5e-2)")).toEqual({
+    expect(argValues("X = Tensor(4, dtype=float32)\nY = f(X, a=2.5E+3, b=.5, c=-1.5e-2)")).toEqual({
       a: 2500,
       b: 0.5,
       c: -0.015,
@@ -423,7 +423,7 @@ describe("numeric literals", () => {
   });
 
   it("reads scientific notation in dimensions and shapes", () => {
-    const graph = parseDSL("N = 2e3\nX = Tensor(N, 1e2, dtype=fp32)\n");
+    const graph = parseDSL("N = 2e3\nX = Tensor(N, 1e2, dtype=float32)\n");
     expect(graph.params.N).toBe(2000);
     expect(graph.tensors.X.shape).toEqual(["N", 100]);
   });

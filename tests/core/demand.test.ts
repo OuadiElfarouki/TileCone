@@ -5,7 +5,7 @@ import { box, fromBox } from "../../src/core/region";
 import { compileDSL } from "../../src/parse/compiler";
 
 /** One output tile of a GEMM reads a full band of A and a full band of B. */
-const GEMM = `M = 4\nN = 4\nK = 8\nA = Tensor(M, K, dtype=fp16)\nB = Tensor(K, N, dtype=fp16)\nC = matmul(A, B)\n`;
+const GEMM = `M = 4\nN = 4\nK = 8\nA = Tensor(M, K, dtype=float16)\nB = Tensor(K, N, dtype=float16)\nC = matmul(A, B)\n`;
 
 const coneOf = (graph: ReturnType<typeof compileDSL>["resolved"], tensorId: string, region: ReturnType<typeof fromBox>) =>
   executeQuery(graph, { tensorId, region, direction: "backward" }).backward!;
@@ -43,8 +43,8 @@ describe("input sharing across the enabled tiles", () => {
   });
 
   it("counts only tiles whose cone reaches a given input", () => {
-    const { resolved } = compileDSL(`A = Tensor(2, dtype=fp16)
-B = Tensor(2, dtype=fp16)
+    const { resolved } = compileDSL(`A = Tensor(2, dtype=float16)
+B = Tensor(2, dtype=float16)
 C = concat([A, B], axis=0)
 `);
     const rows = inputSharing(resolved, [
@@ -57,7 +57,7 @@ C = concat([A, B], axis=0)
   });
 
   it("keeps duplicate demand as an upper bound for widened footprints", () => {
-    const { resolved } = compileDSL("X = Tensor(8, dtype=fp32)\nY = identity(X)\n");
+    const { resolved } = compileDSL("X = Tensor(8, dtype=float32)\nY = identity(X)\n");
     const first = coneOf(resolved, "Y", fromBox(box([0, 2])));
     const second = coneOf(resolved, "Y", fromBox(box([3, 5])));
     first.tensors.set("X", {

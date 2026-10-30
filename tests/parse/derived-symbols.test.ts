@@ -16,8 +16,8 @@ H = 4
 S = 8
 D = 2
 E = H*D
-X = Tensor(B, S, E, dtype=fp16)
-W = Parameter(E, E, dtype=fp16)
+X = Tensor(B, S, E, dtype=float16)
+W = Parameter(E, E, dtype=float16)
 Q = einsum("bse,ef->bsf", X, W)
 Q4 = reshape(Q, [B, S, H, D])
 Z = reshape(Q4, [B, S, E])

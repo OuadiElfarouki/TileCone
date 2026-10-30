@@ -23,8 +23,8 @@ export const EXAMPLES: Example[] = [
 N = 256
 K = 512
 
-A = Tensor(M, K, dtype=fp16)
-B = Tensor(K, N, dtype=fp16)
+A = Tensor(M, K, dtype=float16)
+B = Tensor(K, N, dtype=float16)
 
 C = matmul(A, B)
 `,
@@ -38,7 +38,7 @@ C = matmul(A, B)
 # column band of A. The bands share a square, and that square is read twice.
 # Both bands are reported whole; the shared elements are counted once.
 
-A = Tensor(N, N, dtype=fp16)
+A = Tensor(N, N, dtype=float16)
 
 C = matmul(A, A)
 `,
@@ -51,11 +51,11 @@ H = 4
 S = 128
 D = 32
 
-X = Tensor(batch=B, seq=S, emb=H*D, dtype=fp16)
-Wq = Parameter(emb=H*D, proj=H*D, dtype=fp16)
-Wk = Parameter(emb=H*D, proj=H*D, dtype=fp16)
-Wv = Parameter(emb=H*D, proj=H*D, dtype=fp16)
-Wo = Parameter(emb=H*D, out=H*D, dtype=fp16)
+X = Tensor(batch=B, seq=S, emb=H*D, dtype=float16)
+Wq = Parameter(emb=H*D, proj=H*D, dtype=float16)
+Wk = Parameter(emb=H*D, proj=H*D, dtype=float16)
+Wv = Parameter(emb=H*D, proj=H*D, dtype=float16)
+Wo = Parameter(emb=H*D, out=H*D, dtype=float16)
 
 Qp = einsum("bse,ef->bsf", X, Wq)
 Kp = einsum("bse,ef->bsf", X, Wk)
@@ -88,14 +88,14 @@ D = 32
 # whole of it, and the mask and bias arrive by broadcast rather than as
 # full-sized tensors.
 
-Kc = Tensor(batch=B, head=H, kv=P, dim=D, dtype=fp16)
-Vc = Tensor(batch=B, head=H, kv=P, dim=D, dtype=fp16)
-X = Tensor(batch=B, seq=T, emb=H*D, dtype=fp16)
-Wq = Parameter(emb=H*D, proj=H*D, dtype=fp16)
-Wk = Parameter(emb=H*D, proj=H*D, dtype=fp16)
-Wv = Parameter(emb=H*D, proj=H*D, dtype=fp16)
-Bq = Parameter(proj=H*D, dtype=fp16)
-Mk = Tensor(q=T, k=P+T, dtype=fp16)
+Kc = Tensor(batch=B, head=H, kv=P, dim=D, dtype=float16)
+Vc = Tensor(batch=B, head=H, kv=P, dim=D, dtype=float16)
+X = Tensor(batch=B, seq=T, emb=H*D, dtype=float16)
+Wq = Parameter(emb=H*D, proj=H*D, dtype=float16)
+Wk = Parameter(emb=H*D, proj=H*D, dtype=float16)
+Wv = Parameter(emb=H*D, proj=H*D, dtype=float16)
+Bq = Parameter(proj=H*D, dtype=float16)
+Mk = Tensor(q=T, k=P+T, dtype=float16)
 
 Qp = einsum("bse,ef->bsf", X, Wq)
 Qb = add(Qp, Bq)
@@ -137,10 +137,10 @@ D = 32
 # model stores them: a tile of Out reaches three column bands of the same Wqkv
 # rather than bands of three separate tensors.
 
-Kc = Tensor(batch=B, kv_head=KVH, kv=P, dim=D, dtype=fp16)
-Vc = Tensor(batch=B, kv_head=KVH, kv=P, dim=D, dtype=fp16)
-X = Tensor(batch=B, seq=T, emb=KVH*G*D, dtype=fp16)
-Wqkv = Parameter(emb=KVH*G*D, qkv=KVH*G*D+2*KVH*D, dtype=fp16)
+Kc = Tensor(batch=B, kv_head=KVH, kv=P, dim=D, dtype=float16)
+Vc = Tensor(batch=B, kv_head=KVH, kv=P, dim=D, dtype=float16)
+X = Tensor(batch=B, seq=T, emb=KVH*G*D, dtype=float16)
+Wqkv = Parameter(emb=KVH*G*D, qkv=KVH*G*D+2*KVH*D, dtype=float16)
 
 QKV = einsum("bse,ef->bsf", X, Wqkv)
 Qp, Kp, Vp = split(QKV, [KVH*G*D, KVH*D, KVH*D], axis=-1)
@@ -178,11 +178,11 @@ F = 704
 # norm is why that band is whole rows of X; the residual adds the tile's own
 # columns of X, which those rows already cover.
 
-X = Tensor(seq=S, emb=E, dtype=fp16)
-Wn = Parameter(emb=E, dtype=fp16)
-Wg = Parameter(emb=E, ff=F, dtype=fp16)
-Wu = Parameter(emb=E, ff=F, dtype=fp16)
-Wd = Parameter(ff=F, emb=E, dtype=fp16)
+X = Tensor(seq=S, emb=E, dtype=float16)
+Wn = Parameter(emb=E, dtype=float16)
+Wg = Parameter(emb=E, ff=F, dtype=float16)
+Wu = Parameter(emb=E, ff=F, dtype=float16)
+Wd = Parameter(ff=F, emb=E, dtype=float16)
 
 Xn = rms_norm(X, Wn)
 G = matmul(Xn, Wg)
@@ -212,12 +212,12 @@ K = 2
 # written here (no argmax), so Idx arrives as an input and Pr is left as an
 # output of its own: what the graph can state is that the choice is data.
 
-X = Tensor(seq=T, emb=E, dtype=fp16)
-Wr = Parameter(emb=E, expert=N, dtype=fp16)
-W1 = Parameter(expert=N, emb=E, ff=F, dtype=fp16)
-W2 = Parameter(expert=N, ff=F, emb=E, dtype=fp16)
+X = Tensor(seq=T, emb=E, dtype=float16)
+Wr = Parameter(emb=E, expert=N, dtype=float16)
+W1 = Parameter(expert=N, emb=E, ff=F, dtype=float16)
+W2 = Parameter(expert=N, ff=F, emb=E, dtype=float16)
 Idx = Tensor(chosen=K, dtype=int32)
-Gate = Tensor(seq=T, chosen=K, dtype=fp16)
+Gate = Tensor(seq=T, chosen=K, dtype=float16)
 
 Sc = einsum("se,en->sn", X, Wr)
 Pr = softmax(Sc, axis=-1)
@@ -241,9 +241,9 @@ F2 = 16
 H = 64
 W = 64
 
-X = Tensor(N, C, H, W, dtype=fp16)
-W1 = Parameter(F1, C, 3, 3, dtype=fp16)
-W2 = Parameter(F2, F1, 3, 3, dtype=fp16)
+X = Tensor(N, C, H, W, dtype=float16)
+W1 = Parameter(F1, C, 3, 3, dtype=float16)
+W2 = Parameter(F2, F1, 3, 3, dtype=float16)
 
 Y1 = conv2d(X, W1, stride=2, padding=1)
 Y2 = conv2d(Y1, W2, stride=2, padding=1)
@@ -252,7 +252,7 @@ Y2 = conv2d(Y1, W2, stride=2, padding=1)
   },
   {
     name: "Reshape trap",
-    dsl: `X = Tensor(4, 4, dtype=fp32)
+    dsl: `X = Tensor(4, 4, dtype=float32)
 
 F = reshape(X, [16])
 Y = reshape(F, [2, 8])
@@ -264,9 +264,9 @@ Y = reshape(F, [2, 8])
     dsl: `S = 64
 E = 64
 
-X = Tensor(S, E, dtype=fp16)
-W = Parameter(E, dtype=fp16)
-Bb = Parameter(E, dtype=fp16)
+X = Tensor(S, E, dtype=float16)
+W = Parameter(E, dtype=float16)
+Bb = Parameter(E, dtype=float16)
 
 H = layer_norm(X, W, Bb)
 Y = add(H, X)
@@ -277,7 +277,7 @@ Y = add(H, X)
     name: "Cumulative sum",
     dsl: `S = 48
 
-X = Tensor(S, dtype=fp32)
+X = Tensor(S, dtype=float32)
 
 Y = cumulative_sum(X, axis=0)
 Z = cumulative_sum(Y, axis=0)
@@ -296,8 +296,8 @@ N = 128
 # head are hidden. The Axes table in the inspector names every axis of the
 # tile; M = 200 does not divide by 64, so the last row tile is 8 rows.
 
-A = Tensor(batch=B, head=H, m=M, k=K, dtype=fp16)
-W = Tensor(batch=B, head=H, k=K, n=N, dtype=fp16)
+A = Tensor(batch=B, head=H, m=M, k=K, dtype=float16)
+W = Tensor(batch=B, head=H, k=K, n=N, dtype=float16)
 
 C = matmul(A, W)
 `,
@@ -318,8 +318,8 @@ K = 512
 # element of A once per column of its tile. "Operand reuse in this task" shows
 # that count: 128 uses per element here, 32 under P1.
 
-A = Tensor(M, K, dtype=fp16)
-B = Tensor(K, N, dtype=fp16)
+A = Tensor(M, K, dtype=float16)
+B = Tensor(K, N, dtype=float16)
 
 C = matmul(A, B)
 `,
@@ -342,9 +342,9 @@ C = matmul(A, B)
 # 64 KB written. Fusion recomputes when several tasks need the same part of
 # the fused tensor; press fuse or materialize beside H to move between them.
 
-X = Tensor(256, 128, dtype=fp16)
-W1 = Parameter(128, 512, dtype=fp16)
-W2 = Parameter(512, 128, dtype=fp16)
+X = Tensor(256, 128, dtype=float16)
+W1 = Parameter(128, 512, dtype=float16)
+W2 = Parameter(512, 128, dtype=float16)
 
 H = matmul(X, W1)
 Y = matmul(H, W2)
@@ -371,9 +371,9 @@ E = 64
 # in row bands: nothing is recomputed, and the cost moves to memory - 16 KB
 # written instead of 8 KB, and 16 dependencies on H's tasks.
 
-X = Tensor(S, E, dtype=fp16)
-W = Parameter(E, dtype=fp16)
-Bb = Parameter(E, dtype=fp16)
+X = Tensor(S, E, dtype=float16)
+W = Parameter(E, dtype=float16)
+Bb = Parameter(E, dtype=float16)
 
 H = layer_norm(X, W, Bb)
 Y = add(H, X)

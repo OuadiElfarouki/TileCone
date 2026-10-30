@@ -28,18 +28,18 @@ import {
   type Signature,
 } from "./signatures";
 
-/** The DSL's dtype names. */
+/** The DSL's dtype names: those of the Array API, NumPy and PyTorch. */
 export const DSL_DTYPES = [
-  "fp32", "fp16", "bf16", "fp8", "int64", "int32", "uint8", "int8", "bool",
+  "float32", "float16", "bfloat16", "float8", "int64", "int32", "uint8", "int8", "bool",
 ] as const;
 
 export type DSLDType = (typeof DSL_DTYPES)[number];
 
 export const DTYPE_FROM_DSL: Record<DSLDType, DType> = {
-  fp32: "f32",
-  fp16: "f16",
-  bf16: "bf16",
-  fp8: "f8",
+  float32: "f32",
+  float16: "f16",
+  bfloat16: "bf16",
+  float8: "f8",
   int64: "i64",
   int32: "i32",
   uint8: "u8",
@@ -48,10 +48,10 @@ export const DTYPE_FROM_DSL: Record<DSLDType, DType> = {
 };
 
 export const DTYPE_TO_DSL: Record<DType, DSLDType> = {
-  f32: "fp32",
-  f16: "fp16",
-  bf16: "bf16",
-  f8: "fp8",
+  f32: "float32",
+  f16: "float16",
+  bf16: "bfloat16",
+  f8: "float8",
   i64: "int64",
   i32: "int32",
   u8: "uint8",

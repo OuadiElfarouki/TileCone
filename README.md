@@ -160,8 +160,8 @@ S = 128
 D = 32
 E = H*D
 
-X  = Tensor(batch=B, seq=S, emb=E, dtype=fp16)
-Wq = Parameter(emb=E, proj=E, dtype=fp16)
+X  = Tensor(batch=B, seq=S, emb=E, dtype=float16)
+Wq = Parameter(emb=E, proj=E, dtype=float16)
 
 Qp = einsum("bse,ef->bsf", X, Wq)
 Q4 = reshape(Qp, [B, S, H, D])
@@ -177,7 +177,7 @@ Y  = sum(X, axis=emb)
 Function names and keywords follow the [Python Array API Standard](https://data-apis.org/array-api/)
 (the part NumPy, PyTorch, JAX and CuPy share), and `torch.nn.functional` for the network operations
 the standard does not cover. Each concept has one spelling: `axis`, not `dim`; `keepdims`, not
-`keepdim`. An error for another library's spelling names this one.
+`keepdim`; `float16`, not `fp16`. An error for another library's spelling names this one.
 
 Every function has a signature, read like a Python one:
 
@@ -202,7 +202,7 @@ takes it:
 | padding | one int, one per spatial axis, or a `[lo, hi]` pair per spatial axis | `padding=1`, `padding=[[0, 1], [1, 1]]` |
 | pad_width | NumPy's forms: one int, one `[lo, hi]` pair, or a pair per axis | `pad(X, 1)`, `pad(X, [0, 2])` |
 | extent | an int or an expression over the size symbols | `[B, S, H*D]`, `split(X, D)` |
-| dtype | a bare word | `astype(X, bf16)` |
+| dtype | a bare word | `astype(X, bfloat16)` |
 | free text | a quoted string | `einsum("ij,jk->ik", A, B)` |
 
 Slicing uses subscript notation, `X[a:b:c, ...]`, with NumPy's rules: a part left out takes its
@@ -250,8 +250,8 @@ column block of a GEMM tile needs no more of A and a whole band of B.
 | **Other** | `cumulative_sum(x, *, axis, reverse)`, `take(x, indices, *, axis, index_values)`, `astype(x, dtype)` |
 | **Barrier** | `opaque`: an operation whose shapes are known and whose semantics are not |
 
-Dtypes are `fp32` `fp16` `bf16` `fp8` `int64` `int32` `uint8` `int8` `bool`.
-Operations that compute from several tensors promote (`fp16 + fp32 → fp32`, following
+Dtypes are `float32` `float16` `bfloat16` `float8` `int64` `int32` `uint8` `int8` `bool`.
+Operations that compute from several tensors promote (`float16 + float32 → float32`, following
 PyTorch); operations that only move data require a match, since one output buffer has no result
 type to infer.
 
@@ -311,8 +311,8 @@ import { compileDSL } from "./src/parse/compiler";
 import { box, fromBox } from "./src/core/region";
 
 const program = compileDSL(`
-  A = Tensor(256, 512, dtype=fp16)
-  B = Tensor(512, 256, dtype=fp16)
+  A = Tensor(256, 512, dtype=float16)
+  B = Tensor(512, 256, dtype=float16)
   C = matmul(A, B)
 `);
 
@@ -330,9 +330,9 @@ import { tilePlan } from "./src/core/plan/plan";
 import { interfaceOf, planReport, supplyOf } from "./src/core/plan/interfaces";
 
 const mlp = compileDSL(`
-  X  = Tensor(256, 128, dtype=fp16)
-  W1 = Parameter(128, 512, dtype=fp16)
-  W2 = Parameter(512, 128, dtype=fp16)
+  X  = Tensor(256, 128, dtype=float16)
+  W1 = Parameter(128, 512, dtype=float16)
+  W2 = Parameter(512, 128, dtype=float16)
   H  = matmul(X, W1)
   Y  = matmul(H, W2)
 `);

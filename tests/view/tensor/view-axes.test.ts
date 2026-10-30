@@ -12,7 +12,7 @@ const S = () => useStore.getState();
 
 /* [B, S, H, D] after the head split: the default plane is H x D, and the one
    worth studying is S x D. */
-const DSL = "B = 1\nL = 128\nH = 4\nD = 32\nX = Tensor(B, L, H, D, dtype=fp16)\nY = relu(X)\n";
+const DSL = "B = 1\nL = 128\nH = 4\nD = 32\nX = Tensor(B, L, H, D, dtype=float16)\nY = relu(X)\n";
 const SHAPE = [1, 128, 4, 32];
 
 describe("choosing the axes a card draws", () => {

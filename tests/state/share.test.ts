@@ -11,7 +11,7 @@ import {
 import { box } from "../../src/core/region";
 
 const LINK: WorkspaceLink = {
-  dsl: "A = Tensor(4, 4, dtype=fp32)\nB = relu(A)\n",
+  dsl: "A = Tensor(4, 4, dtype=float32)\nB = relu(A)\n",
   dir: "both",
   ent: true,
   tile: -2,
@@ -32,7 +32,7 @@ describe("workspace links round-trip", () => {
   });
 
   it("carries non-ASCII source through base64 intact", () => {
-    const link = { ...LINK, dsl: "# λ - tensor ≈ région\nA = Tensor(2, dtype=fp32)\n" };
+    const link = { ...LINK, dsl: "# λ - tensor ≈ région\nA = Tensor(2, dtype=float32)\n" };
     expect(decodeWorkspace(`#s=${encodeWorkspace(link)}`)?.dsl).toBe(link.dsl);
   });
 
@@ -156,7 +156,7 @@ describe("a link that cannot be trusted is refused, not repaired", () => {
   });
 
   it("defaults snapping on for links written before it existed", () => {
-    const legacy = btoa(JSON.stringify({ dsl: "A = Tensor(2, dtype=fp32)\n", dir: "both", tile: 0, sel: null }));
+    const legacy = btoa(JSON.stringify({ dsl: "A = Tensor(2, dtype=float32)\n", dir: "both", tile: 0, sel: null }));
     expect(decodeWorkspace(`#s=${legacy}`)?.snap).toBe(true);
   });
 
@@ -205,7 +205,7 @@ describe("selectionToLink", () => {
 describe("the shape view travels with the link", () => {
   it("round-trips the chosen reading", () => {
     const link = {
-      dsl: "X = Tensor(2, dtype=fp32)\n",
+      dsl: "X = Tensor(2, dtype=float32)\n",
       dir: "both" as const,
       tile: 0,
       snap: true,
@@ -217,14 +217,14 @@ describe("the shape view travels with the link", () => {
 
   it("keeps a link written before the setting existed on numeric shapes", () => {
     // Absent is not malformed: a legacy field takes its documented default.
-    const legacy = { dsl: "X = Tensor(2, dtype=fp32)\n", dir: "both" as const, tile: 0, sel: null };
+    const legacy = { dsl: "X = Tensor(2, dtype=float32)\n", dir: "both" as const, tile: 0, sel: null };
     const decoded = decodeWorkspace(`#s=${encodeWorkspace(legacy)}`);
     expect(decoded).not.toBeNull();
     expect(decoded!.axes).toBe("numeric");
   });
 
   it("refuses a link whose shape view is not a known reading", () => {
-    const bad = { dsl: "X = Tensor(2, dtype=fp32)\n", dir: "both", tile: 0, axes: "hieroglyphs", sel: null };
+    const bad = { dsl: "X = Tensor(2, dtype=float32)\n", dir: "both", tile: 0, axes: "hieroglyphs", sel: null };
     expect(decodeWorkspace(`#s=${encodeWorkspace(bad as never)}`)).toBeNull();
   });
 });

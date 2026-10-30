@@ -16,9 +16,9 @@ import {
 } from "../../src/view/plan-work";
 
 const chain = () =>
-  compileDSL(`A = Tensor(256, 256, dtype=fp16)
-B = Tensor(256, 256, dtype=fp16)
-W = Tensor(256, 128, dtype=fp16)
+  compileDSL(`A = Tensor(256, 256, dtype=float16)
+B = Tensor(256, 256, dtype=float16)
+W = Tensor(256, 128, dtype=float16)
 C = matmul(A, B)
 Y = matmul(C, W)
 `).resolved;

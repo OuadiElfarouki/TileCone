@@ -39,7 +39,7 @@ const option = (id: AxisTableAction) => actionsNow().find((o) => o.id === id)!;
 
 describe("the axis table at rest", () => {
   beforeEach(() => {
-    S().applyDSL("X = Tensor(256, 256, dtype=fp32)\nY = relu(X)\n");
+    S().applyDSL("X = Tensor(256, 256, dtype=float32)\nY = relu(X)\n");
     const [rows, cols] = currentTile();
     S().setSelection("X", fromBox(box([0, rows], [0, cols])), "replace");
   });
@@ -69,7 +69,7 @@ describe("the axis table at rest", () => {
 
 describe("keeping the canvas grid as a tensor's own", () => {
   beforeEach(() => {
-    S().applyDSL("X = Tensor(256, 256, dtype=fp32)\nY = relu(X)\n");
+    S().applyDSL("X = Tensor(256, 256, dtype=float32)\nY = relu(X)\n");
     const [rows, cols] = currentTile();
     // Exactly one tile of the canvas lattice, so nothing distinguishes it from
     // the tile a click would take.

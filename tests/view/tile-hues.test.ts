@@ -43,7 +43,7 @@ describe("tile colour slots", () => {
 });
 
 describe("colours across tile edits", () => {
-  const GEMM = "A = Tensor(16, 32, dtype=fp16)\nB = Tensor(32, 16, dtype=fp16)\nC = matmul(A, B)\n";
+  const GEMM = "A = Tensor(16, 32, dtype=float16)\nB = Tensor(32, 16, dtype=float16)\nC = matmul(A, B)\n";
   const draw = (lo: number) => S().setSelection("C", fromBox(box([lo, lo + 2], [0, 2])), "union");
 
   beforeEach(() => {

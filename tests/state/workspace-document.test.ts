@@ -5,7 +5,7 @@ import { parseWorkspaceDocument, serializeWorkspace, workspaceDocument } from ".
 import { workspaceToLink } from "../../src/state/share";
 import { planReport } from "../../src/core/plan/interfaces";
 
-const SOURCE = "A = Tensor(8, 8, dtype=fp32)\nB = relu(A)\n";
+const SOURCE = "A = Tensor(8, 8, dtype=float32)\nB = relu(A)\n";
 const S = () => useStore.getState();
 beforeEach(() => { useStore.setState(useStore.getInitialState(), true); S().applyDSL(SOURCE); });
 

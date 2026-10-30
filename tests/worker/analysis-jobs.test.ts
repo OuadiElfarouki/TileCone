@@ -3,9 +3,9 @@ import { hydrateResolvedGraph } from "../../src/core/graph";
 import { compileArtifact, layoutArtifact, planArtifact, planRestoreArtifact, replayArtifact } from "../../src/worker/analysis-jobs";
 import { box } from "../../src/core/region";
 
-const CHAIN = `A = Tensor(256, 256, dtype=fp16)
-B = Tensor(256, 256, dtype=fp16)
-W = Tensor(256, 128, dtype=fp16)
+const CHAIN = `A = Tensor(256, 256, dtype=float16)
+B = Tensor(256, 256, dtype=float16)
+W = Tensor(256, 128, dtype=float16)
 C = matmul(A, B)
 Y = matmul(C, W)
 `;

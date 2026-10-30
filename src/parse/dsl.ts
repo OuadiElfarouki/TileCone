@@ -1,7 +1,7 @@
 /** Text DSL:
  *   M = 512
  *   K = 2048
- *   A = Tensor(M, K, dtype=fp16)
+ *   A = Tensor(M, K, dtype=float16)
  *   C = einsum("mk,kn->mn", A, B)
  *   Y0, Y1 = split(X, [2, 2], axis=0)
  *   Z = Y0[:, 0:K/2]

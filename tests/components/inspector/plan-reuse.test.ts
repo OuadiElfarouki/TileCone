@@ -16,8 +16,8 @@ vi.mock("../../../src/state/store", async (importOriginal) => {
   ) };
 });
 
-const CHAIN = "A = Tensor(32, 32, dtype=fp16)\nB = Tensor(32, 32, dtype=fp16)\n" +
-  "W = Tensor(32, 16, dtype=fp16)\nC = matmul(A, B)\nY = matmul(C, W)\n";
+const CHAIN = "A = Tensor(32, 32, dtype=float16)\nB = Tensor(32, 32, dtype=float16)\n" +
+  "W = Tensor(32, 16, dtype=float16)\nC = matmul(A, B)\nY = matmul(C, W)\n";
 const S = () => useStore.getState();
 const render = () => renderToStaticMarkup(createElement(Inspector));
 

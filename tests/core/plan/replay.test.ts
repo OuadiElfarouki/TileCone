@@ -5,7 +5,7 @@ import { tileBox, tileCoord } from "../../../src/core/plan/tile-family";
 import { box, count, fromBox, intersect, unionOf } from "../../../src/core/region";
 import { compileDSL } from "../../../src/parse/compiler";
 
-const GEMM = "A = Tensor(256, 128, dtype=fp16)\nB = Tensor(128, 256, dtype=fp16)\nC = matmul(A, B)\n";
+const GEMM = "A = Tensor(256, 128, dtype=float16)\nB = Tensor(128, 256, dtype=float16)\nC = matmul(A, B)\n";
 const coordOf = (frame: { first: { coord: readonly number[] } }) => frame.first.coord.join(",");
 
 describe("a family replay", () => {
@@ -107,8 +107,8 @@ describe("replay runs", () => {
    than Y's 8-row ones, which is where following the plan differs from the
    element-level cone: a producer computes its whole tile. */
 describe("replaying through the plan's own producers", () => {
-  const CHAIN = "A = Tensor(64, 32, dtype=fp16)\nB = Tensor(32, 64, dtype=fp16)\n" +
-    "W = Tensor(64, 32, dtype=fp16)\nC = matmul(A, B)\nY = matmul(C, W)\n";
+  const CHAIN = "A = Tensor(64, 32, dtype=float16)\nB = Tensor(32, 64, dtype=float16)\n" +
+    "W = Tensor(64, 32, dtype=float16)\nC = matmul(A, B)\nY = matmul(C, W)\n";
   const { resolved } = compileDSL(CHAIN);
   const plan = tilePlan(resolved, { C: [16, 16], Y: [8, 8] });
   const at = (replay: ReturnType<typeof familyReplay>, coord: string) =>
@@ -294,7 +294,7 @@ describe("replay depth on large and shared graphs", () => {
 
 describe("what a deeper step walks", () => {
   // A row of C per D task: the matmul is fused into D, and D2 reads D tile for tile.
-  const SOURCE = `M = 16\nN = 16\nK = 128\nE = M * N\nA = Tensor(M, K, dtype=fp16)\nB = Tensor(K, N, dtype=fp16)
+  const SOURCE = `M = 16\nN = 16\nK = 128\nE = M * N\nA = Tensor(M, K, dtype=float16)\nB = Tensor(K, N, dtype=float16)
 C = matmul(A, B)\nD = reshape(C, [E])\nD2 = add(D, D)\n`;
   const { resolved } = compileDSL(SOURCE);
   const plan = tilePlan(resolved, { D2: [16], D: [16] });

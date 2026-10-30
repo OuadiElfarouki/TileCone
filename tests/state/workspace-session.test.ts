@@ -6,7 +6,7 @@ import { encodeWorkspace, workspaceToLink } from "../../src/state/share";
 import { serializeWorkspace } from "../../src/state/workspace-document";
 import { AUTOSAVE_KEY, RECOVERY_KEY, startWorkspaceSession } from "../../src/state/workspace-session";
 
-const SOURCE = "A = Tensor(8, 8, dtype=fp32)\nB = relu(A)\n";
+const SOURCE = "A = Tensor(8, 8, dtype=float32)\nB = relu(A)\n";
 const S = () => useStore.getState();
 let sessions: ReturnType<typeof startWorkspaceSession>[];
 let data: Map<string, string>;
@@ -37,7 +37,7 @@ describe("local workspace recovery", () => {
   it("gives share links precedence and keeps the previous local workspace", async () => {
     S().applyDSL(SOURCE); S().setDraftText("local work");
     const local = serializeWorkspace(S()); data.set(AUTOSAVE_KEY, local);
-    const link = { ...workspaceToLink(S()), dsl: "X = Tensor(4, dtype=fp32)\n", sel: null };
+    const link = { ...workspaceToLink(S()), dsl: "X = Tensor(4, dtype=float32)\n", sel: null };
     expect(await start(`#s=${encodeWorkspace(link)}`).initialized).toBe(true);
     expect(S().dslText).toBe(link.dsl); expect(S().draftText).toBe(link.dsl);
     expect(data.get(RECOVERY_KEY)).toBe(local);

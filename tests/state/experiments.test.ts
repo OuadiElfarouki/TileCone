@@ -21,7 +21,7 @@ const run = (name: string): { dsl: string; p1: Work; p2: Work; current: Work } =
 describe("building an experiment's source", () => {
   it("opens the Plan view on its plan, task, selection and two kept plans", () => {
     const { index, example } = experiment("Experiment: fusion and recomputation");
-    S().applyDSL("X = Tensor(2, 3, dtype=fp32)\nY = relu(X)\n");
+    S().applyDSL("X = Tensor(2, 3, dtype=float32)\nY = relu(X)\n");
     S().setInspectorTab("dependencies");
     S().applyDSL(example.dsl);
     expect(S().inspectorTab).toBe("plan");

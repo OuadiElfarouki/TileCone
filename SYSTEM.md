@@ -345,7 +345,7 @@ The DSL is line-oriented and intentionally small:
   and reading it counts the parameters it is written over as used. It has no value of its
   own, so the parameter controls do not offer one.
 - `Tensor(...)` declares a graph input and `Parameter(...)` declares a learned graph input.
-- An axis may be labelled in place: `X = Tensor(batch=B, seq=S, emb=E, dtype=fp16)`. A constructor
+- An axis may be labelled in place: `X = Tensor(batch=B, seq=S, emb=E, dtype=float16)`. A constructor
   names every axis or none, because a half-named declaration is a slip rather than a
   statement; propagated names may legitimately have holes.
 - Assignments create operation nodes and one or more output tensors.
@@ -370,14 +370,15 @@ The DSL is line-oriented and intentionally small:
 - Values are lists, numbers, booleans, quoted strings and bare words; which of them a parameter
   accepts is its kind's. Numbers accept decimals and scientific notation, so `toDSL` cannot emit
   a literal the parser then rejects.
-- Dtypes use the familiar external spellings `fp32`, `fp16`, `bf16`, `fp8`, `int64`, `int32`,
-  `uint8`, `int8` and `bool`; the graph IR retains its compact internal dtype names.
+- Dtypes use the Array API, NumPy and PyTorch spellings `float32`, `float16`, `bfloat16`,
+  `float8`, `int64`, `int32`, `uint8`, `int8` and `bool`; the graph IR retains its compact
+  internal dtype names.
 - `#` introduces a comment.
 
 Several functions lower to one operation: `relu` and `subtract` are `elementwise` nodes, `sum` and `max` are `reduce` nodes, `layer_norm` and `rms_norm` are `normalize` nodes, `conv1d` to `conv3d` are `conv`, and a subscript is `slice`. Operation names are not callable themselves; a node is written as the function whose implied attributes it carries.
 
 Every statement is an assignment and is closed at the end, so
-`X = Tensor(4, 8, dtype=fp32) garbage` is a syntax error rather than a tensor whose malformed
+`X = Tensor(4, 8, dtype=float32) garbage` is a syntax error rather than a tensor whose malformed
 suffix is silently discarded.
 
 The source map connects compiler errors back to declarations or operation calls. Parsing errors are reported as DSL diagnostics; graph, shape, dtype, and arity failures become semantic diagnostics with the most specific available source span.

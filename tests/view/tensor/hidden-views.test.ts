@@ -225,7 +225,7 @@ describe("projected tile controls and placement", () => {
 describe("hidden readings in the workspace", () => {
   const S = () => useStore.getState();
   beforeEach(() => {
-    S().applyDSL("B = 2\nH = 4\nM = 8\nN = 6\nX = Tensor(B, H, M, N, dtype=fp16)\nY = relu(X)\n");
+    S().applyDSL("B = 2\nH = 4\nM = 8\nN = 6\nX = Tensor(B, H, M, N, dtype=float16)\nY = relu(X)\n");
   });
 
   it("stores an unfold as a slice-free reading and clears it on the way back", () => {

@@ -24,8 +24,8 @@ vi.mock("../../../src/state/store", async (importOriginal) => {
 
 /** Two tensors where one feeds the other, so their cones genuinely overlap. */
 const chain = () =>
-  compileDSL(`A = Tensor(64, 64, dtype=fp32)
-B = Tensor(64, 64, dtype=fp32)
+  compileDSL(`A = Tensor(64, 64, dtype=float32)
+B = Tensor(64, 64, dtype=float32)
 C = matmul(A, B)
 D = relu(C)
 `).resolved;
@@ -172,10 +172,10 @@ describe("tile groups", () => {
  * Each of these was a way to strand the reader in a group they had left.
  */
 describe("moving between tile groups", () => {
-  const SRC = `A = Tensor(256, 256, dtype=fp16)
-B = Tensor(256, 256, dtype=fp16)
+  const SRC = `A = Tensor(256, 256, dtype=float16)
+B = Tensor(256, 256, dtype=float16)
 CC = matmul(A, B)
-W = Tensor(256, 256, dtype=fp16)
+W = Tensor(256, 256, dtype=float16)
 D = matmul(CC, W)
 `;
   const S = () => useStore.getState();

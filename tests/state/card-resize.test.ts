@@ -9,7 +9,7 @@ import { displayedCards } from "../../src/view/tensor/resize";
 import type { BaseGraphLayout } from "../../src/view/graph/graph-scene";
 import { box, fromBox } from "../../src/core/region";
 
-const SOURCE = "X = Tensor(8, 16, dtype=fp32)\nY = relu(X)\n";
+const SOURCE = "X = Tensor(8, 16, dtype=float32)\nY = relu(X)\n";
 const S = () => useStore.getState();
 /** The placed graph as the canvas sees it: layout, offsets, and resized cards. */
 const sceneOf = (base: BaseGraphLayout) =>
@@ -51,7 +51,7 @@ describe("card resize workspace edits", () => {
     expect(S()).toBe(before);
   });
   it("disables ineffective singleton resizing but permits clearing a legacy stored size", () => {
-    S().applyDSL("X = Tensor(1, 1, dtype=fp32)\n");
+    S().applyDSL("X = Tensor(1, 1, dtype=float32)\n");
     const before = S();
     S().setResizingTensor("X"); S().setCardScale("X", 2);
     expect(S()).toBe(before);
@@ -61,7 +61,7 @@ describe("card resize workspace edits", () => {
     expect(S().workspaceHistory).toHaveLength(1);
   });
   it("retires resize mode when the chosen plane becomes fixed", () => {
-    S().applyDSL("X = Tensor(8, 1, 1, dtype=fp32)\n");
+    S().applyDSL("X = Tensor(8, 1, 1, dtype=float32)\n");
     S().setViewAxes("X", [0, 2]); S().setResizingTensor("X");
     expect(S().resizingTensor).toBe("X");
     S().setViewAxes("X", null); expect(S().resizingTensor).toBeNull();

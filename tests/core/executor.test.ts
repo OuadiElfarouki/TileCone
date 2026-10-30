@@ -4,8 +4,8 @@ import { box, count, fromBox } from "../../src/core/region";
 import { compileDSL } from "../../src/parse/compiler";
 
 const gemm = () =>
-  compileDSL(`A = Tensor(4, 6, dtype=fp16)
-B = Tensor(6, 5, dtype=fp16)
+  compileDSL(`A = Tensor(4, 6, dtype=float16)
+B = Tensor(6, 5, dtype=float16)
 C = matmul(A, B)
 `);
 
@@ -59,7 +59,7 @@ describe("headless symbolic executor", () => {
   });
 
   it("counts the shared prefix work required by a partial scan selection", () => {
-    const { executor } = compileDSL(`X = Tensor(128, dtype=fp32)
+    const { executor } = compileDSL(`X = Tensor(128, dtype=float32)
 Y = cumulative_sum(X, axis=0)
 `);
     const region = {
@@ -72,8 +72,8 @@ Y = cumulative_sum(X, axis=0)
   });
 
   it("charges overlapping output boxes once without constructing a partition", () => {
-    const { executor } = compileDSL(`A = Tensor(512, 512, dtype=fp16)
-B = Tensor(512, 512, dtype=fp16)
+    const { executor } = compileDSL(`A = Tensor(512, 512, dtype=float16)
+B = Tensor(512, 512, dtype=float16)
 C = matmul(A, B)
 `);
     const region = {
@@ -89,9 +89,9 @@ C = matmul(A, B)
   });
 
   it("uses inferred cast dtypes for output and intermediate byte metrics", () => {
-    const { executor } = compileDSL(`X = Tensor(4, dtype=fp32)
-Y = astype(X, fp8)
-Z = astype(Y, fp16)
+    const { executor } = compileDSL(`X = Tensor(4, dtype=float32)
+Y = astype(X, float8)
+Z = astype(Y, float16)
 `);
     const region = fromBox(box([0, 4]));
 

@@ -60,7 +60,7 @@ const PROGRAMS: Record<string, string> = {
   ...spatialPrograms,
   cumulative_sum: `${X}Z = cumulative_sum(X, axis=1, reverse=true)\n`,
   take: "E = Tensor(10, 6)\nI = Tensor(3, dtype=int64)\nZ = take(E, I, axis=0)\n",
-  astype: `${X}Z = astype(X, fp16)\n`,
+  astype: `${X}Z = astype(X, float16)\n`,
   identity: `${X}Z = identity(X)\n`,
   contiguous: `${X}Z = contiguous(X)\n`,
   opaque: `${X}Z = opaque(X, op="Foo", shapes=[[4, 6]])\n`,
@@ -128,7 +128,7 @@ describe("printing", () => {
   });
 
   it("writes dtypes in the DSL's spelling", () => {
-    expect(toDSL(parseDSL(`${X}Z = astype(X, bf16)\n`))).toContain("Z = astype(X, bf16)");
+    expect(toDSL(parseDSL(`${X}Z = astype(X, bfloat16)\n`))).toContain("Z = astype(X, bfloat16)");
   });
 });
 
@@ -199,8 +199,8 @@ describe("binding", () => {
   });
 
   it("refuses a value spelled for another kind", () => {
-    expect(first(`${X}Z = astype(X, "fp16")\n`).message).toBe(
-      "dtype: expected one of fp32, fp16, bf16, fp8, int64, int32, uint8, int8, bool"
+    expect(first(`${X}Z = astype(X, "float16")\n`).message).toBe(
+      "dtype: expected one of float32, float16, bfloat16, float8, int64, int32, uint8, int8, bool"
     );
     expect(first(`${X}Z = softmax(X, axis="s")\n`).message).toBe("axis: quotes are for free text; write s without them");
     expect(first(`${X}Z = pad(X, 1, mode="edge")\n`).message).toBe("mode: write edge without quotes");

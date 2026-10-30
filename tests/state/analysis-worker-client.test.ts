@@ -3,8 +3,8 @@ import { hydrateResolvedGraph } from "../../src/core/graph";
 import { compileArtifact, layoutArtifact, planArtifact, replayArtifact } from "../../src/worker/analysis-jobs";
 import type { AnalysisRequest, AnalysisResponse } from "../../src/worker/analysis-protocol";
 
-const CHAIN = `A = Tensor(256, 256, dtype=fp16)
-B = Tensor(256, 256, dtype=fp16)
+const CHAIN = `A = Tensor(256, 256, dtype=float16)
+B = Tensor(256, 256, dtype=float16)
 C = matmul(A, B)
 Y = relu(C)
 `;

@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { compileArtifact, planArtifact, planRestoreArtifact } from "../../src/worker/analysis-jobs";
 import type { AnalysisRequest, AnalysisResponse } from "../../src/worker/analysis-protocol";
 
-const CHAIN = "A = Tensor(16, 16, dtype=fp16)\nB = Tensor(16, 16, dtype=fp16)\n" +
-  "W = Tensor(16, 8, dtype=fp16)\nC = matmul(A, B)\nY = matmul(C, W)\n";
+const CHAIN = "A = Tensor(16, 16, dtype=float16)\nB = Tensor(16, 16, dtype=float16)\n" +
+  "W = Tensor(16, 8, dtype=float16)\nC = matmul(A, B)\nY = matmul(C, W)\n";
 
 class FakeWorker {
   static instances: FakeWorker[] = [];
@@ -111,7 +111,7 @@ describe("restoring a shared plan through the Worker", () => {
 
     const restore = await pending("restore", answered);
 
-    const other = "X = Tensor(4, 4, dtype=fp32)\nY = relu(X)\n";
+    const other = "X = Tensor(4, 4, dtype=float32)\nY = relu(X)\n";
     const building = useStore.getState().applyDSLAsync(other);
     expect(restore.worker.terminated).toBe(true);
     await expect(restoring).resolves.toBe(false);

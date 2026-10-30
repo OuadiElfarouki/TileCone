@@ -10,7 +10,7 @@ import { FIGURE_MARK } from "../../src/view/format";
 import { axisName } from "../../src/view/tensor/shape-label";
 
 describe("a shared-demand row in words", () => {
-  const { resolved } = compileDSL("X = Tensor(8, dtype=fp32)\nY = relu(X)\n");
+  const { resolved } = compileDSL("X = Tensor(8, dtype=float32)\nY = relu(X)\n");
   const X = resolved.tensors.X;
   const region = (lo: number, hi: number, exact = true) =>
     ({ boxes: [box([lo, hi])], exact, reasons: exact ? [] : ["widened"] });
@@ -34,7 +34,7 @@ describe("a read-multiplicity row in words", () => {
     const back = executeQuery(resolved, { tensorId, region, direction: "backward" }).backward!;
     return operandReads(resolved, back.tensors).find((row) => row.tensorId === read)!;
   };
-  const GEMM = "A = Tensor(4, 8, dtype=fp16)\nB = Tensor(8, 6, dtype=fp16)\nC = matmul(A, B)\n";
+  const GEMM = "A = Tensor(4, 8, dtype=float16)\nB = Tensor(8, 6, dtype=float16)\nC = matmul(A, B)\n";
 
   it("names a uniform count, a mixed one, and a single use", () => {
     const tile = readsOf(GEMM, "C", fromBox(box([0, 2], [0, 3])), "A");

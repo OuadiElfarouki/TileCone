@@ -3,7 +3,7 @@ import { act, expect, runSource, snapshot, test } from "./fixtures";
 
 /* A card between two operations: growing it has to move a neighbour aside,
    which is the case the old resize stopped dead at. */
-const SOURCE = "X = Tensor(8, 16, dtype=fp32)\nY = relu(X)\nZ = exp(Y)\nW = relu(Z)\n";
+const SOURCE = "X = Tensor(8, 16, dtype=float32)\nY = relu(X)\nZ = exp(Y)\nW = relu(Z)\n";
 
 async function enterResize(page: Page, tensor: string) {
   // The card takes the press over its canvas, and owns the context menu.

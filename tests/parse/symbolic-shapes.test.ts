@@ -144,7 +144,7 @@ Y = conv2d(X, W, padding=1)
   });
 
   it("does not refute what a barrier produced", () => {
-    accepts('P = 2\nQ = 4\nX = opaque(op="Src", shapes=[[8]], dtypes=[fp32])\nY = reshape(X, [P, Q])\n');
+    accepts('P = 2\nQ = 4\nX = opaque(op="Src", shapes=[[8]], dtypes=[float32])\nY = reshape(X, [P, Q])\n');
   });
 
   it("keeps the canonical display of a lost axis", () => {

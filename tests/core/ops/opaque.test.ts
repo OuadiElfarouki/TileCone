@@ -8,8 +8,8 @@ import { box, fromBox } from "../../../src/core/region";
 /** The same three-layer chain, with the middle operation unknown or opaque. */
 const chain = (middle: string) => `M = 4
 K = 6
-X = Tensor(rows=M, cols=K, dtype=fp16)
-S = Parameter(cols=K, dtype=fp16)
+X = Tensor(rows=M, cols=K, dtype=float16)
+S = Parameter(cols=K, dtype=float16)
 H = ${middle}
 Y = relu(H)
 `;
@@ -86,8 +86,8 @@ describe("an operation carried as a barrier", () => {
   it("gives each output its own dtype", () => {
     const source = `M = 4
 K = 6
-X = Tensor(rows=M, cols=K, dtype=fp16)
-V, I = opaque(X, op="TopK", shapes=[[M, 3], [M, 3]], dtypes=[fp16, int64])
+X = Tensor(rows=M, cols=K, dtype=float16)
+V, I = opaque(X, op="TopK", shapes=[[M, 3], [M, 3]], dtypes=[float16, int64])
 `;
     const { resolved } = compileDSL(source);
     expect(resolved.tensors.V.dtype).toBe("f16");
@@ -98,7 +98,7 @@ V, I = opaque(X, op="TopK", shapes=[[M, 3], [M, 3]], dtypes=[fp16, int64])
   it("lets an output fall back to promotion while its sibling is declared", () => {
     const source = `M = 4
 K = 6
-X = Tensor(rows=M, cols=K, dtype=fp16)
+X = Tensor(rows=M, cols=K, dtype=float16)
 V, I = opaque(X, op="MaxPool", shapes=[[M, 3], [M, 3]], dtypes=[null, int64])
 `;
     const { resolved } = compileDSL(source);
@@ -108,7 +108,7 @@ V, I = opaque(X, op="MaxPool", shapes=[[M, 3], [M, 3]], dtypes=[null, int64])
 
   it("requires the declared dtypes to pair with the outputs", () => {
     const bad = tryCompileDSL(
-      chain('opaque(X, S, op="TopK", shapes=[[M, K]], dtypes=[fp16, int64])')
+      chain('opaque(X, S, op="TopK", shapes=[[M, K]], dtypes=[float16, int64])')
     );
     expect(bad.ok).toBe(false);
     if (bad.ok) throw new Error("unreachable");
@@ -145,8 +145,8 @@ V, I = opaque(X, op="MaxPool", shapes=[[M, 3], [M, 3]], dtypes=[null, int64])
   it("carries a node that reads nothing, given a dtype it cannot promote", () => {
     const source = `M = 4
 K = 6
-X = Tensor(rows=M, cols=K, dtype=fp16)
-C = opaque(op="ConstantOfShape", shapes=[[M, K]], dtypes=[fp16])
+X = Tensor(rows=M, cols=K, dtype=float16)
+C = opaque(op="ConstantOfShape", shapes=[[M, K]], dtypes=[float16])
 Y = add(X, C)
 `;
     const { resolved } = compileDSL(source);
@@ -176,7 +176,7 @@ C = opaque(op="ConstantOfShape", shapes=[[M, K]])
   it("round-trips per-output dtypes and provenance", () => {
     const source = `M = 4
 K = 6
-X = Tensor(rows=M, cols=K, dtype=fp16)
+X = Tensor(rows=M, cols=K, dtype=float16)
 V, I = opaque(X, op="TopK", domain="com.microsoft", opset=17, source_name="/head/TopK", shapes=[[M, 3], [M, 3]], dtypes=[null, int64])
 `;
     const printed = toDSL(compileDSL(source).graph);

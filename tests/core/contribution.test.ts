@@ -9,8 +9,8 @@ import { G } from "../corpus/harness";
 const MATMUL = `S = 8
 K = 12
 N = 8
-P = Tensor(S, K, dtype=fp16)
-V = Tensor(K, N, dtype=fp16)
+P = Tensor(S, K, dtype=float16)
+V = Tensor(K, N, dtype=float16)
 O = matmul(P, V)
 `;
 
@@ -47,7 +47,7 @@ describe("partial contribution", () => {
 
   it("is complete through an elementwise chain", () => {
     const dsl = `S = 8
-X = Tensor(S, dtype=fp32)
+X = Tensor(S, dtype=float32)
 Y = relu(X)
 Z = relu(Y)
 `;
@@ -60,7 +60,7 @@ Z = relu(Y)
     // a prefix scan reaches every later element, and each of those reads the
     // whole prefix -- so the honest statement is the axis, not a count
     const dsl = `S = 16
-X = Tensor(S, dtype=fp32)
+X = Tensor(S, dtype=float32)
 Y = cumulative_sum(X, axis=0, reverse=false)
 `;
     const { byTensor } = report(dsl, [["X", tile([4, 8])]]);
@@ -72,8 +72,8 @@ Y = cumulative_sum(X, axis=0, reverse=false)
   it("counts the residue when no whole axis explains it", () => {
     // a conv halo: the neighbouring tiles supply the rest, and no axis is
     // consumed in full, so a count is the only true thing to say
-    const dsl = `X = Tensor(1, 1, 16, 16, dtype=fp32)
-Kw = Tensor(1, 1, 3, 3, dtype=fp32)
+    const dsl = `X = Tensor(1, 1, 16, 16, dtype=float32)
+Kw = Tensor(1, 1, 3, 3, dtype=float32)
 Y = conv2d(X, Kw, padding=1)
 `;
     const { byTensor } = report(dsl, [["X", tile([0, 1], [0, 1], [6, 10], [6, 10])]]);

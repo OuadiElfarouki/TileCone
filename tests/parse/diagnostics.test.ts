@@ -200,8 +200,8 @@ describe("messages in the source's terms", () => {
   });
 
   it("spells dtypes the DSL's way", () => {
-    expect(message("A = Tensor(4, dtype=fp16)\nB = Tensor(4, dtype=fp32)\nC = concat([A, B])\n")).toBe(
-      "concat: input dtypes must match, got [fp16, fp32] - insert an astype(...) to choose the one you want"
+    expect(message("A = Tensor(4, dtype=float16)\nB = Tensor(4, dtype=float32)\nC = concat([A, B])\n")).toBe(
+      "concat: input dtypes must match, got [float16, float32] - insert an astype(...) to choose the one you want"
     );
   });
 

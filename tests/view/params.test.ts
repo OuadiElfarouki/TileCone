@@ -16,7 +16,7 @@ const source = `M = 256
 N = 384  # not a power of two
 K = 512
 
-A = Tensor(M, K, dtype=fp16)
+A = Tensor(M, K, dtype=float16)
 `;
 
 describe("size parameters in the draft", () => {
@@ -111,10 +111,10 @@ describe("parameter hints in the editor", () => {
 
 
 describe("the source a build's parameter controls belong to", () => {
-  const built = "M = 8\nX = Tensor(M * 2, dtype=fp16)\nY = relu(X)\n";
+  const built = "M = 8\nX = Tensor(M * 2, dtype=float16)\nY = relu(X)\n";
 
   it("allows several parameter edits and ignores comments and formatting", () => {
-    const draft = "# resized\n  M = 16 # next run\n\nX = Tensor(M*2, dtype=fp16)\nY = relu(X)\n";
+    const draft = "# resized\n  M = 16 # next run\n\nX = Tensor(M*2, dtype=float16)\nY = relu(X)\n";
     expect(parameterSourceKey(draft)).toBe(parameterSourceKey(built));
   });
 
@@ -123,7 +123,7 @@ describe("the source a build's parameter controls belong to", () => {
     ["only parameters", "M = 8\n"],
     ["different operation", built.replace("relu", "exp")],
     ["different literal extent", built.replace("M * 2", "M * 3")],
-    ["different dtype", built.replace("fp16", "fp32")],
+    ["different dtype", built.replace("float16", "float32")],
     ["different parameter name", built.split("M").join("N")],
     ["invalid parameter", built.replace("M = 8", "M = 0")],
   ])("rejects %s", (_label, draft) => {

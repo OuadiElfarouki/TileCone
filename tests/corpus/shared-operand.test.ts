@@ -9,7 +9,7 @@ import { box, fromBox } from "../../src/core/region";
  * measured on the union of them.
  */
 describe("a tensor read through two operand slots", () => {
-  const program = () => compileDSL(`N = 256\nA = Tensor(N, N, dtype=fp16)\nC = matmul(A, A)\n`);
+  const program = () => compileDSL(`N = 256\nA = Tensor(N, N, dtype=float16)\nC = matmul(A, A)\n`);
   const tile = fromBox(box([64, 128], [32, 96]));
 
   it("reports the row band and the column band, not three fragments", () => {
@@ -32,7 +32,7 @@ describe("a tensor read through two operand slots", () => {
     // S is read through both slots of the matmul, so its backward region has
     // overlapping boxes. Summing per box would over-count where they meet.
     const src = `N = 64
-A = Tensor(N, N, dtype=fp16)
+A = Tensor(N, N, dtype=float16)
 T = permute_dims(A, [1,0])
 S = add(A, T)
 U = matmul(S, S)

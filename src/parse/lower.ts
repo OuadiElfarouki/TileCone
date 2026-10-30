@@ -205,7 +205,7 @@ export function lowerProgram(program: Program): LowerResult {
   function dimensionOf(e: Expr): Sym | null {
     if (e.kind === "number") return e.value;
     if (e.kind === "dim") {
-      // `Tensor(4, fp16)` is the shape of a removed grammar, where the dtype
+      // `Tensor(4, float16)` is the shape of a removed grammar, where the dtype
       // was a trailing positional word. Read as a dimension it is a symbol that
       // happens to be spelled like a dtype, and the failure would surface much
       // later as an unbound symbol - naming a real mistake something it is not.

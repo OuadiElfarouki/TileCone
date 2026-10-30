@@ -17,7 +17,7 @@ import { compileDSL } from "../../src/parse/compiler";
 import { supplyOf } from "../../src/core/plan/interfaces";
 import { tilePlan } from "../../src/core/plan/plan";
 
-const GEMM = "M = 4\nN = 6\nK = 8\nA = Tensor(M, K, dtype=fp16)\nB = Tensor(K, N, dtype=fp16)\nC = matmul(A, B)\n";
+const GEMM = "M = 4\nN = 6\nK = 8\nA = Tensor(M, K, dtype=float16)\nB = Tensor(K, N, dtype=float16)\nC = matmul(A, B)\n";
 
 function readsFor(dsl: string, tensorId: string, region: Region): { graph: ResolvedGraph; rows: OperandReads[] } {
   const { resolved } = compileDSL(dsl);
@@ -139,7 +139,7 @@ describe("bounded scan multiplicity", () => {
 
 describe("read multiplicity along a cone", () => {
   it("gives a row per operation and operand, in graph order", () => {
-    const dsl = `${GEMM}bias = Tensor(N, dtype=fp16)\nY = add(C, bias)\nZ = relu(Y)\n`;
+    const dsl = `${GEMM}bias = Tensor(N, dtype=float16)\nY = add(C, bias)\nZ = relu(Y)\n`;
     const { rows } = readsFor(dsl, "Z", fromBox(box([0, 4], [0, 2])));
     expect(rows.map((r) => [r.op, r.tensorId])).toEqual([
       ["matmul", "A"],
@@ -181,8 +181,8 @@ describe("read multiplicity along a cone", () => {
    the untiled tensors it computes on the way - so fusing an operand into the
    task brings that operand's own operation, and its reuse, into the count. */
 describe("operand reuse inside a plan task", () => {
-  const CHAIN = "A = Tensor(32, 32, dtype=fp16)\nB = Tensor(32, 32, dtype=fp16)\n" +
-    "W = Tensor(32, 16, dtype=fp16)\nC = matmul(A, B)\nY = matmul(C, W)\n";
+  const CHAIN = "A = Tensor(32, 32, dtype=float16)\nB = Tensor(32, 32, dtype=float16)\n" +
+    "W = Tensor(32, 16, dtype=float16)\nC = matmul(A, B)\nY = matmul(C, W)\n";
   const { resolved } = compileDSL(CHAIN);
   const taskReads = (tiles: Record<string, number[]>) => {
     const supply = supplyOf(tilePlan(resolved, tiles), { tensorId: "Y", coord: [1, 1] });

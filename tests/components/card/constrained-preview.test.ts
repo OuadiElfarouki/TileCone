@@ -43,7 +43,7 @@ function canvasOf(displayScale?: number): ReactElement {
 }
 beforeEach(() => {
   useStore.setState(useStore.getInitialState(), true);
-  S().applyDSL("X = Tensor(8, 16, dtype=fp32)\nY = relu(X)\n");
+  S().applyDSL("X = Tensor(8, 16, dtype=float32)\nY = relu(X)\n");
 });
 
 describe("hover preview on a resized card", () => {

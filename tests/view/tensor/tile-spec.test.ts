@@ -21,7 +21,7 @@ const S = () => useStore.getState();
 
 /* [B, H, S, D] with a sequence length the tile does not divide, so boundary
    tiles are exercised as well as ordinary ones. */
-const DSL = "B = 2\nH = 8\nL = 200\nD = 128\nX = Tensor(B, H, L, D, dtype=fp16)\nY = relu(X)\n";
+const DSL = "B = 2\nH = 8\nL = 200\nD = 128\nX = Tensor(B, H, L, D, dtype=float16)\nY = relu(X)\n";
 const SHAPE = [2, 8, 200, 128];
 const TILE = [1, 2, 64, 128];
 

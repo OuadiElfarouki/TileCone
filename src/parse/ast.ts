@@ -57,7 +57,7 @@ export type Stmt =
       value: { kind: "dim"; text: string; span: SourceSpan };
       span: SourceSpan;
     }
-  /** `A = Tensor(M, K, dtype=fp16)` / `W = Parameter(...)` */
+  /** `A = Tensor(M, K, dtype=float16)` / `W = Parameter(...)` */
   | {
       kind: "declare";
       name: Spanned<string>;

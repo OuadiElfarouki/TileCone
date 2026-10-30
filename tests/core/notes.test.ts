@@ -21,8 +21,8 @@ const notesFor = (dsl: string, tensor: string, sel: [number, number][]) => {
 const GEMM = `M = 64
 N = 64
 K = 128
-A = Tensor(M, K, dtype=fp16)
-B = Tensor(K, N, dtype=fp16)
+A = Tensor(M, K, dtype=float16)
+B = Tensor(K, N, dtype=float16)
 C = matmul(A, B)
 `;
 
@@ -53,7 +53,7 @@ describe("contraction notes", () => {
 describe("reduction and normalization notes", () => {
   it("softmax names the axis it normalises over", () => {
     const { notes } = notesFor(
-      `X = Tensor(8, 32, dtype=fp32)
+      `X = Tensor(8, 32, dtype=float32)
 Y = softmax(X, axis=-1)
 `,
       "Y",
@@ -68,9 +68,9 @@ Y = softmax(X, axis=-1)
     // the fusable half matters: reporting only the constraint would make
     // layernorm look less tileable than it is
     const { notes } = notesFor(
-      `X = Tensor(16, 32, dtype=fp16)
-W = Tensor(32, dtype=fp16)
-Bb = Tensor(32, dtype=fp16)
+      `X = Tensor(16, 32, dtype=float16)
+W = Tensor(32, dtype=float16)
+Bb = Tensor(32, dtype=float16)
 H = layer_norm(X, W, Bb)
 `,
       "H",
@@ -84,9 +84,9 @@ H = layer_norm(X, W, Bb)
 
   it("agrees in number when several axes stay independent", () => {
     const { notes } = notesFor(
-      `X = Tensor(4, 8, 32, dtype=fp16)
-W = Tensor(32, dtype=fp16)
-Bb = Tensor(32, dtype=fp16)
+      `X = Tensor(4, 8, 32, dtype=float16)
+W = Tensor(32, dtype=float16)
+Bb = Tensor(32, dtype=float16)
 H = layer_norm(X, W, Bb)
 `,
       "H",
@@ -97,7 +97,7 @@ H = layer_norm(X, W, Bb)
 
   it("a reduction names its collapsed axes", () => {
     const { notes } = notesFor(
-      `X = Tensor(8, 16, dtype=fp32)
+      `X = Tensor(8, 16, dtype=float32)
 Y = sum(X, axis=1)
 `,
       "Y",
@@ -109,7 +109,7 @@ Y = sum(X, axis=1)
 
 describe("notes never over-claim", () => {
   it("a chain of elementwise ops produces no notes but is not 'no cone'", () => {
-    const dsl = `X = Tensor(8, 8, dtype=fp32)
+    const dsl = `X = Tensor(8, 8, dtype=float32)
 Y = relu(X)
 Z = add(Y, X)
 `;
@@ -130,7 +130,7 @@ Z = add(Y, X)
 
   it("is capped so the panel stays a summary", () => {
     const dsl = `S = 32
-X = Tensor(S, S, dtype=fp16)
+X = Tensor(S, S, dtype=float16)
 A1 = softmax(X, axis=-1)
 A2 = softmax(A1, axis=-1)
 A3 = softmax(A2, axis=-1)
@@ -145,7 +145,7 @@ A6 = softmax(A5, axis=-1)
   it("identical statements are not repeated", () => {
     const { notes } = notesFor(
       `S = 32
-X = Tensor(S, S, dtype=fp16)
+X = Tensor(S, S, dtype=float16)
 A1 = softmax(X, axis=-1)
 A2 = softmax(A1, axis=-1)
 `,
@@ -165,8 +165,8 @@ C = 3
 F = 8
 H = 32
 W = 32
-X = Tensor(N, C, H, W, dtype=fp16)
-W1 = Tensor(F, C, 3, 3, dtype=fp16)
+X = Tensor(N, C, H, W, dtype=float16)
+W1 = Tensor(F, C, 3, 3, dtype=float16)
 Y = conv2d(X, W1, stride=2, padding=1)
 `,
       "Y",
@@ -185,8 +185,8 @@ C = 3
 F = 8
 H = 33
 W = 33
-X = Tensor(N, C, H, W, dtype=fp16)
-W1 = Tensor(F, C, 3, 3, dtype=fp16)
+X = Tensor(N, C, H, W, dtype=float16)
+W1 = Tensor(F, C, 3, 3, dtype=float16)
 Y = conv2d(X, W1, stride=3)
 `,
       "Y",
@@ -197,7 +197,7 @@ Y = conv2d(X, W1, stride=3)
 
   it("a scan is described as triangular, and knows its direction", () => {
     const forward = notesFor(
-      `X = Tensor(32, dtype=fp32)
+      `X = Tensor(32, dtype=float32)
 Y = cumulative_sum(X, axis=0, reverse=false)
 `,
       "Y",
@@ -207,7 +207,7 @@ Y = cumulative_sum(X, axis=0, reverse=false)
     expect(forward.notes[0].text).toContain("triangular");
 
     const backward = notesFor(
-      `X = Tensor(32, dtype=fp32)
+      `X = Tensor(32, dtype=float32)
 Y = cumulative_sum(X, axis=0, reverse=true)
 `,
       "Y",
@@ -218,7 +218,7 @@ Y = cumulative_sum(X, axis=0, reverse=true)
 });
 
 describe("reshape, the op that looks free and is not", () => {
-  const TRAP = `X = Tensor(4, 4, dtype=fp32)
+  const TRAP = `X = Tensor(4, 4, dtype=float32)
 F = reshape(X, [16])
 `;
 
@@ -248,10 +248,10 @@ F = reshape(X, [16])
 describe("look-alike notes are merged, not repeated", () => {
   const QKV = `S = 16
 E = 32
-X = Tensor(S, E, dtype=fp16)
-Wq = Tensor(E, E, dtype=fp16)
-Wk = Tensor(E, E, dtype=fp16)
-Wv = Tensor(E, E, dtype=fp16)
+X = Tensor(S, E, dtype=float16)
+Wq = Tensor(E, E, dtype=float16)
+Wk = Tensor(E, E, dtype=float16)
+Wv = Tensor(E, E, dtype=float16)
 Q = matmul(X, Wq)
 K = matmul(X, Wk)
 V = matmul(X, Wv)
@@ -305,10 +305,10 @@ describe("cone findings: flags, and what survives the note cap", () => {
   // in graph order, so a verdict taken from the capped list would miss it.
   const STACK = `S = 16
 E = 16
-X = Tensor(S, E, dtype=fp16)
-W = Tensor(E, dtype=fp16)
-Bb = Tensor(E, dtype=fp16)
-V = Tensor(E, E, dtype=fp16)
+X = Tensor(S, E, dtype=float16)
+W = Tensor(E, dtype=float16)
+Bb = Tensor(E, dtype=float16)
+V = Tensor(E, E, dtype=float16)
 C1 = cumulative_sum(X, axis=0, reverse=false)
 C2 = cumulative_sum(C1, axis=0, reverse=true)
 P = softmax(C2, axis=-1)
@@ -354,9 +354,9 @@ Y = matmul(H, V)
     // the attention product one. The reader hits the near one first.
     const QKV = `S = 16
 E = 32
-X = Tensor(S, E, dtype=fp16)
-Wq = Tensor(E, E, dtype=fp16)
-Wk = Tensor(E, E, dtype=fp16)
+X = Tensor(S, E, dtype=float16)
+Wq = Tensor(E, E, dtype=float16)
+Wk = Tensor(E, E, dtype=float16)
 Q = matmul(X, Wq)
 K = matmul(X, Wk)
 Kt = permute_dims(K, [1, 0])
@@ -380,9 +380,9 @@ Y = matmul(Q, Kt)
     const SELF = `M = 256
 N = 256
 K = 512
-A = Tensor(M, K, dtype=fp16)
-B = Tensor(K, N, dtype=fp16)
-F = Tensor(N, M, dtype=fp16)
+A = Tensor(M, K, dtype=float16)
+B = Tensor(K, N, dtype=float16)
+F = Tensor(N, M, dtype=float16)
 C = matmul(A, B)
 D = matmul(F, C)
 DD = matmul(D, D)
@@ -398,10 +398,10 @@ DD = matmul(D, D)
   it("a merged note flags every tensor it was merged from", () => {
     const QKV = `S = 16
 E = 32
-X = Tensor(S, E, dtype=fp16)
-Wq = Tensor(E, E, dtype=fp16)
-Wk = Tensor(E, E, dtype=fp16)
-Wv = Tensor(E, E, dtype=fp16)
+X = Tensor(S, E, dtype=float16)
+Wq = Tensor(E, E, dtype=float16)
+Wk = Tensor(E, E, dtype=float16)
+Wv = Tensor(E, E, dtype=float16)
 Q = matmul(X, Wq)
 K = matmul(X, Wk)
 V = matmul(X, Wv)
@@ -417,7 +417,7 @@ Y = matmul(S1, V)
   it("states the elementwise finding as its own verdict, with no author", () => {
     const { findings } = findingsFor(
       `S = 8
-X = Tensor(S, dtype=fp32)
+X = Tensor(S, dtype=float32)
 Y = add(X, X)
 `,
       "Y",
@@ -446,9 +446,9 @@ describe("notes naming axes by their declared names", () => {
 H = 4
 S = 32
 D = 8
-X = Tensor(batch=B, seq=S, emb=H*D, dtype=fp16)
-Wq = Tensor(emb=H*D, proj=H*D, dtype=fp16)
-Kc = Tensor(batch=B, head=H, kv=S, dim=D, dtype=fp16)
+X = Tensor(batch=B, seq=S, emb=H*D, dtype=float16)
+Wq = Tensor(emb=H*D, proj=H*D, dtype=float16)
+Kc = Tensor(batch=B, head=H, kv=S, dim=D, dtype=float16)
 Qp = einsum("bse,ef->bsf", X, Wq)
 Q4 = reshape(Qp, [B, S, H, D])
 Qh = permute_dims(Q4, [0, 2, 1, 3])
@@ -480,7 +480,7 @@ Pr = softmax(Sc, axis=-1)
   });
 
   it("still falls back to the position when no axis is named", () => {
-    const UNNAMED = `X = Tensor(2, 4, 8, dtype=fp32)
+    const UNNAMED = `X = Tensor(2, 4, 8, dtype=float32)
 Y = softmax(X, axis=-1)
 `;
     const { notes } = notesFor(UNNAMED, "Y", [[0, 2], [0, 4], [0, 8]]);
@@ -490,7 +490,7 @@ Y = softmax(X, axis=-1)
   it("uses a carried symbolic extent before falling back to the position", () => {
     const SYMBOLIC = `B = 2
 S = 8
-X = Tensor(B, S, dtype=fp32)
+X = Tensor(B, S, dtype=float32)
 H = relu(X)
 Y = softmax(H, axis=-1)
 `;
@@ -501,7 +501,7 @@ Y = softmax(H, axis=-1)
 
   it("names a reduced axis in the flag as well as the note", () => {
     const { back, resolved } = notesFor(
-      `X = Tensor(batch=2, seq=4, emb=8, dtype=fp32)
+      `X = Tensor(batch=2, seq=4, emb=8, dtype=float32)
 Y = sum(X, axis=1)
 `,
       "Y",

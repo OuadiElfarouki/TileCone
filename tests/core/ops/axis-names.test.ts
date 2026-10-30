@@ -9,29 +9,29 @@ const namesOf = (src: string, tensor: string) =>
 
 describe("declaring axis names", () => {
   it("labels axes alongside their dimensions", () => {
-    const graph = parseDSL("X = Tensor(batch=B, seq=128, emb=E, dtype=fp16)\n");
+    const graph = parseDSL("X = Tensor(batch=B, seq=128, emb=E, dtype=float16)\n");
     expect(graph.tensors.X.axisNames).toEqual(["batch", "seq", "emb"]);
     expect(graph.tensors.X.shape).toEqual(["B", 128, "E"]);
   });
 
   it("leaves an unlabelled declaration unnamed", () => {
-    const graph = parseDSL("X = Tensor(4, 8, dtype=fp16)\n");
+    const graph = parseDSL("X = Tensor(4, 8, dtype=float16)\n");
     expect(graph.tensors.X.axisNames).toBeUndefined();
   });
 
   it("refuses a partly named declaration", () => {
     // Propagation produces holes legitimately; a hand-written half-naming is a
     // slip, so the two cases are treated differently on purpose.
-    expect(() => parseDSL("X = Tensor(8, batch=2, dtype=fp16)\n")).toThrow(DSLError);
-    expect(() => parseDSL("X = Tensor(8, batch=2, dtype=fp16)\n")).toThrow(/name every axis or none/);
+    expect(() => parseDSL("X = Tensor(8, batch=2, dtype=float16)\n")).toThrow(DSLError);
+    expect(() => parseDSL("X = Tensor(8, batch=2, dtype=float16)\n")).toThrow(/name every axis or none/);
   });
 
   it("refuses a repeated axis name", () => {
-    expect(() => parseDSL("X = Tensor(d=2, d=8, dtype=fp16)\n")).toThrow(/duplicate axis name/);
+    expect(() => parseDSL("X = Tensor(d=2, d=8, dtype=float16)\n")).toThrow(/duplicate axis name/);
   });
 
   it("round-trips through toDSL", () => {
-    const source = "X = Tensor(batch=2, seq=8, dtype=fp16)\n";
+    const source = "X = Tensor(batch=2, seq=8, dtype=float16)\n";
     expect(toDSL(parseDSL(source))).toBe(source);
   });
 
@@ -50,7 +50,7 @@ describe("declaring axis names", () => {
   });
 
   it("rejects an axis-name count that is not parallel to the input rank", () => {
-    const graph = parseDSL("X = Tensor(2, 8, dtype=fp32)\n");
+    const graph = parseDSL("X = Tensor(2, 8, dtype=float32)\n");
     graph.tensors.X.axisNames = ["batch"];
     expect(() => resolveGraph(graph)).toThrow(/1 axis names for rank 2/);
   });
@@ -61,8 +61,8 @@ describe("carrying axis names through operations", () => {
 H = 4
 S = 128
 D = 32
-X = Tensor(batch=B, seq=S, emb=H*D, dtype=fp16)
-Wq = Tensor(emb=H*D, proj=H*D, dtype=fp16)
+X = Tensor(batch=B, seq=S, emb=H*D, dtype=float16)
+Wq = Tensor(emb=H*D, proj=H*D, dtype=float16)
 Qp = einsum("bse,ef->bsf", X, Wq)
 Q4 = reshape(Qp, [B, S, H, D])
 Qh = permute_dims(Q4, [0, 2, 1, 3])
@@ -84,7 +84,7 @@ Qh = permute_dims(Q4, [0, 2, 1, 3])
   });
 
   it("drops a reduced axis and keeps it under keepdim", () => {
-    const src = "X = Tensor(batch=2, seq=4, emb=8, dtype=fp16)\n";
+    const src = "X = Tensor(batch=2, seq=4, emb=8, dtype=float16)\n";
     expect(namesOf(src + "Y = sum(X, axis=1)\n", "Y")).toEqual(["batch", "emb"]);
     expect(namesOf(src + "Y = sum(X, axis=1, keepdims=true)\n", "Y")).toEqual([
       "batch",
@@ -97,8 +97,8 @@ Qh = permute_dims(Q4, [0, 2, 1, 3])
     // A's axis 0 has extent 1 and is a different axis from B's 3-wide one, so
     // "one" must not end up naming it; the shared 4-wide axis does inherit.
     const names = namesOf(
-      `A = Tensor(one=1, wide=4, dtype=fp32)
-B = Tensor(rows=3, cols=4, dtype=fp32)
+      `A = Tensor(one=1, wide=4, dtype=float32)
+B = Tensor(rows=3, cols=4, dtype=float32)
 C = add(A, B)
 `,
       "C"
@@ -107,7 +107,7 @@ C = add(A, B)
   });
 
   it("keeps the layout of every piece of a split", () => {
-    const program = compileDSL(`X = Tensor(batch=2, feat=8, dtype=fp32)
+    const program = compileDSL(`X = Tensor(batch=2, feat=8, dtype=float32)
 A, B = split(X, [3, 5], axis=1)
 `);
     expect(program.resolved.tensors.A.axisNames).toEqual(["batch", "feat"]);
@@ -116,8 +116,8 @@ A, B = split(X, [3, 5], axis=1)
 
   it("takes convolution output channels from the weight, not the activation", () => {
     const names = namesOf(
-      `X = Tensor(batch=2, in_channel=3, height=8, width=8, dtype=fp32)
-W = Parameter(out_channel=5, kernel_in=3, kernel_h=3, kernel_w=3, dtype=fp32)
+      `X = Tensor(batch=2, in_channel=3, height=8, width=8, dtype=float32)
+W = Parameter(out_channel=5, kernel_in=3, kernel_h=3, kernel_w=3, dtype=float32)
 Y = conv2d(X, W, padding=1)
 `,
       "Y"
@@ -127,7 +127,7 @@ Y = conv2d(X, W, padding=1)
 
   it("takes a gathered axis name from index positions, not data coordinates", () => {
     const names = namesOf(
-      `D = Tensor(vocab=16, embedding=8, dtype=fp32)
+      `D = Tensor(vocab=16, embedding=8, dtype=float32)
 I = Tensor(token=4, dtype=int32)
 Y = take(D, I, axis=0, index_values=[1, 5, 2, 7])
 `,
@@ -137,15 +137,15 @@ Y = take(D, I, axis=0, index_values=[1, 5, 2, 7])
   });
 
   it("leaves outputs unnamed when nothing upstream was named", () => {
-    expect(namesOf("X = Tensor(2, 4, dtype=fp32)\nY = relu(X)\n", "Y")).toBeNull();
+    expect(namesOf("X = Tensor(2, 4, dtype=float32)\nY = relu(X)\n", "Y")).toBeNull();
   });
 
   it("does not make a previously valid graph fail", () => {
     const result = tryCompileDSL(`M = 4
 K = 8
 N = 2
-A = Tensor(M, K, dtype=fp16)
-B = Parameter(K, N, dtype=fp16)
+A = Tensor(M, K, dtype=float16)
+B = Parameter(K, N, dtype=float16)
 C = matmul(A, B)
 `);
     expect(result.ok).toBe(true);

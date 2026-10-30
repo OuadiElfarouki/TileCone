@@ -1,7 +1,7 @@
 import { decodeWorkspace, encodeWorkspace } from "../src/state/share";
 import { act, expect, runSource, snapshot, test } from "./fixtures";
 
-const SOURCE = "M = 16\nN = 32\nX = Tensor(M, N, dtype=fp16)\nY = relu(X)\nZ = exp(Y)\n";
+const SOURCE = "M = 16\nN = 32\nX = Tensor(M, N, dtype=float16)\nY = relu(X)\nZ = exp(Y)\n";
 const region = (rows: [number, number], cols: [number, number]) => ({
   boxes: [[{ lo: rows[0], hi: rows[1] }, { lo: cols[0], hi: cols[1] }]], exact: true, reasons: [],
 });

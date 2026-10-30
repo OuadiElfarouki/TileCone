@@ -127,7 +127,7 @@ describe("staging an example", () => {
 
   it("recognises an example typed or restored rather than picked", () => {
     const target = EXAMPLES.findIndex((ex) => ex.name === "Reshape trap");
-    S().applyDSL("X = Tensor(2, 3, dtype=fp32)\nY = relu(X)\n");
+    S().applyDSL("X = Tensor(2, 3, dtype=float32)\nY = relu(X)\n");
     expect(S().exampleIndex).toBe(-1);
 
     S().applyDSL(EXAMPLES[target].dsl);
@@ -137,7 +137,7 @@ describe("staging an example", () => {
   it("keeps direct editor drafts separate from the built source", () => {
     const built = S().dslText;
     const resolved = S().resolved;
-    S().setDraftText("X = Tensor(2, 3, dtype=fp32)\nY = relu(X)\n");
+    S().setDraftText("X = Tensor(2, 3, dtype=float32)\nY = relu(X)\n");
     expect(S().draftText).not.toBe(built);
     expect(S().dslText).toBe(built);
     expect(S().resolved).toBe(resolved);
@@ -157,7 +157,7 @@ describe("DSL compiler integration", () => {
   beforeEach(() => S().loadExample(0));
 
   it("loads a compiled program through the UI boundary", () => {
-    S().applyDSL(`X = Tensor(2, 3, dtype=fp32)
+    S().applyDSL(`X = Tensor(2, 3, dtype=float32)
 Y = softmax(X, axis=-1)
 `);
     expect(S().loadError).toBeNull();
@@ -166,8 +166,8 @@ Y = softmax(X, axis=-1)
   });
 
   it("expands an intermediate composite and keeps the displayed DSL executable", () => {
-    S().applyDSL(`A = Tensor(2, 3, dtype=fp32)
-B = Tensor(3, 4, dtype=fp32)
+    S().applyDSL(`A = Tensor(2, 3, dtype=float32)
+B = Tensor(3, 4, dtype=float32)
 S = matmul(A, B)
 P = softmax(S, axis=-1)
 `);
@@ -190,8 +190,8 @@ P = softmax(S, axis=-1)
     const builtSource = S().dslText;
     const resolved = S().resolved;
     const selection = S().selection;
-    const invalid = `A = Tensor(2, 3, dtype=fp32)
-B = Tensor(4, 5, dtype=fp32)
+    const invalid = `A = Tensor(2, 3, dtype=float32)
+B = Tensor(4, 5, dtype=float32)
 C = matmul(A, B)
 `;
     S().applyDSL(invalid);
@@ -215,7 +215,7 @@ C = matmul(A, B)
     // relying on a clamped movement to add a redundant undo snapshot.
     S().setSelection("Out", fromBox(S().resolved!.tensors.Out.resolved!.map(() => ({ lo: 0, hi: 1 }))), "replace");
     expect(S().workspaceHistory.length).toBeGreaterThan(0);
-    S().applyDSL("X = Tensor(2, 3, dtype=fp32)\nY = identity(X)\n");
+    S().applyDSL("X = Tensor(2, 3, dtype=float32)\nY = identity(X)\n");
     expect(S().workspaceHistory).toEqual([]);
     expect(S().selection).toBeNull();
     expect(() => S().undoWorkspace()).not.toThrow();
@@ -226,7 +226,7 @@ C = matmul(A, B)
     S().commitNodeMove("t:A", { dx: 0, dy: 0 });
     expect(S().nodeOffsets["t:A"]).toEqual({ dx: 80, dy: 25 });
 
-    S().applyDSL("X = Tensor(2, 3, dtype=fp32)\nY = identity(X)\n");
+    S().applyDSL("X = Tensor(2, 3, dtype=float32)\nY = identity(X)\n");
     expect(S().nodeOffsets).toEqual({});
     expect(S().workspaceHistory).toEqual([]);
   });
@@ -237,7 +237,7 @@ describe("transactional workspace restore", () => {
 
   it("installs source, settings, and an ordered selection together", () => {
     const restored = S().restoreWorkspace({
-      dsl: "X = Tensor(4, 4, dtype=fp32)\nY = relu(X)\n",
+      dsl: "X = Tensor(4, 4, dtype=float32)\nY = relu(X)\n",
       direction: "both",
       showEntangled: true,
       tileScale: 2,
@@ -279,7 +279,7 @@ describe("transactional workspace restore", () => {
 
   it("restores a shared figures-only view", () => {
     const restored = S().restoreWorkspace({
-      dsl: "X = Tensor(4, 4, dtype=fp32)\nY = relu(X)\n",
+      dsl: "X = Tensor(4, 4, dtype=float32)\nY = relu(X)\n",
       direction: "none",
       tileScale: 0,
       snapToGrid: true,
@@ -298,7 +298,7 @@ describe("transactional workspace restore", () => {
       [{ tensorId: "A", box: box([0, 999], [0, 1]) }],
     ]) {
       const restored = S().restoreWorkspace({
-        dsl: "A = Tensor(4, 4, dtype=fp32)\nB = relu(A)\n",
+        dsl: "A = Tensor(4, 4, dtype=float32)\nB = relu(A)\n",
         direction: "none",
         tileScale: 0,
         snapToGrid: true,
@@ -317,7 +317,7 @@ describe("transactional workspace restore", () => {
     for (const key of ["t:missing", "n:missing", "X"]) {
       const before = S();
       const restored = S().restoreWorkspace({
-        dsl: "X = Tensor(4, 4, dtype=fp32)\nY = relu(X)\n",
+        dsl: "X = Tensor(4, 4, dtype=float32)\nY = relu(X)\n",
         direction: "both",
         tileScale: 0,
         snapToGrid: true,
@@ -332,7 +332,7 @@ describe("transactional workspace restore", () => {
 
   it("restores an operation node's own position", () => {
     const restored = S().restoreWorkspace({
-      dsl: "X = Tensor(4, 4, dtype=fp32)\nY = relu(X)\n",
+      dsl: "X = Tensor(4, 4, dtype=float32)\nY = relu(X)\n",
       direction: "both",
       tileScale: 0,
       snapToGrid: true,
@@ -349,8 +349,8 @@ describe("transactional workspace restore", () => {
    link as tilings and is checked against the graph the link compiles to. Kept
    plans travel as tilings too, and their figures are measured again. */
 describe("restoring a shared tile plan", () => {
-  const CHAIN = "A = Tensor(16, 16, dtype=fp16)\nB = Tensor(16, 16, dtype=fp16)\n" +
-    "W = Tensor(16, 8, dtype=fp16)\nC = matmul(A, B)\nY = matmul(C, W)\n";
+  const CHAIN = "A = Tensor(16, 16, dtype=float16)\nB = Tensor(16, 16, dtype=float16)\n" +
+    "W = Tensor(16, 8, dtype=float16)\nC = matmul(A, B)\nY = matmul(C, W)\n";
   const restore = (patch: Partial<Parameters<ReturnType<typeof S>["restoreWorkspace"]>[0]>) =>
     S().restoreWorkspace({
       dsl: CHAIN,
@@ -485,7 +485,7 @@ describe("node layout transactions", () => {
      preview, the same single undo step. The unlock itself gates the gesture in
      the view, not the store, so moving one is never silently unrecordable. */
   it("moves an operation node on the same terms as a card", () => {
-    S().applyDSL("X = Tensor(8, 8, dtype=fp32)\nY = relu(X)\n");
+    S().applyDSL("X = Tensor(8, 8, dtype=float32)\nY = relu(X)\n");
     const depth = S().workspaceHistory.length;
     S().setNodeOffset("n:elementwise_Y", { dx: 40, dy: -15 });
     S().setNodeOffset("n:elementwise_Y", { dx: 55, dy: -20 });
@@ -500,7 +500,7 @@ describe("node layout transactions", () => {
   });
 
   it("resets cards and operations together", () => {
-    S().applyDSL("X = Tensor(8, 8, dtype=fp32)\nY = relu(X)\n");
+    S().applyDSL("X = Tensor(8, 8, dtype=float32)\nY = relu(X)\n");
     S().setNodeOffset("t:X", { dx: 20, dy: 5 });
     S().commitNodeMove("t:X", { dx: 0, dy: 0 });
     S().setNodeOffset("n:elementwise_Y", { dx: -10, dy: 30 });
@@ -514,7 +514,7 @@ describe("node layout transactions", () => {
   });
 
   it("can undo the first selection without disturbing node placement", () => {
-    S().applyDSL("X = Tensor(8, 8, dtype=fp32)\nY = identity(X)\n");
+    S().applyDSL("X = Tensor(8, 8, dtype=float32)\nY = identity(X)\n");
     S().setNodeOffset("t:X", { dx: 45, dy: 20 });
     S().commitNodeMove("t:X", { dx: 0, dy: 0 });
     S().setSelection("Y", fromBox(box([0, 2], [0, 2])), "replace");
@@ -803,9 +803,9 @@ describe("the graph's render scale", () => {
   });
 
   it("is recomputed for a different graph", () => {
-    S().applyDSL("X = Tensor(4, 4, dtype=fp32)\nY = reshape(X, [16])\n");
+    S().applyDSL("X = Tensor(4, 4, dtype=float32)\nY = reshape(X, [16])\n");
     const small = S().graphPx;
-    S().applyDSL("X = Tensor(1024, 1024, dtype=fp16)\nW = Tensor(1024, 1024, dtype=fp16)\nZ = matmul(X, W)\n");
+    S().applyDSL("X = Tensor(1024, 1024, dtype=float16)\nW = Tensor(1024, 1024, dtype=float16)\nZ = matmul(X, W)\n");
     expect(S().graphPx).toBeLessThan(small);
   });
 
@@ -1552,7 +1552,7 @@ describe("offered starting tiles", () => {
 
 describe("bidirectional hover probes", () => {
   it("retains both answers across view changes and clears on exit or invalid input", () => {
-    S().applyDSL("A = Tensor(8, 8, dtype=fp32)\nB = relu(A)\nC = relu(B)");
+    S().applyDSL("A = Tensor(8, 8, dtype=float32)\nB = relu(A)\nC = relu(B)");
     S().setDirection("forward");
     S().setPreviewBox("B", box([0, 2], [0, 2]));
     const preview = S().preview;
@@ -1793,7 +1793,7 @@ describe("the operations list tracks where the reader is working", () => {
    layout. The selection is reset either way - its coordinates were the old sizes'. */
 describe("size-only runs", () => {
   const program = (b: number, extra = "") =>
-    `B = ${b}\nN = 8\nX = Tensor(B, N, N, dtype=fp32)\nY = relu(X)\n${extra}`;
+    `B = ${b}\nN = 8\nX = Tensor(B, N, N, dtype=float32)\nY = relu(X)\n${extra}`;
 
   it("carries card views and flags the placement for the canvas", () => {
     S().applyDSL(program(4));
@@ -1823,11 +1823,11 @@ describe("size-only runs", () => {
   });
 
   it.each([
-    "X = Tensor(4, 8, dtype=fp32)\nY = softmax(X, axis=0)\n",
-    "X = Tensor(4, 8, dtype=fp16)\nY = softmax(X, axis=-1)\n",
-    "X = Tensor(2, 4, 8, dtype=fp32)\nY = softmax(X, axis=-1)\n",
+    "X = Tensor(4, 8, dtype=float32)\nY = softmax(X, axis=0)\n",
+    "X = Tensor(4, 8, dtype=float16)\nY = softmax(X, axis=-1)\n",
+    "X = Tensor(2, 4, 8, dtype=float32)\nY = softmax(X, axis=-1)\n",
   ])("starts fresh for semantic changes despite identical wiring: %s", (next) => {
-    S().applyDSL("X = Tensor(4, 8, dtype=fp32)\nY = softmax(X, axis=-1)\n");
+    S().applyDSL("X = Tensor(4, 8, dtype=float32)\nY = softmax(X, axis=-1)\n");
     S().setViewCfg("X", { projection: false, sliders: [0, 0] });
     S().applyDSL(next);
     expect(S().loadError).toBeNull();

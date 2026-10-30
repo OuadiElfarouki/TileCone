@@ -5,8 +5,8 @@ const SOURCE = `M = 16
 N = 16
 K = 128
 E = M * N
-A = Tensor(M, K, dtype=fp16)
-B = Tensor(K, N, dtype=fp16)
+A = Tensor(M, K, dtype=float16)
+B = Tensor(K, N, dtype=float16)
 C = matmul(A, B)
 D = reshape(C, [E])
 D2 = add(D, D)
