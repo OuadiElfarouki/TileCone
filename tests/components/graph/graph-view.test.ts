@@ -114,6 +114,21 @@ describe("graph viewport fit", () => {
     expect(top).toBe(50);
   });
 
+  /* The view switch sits over the top of the canvas and the controls over the
+     bottom. A fitted scene keeps its margins inside what they leave, so no bar
+     covers a card's title; the zoom-out floor reads the same insets. */
+  it("fits the scene between the overlay bars", () => {
+    const scene = { left: 0, top: 0, width: 400, height: 1000 };
+    const viewport = { width: 1000, height: 500 };
+    const insets = { top: 40, bottom: 44 };
+    const tf = fittedTransform(scene, viewport, undefined, insets);
+    expect(tf.k).toBeCloseTo((500 - 40 - 44 - 40) / 1000);
+    expect(tf.y).toBeCloseTo(40 + 20);
+    expect(500 - (tf.y + 1000 * tf.k)).toBeCloseTo(44 + 20);
+    const bounds = { min: 1, max: 4 };
+    expect(lowZoomBound(scene, viewport, bounds, insets)).toBeCloseTo(fittedTransform(scene, viewport, bounds, insets).k);
+  });
+
   it("keeps the smallest tensor legible and stops where supersampling stops", () => {
     const bounds = graphZoomBounds([
       { kind: "tensor", w: 120, h: 35 },

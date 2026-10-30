@@ -24,7 +24,7 @@ const controls = (page: Page) => page.getByRole("group", { name: "replay control
 
 test.beforeEach(async ({ page }) => {
   await runSource(page, SOURCE);
-  await page.locator("#ins-tab-plan").click();
+  await page.locator("#view-plan").click();
   // The plan from the report: D2 and D in tiles of 16, C fused into D's tasks.
   // A first tiling also tiles the operands it computes, so C is fused after.
   await act(page, "setPlanTileAt", "D", [16], [0]);

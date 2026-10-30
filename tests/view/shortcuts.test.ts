@@ -44,6 +44,12 @@ describe("shortcut manifest", () => {
     expect(matchesShortcut(key("?", { shiftKey: true }), SHORTCUTS.help)).toBe(true);
   });
 
+  it("switches views with a bare P, leaving the browser's Ctrl+P to print", () => {
+    expect(matchesShortcut(key("p"), SHORTCUTS.viewMode)).toBe(true);
+    expect(matchesShortcut(key("p", { ctrlKey: true }), SHORTCUTS.viewMode)).toBe(false);
+    expect(matchesShortcut(key("p", { metaKey: true }), SHORTCUTS.viewMode)).toBe(false);
+  });
+
   it("does not pretend a pointer gesture is a keyboard match", () => {
     expect(matchesShortcut(key("Scroll"), SHORTCUTS.zoom)).toBe(false);
   });

@@ -150,6 +150,10 @@ export function useKeyboard({
         window.dispatchEvent(new Event(FIT_GRAPH_EVENT));
         return;
       }
+      if (matchesShortcut(e, SHORTCUTS.viewMode)) {
+        e.preventDefault();
+        return s.setInspectorTab(s.inspectorTab === "plan" ? "dependencies" : "plan");
+      }
       /* Alt+arrow is the browser's Back and Forward on some platforms. The
          workspace claims it whenever it has the keys, so a press with no tile
          to grow - or in the Plan view, or on an old build - cannot navigate

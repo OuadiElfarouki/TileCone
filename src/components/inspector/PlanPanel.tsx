@@ -1014,7 +1014,7 @@ export function PlanPanel({ replay }: { replay: PlanReplayControl }): React.Reac
   const node = task ? producerNode(resolved, task.tensorId) : undefined;
 
   return (
-    <div className="ins-tabpanel" role="region" id="ins-panel-plan" aria-labelledby="ins-tab-plan">
+    <div className="ins-tabpanel" role="region" id="ins-panel-plan" aria-labelledby="view-plan">
       <p className="tab-note">
         A plan divides produced tensors into tiles, one task per tile, and writes each tiled tensor
         to memory. A task computes any untiled tensor it needs itself. Figures are exact for the

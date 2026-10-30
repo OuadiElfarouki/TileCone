@@ -39,6 +39,27 @@ export const layoutMovable = (tab: InspectorTab): boolean => tab !== "plan";
 export const activeCanvasTool = (state: { canvasTool: CanvasTool; inspectorTab: InspectorTab }): CanvasTool =>
   layoutMovable(state.inspectorTab) ? state.canvasTool : "select";
 
+/**
+ * What a press on the canvas does right now, in one line. The two views give
+ * the same gesture different meanings - a drag draws a tile in one and divides
+ * a tensor into tasks in the other - so the canvas says which one is in force,
+ * where the gesture is made rather than in a panel that may be collapsed.
+ */
+export function canvasHint(state: {
+  inspectorTab: InspectorTab;
+  canvasTool: CanvasTool;
+  /** Whether the plan divides any tensor into tasks yet. */
+  planTiled: boolean;
+}): string {
+  if (state.inspectorTab === "plan")
+    return state.planTiled
+      ? "click a tile to inspect its task · drag on an untiled tensor to divide it"
+      : "drag on a produced tensor to divide it into tasks, or click it to use the drawn grid";
+  return activeCanvasTool(state) === "move"
+    ? "drag a card or operation to move it · Esc returns to drawing tiles"
+    : "drag on a tensor to draw a tile · Shift adds one, Alt subtracts";
+}
+
 /** Parameter edits keep the built graph interactive, including while resized
  * source builds. Other source changes leave a navigable snapshot. */
 export function graphIsInteractive(state: {

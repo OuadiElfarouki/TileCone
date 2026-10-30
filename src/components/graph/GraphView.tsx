@@ -26,6 +26,7 @@ import { paintScale } from "../../view/tensor/grid";
 import { FIT_GRAPH_EVENT } from "../hooks/useKeyboard";
 import { GridControls } from "../chrome/GridControls";
 import { LayoutControls } from "../chrome/LayoutControls";
+import { ViewModeBar } from "../chrome/ViewModeBar";
 import { useFrameThrottle } from "../hooks/useFrameThrottle";
 import { activeCanvasTool, graphIsInteractive, involvedTensorIds, layoutMovable, PANEL_RAIL } from "../../view/workspace";
 import { isPrimaryPress } from "../pointer";
@@ -46,15 +47,22 @@ export function edgePresentation(hasResult: boolean, hot: boolean): EdgePresenta
   return { className: hot ? "edge hot" : "edge", layer: "front" };
 }
 
+type Insets = { top: number; bottom: number };
+const NO_INSETS: Insets = { top: 0, bottom: 0 };
+
 /** @internal Pure fit seam for viewport regression tests. */
 export function fittedTransform(
   scene: Pick<GraphScene, "left" | "top" | "width" | "height">,
   viewport: { width: number; height: number },
-  bounds: { min: number; max: number } = { min: 0, max: 1.25 }
+  bounds: { min: number; max: number } = { min: 0, max: 1.25 },
+  /** Canvas height the overlay bars cover at the top and bottom. The scene is
+   * fitted between them, so no bar sits over a card's title. */
+  insets: Insets = NO_INSETS
 ): { x: number; y: number; k: number } {
+  const height = viewport.height - insets.top - insets.bottom;
   const natural = Math.min(
     Math.max(1, viewport.width - 40) / Math.max(1, scene.width),
-    Math.max(1, viewport.height - 40) / Math.max(1, scene.height),
+    Math.max(1, height - 40) / Math.max(1, scene.height),
     1.25
   );
   // Fit is an overview: the manual legibility floor must not crop the scene.
@@ -66,7 +74,7 @@ export function fittedTransform(
      20px exists - keeping overview labels inside the viewport - still holds. */
   return {
     x: (viewport.width - scene.width * k) / 2 - scene.left * k,
-    y: (viewport.height - scene.height * k) / 2 - scene.top * k,
+    y: insets.top + (height - scene.height * k) / 2 - scene.top * k,
     k,
   };
 }
@@ -82,9 +90,20 @@ export function fittedTransform(
 export function lowZoomBound(
   scene: Pick<GraphScene, "left" | "top" | "width" | "height">,
   viewport: { width: number; height: number },
-  bounds: { min: number; max: number }
+  bounds: { min: number; max: number },
+  insets: Insets = NO_INSETS
 ): number {
-  return Math.min(bounds.min, fittedTransform(scene, viewport, bounds).k);
+  return Math.min(bounds.min, fittedTransform(scene, viewport, bounds, insets).k);
+}
+
+/** How much of the canvas the overlay bars cover, top and bottom, as laid out. */
+function overlayInsets(canvas: HTMLElement): Insets {
+  const bar = canvas.querySelector<HTMLElement>(".view-mode-bar");
+  const hud = canvas.querySelector<HTMLElement>(".graph-hud");
+  return {
+    top: bar ? bar.offsetTop + bar.offsetHeight : 0,
+    bottom: hud ? canvas.clientHeight - hud.offsetTop : 0,
+  };
 }
 
 /** How long the viewport takes to slide to a focused node, in ms. Long enough
@@ -123,7 +142,7 @@ export function graphZoomBounds(
 
 /** Elements that own their pointer gesture instead of panning the viewport. */
 const GRAPH_PAN_BLOCKERS =
-  ".card-slot, .op-node, .zoom-controls, .layout-controls, .grid-controls";
+  ".card-slot, .op-node, .zoom-controls, .layout-controls, .grid-controls, .view-mode-switch";
 
 /** @internal DOM-light hit-test seam for the graph interaction tests. */
 export function canStartGraphPan(target: unknown): boolean {
@@ -438,7 +457,12 @@ export function GraphView(): React.ReactElement {
     const current = sceneRef.current;
     if (!el || !current || el.clientWidth <= 0 || el.clientHeight <= 0)
       return zoomBounds.min;
-    return lowZoomBound(current, { width: el.clientWidth, height: el.clientHeight }, zoomBounds);
+    return lowZoomBound(
+      current,
+      { width: el.clientWidth, height: el.clientHeight },
+      zoomBounds,
+      overlayInsets(el)
+    );
   }, [zoomBounds]);
 
   const fit = useCallback(() => {
@@ -452,7 +476,8 @@ export function GraphView(): React.ReactElement {
     setTf(fittedTransform(
       current,
       { width: el.clientWidth, height: el.clientHeight },
-      zoomBounds
+      zoomBounds,
+      overlayInsets(el)
     ));
     movedRef.current = false;
   }, [zoomBounds]);
@@ -875,6 +900,7 @@ export function GraphView(): React.ReactElement {
           Run the source to render the graph · Current is outdated.
         </p>
       )}
+      {interactive && <ViewModeBar />}
       {/* Everything that changes the canvas, on the canvas: the viewport on the
           left, the lattice a tile is cut against on the right, where the strip
           that used to carry it sat. */}

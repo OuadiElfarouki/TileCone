@@ -1,55 +1,9 @@
-/** The Dependencies / Plan switch, and the panel shown with nothing drawn. */
+/** The Dependencies panel shown with nothing drawn. */
 
 import React, { useMemo } from "react";
 import { fromBox } from "../../core/region";
 import { startingTiles } from "../../view/tensor/seeds";
-import { InspectorTab } from "../../view/workspace";
 import { useStore } from "../../state/store";
-
-export const TABS = [
-  {
-    id: "dependencies",
-    label: "Dependencies",
-    hint: "what the drawn tiles need, feed and share: exact, or bounded with its reason named",
-  },
-  /* A second class, and a second promise. A plan figure rests on a declared
-     tiling rather than on the drawn region, and it is exact for that tiling or
-     bounded with its reason. Fusion and materialization are choices the plan
-     states, so nothing here is modelled behind the reader's back. */
-  {
-    id: "plan",
-    label: "Plan",
-    hint: "how a declared tiling divides the work: exact for that tiling, or bounded",
-  },
-] as const satisfies readonly { id: InspectorTab; label: string; hint: string }[];
-
-/**
- * A view switch of plain buttons, deliberately not the ARIA tab pattern. Tabs would
- * promise roving focus and arrow navigation, while arrows already move the
- * tile this panel describes. Both buttons remain ordinary tab stops and expose
- * their current state through `aria-pressed`.
- */
-export function InspectorTabs(): React.ReactElement {
-  const tab = useStore((s) => s.inspectorTab);
-  const setTab = useStore((s) => s.setInspectorTab);
-  return (
-    <div className="ins-tabs" role="group" aria-label="analysis class">
-      {TABS.map(({ id, label, hint }) => (
-        <button
-          key={id}
-          id={`ins-tab-${id}`}
-          className="ins-tab"
-          aria-pressed={tab === id}
-          aria-controls={`ins-panel-${id}`}
-          title={hint}
-          onClick={() => setTab(id)}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 /** Nothing drawn yet: teach the three relations instead of rendering empty tables. */
 export function EmptyPanel(): React.ReactElement {

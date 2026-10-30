@@ -33,7 +33,9 @@ Press `?` in the app for the shortcut sheet.
 
 ## The two views
 
-The inspector is split by what a figure rests on.
+The inspector is split by what a figure rests on. The switch between the two views sits at the top
+of the canvas, beside a line saying what a press on the canvas does in the current one, since the
+same drag draws a tile in one view and divides a tensor into tasks in the other. `P` switches.
 
 | View | Question | What its figures are |
 |---|---|---|

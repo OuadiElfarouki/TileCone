@@ -395,14 +395,13 @@ D = matmul(CC, W)
     S().setInspectorTab("dependencies");
   });
 
-  it("exposes the view switch as buttons without claiming tab arrow navigation", () => {
+  /* The view switch rides the canvas (`ViewModeBar`), which stays when this
+     panel collapses; the panel is the region it controls and names. */
+  it("is the region the canvas view switch controls, with no switch of its own", () => {
     const html = render();
-    expect(html).toContain('role="group" aria-label="analysis class"');
-    expect(html).toContain('id="ins-tab-dependencies" class="ins-tab" aria-pressed="true"');
-    expect(html).toContain('id="ins-tab-plan" class="ins-tab" aria-pressed="false"');
-    expect(html).toContain('role="region" id="ins-panel-dependencies"');
+    expect(html).toContain('role="region" id="ins-panel-dependencies" aria-labelledby="view-dependencies"');
+    expect(html).not.toContain("aria-pressed=\"true\">Dependencies");
     expect(html).not.toContain('role="tab"');
-    expect(html).not.toContain('role="tablist"');
   });
 
   it("reports when per-tile sharing is unavailable past the attribution cap", () => {

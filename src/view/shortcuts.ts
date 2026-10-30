@@ -101,6 +101,12 @@ export const SHORTCUTS = {
     keys: ["e"],
   },
   fit: { id: "fit", label: "F", action: "fit the graph to the viewport", keys: ["f"] },
+  viewMode: {
+    id: "view-mode",
+    label: "P",
+    action: "switch between the Dependencies and Plan views",
+    keys: ["p"],
+  },
   scrub: {
     id: "scrub",
     label: "[ / ]",
@@ -155,16 +161,16 @@ export const SHORTCUT_GROUPS = [
       SHORTCUTS.escape,
       SHORTCUTS.undo,
     ],
-    note: "Tile edits apply while the inspector shows Dependencies, the view that lists them.",
+    note: "Tile edits apply in the Dependencies view.",
   },
-  { title: "View", items: [SHORTCUTS.needs, SHORTCUTS.feeds, SHORTCUTS.entangled, SHORTCUTS.fit, SHORTCUTS.scrub, SHORTCUTS.zoom, SHORTCUTS.options, SHORTCUTS.help] },
+  { title: "View", items: [SHORTCUTS.viewMode, SHORTCUTS.needs, SHORTCUTS.feeds, SHORTCUTS.entangled, SHORTCUTS.fit, SHORTCUTS.scrub, SHORTCUTS.zoom, SHORTCUTS.options, SHORTCUTS.help] },
   /* `run` builds the source; it is not a panel control. The sheet is the one
      place the bindings are taught, so its grouping is the mental model a reader
      leaves with. */
   {
     title: "Plan",
     items: [SHORTCUTS.movePlanTask, SHORTCUTS.planBack],
-    note: "Applies while the inspector shows Plan, the view that names the task.",
+    note: "Applies in the Plan view, where the task is named.",
   },
   /* Layout keys are reached through the thing they move, not globally: they
      act on whatever has focus, which is what makes one pair of arrows mean the

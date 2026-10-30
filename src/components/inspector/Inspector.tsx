@@ -20,7 +20,7 @@ import {
 } from "./inspector-analysis";
 import { DependencyNotes } from "./notes";
 import { OperandReuse } from "./operand-reuse";
-import { EmptyPanel, InspectorTabs } from "./tabs";
+import { EmptyPanel } from "./empty-panel";
 import { RegionEditor, TileIdentity } from "./tiles";
 import { usePlanReplay } from "./usePlanReplay";
 
@@ -206,19 +206,12 @@ function ActiveInspector(): React.ReactElement {
   return (
     <aside className="inspector" aria-label="Tile inspector">
       <div className="inspector-scroll">
-        {/* The Plan view describes tasks rather than drawn tiles, so it is
-            reachable with nothing drawn, and the switch sits above the empty
-            panel because it is the only route to it. */}
+        {/* The view switch rides the canvas (`ViewModeBar`); the Plan view
+            describes tasks rather than drawn tiles, so it needs none drawn. */}
         {tab === "plan" ? (
-          <>
-            <InspectorTabs />
-            <PlanPanel replay={replay} />
-          </>
+          <PlanPanel replay={replay} />
         ) : !selection ? (
-          <>
-            <InspectorTabs />
-            <EmptyPanel />
-          </>
+          <EmptyPanel />
         ) : (
           <>
             <TileIdentity
@@ -228,16 +221,12 @@ function ActiveInspector(): React.ReactElement {
                 [...upstream, ...downstream].flatMap((row) => sliceLines(row)).join("\n")
               }
             />
-            {/* The tile header sits above the strip: both classes of question
-                are about the same tile, and it is the tiles list below that
-                picks which one. */}
-            <InspectorTabs />
             {tab === "dependencies" && (
               <div
                 className="ins-tabpanel"
                 role="region"
                 id="ins-panel-dependencies"
-                aria-labelledby="ins-tab-dependencies"
+                aria-labelledby="view-dependencies"
               >
             {/* The tiles list is the selector for everything below it: it picks
                 which cone the two sections describe, so it sits above them. */}
