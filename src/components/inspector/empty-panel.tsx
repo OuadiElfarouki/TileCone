@@ -21,8 +21,7 @@ export function EmptyPanel(): React.ReactElement {
     <div className="empty-panel">
       <h2 className="panel-title">No tile drawn</h2>
       <p className="hint">
-        Drag a rectangle on any tensor to cut a tile. Shift adds another, Alt subtracts. This
-        panel then answers three questions about it.
+        Draw a tile on any tensor, and this panel answers three questions about it.
       </p>
       <dl className="empty-questions">
         <div>

@@ -5,7 +5,6 @@ import { buildLayers } from "../../../src/view/tensor/layers";
 import { gridGeometry, nudgeUnit } from "../../../src/view/tensor/grid";
 import { decodeWorkspace, encodeWorkspace, type WorkspaceLink } from "../../../src/state/share";
 import { useStore } from "../../../src/state/store";
-import { selectionReading } from "../../../src/components/inspector/AxisEditor";
 import {
   gestureTile,
   lastTileExtent,
@@ -64,7 +63,6 @@ describe("the tile a gesture takes", () => {
     // the position, not the whole axis, because the tile names that extent.
     const picked = selectionBoxFromDrag(SHAPE, cfg, geom, { r0: 130, c0: 3, r1: 130, c1: 3 }, true);
     expect(picked).toEqual(box([0, 1], [4, 6], [128, 192], [0, 128]));
-    expect(selectionReading(picked, (axis) => "BHSD"[axis])).toBe("B[0:1] H[4:6] S[128:192] D[0:128]");
   });
 
   it("gives the boundary tile its actual extent", () => {

@@ -55,9 +55,10 @@ ruling for the Forward Cone (`D`), a dot stipple for the Co-access Surface (`E`)
 for any region that is a conservative over-approximation. Hue identifies which tile a mark belongs
 to.
 
-The panel lists each tensor in each cone with its slice expressions, element and byte footprint,
-and distance from the tile. It also reports FLOPs, duplicate graph-input demand across the drawn
-tiles, and plain-language notes on the constraint each operation puts on tiling or fusion - the
+The panel lists each tensor in each cone with its slice expression first, then its element and
+byte footprint and how many operations away it is. For a tile on a computed tensor it also reports
+FLOPs and the cone's byte footprint, duplicate graph-input demand once two tiles can be compared,
+and plain-language notes on the constraint each operation puts on tiling or fusion - the
 contraction that must be staged, the axis a softmax needs whole. Forward Cone rows say whether the
 tile **completes** a downstream region or only **partly** contributes to it: a tile covering part
 of a contracted axis reaches an output without determining any element of it.
@@ -133,14 +134,14 @@ undoes like any other plan edit.
 the part it shares with the inspected task drawn on top, and a trail of the tiles walked so far.
 The tasks follow listing order, row by row, which is not an execution order. A family of more than
 48 tasks is walked in 48 contiguous runs, so no task is skipped. When the replay ends it holds the
-last run on the graph. Under the heading, ‹ and › step one run, ▶ / ❚❚ play and pause, the slider
-moves to any run, and **clear** fades the overlay. While it shows, the inspected task's own paint
+last run on the graph. Its controls sit on the canvas, beside the view switch: ‹ and › step one
+run, ▶ / ❚❚ play and pause, the slider moves to any run, and **clear** fades the overlay. While it shows, the inspected task's own paint
 steps back so the run is the subject. **depth** changes what a step is. At 1 a step is one of the family's tasks. At 2
 a step is one task producing a tile it reads - for `Z = Y @ A`, one Y task feeding one Z task - and
 it moves with the elements of the other operands it is combined with in that Z task (the one block
 of A it is multiplied against, not A's whole column), plus what the Y task reads, drawn fainter. At
-3 a step is a task one level further up, and so on. Those tasks compute whole tiles. The panel
-names each step as a path, `Z (0, 0) ← Y (0, 3)`.
+3 a step is a task one level further up, and so on. Those tasks compute whole tiles. The controls
+name each step as a path, `Z (0, 0) ← Y (0, 3)`.
 
 Share links include the current tiling, inspected task, kept tilings and Plan view. Kept
 figures are recomputed when the link is opened. Producer details are paged, with total counts

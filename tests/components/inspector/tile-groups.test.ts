@@ -8,7 +8,7 @@ import { executeQuery } from "../../../src/core/executor";
 import { removalTarget } from "../../../src/components/hooks/useKeyboard";
 import { box, count, fromBox } from "../../../src/core/region";
 import type { ResolvedGraph } from "../../../src/core/graph";
-import { analysisTensorId, groupAttribution, groupFocus, measuredParts, measuredElements } from "../../../src/components/inspector/inspector-analysis";
+import { analysisTensorId, groupAttribution, groupFocus } from "../../../src/components/inspector/inspector-analysis";
 import { groupPropResult, analysisTarget, MAX_PER_BOX_PROPS, partsOn, BoxProp, SelPart } from "../../../src/view/workspace";
 import { formatBytes } from "../../../src/view/format";
 
@@ -54,17 +54,6 @@ const byTensorOf = (resolved: ResolvedGraph, parts: SelPart[]) => {
 };
 
 describe("tile groups", () => {
-  it("counts the enabled union in the header, including the cap fallback", () => {
-    const tiles: SelPart[] = [
-      { tensorId: "C", box: box([0, 4]) },
-      { tensorId: "C", box: box([2, 6]) },
-      { tensorId: "D", box: box([0, 20]) },
-    ];
-    expect(measuredElements(measuredParts(tiles, "C", new Set(), null, true))).toBe(6);
-    expect(measuredElements(measuredParts(tiles, "C", new Set([1]), null, true))).toBe(4);
-    expect(measuredElements(measuredParts(tiles, "C", new Set([0, 1]), null, true))).toBe(0);
-    expect(measuredElements(measuredParts(tiles, "C", new Set([1]), null, false))).toBe(6);
-  });
   const parts: SelPart[] = [
     { tensorId: "C", box: box([0, 16], [0, 16]) },
     { tensorId: "D", box: box([32, 48], [32, 48]) },
@@ -233,10 +222,14 @@ D = matmul(CC, W)
       expect(render()).toContain(`128 uses per element · ${B_BYTES}`);
     });
 
-    it("says when the tile is on a graph input rather than claiming single use", () => {
+    /* A graph input is read, never computed: one line says so, in place of a
+       cost of zero, a reuse section with nothing in it and an empty note. */
+    it("says a tile on a graph input has no cost or reuse, rather than listing empty sections", () => {
       S().setSelection("A", fromBox(box([0, 8], [0, 8])), "union");
       const html = render();
-      expect(html).toContain("No operation computes this tile: it is on a graph input.");
+      expect(html).toContain("A graph input is read, not computed");
+      expect(html).not.toContain("Cost to compute");
+      expect(html).not.toContain("Operand reuse");
       expect(html).not.toContain("is used by one output");
     });
 
@@ -361,12 +354,14 @@ D = matmul(CC, W)
     expect(S().selection!.parts[2].box[0].lo).toBe(before[2].box[0].lo + 1);
   });
 
-  it("renders ranges only in tile rows, including a single-tile workspace", () => {
+  /* The tile is stated once: its row names the tensor, counts the elements and
+     edits the range, so no header above repeats it. */
+  it("states a tile once, in its row, including a single-tile workspace", () => {
     S().setSelection("D", fromBox(box([0, 16], [0, 16])), "replace");
     const html = render();
     expect(html.match(/aria-label="selection range for tile/g)).toHaveLength(1);
-    const header = html.match(/<header class="tile-identity">[\s\S]*?<\/header>/)![0];
-    expect(header).not.toContain("selection range");
+    expect(html).not.toContain("tile-identity");
+    expect(html).toContain(">copy slices<");
     expect(html).toContain('aria-label="pin tile 1 on D"');
     expect(html).toContain('aria-label="remove tile 1 from D"');
     expect(html).not.toContain("hover an enabled tile");
@@ -379,9 +374,13 @@ D = matmul(CC, W)
   it("keeps drawn-tile figures and plan figures in their own views, and models none", () => {
     S().setSelection("D", fromBox(box([0, 16], [0, 16])), "replace");
 
+    const single = render();
+    expect(single).toContain("Cost to compute");
+    expect(single).toContain("Backward Cone");
+    // Sharing compares tiles: it appears once there are two to compare.
+    expect(single).not.toContain("Shared graph-input demand");
+    S().setSelection("D", fromBox(box([16, 32], [0, 16])), "union");
     const dependencies = render();
-    expect(dependencies).toContain("Cost to compute");
-    expect(dependencies).toContain("Backward Cone");
     expect(dependencies).toContain("Shared graph-input demand");
     expect(dependencies).not.toContain("Arithmetic intensity");
     expect(dependencies).not.toContain("Reuse sweep");

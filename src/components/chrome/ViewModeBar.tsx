@@ -1,6 +1,7 @@
 import React from "react";
 import { useStore } from "../../state/store";
 import { canvasHint, InspectorTab } from "../../view/workspace";
+import { CANVAS_SLOT_ID } from "./OnCanvas";
 
 export const VIEWS = [
   {
@@ -62,6 +63,8 @@ export function ViewModeBar(): React.ReactElement {
       <span className="view-mode-hint" role="status">
         {hint}
       </span>
+      {/* Controls for what plays on the cards, placed here by their owner. */}
+      <div id={CANVAS_SLOT_ID} className="canvas-controls-slot" />
     </div>
   );
 }

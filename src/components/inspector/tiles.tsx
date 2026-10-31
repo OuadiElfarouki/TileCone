@@ -1,7 +1,6 @@
-/** The tile header, the tiles list, and the range field each row edits. */
+/** The tiles list, and the range field each row edits. */
 
 import React from "react";
-import { axisName } from "../../view/tensor/shape-label";
 import { Box, partsOverlap, sameBox } from "../../core/region";
 import { fmt } from "../../view/format";
 import { boxColor, MAX_DISTINCT_HUES, rgbCss } from "../../view/palette";
@@ -13,7 +12,6 @@ import { useDark, useStore } from "../../state/store";
 import { CopyButton } from "../chrome/CopyButton";
 import { DraftField } from "../chrome/DraftField";
 import { MERGED_AT_CAP } from "./cones";
-import { measuredElements, measuredParts } from "./inspector-analysis";
 
 export function SelectionRangeInput({
   box,
@@ -38,85 +36,6 @@ export function SelectionRangeInput({
       invalidTitle={`expected ${shape.length} in-bounds index or lo:hi fields`}
       className="box-range"
     />
-  );
-}
-
-/**
- * The analysed tile set and its distinct element count. Ranges are edited only
- * in the tile list, including when the workspace contains a single tile.
- */
-export function TileIdentity({
-  coneExprs,
-  activeTensorId,
-  focusedBox,
-}: {
-  coneExprs: () => string;
-  activeTensorId: string | null;
-  focusedBox: number | null;
-}): React.ReactElement | null {
-  const resolved = useStore((s) => s.resolved)!;
-  const selection = useStore((s) => s.selection);
-  const hiddenBoxes = useStore((s) => s.hiddenBoxes);
-  const perBox = useStore((s) => s.perBox);
-  const viewCfg = useStore((s) => (activeTensorId ? s.viewCfgs[activeTensorId] : undefined));
-  const dark = useDark();
-
-  if (!selection) return null;
-  const anchorId = activeTensorId;
-  if (!anchorId) return null;
-  /**
-   * The header describes the same group as everything under it, so its counts
-   * come from the active tensor's tiles rather than from the whole selection.
-   * A tile on another tensor is in the list above, not in this answer.
-   */
-  const group = partsOn(selection, anchorId);
-  const index = focusedBox ?? group[group.length - 1]?.index;
-  const part = selection.parts[index];
-  if (part === undefined || index === undefined) return null;
-  const ordinal = group.findIndex((row) => row.index === index);
-
-  // With several tiles in the group and none focused, everything below
-  // describes their merged cone. Naming one of them here would put the wrong
-  // tile at the top of a readout about all of them.
-  const merged = group.length > 1 && focusedBox === null;
-  const tensor = resolved.tensors[anchorId];
-  const shape = tensor.resolved;
-  const { rowAxis, colAxis } = viewAxes(shape, viewCfg);
-  const axisLabel = (axis: number) => axisName(tensor, axis);
-  const measured = measuredParts(selection.parts, anchorId, hiddenBoxes, focusedBox, !!perBox);
-  const elements = measuredElements(measured);
-
-  return (
-    <header className="tile-identity">
-      <div className="tile-ord">
-        {/* The swatch is the tile's hue on the canvas: the header and the cone
-            it describes have to be the same colour, so it follows the anchor's
-            own slot rather than the first one. A merged readout belongs to no
-            single hue, so it carries none. */}
-        {!merged && (
-          <i className="swatch" style={{ background: rgbCss(boxColor(partHue(selection?.parts, index), dark)) }} />
-        )}
-        <span>
-          {measured.length === 0 ? "no enabled tiles" : merged
-            ? `${measured.length} of ${group.length} tiles · merged`
-            : `tile ${ordinal + 1} of ${group.length}`}
-        </span>
-        <CopyButton
-          className="mini copy-cone"
-          title="copy slice expressions for everything this tile needs and feeds"
-          text={coneExprs}
-          label="copy all"
-        />
-      </div>
-      <div className="tile-name">
-        <b
-          title={`rows ${axisLabel(rowAxis >= 0 ? rowAxis : 0)} · cols ${axisLabel(colAxis >= 0 ? colAxis : 0)} · shape [${shape.join("×")}]`}
-        >
-          {tensor.name}
-        </b>
-        <span className="tile-count">{fmt(elements)} el</span>
-      </div>
-    </header>
   );
 }
 
@@ -162,9 +81,11 @@ function GrowButtons({ shape, box, axes, label, onGrow }: {
   );
 }
 
-export function RegionEditor({ activeTensorId, onSelectGroup }: {
+export function RegionEditor({ activeTensorId, onSelectGroup, coneExprs }: {
   activeTensorId: string | null;
   onSelectGroup: (tensorId: string) => void;
+  /** Slice expressions for everything the analysed tiles need and feed. */
+  coneExprs: () => string;
 }): React.ReactElement | null {
   const resolved = useStore((s) => s.resolved);
   const selection = useStore((s) => s.selection);
@@ -209,11 +130,21 @@ export function RegionEditor({ activeTensorId, onSelectGroup }: {
 
   return (
     <div className="ins-section">
+      {/* The tiles are the panel's subject, so this list is its heading: the
+          tensor, the element count and the range are each stated once, here. */}
       <div className="ins-title with-action">
         Tiles
-        <button className="mini" onClick={clearSelection} title="remove every tile from the selection">
-          clear all
-        </button>
+        <span className="ins-title-actions">
+          <CopyButton
+            className="mini"
+            title="copy slice expressions for everything these tiles need and feed"
+            text={coneExprs}
+            label="copy slices"
+          />
+          <button className="mini" onClick={clearSelection} title="remove every tile from the selection">
+            clear all
+          </button>
+        </span>
       </div>
       {!perBox && <p className="hint">{MERGED_AT_CAP}</p>}
       {overlap.summed > overlap.unique && (

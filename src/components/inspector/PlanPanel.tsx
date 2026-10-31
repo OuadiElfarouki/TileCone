@@ -37,6 +37,8 @@ import { describePlanChange, describeTiling, readOrder, WORK_ROWS, workCell, wor
 import { boxColor, rgbCss } from "../../view/palette";
 import { useDark, useStore } from "../../state/store";
 import { DraftField } from "../chrome/DraftField";
+import { useExplanation } from "../chrome/Explain";
+import { OnCanvas } from "../chrome/OnCanvas";
 import { OperandReuse } from "./operand-reuse";
 import type { PlanReplayControl } from "./usePlanReplay";
 import type { ReplayPlayback } from "../../view/workspace";
@@ -235,20 +237,31 @@ function PlanTotals({ report }: { report: PlanReport | null }): React.ReactEleme
   ];
   const works = columns.flatMap((c) => (c.work ? [c.work] : []));
   const figures = works.flatMap((w) => WORK_ROWS.map((row) => row.figure(w)));
+  const explain = useExplanation(
+    "these figures",
+    <>
+      Logical figures for each plan: each task reads its own demand and each tiled tensor is
+      written once. Not measured traffic; FLOPs follow each operation's cost formula.
+    </>
+  );
 
   return (
     <>
       <div className="plan-total-head">
         <span className="muted">whole plan</span>
-        <button
-          className="mini"
-          onClick={() => report && keepPlan(report)}
-          disabled={!total || !!same || full}
-          title={keepTitle}
-        >
-          keep
-        </button>
+        <span className="ins-title-actions">
+          <button
+            className="mini"
+            onClick={() => report && keepPlan(report)}
+            disabled={!total || !!same || full}
+            title={keepTitle}
+          >
+            keep
+          </button>
+          {explain.button}
+        </span>
       </div>
+      {explain.panel}
       <div
         className="plan-compare"
         style={{ gridTemplateColumns: `auto repeat(${columns.length}, auto)` }}
@@ -329,10 +342,6 @@ function PlanTotals({ report }: { report: PlanReport | null }): React.ReactEleme
           ))}
         </ul>
       )}
-      <p className="hint">
-        Logical figures for each plan: each task reads its own demand and each tiled tensor is
-        written once. Not measured traffic; FLOPs follow each operation's cost formula.
-      </p>
       {works.some((w) => w.flops.status === "unknown") ? (
         <p className="hint overlap">
           No FLOP total: some task computes an operation whose arithmetic is not modelled. The byte
@@ -357,33 +366,39 @@ function TiledTensors({ plan, run }: { plan: TilePlan | null; run: PlanRun }): R
   // show while nothing is tiled; kept plans are still shown, to restore one.
   const total = plan ? run.report?.total ?? null : null;
   const unwritten = run.report?.unwritten ?? [];
+  const explain = useExplanation(
+    "a plan",
+    <>
+      A plan divides produced tensors into tiles, one task per tile, and writes each tiled tensor
+      to memory. A task computes any untiled tensor it needs itself, so fusing a tensor makes the
+      tasks that read it compute it; type new extents to divide it differently. Figures are exact
+      for the plan as given, or bounded with the reason named. The arrow keys step the inspected
+      task.
+    </>
+  );
   return (
     <div className="ins-section">
       <div className="ins-title with-action">
         Tiled tensors
-        {plan && !run.auto && !run.report && (
-          <button
-            className="mini"
-            onClick={run.evaluate}
-            disabled={run.evaluating}
-            title="run one bounded query per task of every tiled tensor"
-          >
-            {run.evaluating ? "evaluating…" : "evaluate"}
-          </button>
-        )}
+        <span className="ins-title-actions">
+          {plan && !run.auto && !run.report && (
+            <button
+              className="mini"
+              onClick={run.evaluate}
+              disabled={run.evaluating}
+              title="run one bounded query per task of every tiled tensor"
+            >
+              {run.evaluating ? "evaluating…" : "evaluate"}
+            </button>
+          )}
+          {explain.button}
+        </span>
       </div>
+      {explain.panel}
       {families.length === 0 ? (
-        <p className="hint">
-          Draw a rectangle on a produced tensor to divide it, or click one to divide it at the size
-          the canvas is drawing. Graph inputs have no tasks and cannot be tiled.
-        </p>
+        <p className="hint">Nothing is tiled yet. Graph inputs have no tasks and cannot be tiled.</p>
       ) : (
         <>
-        <p className="hint">
-          Click a tile to inspect its task; the arrow keys step it. A tiled tensor is written to
-          memory. Fuse one and the tasks that read it compute it themselves; type new extents to
-          divide it differently.
-        </p>
         <ul className="plan-list">
           {families.map((family) => {
             const tensor = resolved.tensors[family.tensorId];
@@ -714,6 +729,14 @@ function FamilySection({
   const report: InterfaceReport | undefined =
     run.report?.families.find((r) => r.tensorId === task.tensorId);
 
+  const explain = useExplanation(
+    "family demand and replay",
+    <>
+      Demand is the mean number of tasks reading each element they read. It is not a cache hit
+      rate or a count of memory transfers.{" "}
+      {replayExplanation(replay.playback, name, (tensorId) => plan.graph.tensors[tensorId].name)}
+    </>
+  );
   const matrixFor = (row: BoundaryDemand) => {
     const producer = plan.families.get(row.tensorId);
     return row.supplier === "tasks" &&
@@ -728,15 +751,19 @@ function FamilySection({
     <div className="ins-section">
       <div className="ins-title with-action">
         Across all {family.count} {name} task{family.count === 1 ? "" : "s"}
-        <button
-          className="mini"
-          onClick={replay.run}
-          disabled={replay.pending || run.evaluating}
-          title={`replay this family's tasks on the cards: what each one reads, and what it shares with task ${taskName(name, task.coord)}`}
-        >
-          {replay.pending ? "preparing…" : "replay"}
-        </button>
+        <span className="ins-title-actions">
+          <button
+            className="mini"
+            onClick={replay.run}
+            disabled={replay.pending || run.evaluating}
+            title={`replay this family's tasks on the cards: what each one reads, and what it shares with task ${taskName(name, task.coord)}`}
+          >
+            {replay.pending ? "preparing…" : "replay"}
+          </button>
+          {explain.button}
+        </span>
       </div>
+      {explain.panel}
       {replay.depthLimit > 1 && (
         <ReplayDepth
           tensorId={task.tensorId}
@@ -791,10 +818,6 @@ function FamilySection({
               )
             );
           })}
-          <p className="hint">
-            Demand is the mean number of tasks reading each element they read. It is not a cache hit
-            rate or a count of memory transfers.
-          </p>
         </>
       )}
     </div>
@@ -807,10 +830,17 @@ function FamilySection({
  */
 function ComputedSection({ plan, computes }: { plan: TilePlan; computes: Computed[] }): React.ReactElement {
   const tilePlanTensor = useStore((s) => s.tilePlanTensor);
+  const explain = useExplanation(
+    "computed in this task",
+    <>Not tiled, so this task computes them itself rather than reading them. Materializing one writes it to memory in tasks of its own, and this task reads it.</>
+  );
   return (
     <section className="ins-section">
-      <div className="ins-title">Computed in this task</div>
-      <p className="hint">Not tiled, so this task computes them itself rather than reading them.</p>
+      <div className="ins-title with-action">
+        Computed in this task
+        {explain.button}
+      </div>
+      {explain.panel}
       {computes.map(({ tensorId, region }) => {
         const tensor = plan.graph.tensors[tensorId];
         return (
@@ -837,9 +867,23 @@ function ComputedSection({ plan, computes }: { plan: TilePlan; computes: Compute
   );
 }
 
+/** @internal What a replay at its depth walks, for the family's explanation. */
+export function replayExplanation(playback: ReplayPlayback | null, name: string, nameOf: (tensorId: string) => string): string {
+  if (!playback)
+    return "A replay walks this family's tasks on the cards in listing order, which is not an execution order; full strength marks what each shares with this task, and outlines are the producer tiles.";
+  const { frames, tasks, depth, steps, stepTensors } = playback.replay;
+  const runs = frames.length < steps;
+  const feeders = stepTensors.map(nameOf).join(" or ");
+  const unit = runs ? "run" : depth > 1 ? "step" : "task";
+  return `${depth > 1
+    ? `${runs ? `All ${steps} steps in ${frames.length} runs` : `All ${steps} steps`}, each a ${feeders} task feeding the ${name} tasks ${depth > 2 ? `through ${depth - 2} level${depth > 3 ? "s" : ""} of producers ` : ""}in listing order, which is not an execution order. A step moves with the parts of the other operands it is combined with in the task it feeds, and what its task reads is drawn fainter.`
+    : `${runs ? `All ${tasks} tasks in ${frames.length} runs,` : `All ${tasks} tasks`} in listing order, which is not an execution order.`} Full strength marks what each ${unit} shares with this task; outlines are the producer tiles.`;
+}
+
 /**
- * Where a family replay is, and what it shows. The listing order is said every
- * time: a replay walks the grid row by row, and read as an execution order it
+ * A replay's transport, on the canvas it plays on: step, play or pause, scrub,
+ * clear, and where the replay is. The listing order is said every time in
+ * short: a replay walks the grid row by row, and read as an execution order it
  * would claim a schedule nobody declared.
  */
 function ReplayStatus({
@@ -853,7 +897,7 @@ function ReplayStatus({
   nameOf: (tensorId: string) => string;
   replay: PlanReplayControl;
 }): React.ReactElement {
-  const { frames, tasks, depth, steps, stepTensors } = playback.replay;
+  const { frames, depth, steps, stepTensors } = playback.replay;
   const current = frames[playback.visited - 1];
   const runs = frames.length < steps;
   const stepped = depth > 1;
@@ -861,11 +905,12 @@ function ReplayStatus({
   /* A step deeper than 1 is a path, read as what feeds what: the family's task,
      then the producer task feeding it, and so on upstream. */
   const pathName = (path: TaskRef[]) => path.map((t) => taskName(nameOf(t.tensorId), t.coord)).join(" ← ");
-  const feeders = stepTensors.map(nameOf).join(" or ");
+  const subject = stepped ? `${stepTensors.map(nameOf).join(" or ")} tasks feeding ${name}` : `${name} tasks`;
   const last = playback.visited >= frames.length;
   return (
-    <>
+    <OnCanvas>
       <div className="plan-replay-controls tc-slider" role="group" aria-label="replay controls">
+        <span className="replay-subject">replay · {subject}</span>
         <button
           className="mini"
           onClick={() => replay.seek(playback.visited - 1)}
@@ -911,26 +956,20 @@ function ReplayStatus({
         <button className="mini" onClick={replay.clear} aria-label="clear replay" title="clear the replay from the cards">
           clear
         </button>
+        {current && (
+          <span className="replay-where" role="status">
+            {stepped
+              ? current.steps === 1
+                ? pathName(current.firstPath)
+                : `${pathName(current.firstPath)} to ${pathName(current.lastPath)}`
+              : current.tasks === 1
+                ? `Task ${taskName(name, current.first.coord)}`
+                : `Tasks ${taskName(name, current.first.coord)} to ${taskName(name, current.last.coord)}`}{" "}
+            · {playback.visited} of {frames.length} · listing order, not execution order
+          </span>
+        )}
       </div>
-      {current && (
-        <p className="hint">
-          {stepped
-            ? current.steps === 1
-              ? pathName(current.firstPath)
-              : `${pathName(current.firstPath)} to ${pathName(current.lastPath)}`
-            : current.tasks === 1
-              ? `Task ${taskName(name, current.first.coord)}`
-              : `Tasks ${taskName(name, current.first.coord)} to ${taskName(name, current.last.coord)}`}{" "}
-          · {playback.visited} of {frames.length}
-        </p>
-      )}
-      <p className="hint">
-        {stepped
-          ? `${runs ? `All ${steps} steps in ${frames.length} runs` : `All ${steps} steps`}, each a ${feeders} task feeding the ${name} tasks ${depth > 2 ? `through ${depth - 2} level${depth > 3 ? "s" : ""} of producers ` : ""}in listing order, which is not an execution order. A step moves with the parts of the other operands it is combined with in the task it feeds, and what its task reads is drawn fainter.`
-          : `${runs ? `All ${tasks} tasks in ${frames.length} runs,` : `All ${tasks} tasks`} in listing order, which is not an execution order.`}{" "}
-        Full strength marks what each {unit} shares with this task; outlines are the producer tiles.
-      </p>
-    </>
+    </OnCanvas>
   );
 }
 
@@ -1015,11 +1054,6 @@ export function PlanPanel({ replay }: { replay: PlanReplayControl }): React.Reac
 
   return (
     <div className="ins-tabpanel" role="region" id="ins-panel-plan" aria-labelledby="view-plan">
-      <p className="tab-note">
-        A plan divides produced tensors into tiles, one task per tile, and writes each tiled tensor
-        to memory. A task computes any untiled tensor it needs itself. Figures are exact for the
-        plan as given, or bounded with the reason named.
-      </p>
       <TiledTensors plan={plan} run={run} />
       {plan && task && family && tensor && node && supply ? (
         <>
@@ -1088,9 +1122,7 @@ export function PlanPanel({ replay }: { replay: PlanReplayControl }): React.Reac
           )}
           <FamilySection plan={plan} task={task} run={run} replay={replay} />
         </>
-      ) : (
-        plan && <p className="hint">Click a tile of a tiled tensor to inspect its task.</p>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -1117,6 +1149,13 @@ function LineageSection({
 }): React.ReactElement | null {
   const setLineageFocus = useStore((s) => s.setLineageFocus);
   const rows = useMemo(() => taskLineage(plan, task), [plan, task]);
+  const explain = useExplanation(
+    "upstream levels",
+    <>
+      Level 1 is what this task reads; each further level is what the tasks producing those tiles
+      read, which is whole tiles. Point at a row to outline its tasks on the card.
+    </>
+  );
   // A focus left behind by a row that went away with its task would outline
   // tiles nothing on screen is pointing at.
   useEffect(() => () => setLineageFocus(null), [plan, task, setLineageFocus]);
@@ -1125,7 +1164,11 @@ function LineageSection({
   const name = (row: LineageRow) => plan.graph.tensors[row.tensorId].name;
   return (
     <section className="ins-section" aria-label="upstream to the inputs">
-      <div className="ins-title">Upstream, to the inputs</div>
+      <div className="ins-title with-action">
+        Upstream, to the inputs
+        {explain.button}
+      </div>
+      {explain.panel}
       {levels.map((level) => (
         <div className="plan-lineage-level" key={level}>
           <div className="plan-lineage-head muted">
@@ -1187,10 +1230,6 @@ function LineageSection({
           </ul>
         </div>
       ))}
-      <p className="hint">
-        Level 1 is what this task reads; each further level is what the tasks producing those tiles
-        read, which is whole tiles. Point at a row to outline its tasks on the card.
-      </p>
     </section>
   );
 }

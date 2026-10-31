@@ -140,35 +140,14 @@ export function ConeRow({
 
   return (
     <div className="cone-row">
+      {/* The slice is the answer, so it leads the row whole: wrapped when long,
+          never cut. More than one box moves to its own block below. */}
       <div className="cone-row-head">
         <b>{row.name}</b>
-        {/* One box is the common case and reads best inline. More than one is
-            exactly when a single truncated expression would hide the answer, so
-            those move to their own block below. */}
         {exprs.length === 1 && (
           <code className="cone-expr">{exprs[0].slice(row.name.length)}</code>
         )}
         {!row.exact && <span className="badge approx" title={row.reasons.join("; ")}>≈</span>}
-        {row.isInput && <span className="badge input">in</span>}
-        <span className="badge depth" title={`${row.depth} step${row.depth === 1 ? "" : "s"} along this direction`}>
-          d{row.depth}
-        </span>
-        <span className="row-stats">
-          {share.toFixed(1)}% · {formatFigure(row.byteFigure, formatBytes)} · {row.boxCount} box{row.boxCount === 1 ? "" : "es"}
-          {/* Boxes may overlap - two operand slots reading one tensor give two
-              bands sharing a corner. Without this the listed boxes visibly sum
-              past the element total and the row looks like it is miscounting,
-              when in fact the total is the union and the shared elements are
-              read twice. Stated only when there are some. */}
-          {row.overlap > 0 && (
-            <span
-              className="row-shared"
-              title={`${row.overlap.toLocaleString()} element${row.overlap === 1 ? "" : "s"} lie in more than one box, counted once in the total`}
-            >
-              {" "}· {row.overlap.toLocaleString()} shared
-            </span>
-          )}
-        </span>
       </div>
       {attr.perBox ? (
         <FootprintBar
@@ -187,6 +166,35 @@ export function ConeRow({
           <i style={{ width: `${Math.min(100, share)}%`, background: hue }} />
         </span>
       )}
+      <div className="cone-row-meta">
+        {row.isInput && <span title="read from memory: no operation produces it">graph input</span>}
+        <span title={`operations between this tensor and the tile, along this direction`}>
+          {row.depth} op{row.depth === 1 ? "" : "s"} away
+        </span>
+        <span className="row-stats">
+          {share.toFixed(1)}% · {formatFigure(row.byteFigure, formatBytes)}
+          {row.boxCount > 1 && ` · ${row.boxCount} boxes`}
+          {/* Boxes may overlap - two operand slots reading one tensor give two
+              bands sharing a corner. Without this the listed boxes visibly sum
+              past the element total and the row looks like it is miscounting,
+              when in fact the total is the union and the shared elements are
+              read twice. Stated only when there are some. */}
+          {row.overlap > 0 && (
+            <span
+              className="row-shared"
+              title={`${row.overlap.toLocaleString()} element${row.overlap === 1 ? "" : "s"} lie in more than one box, counted once in the total`}
+            >
+              {" "}· {row.overlap.toLocaleString()} shared
+            </span>
+          )}
+        </span>
+        <CopyButton
+          className="mini copy-exprs"
+          title="copy this tensor's slice expressions"
+          text={() => exprs.join("\n")}
+          label="copy"
+        />
+      </div>
       {flags.map((flag) => (
         <span className="cone-flag" key={flag}>
           {flag}
@@ -208,12 +216,6 @@ export function ConeRow({
           )}
         </div>
       )}
-      <CopyButton
-        className="mini copy-exprs"
-        title="copy this tensor's slice expressions"
-        text={() => exprs.join("\n")}
-        label="copy"
-      />
     </div>
   );
 }

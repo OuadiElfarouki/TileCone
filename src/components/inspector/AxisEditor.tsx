@@ -1,6 +1,5 @@
 import React from "react";
 import { axisName } from "../../view/tensor/shape-label";
-import type { Box } from "../../core/region";
 import { displayTile } from "../../view/tensor/tiling";
 import { useStore } from "../../state/store";
 import { axisTableMenu, planWithTile, type AxisTableAction } from "../../view/tensor/menus";
@@ -141,16 +140,8 @@ export function AxisEditor({ index }: { index: number }): React.ReactElement | n
           })}
         </tbody>
       </table>
-      <p className="axis-selection" aria-label="complete selection">
-        {selectionReading(box, name)}
-      </p>
     </div>
   );
-}
-
-/** `B[0:1] H[2:4] S[128:192] D[0:128]`: every axis, named, so none is implied. */
-export function selectionReading(box: Box, name: (axis: number) => string): string {
-  return box.map((interval, axis) => `${name(axis)}[${interval.lo}:${interval.hi}]`).join(" ");
 }
 
 /**

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Inspector } from "../../../src/components/inspector/Inspector";
+import { replayExplanation } from "../../../src/components/inspector/PlanPanel";
 import { useStore } from "../../../src/state/store";
 import { familyReplay } from "../../../src/core/plan/replay";
 import { EXAMPLES } from "../../../src/examples/index";
@@ -70,18 +71,32 @@ describe("family replay in the Plan view", () => {
     S().setPlanTileAt("Y", [8, 4], [8, 4]);
   });
 
+  /* What a section's figures mean is read once; it waits behind a "?" in the
+     heading rather than standing between the reader and the figures. */
+  it("offers each section's explanation behind a closed question mark", () => {
+    const html = render();
+    for (const topic of ["a plan", "upstream levels", "family demand and replay"])
+      expect(html).toContain(`aria-expanded="false" aria-label="what ${topic} means"`);
+    expect(html).not.toContain("A plan divides produced tensors into tiles");
+    expect(html).not.toContain("Level 1 is what this task reads");
+  });
+
   it("offers a replay beside the family figures", () => {
     const html = render();
-    expect(html).toMatch(/Across all 16 Y tasks<button[^>]*>replay<\/button>/);
+    expect(html).toMatch(/Across all 16 Y tasks<span class="ins-title-actions"><button[^>]*>replay<\/button>/);
   });
 
   it("says where the replay is, and that listing order is not an execution order", () => {
     const replay = familyReplay(S().plan!, S().planTask!);
     S().setReplayPlayback({ replay, plan: S().plan!, visited: 3, paused: false, exiting: false, opacity: 1 });
     const html = render();
-    expect(html).toContain("Task Y (0, 2) · 3 of 16");
-    expect(html).toContain("All 16 tasks in");
-    expect(html).toContain("listing order, which is not an execution order");
+    expect(html).toContain("replay · Y tasks");
+    expect(html).toContain("Task Y (0, 2) · 3 of 16 · listing order, not execution order");
+    // The longer account sits behind the family's "?", closed by default.
+    expect(html).not.toContain("All 16 tasks in");
+    expect(replayExplanation(S().replayPlayback, "Y", (id) => id)).toBe(
+      "All 16 tasks in listing order, which is not an execution order. Full strength marks what each task shares with this task; outlines are the producer tiles."
+    );
     S().setReplayPlayback(null);
   });
 
@@ -97,10 +112,12 @@ describe("family replay in the Plan view", () => {
     S().setReplayPlayback({ replay, plan: S().plan!, visited: 1, paused: false, exiting: false, opacity: 1 });
     const stepped = render();
     // Deeper than 1 a step is a C task feeding a Y task, named as that path.
-    expect(stepped).toMatch(/each a C task feeding the Y tasks/);
+    expect(stepped).toContain("replay · C tasks feeding Y");
     // 16 Y tasks × 64 C tasks each: one frame per step, not runs of them.
     expect(stepped).toMatch(/Y \(0, 0\) ← C \(0, 0\) · 1 of 1024/);
-    expect(stepped).toContain("All 1024 steps, each a C task");
+    expect(replayExplanation(S().replayPlayback, "Y", (id) => id)).toMatch(
+      /^All 1024 steps, each a C task feeding the Y tasks in listing order/
+    );
     // A replay made at another depth is not this one.
     S().setReplayDepth("Y", 1);
     expect(render()).not.toContain("listing order");

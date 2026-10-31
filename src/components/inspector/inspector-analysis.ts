@@ -5,7 +5,7 @@ import { operandReads } from "../../core/multiplicity";
 import { coneFindings } from "../../core/notes";
 import { inputSharing } from "../../core/demand";
 import type { PropResult } from "../../core/propagate";
-import { count, fromBox, Region, union } from "../../core/region";
+import { fromBox, Region, union } from "../../core/region";
 import type { ResolvedGraph } from "../../core/graph";
 import { analysisTarget, groupPropResult, BoxProp, Direction, InspectorTab, SelPart } from "../../view/workspace";
 
@@ -27,17 +27,6 @@ const EMPTY_PARTS: SelPart[] = [];
  */
 export function analysisTensorId(parts: SelPart[], group: string | null): string | null {
   return analysisTarget(parts, group, null).tensorId;
-}
-
-/** The measured tile set; above the attribution cap all group tiles contribute. */
-export function measuredParts(parts: SelPart[], tensorId: string | null, hidden: Set<number>, focus: number | null, attributed: boolean) {
-  const localFocus = attributed ? groupFocus(parts, focus, tensorId) : null;
-  return parts.filter((part, index) => part.tensorId === tensorId &&
-    (!attributed || (!hidden.has(index) && (localFocus === null || index === localFocus))));
-}
-
-export function measuredElements(parts: SelPart[]): number {
-  return count({ boxes: parts.map((part) => part.box), exact: true, reasons: [] });
 }
 
 /**

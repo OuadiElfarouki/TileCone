@@ -142,7 +142,7 @@ export function graphZoomBounds(
 
 /** Elements that own their pointer gesture instead of panning the viewport. */
 const GRAPH_PAN_BLOCKERS =
-  ".card-slot, .op-node, .zoom-controls, .layout-controls, .grid-controls, .view-mode-switch";
+  ".card-slot, .op-node, .zoom-controls, .layout-controls, .grid-controls, .view-mode-switch, .canvas-controls-slot";
 
 /** @internal DOM-light hit-test seam for the graph interaction tests. */
 export function canStartGraphPan(target: unknown): boolean {

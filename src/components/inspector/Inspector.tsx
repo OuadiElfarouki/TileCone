@@ -21,7 +21,7 @@ import {
 import { DependencyNotes } from "./notes";
 import { OperandReuse } from "./operand-reuse";
 import { EmptyPanel } from "./empty-panel";
-import { RegionEditor, TileIdentity } from "./tiles";
+import { RegionEditor } from "./tiles";
 import { usePlanReplay } from "./usePlanReplay";
 
 export function Inspector(): React.ReactElement {
@@ -194,14 +194,23 @@ function ActiveInspector(): React.ReactElement {
 
   /* Summed through the figure algebra rather than by adding three numbers, so
      the total inherits the weakest of the three claims instead of presenting
-     itself as whatever the last one was. */
-  const workingSet = metrics
+     itself as whatever the last one was. It is every byte the cone touches,
+     not what is live at one time, so it is not called a working set. */
+  const footprint = metrics
     ? sumFigures([metrics.inputBytes, metrics.intermediateBytes, metrics.outputBytes])
     : null;
 
   const nameOf = (tensorId: string) => resolved.tensors[tensorId]?.name ?? tensorId;
 
   const activeTensor = activeTensorId ? resolved.tensors[activeTensorId] : undefined;
+  /* A tile on a graph input is read, never computed: it has no cost, no
+     operand reuse and no constraint to report, and three sections saying so
+     in turn would bury the two cones that do answer something. */
+  const computed = !!activeTensor?.producer;
+  /* Sharing compares tiles, so the section appears when there is a comparison
+     to state - or a reason it cannot be made - rather than as a placeholder. */
+  const sharingCapped = !perBox && parts.length > MAX_PER_BOX_PROPS;
+  const comparable = enabledBoxes >= 2 && focusedBox === null;
 
   return (
     <aside className="inspector" aria-label="Tile inspector">
@@ -214,13 +223,6 @@ function ActiveInspector(): React.ReactElement {
           <EmptyPanel />
         ) : (
           <>
-            <TileIdentity
-              activeTensorId={activeTensorId}
-              focusedBox={focusedBox}
-              coneExprs={() =>
-                [...upstream, ...downstream].flatMap((row) => sliceLines(row)).join("\n")
-              }
-            />
             {tab === "dependencies" && (
               <div
                 className="ins-tabpanel"
@@ -230,7 +232,13 @@ function ActiveInspector(): React.ReactElement {
               >
             {/* The tiles list is the selector for everything below it: it picks
                 which cone the two sections describe, so it sits above them. */}
-            <RegionEditor activeTensorId={activeTensorId} onSelectGroup={selectGroup} />
+            <RegionEditor
+              activeTensorId={activeTensorId}
+              onSelectGroup={selectGroup}
+              coneExprs={() =>
+                [...upstream, ...downstream].flatMap((row) => sliceLines(row)).join("\n")
+              }
+            />
             {axisIndex !== null && <AxisEditor index={axisIndex} />}
             <GrowthSummary />
 
@@ -282,6 +290,11 @@ function ActiveInspector(): React.ReactElement {
                   <span className="cone-key combined" aria-hidden="true" />
                   Co-access Surface
                 </button>
+                <span className="rollup">
+                  {showEntangled
+                    ? `${entangledRows.length} region${entangledRows.length === 1 ? "" : "s"}`
+                    : "what this tile is combined with"}
+                </span>
               </div>
               {showEntangled &&
                 (merged ? (
@@ -320,7 +333,13 @@ function ActiveInspector(): React.ReactElement {
               </div>
             )}
 
-            {metrics && (
+            {metrics && !computed && (
+              <p className="hint">
+                A graph input is read, not computed: this tile has no cost, operand reuse or
+                dependency constraint of its own.
+              </p>
+            )}
+            {metrics && computed && (
               <>
                 {/* Each figure says for itself what may be read into it: a
                     bare number is a count, `<=` is "no more than", and a figure
@@ -345,8 +364,10 @@ function ActiveInspector(): React.ReactElement {
                     <span>{formatFigure(metrics.intermediateBytes, formatBytes)}</span>
                     <span>output bytes</span>
                     <span>{formatFigure(metrics.outputBytes, formatBytes)}</span>
-                    <span>working set</span>
-                    <span>{workingSet && formatFigure(workingSet, formatBytes)}</span>
+                    <span title="every byte the cone touches: inputs, intermediates and outputs together, not what is live at one time">
+                      footprint
+                    </span>
+                    <span>{footprint && formatFigure(footprint, formatBytes)}</span>
                   </div>
                   {metrics.flops.status === "unknown" && (
                     /* The one qualification a reader cannot act on without
@@ -371,6 +392,7 @@ function ActiveInspector(): React.ReactElement {
                     at graph inputs. It is a shareable footprint, not a claim
                     about cache hits, transactions, or bytes actually loaded.
                     Demand across a declared family belongs under Plan. */}
+                {(sharing?.length || sharingCapped || comparable) ? (
                 <div className="ins-section">
                   <div className="ins-title">Shared graph-input demand</div>
                   {sharing && sharing.length > 0 ? (
@@ -390,13 +412,9 @@ function ActiveInspector(): React.ReactElement {
                         </li>
                       ))}
                     </ul>
-                  ) : !perBox && parts.length > MAX_PER_BOX_PROPS ? (
+                  ) : sharingCapped ? (
                     <p className="hint">
                       Per-tile sharing is unavailable above {MAX_PER_BOX_PROPS} total tiles.
-                    </p>
-                  ) : enabledBoxes < 2 || focusedBox !== null ? (
-                    <p className="hint">
-                      Enable and analyse at least two tiles together to compare their demand.
                     </p>
                   ) : (
                     <p className="hint">
@@ -404,6 +422,7 @@ function ActiveInspector(): React.ReactElement {
                     </p>
                   )}
                 </div>
+                ) : null}
                 {/* Scoped like the cost figures, and named the same way: a
                     hover over a tile row narrows these counts to that tile,
                     and the heading is what says so. */}
@@ -420,12 +439,14 @@ function ActiveInspector(): React.ReactElement {
                 )}
               </>
             )}
-            <DependencyNotes
-              findings={findings}
-              hasSelection={enabledBoxes > 0}
-              focusedBox={focusedBox}
-              attributed={!!perBox}
-            />
+            {computed && (
+              <DependencyNotes
+                findings={findings}
+                hasSelection={enabledBoxes > 0}
+                focusedBox={focusedBox}
+                attributed={!!perBox}
+              />
+            )}
               </div>
             )}
           </>
