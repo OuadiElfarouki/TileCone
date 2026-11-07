@@ -327,6 +327,16 @@ Y = matmul(H, V)
     expect(findings.notes.filter((note) => note.severity === 1)).toHaveLength(1);
   });
 
+  it("returns the notes the cap leaves out, so none is lost", () => {
+    const { findings } = findingsFor(STACK, "Y", [[0, 4], [0, 4]]);
+    expect(findings.notes.length + findings.omitted.length).toBe(findings.constraintCount);
+    const shown = new Set(findings.notes.map((note) => note.text));
+    expect(findings.omitted.every((note) => !shown.has(note.text))).toBe(true);
+    // what gave way is weaker than, or as strong as, everything kept
+    const weakestKept = Math.min(...findings.notes.map((note) => note.severity));
+    expect(findings.omitted.every((note) => note.severity <= weakestKept)).toBe(true);
+  });
+
   it("reads the surviving notes in graph order, not in ranked order", () => {
     const { resolved, findings } = findingsFor(STACK, "Y", [[0, 4], [0, 4]]);
     const position = (nodeId: string) => resolved.topo.findIndex((n) => n.id === nodeId);

@@ -150,6 +150,12 @@ export function useKeyboard({
         window.dispatchEvent(new Event(FIT_GRAPH_EVENT));
         return;
       }
+      if (matchesShortcut(e, SHORTCUTS.focusOp)) {
+        e.preventDefault();
+        if (graphIsInteractive(s) && s.selectedOp !== null)
+          s.setFocusNode({ kind: "op", id: s.selectedOp, frame: "operands" });
+        return;
+      }
       if (matchesShortcut(e, SHORTCUTS.viewMode)) {
         e.preventDefault();
         return s.setInspectorTab(s.inspectorTab === "plan" ? "dependencies" : "plan");

@@ -242,6 +242,125 @@ function ActiveInspector(): React.ReactElement {
             {axisIndex !== null && <AxisEditor index={axisIndex} />}
             <GrowthSummary />
 
+            {/* The answer first: what computing this tile costs and what
+                constrains it, then the regions that account for it. Every
+                row is still listed below, in the cone it belongs to. */}
+            {metrics && !computed && (
+              <p className="hint">
+                A graph input is read, not computed: this tile has no cost, operand reuse or
+                dependency constraint of its own.
+              </p>
+            )}
+            {metrics && computed && (
+              <>
+                {/* Each figure says for itself what may be read into it: a
+                    bare number is a count, `<=` is "no more than", and a figure
+                    whose arithmetic crosses an operation nobody described says
+                    `unknown` instead of offering a number that is neither a
+                    ceiling nor a floor. */}
+                <div className="ins-section">
+                  <div className="ins-title">
+                    {`Cost to compute ${costScope} `}
+                    {!metrics.exact && (
+                      <span className="badge approx" title={metrics.reasons.join("; ")}>≈</span>
+                    )}
+                  </div>
+                  <div className="kv">
+                    <span>FLOPs</span>
+                    <span title={metrics.flops.reasons.join("; ")}>
+                      {formatFigure(metrics.flops, fmt)}
+                    </span>
+                    <span>input bytes</span>
+                    <span>{formatFigure(metrics.inputBytes, formatBytes)}</span>
+                    <span>intermediate</span>
+                    <span>{formatFigure(metrics.intermediateBytes, formatBytes)}</span>
+                    <span>output bytes</span>
+                    <span>{formatFigure(metrics.outputBytes, formatBytes)}</span>
+                    <span title="every byte the cone touches: inputs, intermediates and outputs together, not what is live at one time">
+                      footprint
+                    </span>
+                    <span>{footprint && formatFigure(footprint, formatBytes)}</span>
+                  </div>
+                  {metrics.flops.status === "unknown" && (
+                    /* The one qualification a reader cannot act on without
+                       being told: every other figure here is still a bound,
+                       and only the arithmetic is missing. Without this the
+                       word `unknown` beside a full set of byte counts reads
+                       as a glitch rather than as the answer. */
+                    <p className="hint overlap">
+                      No FLOP total through {metrics.unknownOperations} unmodelled
+                      {metrics.unknownOperations === 1 ? " operation" : " operations"}:
+                      its arithmetic is not described, so a sum across it would be
+                      neither an upper nor a lower bound. The byte figures still hold.
+                    </p>
+                  )}
+                  {metrics.exact || metrics.flops.status === "unknown" ? null : (
+                    <p className="hint overlap">
+                      Bounds, not counts: read ≤ as “no more than”, never understated.
+                    </p>
+                  )}
+                </div>
+                {/* Why the figures have that size, next to them: the constraint is
+                    what transfers to writing a kernel, and it should not sit
+                    below every row of the cones. */}
+                <DependencyNotes
+                  findings={findings}
+                  hasSelection={enabledBoxes > 0}
+                  focusedBox={focusedBox}
+                  attributed={!!perBox}
+                />
+                {/* A function of the tiles on screen: duplicate element demand
+                    at graph inputs. It is a shareable footprint, not a claim
+                    about cache hits, transactions, or bytes actually loaded.
+                    Demand across a declared family belongs under Plan. */}
+                {(sharing?.length || sharingCapped || comparable) ? (
+                <div className="ins-section">
+                  <div className="ins-title">Shared graph-input demand</div>
+                  {sharing && sharing.length > 0 ? (
+                    <ul className="reuse-list">
+                      {sharing.map((row) => (
+                        <li key={row.tensorId}>
+                          <code>{resolved.tensors[row.tensorId].name}</code>
+                          <span
+                            className="muted"
+                            title={demandDetail(row, `${row.readers} of ${row.selectedTiles} tiles`)}
+                          >
+                            {demandSummary(row)}
+                          </span>
+                          {!row.exact && (
+                            <span className="badge approx" title={row.reasons.join("; ")}>≈</span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : sharingCapped ? (
+                    <p className="hint">
+                      Per-tile sharing is unavailable above {MAX_PER_BOX_PROPS} total tiles.
+                    </p>
+                  ) : (
+                    <p className="hint">
+                      These tiles have no graph-input demand.
+                    </p>
+                  )}
+                </div>
+                ) : null}
+                {/* Scoped like the cost figures, and named the same way: a
+                    hover over a tile row narrows these counts to that tile,
+                    and the heading is what says so. */}
+                {reads && (
+                  <OperandReuse
+                    reads={reads}
+                    title={`Operand reuse in ${costScope}`}
+                    empty={activeTensor?.producer
+                      ? "The operations computing this tile read nothing for it."
+                      : "No operation computes this tile: it is on a graph input."}
+                    nameOf={nameOf}
+                    view="dependencies"
+                  />
+                )}
+              </>
+            )}
+
             <ConeSection
               direction="backward"
               rows={upstream}
@@ -333,120 +452,6 @@ function ActiveInspector(): React.ReactElement {
               </div>
             )}
 
-            {metrics && !computed && (
-              <p className="hint">
-                A graph input is read, not computed: this tile has no cost, operand reuse or
-                dependency constraint of its own.
-              </p>
-            )}
-            {metrics && computed && (
-              <>
-                {/* Each figure says for itself what may be read into it: a
-                    bare number is a count, `<=` is "no more than", and a figure
-                    whose arithmetic crosses an operation nobody described says
-                    `unknown` instead of offering a number that is neither a
-                    ceiling nor a floor. */}
-                <div className="ins-section">
-                  <div className="ins-title">
-                    {`Cost to compute ${costScope} `}
-                    {!metrics.exact && (
-                      <span className="badge approx" title={metrics.reasons.join("; ")}>≈</span>
-                    )}
-                  </div>
-                  <div className="kv">
-                    <span>FLOPs</span>
-                    <span title={metrics.flops.reasons.join("; ")}>
-                      {formatFigure(metrics.flops, fmt)}
-                    </span>
-                    <span>input bytes</span>
-                    <span>{formatFigure(metrics.inputBytes, formatBytes)}</span>
-                    <span>intermediate</span>
-                    <span>{formatFigure(metrics.intermediateBytes, formatBytes)}</span>
-                    <span>output bytes</span>
-                    <span>{formatFigure(metrics.outputBytes, formatBytes)}</span>
-                    <span title="every byte the cone touches: inputs, intermediates and outputs together, not what is live at one time">
-                      footprint
-                    </span>
-                    <span>{footprint && formatFigure(footprint, formatBytes)}</span>
-                  </div>
-                  {metrics.flops.status === "unknown" && (
-                    /* The one qualification a reader cannot act on without
-                       being told: every other figure here is still a bound,
-                       and only the arithmetic is missing. Without this the
-                       word `unknown` beside a full set of byte counts reads
-                       as a glitch rather than as the answer. */
-                    <p className="hint overlap">
-                      No FLOP total through {metrics.unknownOperations} unmodelled
-                      {metrics.unknownOperations === 1 ? " operation" : " operations"}:
-                      its arithmetic is not described, so a sum across it would be
-                      neither an upper nor a lower bound. The byte figures still hold.
-                    </p>
-                  )}
-                  {metrics.exact || metrics.flops.status === "unknown" ? null : (
-                    <p className="hint overlap">
-                      Bounds, not counts: read ≤ as “no more than”, never understated.
-                    </p>
-                  )}
-                </div>
-                {/* A function of the tiles on screen: duplicate element demand
-                    at graph inputs. It is a shareable footprint, not a claim
-                    about cache hits, transactions, or bytes actually loaded.
-                    Demand across a declared family belongs under Plan. */}
-                {(sharing?.length || sharingCapped || comparable) ? (
-                <div className="ins-section">
-                  <div className="ins-title">Shared graph-input demand</div>
-                  {sharing && sharing.length > 0 ? (
-                    <ul className="reuse-list">
-                      {sharing.map((row) => (
-                        <li key={row.tensorId}>
-                          <code>{resolved.tensors[row.tensorId].name}</code>
-                          <span
-                            className="muted"
-                            title={demandDetail(row, `${row.readers} of ${row.selectedTiles} tiles`)}
-                          >
-                            {demandSummary(row)}
-                          </span>
-                          {!row.exact && (
-                            <span className="badge approx" title={row.reasons.join("; ")}>≈</span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : sharingCapped ? (
-                    <p className="hint">
-                      Per-tile sharing is unavailable above {MAX_PER_BOX_PROPS} total tiles.
-                    </p>
-                  ) : (
-                    <p className="hint">
-                      These tiles have no graph-input demand.
-                    </p>
-                  )}
-                </div>
-                ) : null}
-                {/* Scoped like the cost figures, and named the same way: a
-                    hover over a tile row narrows these counts to that tile,
-                    and the heading is what says so. */}
-                {reads && (
-                  <OperandReuse
-                    reads={reads}
-                    title={`Operand reuse in ${costScope}`}
-                    empty={activeTensor?.producer
-                      ? "The operations computing this tile read nothing for it."
-                      : "No operation computes this tile: it is on a graph input."}
-                    nameOf={nameOf}
-                    view="dependencies"
-                  />
-                )}
-              </>
-            )}
-            {computed && (
-              <DependencyNotes
-                findings={findings}
-                hasSelection={enabledBoxes > 0}
-                focusedBox={focusedBox}
-                attributed={!!perBox}
-              />
-            )}
               </div>
             )}
           </>

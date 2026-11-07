@@ -284,20 +284,53 @@ export function ConeSection({
       </div>
       {enabled &&
         (rows.length ? (
-          rows.map((row) => (
-            <ConeRow
-              key={row.tensorId}
-              row={row}
-              direction={direction}
-              hue={hue}
-              flags={flags.get(row.tensorId) ?? []}
-              contribution={contrib?.get(row.tensorId)}
-              attr={attr}
-            />
+          coneGroups(direction, rows).map((group) => (
+            <React.Fragment key={group.title ?? "rows"}>
+              {group.title && (
+                <div className="cone-group">
+                  <span>{group.title}</span>
+                  <span className="rollup">
+                    {group.rows.length} · {formatFigure(sumFigures(group.rows.map((row) => row.byteFigure)), formatBytes)}
+                  </span>
+                </div>
+              )}
+              {group.rows.map((row) => (
+                <ConeRow
+                  key={row.tensorId}
+                  row={row}
+                  direction={direction}
+                  hue={hue}
+                  flags={flags.get(row.tensorId) ?? []}
+                  contribution={contrib?.get(row.tensorId)}
+                  attr={attr}
+                />
+              ))}
+            </React.Fragment>
           ))
         ) : (
           <p className="hint">{empty}</p>
         ))}
     </section>
   );
+}
+
+/**
+ * The Backward Cone's rows, graph inputs first. What a tile reads from memory
+ * is what its cost is made of; the intermediates are how it got there, and in
+ * a layer they are most of the rows. Order within each group is kept. A cone
+ * with only one kind of row, and the Forward Cone, are listed as they are.
+ * @internal Exported for tests.
+ */
+export function coneGroups(
+  direction: ConeDirection,
+  rows: TensorReadout[]
+): { title: string | null; rows: TensorReadout[] }[] {
+  const inputs = rows.filter((row) => row.isInput);
+  const intermediates = rows.filter((row) => !row.isInput);
+  if (direction !== "backward" || !inputs.length || !intermediates.length)
+    return [{ title: null, rows }];
+  return [
+    { title: "Graph inputs", rows: inputs },
+    { title: "Intermediates", rows: intermediates },
+  ];
 }

@@ -3,9 +3,10 @@ import { useDismiss } from "../hooks/useDismiss";
 import { fromBox } from "../../core/region";
 import { EXAMPLES } from "../../examples";
 import { displayTile } from "../../view/tensor/tiling";
-import { workspaceToLink, shareTarget } from "../../state/share";
-import { CopyButton } from "./CopyButton";
-import { WorkspaceFiles } from "./WorkspaceFiles";
+import { workspaceToLink, shareTarget, type ShareTarget } from "../../state/share";
+import { serializeWorkspace } from "../../state/workspace-document";
+import { copyText } from "./clipboard";
+import { download, WorkspaceFiles } from "./WorkspaceFiles";
 import { opLabel } from "../../core/ops/index";
 import { SUBSCRIPT_OP } from "../../parse/signatures";
 import { useStore } from "../../state/store";
@@ -21,23 +22,72 @@ import type { CompilerDiagnostic } from "../../parse/compiler";
 /**
  * Copies a link that restores this workspace - source, selection, analysis views,
  * tile detail and the tile plan. It sits with the source actions rather than in the header
- * because the source is most of what it encodes.
+ * because the source is most of what it encodes. A workspace too long for a
+ * link copies nothing, and `onTooLong` says so where the reader can act on it.
  */
-function ShareButton(): React.ReactElement {
-  // Read at click time rather than subscribing: the link is built from a dozen
-  // pieces of state and none of them change how this button looks.
-  const link = () => {
-    const s = useStore.getState();
-    return shareTarget(location.origin, location.pathname, workspaceToLink(s));
-  };
+function ShareButton({ onTooLong }: {
+  onTooLong: (target: Extract<ShareTarget, { kind: "too-long" }> | null) => void;
+}): React.ReactElement {
+  const [state, setState] = useState<"copied" | "failed" | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => () => clearTimeout(timer.current), []);
 
   return (
-    <CopyButton
-      className="mini share-btn"
+    <button
+      className={`mini share-btn${state === "failed" ? " copy-failed" : ""}`}
       title="copy a link that restores this source, selection, graph layout, analysis views, and tile plans"
-      label="share"
-      text={link}
-    />
+      aria-live="polite"
+      onClick={async () => {
+        // Read at click time rather than subscribing: the link is built from a
+        // dozen pieces of state and none of them change how this button looks.
+        const target = shareTarget(location.origin, location.pathname, workspaceToLink(useStore.getState()));
+        clearTimeout(timer.current);
+        if (target.kind === "too-long") {
+          setState(null);
+          onTooLong(target);
+          return;
+        }
+        onTooLong(null);
+        setState((await copyText(target.url)) ? "copied" : "failed");
+        timer.current = setTimeout(() => setState(null), SHARE_FEEDBACK_MS);
+      }}
+    >
+      {state === "copied" ? "link copied ✓" : state === "failed" ? "copy failed" : "share"}
+    </button>
+  );
+}
+
+const SHARE_FEEDBACK_MS = 1600;
+
+/** Why Share copied nothing, and the file that carries the workspace instead. */
+function ShareTooLong({ target, onDismiss }: {
+  target: Extract<ShareTarget, { kind: "too-long" }>;
+  onDismiss: () => void;
+}): React.ReactElement {
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="workspace-notice share-notice" role="status">
+      <span>
+        Nothing was copied: this workspace needs {target.length.toLocaleString()} characters
+        and a link holds {target.limit.toLocaleString()}. Download it as a file instead;
+        {" "}<b>open</b> restores it here or in another browser.
+        {error && <span className="error"> {error}</span>}
+      </span>
+      <button
+        className="mini"
+        onClick={() => {
+          try {
+            download(serializeWorkspace(useStore.getState()), "tilecone-workspace.json");
+            onDismiss();
+          } catch (e) {
+            setError(e instanceof Error ? e.message : "Could not export this workspace.");
+          }
+        }}
+      >
+        download workspace
+      </button>
+      <button className="mini" onClick={onDismiss} title="dismiss" aria-label="dismiss">×</button>
+    </div>
   );
 }
 
@@ -79,6 +129,10 @@ function SourceEditor({ parametersActive }: { parametersActive: boolean }): Reac
   const diagnosticsSource = useStore((s) => s.diagnosticsSource);
   const built = useStore((s) => s.resolved !== null);
   const [ranAt, setRanAt] = useState(0);
+  const [shareTooLong, setShareTooLong] =
+    useState<Extract<ShareTarget, { kind: "too-long" }> | null>(null);
+  // The notice describes the source Share was pressed on; a new build retires it.
+  useEffect(() => setShareTooLong(null), [dslText]);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const highlightRef = useRef<HTMLPreElement>(null);
   // Each size parameter used by the built graph has its line marked for the note
@@ -173,7 +227,7 @@ function SourceEditor({ parametersActive }: { parametersActive: boolean }): Reac
         <button className="run-btn" onClick={run} disabled={compiling || (!unbuilt && !loadError)}>
           ▶ run
         </button>
-        <ShareButton />
+        <ShareButton onTooLong={setShareTooLong} />
         <span
           className="source-status"
           id="source-status"
@@ -221,6 +275,7 @@ function SourceEditor({ parametersActive }: { parametersActive: boolean }): Reac
           )}
         </span>
       </div>
+      {shareTooLong && <ShareTooLong target={shareTooLong} onDismiss={() => setShareTooLong(null)} />}
       <WorkspaceFiles />
     </>
   );
@@ -255,7 +310,9 @@ function Operations(): React.ReactElement {
   const probe = (nodeId: string, tensorId: string) => {
     if (!graphIsInteractive(useStore.getState())) return;
     const shape = resolved.tensors[tensorId].resolved;
-    setFocusNode({ kind: "op", id: nodeId });
+    // Framed with its operands, not centred at the current scale: in a graph
+    // fitted whole the operator alone is too small to read.
+    setFocusNode({ kind: "op", id: nodeId, frame: "operands" });
     // `setSelection` below lights the row for whatever produced the tensor it
     // lands on, which for an operation's own output is this row - but only when
     // the tile is actually placed. A degenerate output takes the early return,

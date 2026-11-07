@@ -30,6 +30,12 @@ import { WorkspaceSnapshot } from "./history";
  * A plan kept for comparison: its tiling, the whole-plan work it was evaluated
  * to, and the graph outputs it does not write, whose work that total leaves out.
  */
+
+/** See `State.focusNode`. */
+export type FocusRequest =
+  | { kind: "tensor"; id: string }
+  | { kind: "op"; id: string; frame?: "operands" };
+
 export type KeptPlan = {
   id: number;
   tiles: Record<string, number[]>;
@@ -234,9 +240,11 @@ export type State = {
    */
   axisMode: AxisMode;
   /** A one-shot request to bring a node into view. Carries the kind because an
-   * operation row centres its operator, not the tensor it writes. Consumed by
-   * the viewport and cleared, so asking twice acts twice. */
-  focusNode: { kind: "tensor" | "op"; id: string } | null;
+   * operation row centres its operator, not the tensor it writes. `operands`
+   * frames an operation with the cards it reads and writes, zoomed to fit them,
+   * rather than centring it at the current scale. Consumed by the viewport and
+   * cleared, so asking twice acts twice. */
+  focusNode: FocusRequest | null;
   /**
    * The row standing highlighted in the operations list.
    *
@@ -432,7 +440,7 @@ export type State = {
   dropKeptPlan: (id: number) => void;
   /** Make a kept plan's tiling the current one. Undoable. */
   restoreKeptPlan: (id: number) => void;
-  setFocusNode: (node: { kind: "tensor" | "op"; id: string } | null) => void;
+  setFocusNode: (node: FocusRequest | null) => void;
   /** Light one row of the operations list, or clear it with `null`. */
   setSelectedOp: (nodeId: string | null) => void;
   /** Preview a panel resize, clamped to the usable open range. */

@@ -9,6 +9,7 @@ import {
   graphZoomBounds,
   isBackgroundClick,
   lowZoomBound,
+  operandFrame,
   visibleEntangledTensorIds,
 } from "../../../src/components/graph/GraphView";
 
@@ -199,5 +200,35 @@ describe("which presses start a gesture", () => {
     expect(isPrimaryPress({ button: 0 })).toBe(true);
     expect(isPrimaryPress({ button: 1 })).toBe(false);
     expect(isPrimaryPress({ button: 2 })).toBe(false);
+  });
+});
+
+describe("framing an operation with its operands", () => {
+  const node = (kind: "op" | "tensor", id: string, x: number, y: number, w = 100, h = 80) =>
+    ({ kind, id, x, y, w, h });
+  const scene = {
+    nodes: [
+      node("tensor", "A", 0, 0),
+      node("tensor", "B", 0, 200),
+      node("op", "mm", 160, 120, 40, 30),
+      node("tensor", "C", 260, 100),
+      node("tensor", "Far", 3000, 0),
+    ],
+  };
+
+  it("bounds the operation, what it reads and what it writes, and nothing else", () => {
+    expect(operandFrame(scene, { id: "mm", inputs: ["A", "B"], outputs: ["C"] }))
+      .toEqual({ left: 0, top: 0, width: 360, height: 280 });
+  });
+
+  it("fits that frame far tighter than the whole scene", () => {
+    const viewport = { width: 1000, height: 600 };
+    const frame = operandFrame(scene, { id: "mm", inputs: ["A", "B"], outputs: ["C"] })!;
+    const whole = { left: 0, top: 0, width: 3100, height: 280 };
+    expect(fittedTransform(frame, viewport).k).toBeGreaterThan(2 * fittedTransform(whole, viewport).k);
+  });
+
+  it("is null for an operation the scene does not place", () => {
+    expect(operandFrame(scene, { id: "missing", inputs: ["A"], outputs: ["C"] })).toBeNull();
   });
 });

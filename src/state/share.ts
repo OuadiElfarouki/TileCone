@@ -87,8 +87,9 @@ const isTiling = (value: unknown): value is Record<string, number[]> =>
 const DIRECTIONS: Direction[] = ["none", "backward", "forward", "both"];
 const AXIS_MODES: AxisMode[] = ["symbolic", "numeric"];
 
-/** Hash payloads above this are impractical as URLs; callers fall back to JSON. */
-/** @internal Exported so the URL/raw-payload boundary is tested directly. */
+/** Hash payloads above this are impractical as URLs; Share offers the
+ * workspace file instead. */
+/** @internal Exported so the link/too-long boundary is tested directly. */
 export const MAX_HASH_LENGTH = 8000;
 
 export function encodeWorkspace(state: WorkspaceLink): string {
@@ -285,10 +286,19 @@ export function linkToRestore(link: WorkspaceLink): WorkspaceRestore {
   };
 }
 
-/** A shareable URL, or the raw payload when it is too long to live in one. */
-export function shareTarget(origin: string, pathname: string, state: WorkspaceLink): string {
+/** What Share can hand over: a URL, or the length that keeps it from being one. */
+export type ShareTarget =
+  | { kind: "link"; url: string }
+  | { kind: "too-long"; length: number; limit: number };
+
+/**
+ * A shareable URL, or the reason there is none. A workspace too long for a
+ * link is not copied in some other form: the reader expects a link on the
+ * clipboard, and is told to download the workspace file instead.
+ */
+export function shareTarget(origin: string, pathname: string, state: WorkspaceLink): ShareTarget {
   const hash = encodeWorkspace(state);
   return hash.length > MAX_HASH_LENGTH
-    ? JSON.stringify(state)
-    : `${origin}${pathname}#s=${hash}`;
+    ? { kind: "too-long", length: hash.length, limit: MAX_HASH_LENGTH }
+    : { kind: "link", url: `${origin}${pathname}#s=${hash}` };
 }

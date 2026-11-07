@@ -101,6 +101,12 @@ export const SHORTCUTS = {
     keys: ["e"],
   },
   fit: { id: "fit", label: "F", action: "fit the graph to the viewport", keys: ["f"] },
+  focusOp: {
+    id: "focus-op",
+    label: "O",
+    action: "zoom to the selected operation and the cards it reads and writes",
+    keys: ["o"],
+  },
   viewMode: {
     id: "view-mode",
     label: "P",
@@ -163,7 +169,7 @@ export const SHORTCUT_GROUPS = [
     ],
     note: "Tile edits apply in the Dependencies view.",
   },
-  { title: "View", items: [SHORTCUTS.viewMode, SHORTCUTS.needs, SHORTCUTS.feeds, SHORTCUTS.entangled, SHORTCUTS.fit, SHORTCUTS.scrub, SHORTCUTS.zoom, SHORTCUTS.options, SHORTCUTS.help] },
+  { title: "View", items: [SHORTCUTS.viewMode, SHORTCUTS.needs, SHORTCUTS.feeds, SHORTCUTS.entangled, SHORTCUTS.fit, SHORTCUTS.focusOp, SHORTCUTS.scrub, SHORTCUTS.zoom, SHORTCUTS.options, SHORTCUTS.help] },
   /* `run` builds the source; it is not a panel control. The sheet is the one
      place the bindings are taught, so its grouping is the mental model a reader
      leaves with. */

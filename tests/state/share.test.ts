@@ -173,15 +173,19 @@ describe("a link that cannot be trusted is refused, not repaired", () => {
 describe("share target", () => {
   it("is a URL when the payload fits", () => {
     const target = shareTarget("https://x.dev", "/app", LINK);
-    expect(target.startsWith("https://x.dev/app#s=")).toBe(true);
-    expect(decodeWorkspace(target.slice(target.indexOf("#")))).toEqual(LINK);
+    if (target.kind !== "link") throw new Error("expected a link");
+    expect(target.url.startsWith("https://x.dev/app#s=")).toBe(true);
+    expect(decodeWorkspace(target.url.slice(target.url.indexOf("#")))).toEqual(LINK);
   });
 
-  it("falls back to raw JSON when the hash would be unusable", () => {
+  it("reports a payload too long for a link instead of substituting another one", () => {
     const huge = { ...LINK, dsl: "# pad\n".repeat(4000) };
     const target = shareTarget("https://x.dev", "/app", huge);
-    expect(target.startsWith("https://x.dev")).toBe(false);
-    expect(JSON.parse(target).dsl).toBe(huge.dsl);
+    expect(target).toEqual({
+      kind: "too-long",
+      length: encodeWorkspace(huge).length,
+      limit: MAX_HASH_LENGTH,
+    });
     expect(encodeWorkspace(huge).length).toBeGreaterThan(MAX_HASH_LENGTH);
   });
 });

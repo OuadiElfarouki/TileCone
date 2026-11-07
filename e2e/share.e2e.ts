@@ -56,3 +56,18 @@ test("an older link without colour slots restores its tiles in order", async ({ 
   await page.goto(link.toString());
   await expect.poll(async () => (await snapshot(page)).parts.map((p) => p.hue), { timeout: 15_000 }).toEqual([0, 1]);
 });
+
+test("a workspace too long for a link copies nothing and offers the workspace file", async ({ page, context }) => {
+  const comment = Array.from({ length: 120 }, (_, i) => `# note ${i}: ${"abcdefghij".repeat(5)}`).join("\n");
+  await runSource(page, `${comment}\n${SOURCE}`);
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.evaluate(() => navigator.clipboard.writeText("before"));
+  await page.locator("button.share-btn").click();
+  const notice = page.locator(".share-notice");
+  await expect(notice).toContainText("Nothing was copied");
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("before");
+  const download = page.waitForEvent("download");
+  await notice.getByRole("button", { name: "download workspace" }).click();
+  expect((await download).suggestedFilename()).toBe("tilecone-workspace.json");
+  await expect(notice).toHaveCount(0);
+});

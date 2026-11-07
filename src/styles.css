@@ -867,6 +867,12 @@ textarea.source.error-state { border-color: var(--err); }
   margin: 8px 0 2px; padding: 5px 7px; color: var(--muted);
   border: 1px solid var(--line); border-radius: var(--r); font-size: var(--t-small);
 }
+/* A sub-heading inside a cone: graph inputs, then intermediates. */
+.cone-group {
+  display: flex; align-items: baseline; gap: 8px; margin-top: 8px; padding: 2px 0;
+  color: var(--muted); font-size: var(--t-small); border-bottom: 1px solid var(--line);
+}
+.cone-group .rollup { margin-left: auto; font-variant-numeric: tabular-nums; }
 .cone-row { padding: 6px 0; border-bottom: 1px solid var(--line); }
 .cone-row-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
 .cone-row-head b { font: 600 var(--t-body)/1.4 var(--mono); }

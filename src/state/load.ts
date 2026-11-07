@@ -161,7 +161,14 @@ export function installedDSLState(
     draftText: text,
     exampleIndex,
     focusNode: null,
+    // An operation id names a node of the graph being replaced.
+    selectedOp: null,
     compiling: false,
+    /* An example opens on Dependencies, where its starter tile is drawn and
+       described; the Plan view shows neither, and a fresh graph has no plan.
+       An experiment's source never reaches here: it is restored with its plan.
+       The reader's own source keeps the view they built it from. */
+    ...(example ? { inspectorTab: "dependencies" as const } : {}),
   };
   if (example?.defaultSelection) {
     state.selection = {
@@ -175,6 +182,7 @@ export function installedDSLState(
     state.pinnedBox = null;
     // The starter tile is the one placed last, so the keyboard moves it.
     state.editBox = 0;
+    state.selectedOp = operationForTensor(resolved, example.defaultSelection.tensor);
     Object.assign(state, recompute(resolved, state.selection));
   }
   state.loadError = null;
@@ -302,8 +310,13 @@ export function restoredWorkspaceState(
     ...base,
     ...plan,
     keptPlans: restoredKeptPlans(workspace.keptTilings ?? [], restored.reports),
-    ...(plan.planTask ? { selectedOp: operationForTensor(resolved, plan.planTask.tensorId) } : {}),
-    ...(workspace.planView ? { inspectorTab: "plan" as const } : {}),
+    selectedOp: operationForTensor(
+      resolved,
+      plan.planTask?.tensorId ?? analysisGroup ?? checkedParts[checkedParts.length - 1]?.tensorId ?? null
+    ),
+    // Both views are restored explicitly: a workspace saved on Dependencies
+    // opens on Dependencies whichever view the reader was in when opening it.
+    inspectorTab: workspace.planView ? "plan" : "dependencies",
     dslText: workspace.dsl,
     draftText: workspace.draftText ?? workspace.dsl,
     exampleIndex: EXAMPLES.findIndex((example) => example.dsl === workspace.dsl),

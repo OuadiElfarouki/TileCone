@@ -21,6 +21,8 @@ export const MAX_NOTES = 4;
 export type ConeFindings = {
   /** The surviving notes, in graph order. */
   notes: DependencyNote[];
+  /** The notes the cap left out, in graph order: summarised, not discarded. */
+  omitted: DependencyNote[];
   /** All distinct constraints before the display cap is applied. */
   constraintCount: number;
   elementwise: boolean;
@@ -122,7 +124,7 @@ export function dependencyNotes(
   back: PropResult,
   limit = MAX_NOTES
 ): DependencyNote[] {
-  return selectNotes(collectGroups(graph, back).groups, limit);
+  return selectNotes(collectGroups(graph, back).groups, limit).notes;
 }
 
 /**
@@ -134,18 +136,24 @@ export function dependencyNotes(
  * hits first among equals - while the surviving notes are *displayed* in graph
  * order, because that is the order the computation happens in.
  */
-function selectNotes(groups: Group[], limit: number): DependencyNote[] {
-  return groups
+function selectNotes(
+  groups: Group[],
+  limit: number
+): { notes: DependencyNote[]; omitted: DependencyNote[] } {
+  const ranked = groups
     .map((group, index) => ({ group, index }))
     .sort(
       (a, b) =>
         b.group.note.severity - a.group.note.severity ||
         a.group.depth - b.group.depth ||
         a.index - b.index
-    )
-    .slice(0, limit)
-    .sort((a, b) => a.index - b.index)
-    .map(({ group }) => finalize(group));
+    );
+  const inGraphOrder = (picked: typeof ranked) =>
+    picked.sort((a, b) => a.index - b.index).map(({ group }) => finalize(group));
+  return {
+    notes: inGraphOrder(ranked.slice(0, limit)),
+    omitted: inGraphOrder(ranked.slice(limit)),
+  };
 }
 
 /**
@@ -183,7 +191,7 @@ export function coneFindings(
     }
 
   return {
-    notes: selectNotes(groups, limit),
+    ...selectNotes(groups, limit),
     constraintCount: groups.length,
     elementwise,
     flags,

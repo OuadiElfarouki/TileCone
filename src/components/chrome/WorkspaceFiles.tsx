@@ -4,7 +4,7 @@ import { MAX_WORKSPACE_BYTES, parseWorkspaceDocument, sameSavedWorkspace, serial
 import { RECOVERY_KEY } from "../../state/workspace-session";
 import { WorkspaceStatus } from "./WorkspaceStatus";
 
-function download(text: string, name: string): void {
+export function download(text: string, name: string): void {
   const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
   const anchor = document.createElement("a");
   anchor.href = url; anchor.download = name;

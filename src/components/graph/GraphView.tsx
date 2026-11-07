@@ -127,6 +127,27 @@ export function centredOn(
   };
 }
 
+/**
+ * @internal Pure framing seam: the rectangle holding an operation and the
+ * cards it reads and writes, or null when the scene does not place it.
+ * `fittedTransform` then fits this rectangle the way it fits the whole scene.
+ */
+export function operandFrame(
+  scene: Pick<GraphScene, "nodes">,
+  node: { id: string; inputs: readonly string[]; outputs: readonly string[] }
+): { left: number; top: number; width: number; height: number } | null {
+  const tensors = new Set([...node.inputs, ...node.outputs]);
+  const placed = scene.nodes.filter((candidate) =>
+    candidate.kind === "op" ? candidate.id === node.id : tensors.has(candidate.id)
+  );
+  if (!placed.some((candidate) => candidate.kind === "op")) return null;
+  const left = Math.min(...placed.map((n) => n.x));
+  const top = Math.min(...placed.map((n) => n.y));
+  const right = Math.max(...placed.map((n) => n.x + n.w));
+  const bottom = Math.max(...placed.map((n) => n.y + n.h));
+  return { left, top, width: right - left, height: bottom - top };
+}
+
 /** Useful zoom is bounded by legibility at the low end and the canvas backing
  * scale at the high end. Operators do not vote: tensor cards are what the user
  * needs to inspect, and their smallest side determines the floor. */
@@ -422,14 +443,16 @@ export function GraphView(): React.ReactElement {
     glideRef.current = null;
   }, []);
 
-  const glideTo = useCallback((to: { x: number; y: number }) => {
+  const glideTo = useCallback((target: { x: number; y: number; k?: number }) => {
     cancelGlide();
-    const from = { x: tfRef.current.x, y: tfRef.current.y };
-    const still = Math.abs(to.x - from.x) < 0.5 && Math.abs(to.y - from.y) < 0.5;
+    const from = { ...tfRef.current };
+    const to = { ...target, k: target.k ?? from.k };
+    const still = Math.abs(to.x - from.x) < 0.5 && Math.abs(to.y - from.y) < 0.5 &&
+      Math.abs(to.k - from.k) < ZOOM_EPSILON;
     // Honour a reduced-motion preference, and skip the machinery when the view
     // is already where it is going.
     if (still || window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
-      setTf((t) => ({ ...t, ...to }));
+      setTf(to);
       return;
     }
     const started = performance.now();
@@ -438,7 +461,11 @@ export function GraphView(): React.ReactElement {
       // Ease out: leaves quickly, arrives gently, so the end reads as settling
       // rather than stopping.
       const e = 1 - (1 - p) ** 3;
-      setTf((t) => ({ ...t, x: from.x + (to.x - from.x) * e, y: from.y + (to.y - from.y) * e }));
+      setTf({
+        x: from.x + (to.x - from.x) * e,
+        y: from.y + (to.y - from.y) * e,
+        k: from.k + (to.k - from.k) * e,
+      });
       glideRef.current = p < 1 ? requestAnimationFrame(step) : null;
     };
     glideRef.current = requestAnimationFrame(step);
@@ -575,11 +602,14 @@ export function GraphView(): React.ReactElement {
     );
     const el = containerRef.current;
     if (target && el) {
-      glideTo(centredOn(
-        target,
-        { width: el.clientWidth, height: el.clientHeight },
-        tfRef.current.k
-      ));
+      const viewportSize = { width: el.clientWidth, height: el.clientHeight };
+      const op = focusNode.kind === "op" && focusNode.frame === "operands"
+        ? nodeById.get(focusNode.id)
+        : undefined;
+      const frame = op && sceneRef.current ? operandFrame(sceneRef.current, op) : null;
+      glideTo(frame
+        ? fittedTransform(frame, viewportSize, zoomBounds, overlayInsets(el))
+        : centredOn(target, viewportSize, tfRef.current.k));
       // Centring is a deliberate viewport position like a pan or a zoom. Left
       // unmarked, the ResizeObserver still considered the view fitted and the
       // next panel collapse or window resize re-fitted away from the node the
@@ -590,7 +620,7 @@ export function GraphView(): React.ReactElement {
       // arrives before the scene has the node stays pending.
       setFocusNode(null);
     }
-  }, [focusNode, setFocusNode, glideTo]);
+  }, [focusNode, setFocusNode, glideTo, nodeById, zoomBounds]);
 
   const onWheel = (e: React.WheelEvent) => {
     e.preventDefault();
@@ -693,6 +723,10 @@ export function GraphView(): React.ReactElement {
   if (!scene) return <div className="canvas-empty" role="status">{layoutError ? "Unable to arrange graph." : "Arranging graph…"}</div>;
 
   const operandsShown = operandLabelsLegible(tf.k);
+  const focused = selectedOp !== null ? nodeById.get(selectedOp) : undefined;
+  const focusLabel = focused
+    ? `${focused.outputs.map((id) => resolved.tensors[id]?.name ?? id).join(", ")} = ${opLabel(focused)}`
+    : "the selected operation";
   const renderEdges = (layer: EdgePresentation["layer"]) => (
     <svg className={`edges ${layer}`} width={scene.width} height={scene.height} aria-hidden>
       {scene.edges.map((edge) => {
@@ -914,7 +948,18 @@ export function GraphView(): React.ReactElement {
         <div className="zoom-controls">
           <button onClick={() => zoomBy(1 / 1.25)} title="zoom out">−</button>
           <button onClick={() => zoomBy(1.25)} title="zoom in">+</button>
-          <button onClick={fit} title="fit to view (f)">fit</button>
+          <button onClick={fit} title="fit the whole graph to the view (f)">fit</button>
+          {/* The readable counterpart to fit: one operation and its operands,
+              at a scale where their cards can be read. */}
+          <button
+            onClick={() => selectedOp !== null && setFocusNode({ kind: "op", id: selectedOp, frame: "operands" })}
+            disabled={!interactive || selectedOp === null}
+            title={selectedOp === null
+              ? "select an operation to focus on it and its operands"
+              : `zoom to ${focusLabel} and the cards it reads and writes (o)`}
+          >
+            focus
+          </button>
           {/* At the floor the percentage is a number with no reference — 12%
               of what, and why will it not go lower. `fit` names the scale the
               zoom-out is actually resting against, which D72 made a derived
