@@ -1,4 +1,6 @@
 import { isPrimaryPress } from "../../../src/components/pointer";
+import { compileDSL } from "../../../src/parse/compiler";
+import { focusOperation } from "../../../src/view/workspace";
 import { describe, expect, it } from "vitest";
 import {
   canSelectOperation,
@@ -230,5 +232,28 @@ describe("framing an operation with its operands", () => {
 
   it("is null for an operation the scene does not place", () => {
     expect(operandFrame(scene, { id: "missing", inputs: ["A"], outputs: ["C"] })).toBeNull();
+  });
+});
+
+describe("the operation focus goes to", () => {
+  const graph = compileDSL("A = Tensor(4, 4, dtype=float32)\nB = Tensor(4, 4, dtype=float32)\nC = matmul(A, B)\nD = relu(C)\n").resolved;
+  const opOf = (tensorId: string) => graph.tensors[tensorId].producer!.nodeId;
+  const part = (tensorId: string) => ({ tensorId, box: [{ lo: 0, hi: 1 }, { lo: 0, hi: 1 }] });
+  const base = {
+    resolved: graph, selectedOp: null, inspectorTab: "dependencies" as const,
+    planTask: null, selection: null, analysisGroup: null,
+  };
+
+  it("is the selected operation when there is one", () => {
+    expect(focusOperation({ ...base, selectedOp: opOf("D"), selection: { parts: [part("C")] } })).toBe(opOf("D"));
+  });
+
+  it("falls back to what computes the active tile group, or the inspected task under Plan", () => {
+    expect(focusOperation({ ...base, selection: { parts: [part("C"), part("D")] }, analysisGroup: "C" })).toBe(opOf("C"));
+    expect(focusOperation({ ...base, inspectorTab: "plan", planTask: { tensorId: "D" } })).toBe(opOf("D"));
+  });
+
+  it("is none with nothing selected, drawn or inspected", () => {
+    expect(focusOperation(base)).toBeNull();
   });
 });

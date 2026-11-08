@@ -44,6 +44,7 @@ function reduceDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
         text: `full ${one ? `axis ${word(full[0])}` : `axes ${listed}`} - reduced, needs an accumulator`,
       },
     ],
+    summary: `${ctx.outNames[0]} reduces ${ctx.inNames[0]} over ${one ? "axis" : "axes"} ${listed}`,
     text:
       `${attrs.fn} reduces ${ctx.inNames[0]} over ${one ? "axis" : "axes"} ${list}, so one ` +
       `element of ${ctx.outNames[0]} depends on every element along ${one ? "it" : "them"}. ` +

@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useStore } from "../../state/store";
 import { matchesShortcut, SHORTCUTS } from "../../view/shortcuts";
 import { hiddenAxisPositioned, viewAxes } from "../../view/tensor/tensor-view";
-import { activeCanvasTool, analysisTarget, graphIsInteractive, InspectorTab, keyboardTile } from "../../view/workspace";
+import { activeCanvasTool, analysisTarget, focusOperation, graphIsInteractive, InspectorTab, keyboardTile } from "../../view/workspace";
 import { activePlanTrail } from "../../state/plan";
 
 const isTyping = (el: EventTarget | null) => {
@@ -152,8 +152,8 @@ export function useKeyboard({
       }
       if (matchesShortcut(e, SHORTCUTS.focusOp)) {
         e.preventDefault();
-        if (graphIsInteractive(s) && s.selectedOp !== null)
-          s.setFocusNode({ kind: "op", id: s.selectedOp, frame: "operands" });
+        const op = focusOperation(s);
+        if (graphIsInteractive(s) && op !== null) s.setFocusNode({ kind: "op", id: op, frame: "operands" });
         return;
       }
       if (matchesShortcut(e, SHORTCUTS.viewMode)) {

@@ -491,6 +491,7 @@ function einsumDependencyNote(eq: string, ctx: NoteCtx): DependencyNoteDraft | n
       })),
       // Phrased without an article before the axis name on purpose: the label
       // is user-supplied, so "a K" / "an E" cannot be chosen ahead of time.
+      summary: `${ctx.outNames[0]} contracts ${axisLabel}=${extent} in full`,
       text:
         `${ctx.outNames[0]} contracts ${axisLabel}=${extent} in full. One tile of ` +
         `${ctx.outNames[0]} pulls the complete ${axisLabel} extent of ${listed}. A fused ` +

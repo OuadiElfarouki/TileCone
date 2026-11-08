@@ -10,12 +10,13 @@ import { useStore } from "../../state/store";
 const tilesOf = (plan: TilePlan): Record<string, number[]> =>
   Object.fromEntries([...plan.families].map(([tensorId, family]) => [tensorId, [...family.tile]]));
 
-/** How long a whole replay takes, and the bounds on one run's turn within it. */
-const REPLAY_MS = 4200;
-const MIN_STEP_MS = 84;
-/** A step deeper than 1 is one producer tile and the block it meets: small
- *  changes that read at a faster pace, and there are many more of them. */
-const STEPPED_MIN_STEP_MS = 32;
+/** How long a replay takes, and the bounds on one frame's turn within it.
+ *  Playback is a sweep: it shows where demand moves across the family, in
+ *  about ten seconds up to some three hundred frames and longer past that.
+ *  No frame is shorter than two refreshes at 60 Hz. One task is studied by
+ *  pausing and stepping, not at playback pace. */
+const REPLAY_MS = 10_000;
+const MIN_STEP_MS = 32;
 const MAX_STEP_MS = 220;
 /** How long a departure takes to fade the overlay. */
 const DEPART_FADE_MS = 240;
@@ -112,8 +113,7 @@ export function usePlanReplay({
     let visited = from;
     updatePlayback({ visited, paused: visited >= frames });
     if (visited >= frames) return;
-    const min = now.replay.depth > 1 ? STEPPED_MIN_STEP_MS : MIN_STEP_MS;
-    const step = Math.max(min, Math.min(MAX_STEP_MS, Math.round(REPLAY_MS / frames)));
+    const step = Math.max(MIN_STEP_MS, Math.min(MAX_STEP_MS, Math.round(REPLAY_MS / frames)));
     playbackTimer.current = window.setInterval(() => {
       updatePlayback({ visited: ++visited });
       if (visited >= frames) {

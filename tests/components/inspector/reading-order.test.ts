@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Inspector } from "../../../src/components/inspector/Inspector";
 import { coneGroups } from "../../../src/components/inspector/cones";
+import { reuseDisclosure } from "../../../src/components/inspector/operand-reuse";
 import { EXAMPLES } from "../../../src/examples/index";
 import { useStore } from "../../../src/state/store";
 import type { TensorReadout } from "../../../src/core/metrics";
@@ -50,6 +51,42 @@ describe("the Dependencies panel's reading order", () => {
     expect(html).toContain("show 1 more");
     // The summary leaves it out; the flag on its tensor row still names it.
     expect(html).not.toContain("softmax normalises Scores");
+  });
+});
+
+describe("a compact summary on a layer", () => {
+  it("states each constraint in one line, its full account behind it", () => {
+    const html = attention();
+    expect(html).toContain("<b>einsum</b>Kp contracts emb=128 in full (also Qp and Vp)</summary>");
+    expect(html).toContain("<b>einsum</b>Out contracts emb=128 in full</summary>");
+    // The account is still in the page, inside the closed disclosure.
+    expect(html).toMatch(/<details><summary>[^]*?<\/summary><p>Out contracts emb=128 in full\. One tile of Out/);
+  });
+
+  it("opens operand reuse on its total when many operands are reused", () => {
+    const html = attention();
+    expect(html).toContain("show all</button>");
+    expect(html).toMatch(/9 operands of 7 operations reuse\s+elements, up to 128 uses per element/);
+    expect(html).not.toContain("Used once:");
+  });
+});
+
+describe("operand reuse disclosure", () => {
+  it("never leaves a section collapsed without the control to open it", () => {
+    for (const rows of [0, 2, 4, 5, 9])
+      for (const lit of [false, true])
+        for (const expanded of [false, true]) {
+          const { open, toggle } = reuseDisclosure(rows, lit, expanded);
+          if (!open) expect(toggle).toBe(true);
+        }
+  });
+
+  it("opens a short list whatever was chosen on a long one", () => {
+    expect(reuseDisclosure(3, false, false).open).toBe(true);
+  });
+
+  it("keeps a list holding the lit lens open, with nothing offering to close it", () => {
+    expect(reuseDisclosure(9, true, false)).toEqual({ open: true, toggle: false });
   });
 });
 

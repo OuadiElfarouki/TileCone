@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import type { OperandReads } from "../../core/multiplicity";
 import { formatFigure, fmt } from "../../view/format";
 import { readOnceLine, readsDetail, readsOperation, readsSummary } from "../../view/multiplicity";
@@ -47,11 +47,41 @@ export function OperandReuse({
   const reused = reads.filter(listed);
   const single = reads.filter((row) => !listed(row));
   const once = single.length && reused.length ? readOnceLine(single, nameOf) : null;
+  /* A layer reuses operands at most of its operations, and a row each puts
+     the cones below the fold. Past a few rows the section opens on one line,
+     the most any element is used. A short list is always open, and so is a
+     list holding the lit lens, whose row and legend explain the shaded card:
+     the reader's choice applies only where it can be undone from here. */
+  const [expanded, setExpanded] = useState(false);
+  const { open, toggle } = reuseDisclosure(
+    reused.length, reused.some((row) => sameLens(lens, keyOf(row))), expanded);
+  const most = reused.reduce<OperandReads | null>(
+    (top, row) => (!top || (row.max.value ?? 0) > (top.max.value ?? 0) ? row : top), null);
+  /* A row is one operand of one operation, so one tensor read by three
+     operations is three rows; the total counts operations alongside, so the
+     number is not read as distinct tensors. */
+  const operations = new Set(reused.map((row) => row.nodeId)).size;
   return (
     <div className="ins-section">
-      <div className="ins-title">{title}</div>
+      <div className={`ins-title${toggle ? " with-action" : ""}`}>
+        {title}
+        {toggle && (
+          <span className="ins-title-actions">
+            <button className="mini" aria-expanded={open} onClick={() => setExpanded(!open)}>
+              {open ? "hide" : "show all"}
+            </button>
+          </span>
+        )}
+      </div>
       {reads.length === 0 ? (
         <p className="hint">{empty}</p>
+      ) : !open && most ? (
+        <p className="hint reuse-rollup">
+          {reused.length} operands of {operations} operation{operations === 1 ? "" : "s"} reuse
+          elements, up to {formatFigure(most.max, fmt)} uses per element
+          ({nameOf(most.tensorId)} via {readsOperation(most, nameOf)})
+          {single.length > 0 && ` · ${single.length} more use each element once`}
+        </p>
       ) : reused.length > 0 ? (
         <ul className="reuse-list">
           {reused.map((row) => {
@@ -81,13 +111,32 @@ export function OperandReuse({
       ) : (
         <p className="hint">Every operand element here is used by one output.</p>
       )}
-      {once && (
+      {once && open && (
         <p className="hint" title={once.detail}>
           Used once: {once.text}
         </p>
       )}
     </div>
   );
+}
+
+/** Reused rows shown before the section opens on its one-line total instead;
+ *  the dependency notes summarise at the same count. */
+const OPEN_ROWS = 4;
+
+/**
+ * Whether the reused rows are listed, and whether the section offers to
+ * switch that. A collapsed section always offers it, so a choice made on a
+ * long list can never strand a short one closed.
+ * @internal Exported for tests.
+ */
+export function reuseDisclosure(
+  rows: number,
+  lit: boolean,
+  expanded: boolean
+): { open: boolean; toggle: boolean } {
+  const long = rows > OPEN_ROWS;
+  return { open: !long || lit || expanded, toggle: long && !lit };
 }
 
 /**

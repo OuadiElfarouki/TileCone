@@ -216,6 +216,7 @@ function convDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
     flags: [
       { tensorId: ctx.inIds[0], text: `halo - neighbouring tiles overlap by ${halo}` },
     ],
+    summary: `${ctx.outNames[0]} re-reads a ${halo} halo of ${ctx.inNames[0]} between tiles`,
     text:
       `conv reads a ${reach.join("×")} window of ${ctx.inNames[0]} per output element at ` +
       `stride ${stride.join("×")}, so adjacent tiles of ${ctx.outNames[0]} overlap by ` +

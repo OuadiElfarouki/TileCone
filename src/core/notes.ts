@@ -8,6 +8,8 @@ export type DependencyNote = {
   op: string;
   /** The tensor this note is primarily about. */
   subject: string;
+  /** The constraint in one line; see `DependencyNoteDraft.summary`. */
+  summary: string;
   text: string;
   /** How hard this constraint binds a fused kernel; see `DependencyNoteDraft`. */
   severity: 1 | 2 | 3;
@@ -85,6 +87,7 @@ function collectGroups(
         nodeId: node.id,
         op: node.op,
         subject: draft.subject,
+        summary: draft.summary,
         text: draft.text,
         severity: draft.severity,
       },
@@ -104,7 +107,11 @@ function finalize({ note, others }: Group): DependencyNote {
     others.length === 1
       ? others[0]
       : `${others.slice(0, -1).join(", ")} and ${others[others.length - 1]}`;
-  return { ...note, text: `${note.text} The same holds for ${list}.` };
+  return {
+    ...note,
+    summary: `${note.summary} (also ${list})`,
+    text: `${note.text} The same holds for ${list}.`,
+  };
 }
 
 /**

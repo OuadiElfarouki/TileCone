@@ -219,6 +219,7 @@ function reshapeDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
       flags: [
         { tensorId: ctx.inIds[0], text: "superset - preimage fragmented past the box cap" },
       ],
+      summary: `the highlight on ${ctx.inNames[0]} is a superset: reshape fragmented it`,
       text:
         `reshape ${from} → ${to} fragmented this tile's preimage past the box cap, so the ` +
         `highlight on ${ctx.inNames[0]} is a conservative superset - it is hatched for that ` +
@@ -236,6 +237,7 @@ function reshapeDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
           text: `${region.boxes.length} disjoint runs - strided in memory`,
         },
       ],
+      summary: `${ctx.outNames[0]}'s tile lands on ${region.boxes.length} disjoint runs of ${ctx.inNames[0]}`,
       text:
         `reshape ${from} → ${to} costs nothing to compute but is not free to tile: this ` +
         `contiguous tile of ${ctx.outNames[0]} lands on ${region.boxes.length} disjoint runs ` +

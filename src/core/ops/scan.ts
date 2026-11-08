@@ -55,6 +55,9 @@ function cumsumDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
         text: `triangular cone - prefix over axis ${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)}`,
       },
     ],
+    summary:
+      `${ctx.outNames[0]} is a prefix scan of ${ctx.inNames[0]} along axis ` +
+      `${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)}: tiles run in order`,
     text:
       `cumulative_sum is a prefix scan along axis ${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)} ` +
       `(${extent} wide), so element i of ${ctx.outNames[0]} depends on ` +

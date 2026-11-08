@@ -84,6 +84,9 @@ function normalizeDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
         text: `full ${one ? `axis ${word(full[0])}` : `axes ${fullList}`} - ${attrs.kind} statistics span ${one ? "it" : "them"}`,
       },
     ],
+    summary:
+      `${ctx.outNames[0]} needs ${one ? "axis" : "axes"} ${fullList} of ${ctx.inNames[0]} whole ` +
+      `for ${attrs.kind} statistics`,
     text:
       `${attrs.kind} takes statistics over ${one ? "axis" : "axes"} ${fullList} of ` +
       `${ctx.inNames[0]}, so a tile of ${ctx.outNames[0]} needs ` +

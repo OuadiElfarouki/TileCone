@@ -344,6 +344,27 @@ export function operationForTensor(
   return distinct.length === 1 ? distinct[0] : null;
 }
 
+/**
+ * The operation the canvas's focus action frames: the selected one, else the
+ * one computing what the inspector describes - the inspected task under Plan,
+ * the active tile group under Dependencies. A press in the inspector releases
+ * the selected row, and focus should still have the answer on screen to go to.
+ */
+export function focusOperation(state: {
+  resolved: ResolvedGraph | null;
+  selectedOp: string | null;
+  inspectorTab: InspectorTab;
+  planTask: { tensorId: string } | null;
+  selection: { parts: SelPart[] } | null;
+  analysisGroup: string | null;
+}): string | null {
+  if (state.selectedOp !== null) return state.selectedOp;
+  const tensorId = state.inspectorTab === "plan"
+    ? state.planTask?.tensorId ?? null
+    : analysisTarget(state.selection?.parts ?? [], state.analysisGroup, null).tensorId;
+  return operationForTensor(state.resolved, tensorId);
+}
+
 /** Panel geometry. VS Code semantics: drag to resize between the bounds, drag
  * far enough inward to collapse, click the rail to bring it back. */
 export const PANEL_MIN = 232;

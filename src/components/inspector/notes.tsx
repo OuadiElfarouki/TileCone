@@ -77,6 +77,11 @@ export function DependencyNotes({
   );
 }
 
+/**
+ * One line per constraint, its full account a press away. The line says what
+ * the operation makes a tile need; the account says why, and what it implies
+ * for fusing, which is read once rather than every time the panel is.
+ */
 function NoteList({ notes }: { notes: DependencyNote[] }): React.ReactElement {
   return (
     <ul className="notes-list">
@@ -86,11 +91,16 @@ function NoteList({ notes }: { notes: DependencyNote[] }): React.ReactElement {
           className={`severity-${note.severity}`}
           title={`${NOTE_SEVERITY[note.severity].word} constraint · severity ${note.severity} of 3`}
         >
-          <span className="sr-only">
-            {NOTE_SEVERITY[note.severity].word} constraint, severity {note.severity} of 3. {" "}
-          </span>
-          <b>{note.op}</b>
-          {note.text}
+          <details>
+            <summary>
+              <span className="sr-only">
+                {NOTE_SEVERITY[note.severity].word} constraint, severity {note.severity} of 3. {" "}
+              </span>
+              <b>{note.op}</b>
+              {note.summary}
+            </summary>
+            <p>{note.text}</p>
+          </details>
         </li>
       ))}
     </ul>

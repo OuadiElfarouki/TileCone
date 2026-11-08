@@ -4,10 +4,10 @@
  * demands too.
  *
  * The family is walked in listing order - row-major over its grid, which is a
- * listing and not an execution order - and cut into at most `REPLAY_FRAMES`
- * contiguous runs, so a long family replays in the time a short one does
- * without skipping a task. A family no longer than the cap has one task per
- * run.
+ * listing and not an execution order - one task per frame. A family longer
+ * than `REPLAY_FRAMES` is cut into that many contiguous runs, so no task is
+ * skipped; a run paints the union of its tasks, which is not a task's shape,
+ * and the transport says how many tasks each run holds.
  *
  * At depth 1 a run's demand is the bounded cone of its tiles at the plan's
  * frontier: what its tasks read from tiled tensors and graph inputs, and the
@@ -94,15 +94,23 @@ export const STEP_PATH_BUDGET = 16_384;
 export const STEP_WORK_BUDGET = 65_536;
 
 /**
+ * Frames a depth-1 replay shows one task each before it cuts tasks into runs.
+ * A task is the granularity a replay exists to show: a run paints the union of
+ * several tasks, a strip several tiles long, and its demand bands are that
+ * many times wider than one task's. Every frame's reach is computed up front
+ * and copied out of the Worker, so the cap bounds that work: 512 frames of an
+ * attention layer at S = 1024 take about 100 ms and 2 MB, where 2048 took
+ * about 370 ms and 8 MB.
+ */
+export const REPLAY_FRAMES = 512;
+
+/**
  * Frames a stepped replay shows one step each before it cuts steps into runs.
- * Far above `REPLAY_FRAMES` on purpose: a step is the granularity a deeper
- * replay exists to show, and a run of steps paints their union - a whole row
- * of producer tiles at once - which is the picture depth 1 already gives.
+ * A step deeper than 1 is one producer tile and the block it meets, smaller
+ * than a family task, and runs of steps paint a whole row of producer tiles -
+ * the picture depth 1 already gives - so steps are kept single for longer.
  */
 export const STEP_FRAMES = 2048;
-
-/** Runs a replay walks at most, by default. */
-export const REPLAY_FRAMES = 48;
 
 /**
  * Listing positions cut into at most `cap` contiguous runs of near-equal

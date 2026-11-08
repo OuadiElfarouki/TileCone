@@ -29,7 +29,7 @@ import {
 } from "../../core/plan/interfaces";
 import type { TaskRef, TilePlan } from "../../core/plan/plan";
 import { coordinatePage, tileBox, tileOrdinal, tiles, type TileFamily } from "../../core/plan/tile-family";
-import { taskLineage, type LineageRow } from "../../core/plan/replay";
+import { taskLineage, type FamilyReplay, type LineageRow } from "../../core/plan/replay";
 import { count, formatBoxIndices, unionOf } from "../../core/region";
 import { FIGURE_MARK, fmt, formatBytes, formatFigure, formatIntensity } from "../../view/format";
 import { demandDetail, demandSummary } from "../../view/demand";
@@ -880,6 +880,15 @@ export function replayExplanation(playback: ReplayPlayback | null, name: string,
     : `${runs ? `All ${tasks} tasks in ${frames.length} runs,` : `All ${tasks} tasks`} in listing order, which is not an execution order.`} Full strength marks what each ${unit} shares with this task; outlines are the producer tiles.`;
 }
 
+/** How many tasks (or steps) a run holds: one number, or the range when the
+ *  family does not divide evenly. */
+const runSize = (frames: FamilyReplay["frames"], stepped: boolean): string => {
+  const sizes = frames.map((frame) => (stepped ? frame.steps : frame.tasks));
+  const low = Math.min(...sizes);
+  const high = Math.max(...sizes);
+  return low === high ? `${low}` : `${low}–${high}`;
+};
+
 /**
  * A replay's transport, on the canvas it plays on: step, play or pause, scrub,
  * clear, and where the replay is. The listing order is said every time in
@@ -965,7 +974,9 @@ function ReplayStatus({
               : current.tasks === 1
                 ? `Task ${taskName(name, current.first.coord)}`
                 : `Tasks ${taskName(name, current.first.coord)} to ${taskName(name, current.last.coord)}`}{" "}
-            · {playback.visited} of {frames.length} · listing order, not execution order
+            · {playback.visited} of {frames.length}
+            {runs && ` · ${runSize(frames, stepped)} ${stepped ? "steps" : "tasks"} per run`}
+            {" "}· listing order, not execution order
           </span>
         )}
       </div>

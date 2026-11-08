@@ -132,10 +132,12 @@ undoes like any other plan edit.
 
 **replay** walks the inspected task's family on the graph: what each task reads and computes, with
 the part it shares with the inspected task drawn on top, and a trail of the tiles walked so far.
-The tasks follow listing order, row by row, which is not an execution order. A family of more than
-48 tasks is walked in 48 contiguous runs, so no task is skipped. When the replay ends it holds the
-last run on the graph. Its controls sit on the canvas, beside the view switch: ‹ and › step one
-run, ▶ / ❚❚ play and pause, the slider moves to any run, and **clear** fades the overlay. While it shows, the inspected task's own paint
+The tasks follow listing order, row by row, which is not an execution order, one task per step. A
+family of more than 512 tasks is walked in 512 contiguous runs, so no task is skipped, and the
+replay bar says how many tasks each run holds. Playback sweeps the family in about ten seconds;
+pause and step to study one task. When the replay ends it holds the last step on the
+graph. Its controls sit on the canvas, beside the view switch: ‹ and › step once, ▶ / ❚❚ play and
+pause, the slider moves to any step, and **clear** fades the overlay. While it shows, the inspected task's own paint
 steps back so the run is the subject. **depth** changes what a step is. At 1 a step is one of the family's tasks. At 2
 a step is one task producing a tile it reads - for `Z = Y @ A`, one Y task feeding one Z task - and
 it moves with the elements of the other operands it is combined with in that Z task (the one block

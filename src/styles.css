@@ -1039,9 +1039,15 @@ textarea.source.error-state { border-color: var(--err); }
 .notes-section { padding-bottom: 18px; }
 .notes-list { list-style: none; margin: 0; padding: 0; }
 .notes-list li {
-  margin: 0 0 8px; padding-left: 8px; font-size: var(--t-body); line-height: 1.62; color: var(--ink);
+  margin: 0 0 4px; padding-left: 8px; font-size: var(--t-body); line-height: 1.5; color: var(--ink);
   text-wrap: pretty;
 }
+/* One line per constraint; the marker sits at the end so the op chips align. */
+.notes-list summary { cursor: pointer; list-style: none; }
+.notes-list summary::-webkit-details-marker { display: none; }
+.notes-list summary::after { content: " ▸"; color: var(--muted); }
+.notes-list details[open] > summary::after { content: " ▾"; }
+.notes-list details > p { margin: 3px 0 6px; line-height: 1.62; color: var(--muted); }
 .notes-list li.severity-1 { border-left: 1px solid var(--muted); }
 .notes-list li.severity-2 { border-left: 2px solid var(--warn-ink); }
 .notes-list li.severity-3 { border-left: 3px solid var(--err); }

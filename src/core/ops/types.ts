@@ -14,6 +14,12 @@ export type NoteFlag = { tensorId: string; text: string };
 
 export type DependencyNoteDraft = {
   text: string;
+  /**
+   * The constraint in one short line, read before the full text: what the
+   * operation makes a tile of its output need. Written here, beside `text`,
+   * because only the operation can say it in fewer words without losing it.
+   */
+  summary: string;
   /** Identity of the constraint; equal keys are merged. */
   key: string;
   /** The tensor the note is about, used when merging. */

@@ -28,7 +28,7 @@ import { GridControls } from "../chrome/GridControls";
 import { LayoutControls } from "../chrome/LayoutControls";
 import { ViewModeBar } from "../chrome/ViewModeBar";
 import { useFrameThrottle } from "../hooks/useFrameThrottle";
-import { activeCanvasTool, graphIsInteractive, involvedTensorIds, layoutMovable, PANEL_RAIL } from "../../view/workspace";
+import { activeCanvasTool, focusOperation, graphIsInteractive, involvedTensorIds, layoutMovable, PANEL_RAIL } from "../../view/workspace";
 import { isPrimaryPress } from "../pointer";
 import { useMoveModifier } from "../hooks/useMoveModifier";
 import { useGraphLayout } from "../hooks/useGraphLayout";
@@ -231,6 +231,7 @@ export function GraphView(): React.ReactElement {
   const focusNode = useStore((s) => s.focusNode);
   const setSelectedOp = useStore((s) => s.setSelectedOp);
   const selectedOp = useStore((s) => s.selectedOp);
+  const focusOp = useStore(focusOperation);
   const setFocusNode = useStore((s) => s.setFocusNode);
   const setDragging = useStore((s) => s.setDragging);
   const nodeOffsets = useStore((s) => s.nodeOffsets);
@@ -723,10 +724,10 @@ export function GraphView(): React.ReactElement {
   if (!scene) return <div className="canvas-empty" role="status">{layoutError ? "Unable to arrange graph." : "Arranging graph…"}</div>;
 
   const operandsShown = operandLabelsLegible(tf.k);
-  const focused = selectedOp !== null ? nodeById.get(selectedOp) : undefined;
+  const focused = focusOp !== null ? nodeById.get(focusOp) : undefined;
   const focusLabel = focused
     ? `${focused.outputs.map((id) => resolved.tensors[id]?.name ?? id).join(", ")} = ${opLabel(focused)}`
-    : "the selected operation";
+    : "the operation";
   const renderEdges = (layer: EdgePresentation["layer"]) => (
     <svg className={`edges ${layer}`} width={scene.width} height={scene.height} aria-hidden>
       {scene.edges.map((edge) => {
@@ -952,10 +953,10 @@ export function GraphView(): React.ReactElement {
           {/* The readable counterpart to fit: one operation and its operands,
               at a scale where their cards can be read. */}
           <button
-            onClick={() => selectedOp !== null && setFocusNode({ kind: "op", id: selectedOp, frame: "operands" })}
-            disabled={!interactive || selectedOp === null}
-            title={selectedOp === null
-              ? "select an operation to focus on it and its operands"
+            onClick={() => focusOp !== null && setFocusNode({ kind: "op", id: focusOp, frame: "operands" })}
+            disabled={!interactive || focusOp === null}
+            title={focusOp === null
+              ? "select an operation or draw a tile to focus on it and its operands"
               : `zoom to ${focusLabel} and the cards it reads and writes (o)`}
           >
             focus

@@ -86,6 +86,14 @@ describe("family replay in the Plan view", () => {
     expect(html).toMatch(/Across all 16 Y tasks<span class="ins-title-actions"><button[^>]*>replay<\/button>/);
   });
 
+  it("says how many tasks a run holds when the family is cut into runs", () => {
+    const replay = familyReplay(S().plan!, S().planTask!, { sampleCap: 5 });
+    S().setReplayPlayback({ replay, plan: S().plan!, visited: 2, paused: true, exiting: false, opacity: 1 });
+    const html = render();
+    expect(html).toContain("Tasks Y (0, 3) to Y (1, 1) · 2 of 5 · 3–4 tasks per run · listing order");
+    S().setReplayPlayback(null);
+  });
+
   it("says where the replay is, and that listing order is not an execution order", () => {
     const replay = familyReplay(S().plan!, S().planTask!);
     S().setReplayPlayback({ replay, plan: S().plan!, visited: 3, paused: false, exiting: false, opacity: 1 });

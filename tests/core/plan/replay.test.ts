@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { taskDemand, tilePlan } from "../../../src/core/plan/plan";
-import { familyReplay, replayDepthLimit, replayRuns } from "../../../src/core/plan/replay";
+import { familyReplay, REPLAY_FRAMES, replayDepthLimit, replayRuns } from "../../../src/core/plan/replay";
 import { tileBox, tileCoord } from "../../../src/core/plan/tile-family";
 import { box, count, fromBox, intersect, unionOf } from "../../../src/core/region";
 import { compileDSL } from "../../../src/parse/compiler";
@@ -43,12 +43,28 @@ describe("a family replay", () => {
     expect(at("3,0").reach.get("B")!.shared).toBeNull();
   });
 
-  /* A long family is cut into contiguous runs rather than sampled, so the
-     trail on the cards has no gaps and no task is skipped. */
-  describe("over a long family", () => {
+  it("shows one task per frame for a family within the frame cap", () => {
+    const plan = tilePlan(resolved, { C: [16, 16] });
+    const replay = familyReplay(plan, { tensorId: "C", coord: [0, 0] });
+    expect(replay.tasks).toBe(256);
+    expect(replay.frames).toHaveLength(256);
+    expect(replay.frames.every((frame) => frame.tasks === 1 && count(frame.region) === 256)).toBe(true);
+  });
+
+  it("cuts a family past the frame cap into runs of near-equal length", () => {
+    const fine = tilePlan(resolved, { C: [8, 8] });
+    const replay = familyReplay(fine, { tensorId: "C", coord: [0, 0] });
+    expect(replay.tasks).toBe(1024);
+    expect(replay.frames).toHaveLength(REPLAY_FRAMES);
+    expect(replay.frames.every((frame) => frame.tasks === 1024 / REPLAY_FRAMES)).toBe(true);
+  });
+
+  /* A family longer than the cap is cut into contiguous runs rather than
+     sampled, so the trail on the cards has no gaps and no task is skipped. */
+  describe("over a family longer than the frame cap", () => {
     const fine = tilePlan(resolved, { C: [8, 8] });
     const family = fine.families.get("C")!;
-    const long = familyReplay(fine, { tensorId: "C", coord: [0, 0] });
+    const long = familyReplay(fine, { tensorId: "C", coord: [0, 0] }, { sampleCap: 48 });
 
     it("covers every task exactly once, in contiguous runs", () => {
       expect(long.tasks).toBe(1024);

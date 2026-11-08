@@ -44,6 +44,9 @@ function softmaxDependencyNote(ctx: NoteCtx): DependencyNoteDraft | null {
         text: `full axis ${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)} - softmax normalises across it`,
       },
     ],
+    summary:
+      `${ctx.outNames[0]} needs axis ${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)} of ` +
+      `${ctx.inNames[0]} whole (${extent} wide)`,
     text:
       `softmax normalises ${ctx.inNames[0]} along axis ${axisWord(ctx.inAxisNames[0], ctx.inDims[0], axis)} ` +
       `(${extent} wide), so a tile of ${ctx.outNames[0]} needs that axis of ${ctx.inNames[0]} ` +

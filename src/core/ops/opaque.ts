@@ -196,6 +196,7 @@ export const opaqueOp: OpSpec = {
     // the other half - that its arithmetic is still uncounted.
     if (!ctx.inIds.length)
       return {
+        summary: `${op} is an unmodelled barrier; its arithmetic is not counted`,
         text:
           ` ${op} is carried as a barrier and reads no tensor in this graph, so nothing upstream` +
           ` constrains it. Its own arithmetic is not counted.`,
@@ -204,6 +205,7 @@ export const opaqueOp: OpSpec = {
         severity: 1,
       };
     return {
+      summary: `${op} is unmodelled: its inputs are read in full`,
       text:
         ` ${op} is carried as a barrier: its semantics are not modelled, so one output element` +
         ` is assumed to read every input element in full. Everything through it is a bound, and` +
