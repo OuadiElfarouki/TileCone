@@ -78,7 +78,16 @@ export function ShortcutsDialog({
               <dl>
                 {group.items.map((item) => (
                   <React.Fragment key={item.id}>
-                    <dt><kbd>{item.label}</kbd></dt>
+                    <dt>
+                      {/* Alternatives are separate keys, so a long pair wraps
+                          between them rather than widening its column. */}
+                      {item.label.split(" / ").map((key, i) => (
+                        <React.Fragment key={key}>
+                          {i > 0 && <span className="muted">/</span>}
+                          <kbd>{key}</kbd>
+                        </React.Fragment>
+                      ))}
+                    </dt>
                     <dd>{item.action}</dd>
                   </React.Fragment>
                 ))}

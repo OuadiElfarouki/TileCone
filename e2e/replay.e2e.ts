@@ -88,8 +88,8 @@ test("Space pauses and resumes a replay, from the button that started it", async
   const pause = controls(page).getByRole("button", { name: "pause" });
   await pause.focus();
   await page.keyboard.press("Space");
-  await expect(controls(page).getByRole("button", { name: "play", exact: true })).toBeVisible();
-  await controls(page).getByRole("button", { name: "play", exact: true }).focus();
+  // The transport keeps focus through the swap, so the next press continues from it.
+  await expect(controls(page).getByRole("button", { name: "play", exact: true })).toBeFocused();
   const before = (await snapshot(page)).replayPlayback!.visited;
   await page.keyboard.press("Space");
   await expect(controls(page).getByRole("button", { name: "pause" })).toBeVisible();

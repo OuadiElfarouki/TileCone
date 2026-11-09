@@ -1,5 +1,7 @@
 export type Example = {
   name: string;
+  /** The heading the sample menu lists it under. */
+  group: string;
   dsl: string;
   /** initial selection: tensor name + box as [lo, hi] pairs */
   defaultSelection?: { tensor: string; box: [number, number][] };
@@ -19,6 +21,7 @@ export type Example = {
 export const EXAMPLES: Example[] = [
   {
     name: "Plain GEMM",
+    group: "Matmul",
     dsl: `M = 256
 N = 256
 K = 512
@@ -32,6 +35,7 @@ C = matmul(A, B)
   },
   {
     name: "Shared operand (A @ A)",
+    group: "Matmul",
     dsl: `N = 256
 
 # A is read through both operand slots, so a tile of C needs a row band and a
@@ -46,6 +50,7 @@ C = matmul(A, A)
   },
   {
     name: "Multi-head attention",
+    group: "Attention",
     dsl: `B = 1
 H = 4
 S = 128
@@ -77,6 +82,7 @@ Out = einsum("bse,ef->bsf", Zm, Wo)
   },
   {
     name: "KV-cache decode step",
+    group: "Attention",
     dsl: `B = 1
 H = 4
 P = 96
@@ -120,6 +126,7 @@ Out = reshape(Zt, [B, T, H*D])
   },
   {
     name: "Grouped-query decode step",
+    group: "Attention",
     dsl: `B = 1
 KVH = 2
 G = 4
@@ -168,6 +175,7 @@ Out = reshape(Zt, [B, T, KVH*G*D])
   },
   {
     name: "SwiGLU feed-forward",
+    group: "Layer blocks",
     dsl: `S = 128
 E = 256
 F = 704
@@ -196,6 +204,7 @@ Out = add(Y, X)
   },
   {
     name: "MoE expert dispatch",
+    group: "Layer blocks",
     dsl: `T = 8
 E = 128
 F = 256
@@ -234,6 +243,7 @@ Y = sum(Yg, axis=1, keepdims=false)
   },
   {
     name: "Conv2d 3x3 stride 2 (stacked)",
+    group: "Other operations",
     dsl: `N = 1
 C = 3
 F1 = 8
@@ -252,6 +262,7 @@ Y2 = conv2d(Y1, W2, stride=2, padding=1)
   },
   {
     name: "Reshape trap",
+    group: "Other operations",
     dsl: `X = Tensor(4, 4, dtype=float32)
 
 F = reshape(X, [16])
@@ -261,6 +272,7 @@ Y = reshape(F, [2, 8])
   },
   {
     name: "Layernorm + residual",
+    group: "Layer blocks",
     dsl: `S = 64
 E = 64
 
@@ -275,6 +287,7 @@ Y = add(H, X)
   },
   {
     name: "Cumulative sum",
+    group: "Other operations",
     dsl: `S = 48
 
 X = Tensor(S, dtype=float32)
@@ -286,6 +299,7 @@ Z = cumulative_sum(Y, axis=0)
   },
   {
     name: "Batched matmul",
+    group: "Matmul",
     dsl: `B = 2
 H = 4
 M = 200
@@ -305,6 +319,7 @@ C = matmul(A, W)
   },
   {
     name: "Experiment: tile size and reuse",
+    group: "Plan experiments",
     dsl: `M = 256
 N = 256
 K = 512
@@ -332,6 +347,7 @@ C = matmul(A, B)
   },
   {
     name: "Experiment: fusion and recomputation",
+    group: "Plan experiments",
     dsl: `# Question: when does fusion introduce recomputation?
 #
 # P1 writes H in 64x128 tiles and Y reads them: 24 tasks, 32 dependencies,
@@ -358,6 +374,7 @@ Y = matmul(H, W2)
   },
   {
     name: "Experiment: splitting a normalised axis",
+    group: "Plan experiments",
     dsl: `S = 64
 E = 64
 
@@ -386,3 +403,25 @@ Y = add(H, X)
     },
   },
 ];
+
+/**
+ * The examples by group, in the order each group first appears, with the
+ * indices into `EXAMPLES` they hold. The menu lists them this way; an
+ * example's index, which a workspace records, does not change with it.
+ */
+export function exampleGroups(examples: readonly Example[] = EXAMPLES): { title: string; indices: number[] }[] {
+  const groups = new Map<string, number[]>();
+  examples.forEach((example, index) => {
+    const indices = groups.get(example.group) ?? [];
+    indices.push(index);
+    groups.set(example.group, indices);
+  });
+  return [...groups].map(([title, indices]) => ({ title, indices }));
+}
+
+/** An example's name under its group's heading, which already says what the
+ *  "Experiment:" prefix does. The trigger shows the full name. */
+export function listedName(example: Example): string {
+  const rest = example.name.replace(/^Experiment: /, "");
+  return rest === example.name ? rest : rest[0].toUpperCase() + rest.slice(1);
+}

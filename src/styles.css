@@ -165,21 +165,27 @@ button.copy-failed { color: var(--err); border-color: var(--err); }
   background: color-mix(in srgb, var(--ink) 30%, transparent);
 }
 .shortcut-dialog {
-  width: min(680px, 100%); max-height: min(620px, calc(100vh - 40px)); overflow: auto;
+  width: min(960px, 100%); max-height: calc(100vh - 40px); overflow: auto;
   padding: 15px; background: var(--panel); border: 1px solid var(--card-line);
   border-radius: var(--r-pop); box-shadow: var(--shadow-pop);
 }
 .shortcut-dialog > header { display: flex; align-items: center; gap: 12px; }
 .shortcut-dialog > header button { margin-left: auto; }
-.shortcut-groups {
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px;
-  margin-top: 14px;
-}
+/* Columns rather than a grid of rows: the short groups pack under the tall
+   ones instead of each row waiting on its tallest group. */
+.shortcut-groups { columns: 3 260px; column-gap: 28px; margin-top: 14px; }
+.shortcut-groups > section { break-inside: avoid; margin-bottom: 18px; }
 .shortcut-groups h3 {
   margin: 0 0 8px; color: var(--muted);
   font: 600 var(--t-body)/1.3 var(--mono); text-transform: uppercase; letter-spacing: .06em;
 }
-.shortcut-groups dl { display: grid; grid-template-columns: auto 1fr; gap: 7px 9px; margin: 0; }
+/* The key column takes what its keys need, up to a share of the group: one
+   long key wraps instead of narrowing every description beside it. */
+.shortcut-groups dl {
+  display: grid; grid-template-columns: fit-content(40%) minmax(0, 1fr); gap: 7px 12px; margin: 0;
+}
+.shortcut-groups dt { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 0; }
+.shortcut-groups dt > .muted { padding: 0 4px; }
 .shortcut-groups dt, .shortcut-groups dd { margin: 0; font-size: var(--t-small); }
 .shortcut-groups dd { color: var(--muted); line-height: 1.45; }
 kbd {
@@ -187,9 +193,7 @@ kbd {
   border: 1px solid var(--line); border-radius: var(--r); background: var(--bg);
   font: var(--t-micro)/1.4 var(--mono);
 }
-@media (max-width: 700px) {
-  .shortcut-groups { grid-template-columns: 1fr; }
-}
+
 
 /* ---------------- panel frame ---------------- */
 /* The frame owns width and the drag strip; the panel inside just fills it. */
@@ -256,7 +260,7 @@ kbd {
 .side-kicker {
   font-size: var(--t-micro); letter-spacing: .09em; text-transform: uppercase; color: var(--muted);
 }
-.example-picker { display: flex; align-items: center; gap: 9px; padding: 13px 12px 0; }
+.example-picker { display: flex; align-items: center; gap: 9px; padding: 0 12px 8px; }
 /* The kicker keeps its own padding rule for headings that stand alone; inside
    the picker row the row owns the spacing. */
 .example-picker .side-kicker { flex: none; padding: 0; }
@@ -264,8 +268,6 @@ kbd {
    positioned rather than fixed: it must travel with the trigger. */
 .example-menu {
   position: relative; flex: 1; min-width: 0;
-  /* One row height, declared once: the option box and the menu's own height cap
-     are the same measurement, so a partial row is exactly half a row. */
   --example-row: 24px;
 }
 .example-trigger {
@@ -284,11 +286,8 @@ kbd {
 .example-trigger.on > i { color: inherit; }
 .example-options {
   position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0;
-  /* Three rows and the top of a fourth. The half row is the affordance: a list
-     cut cleanly at a row boundary looks finished, so nobody scrolls it. Sized
-     from the row metric rather than a round pixel count so it stays exactly
-     three-and-a-half rows if the type scale moves. */
-  max-height: calc(var(--example-row) * 3.5 + 6px);
+  /* Every sample shows; the height cap is the window's, set from the trigger's
+     position, and only a short window reaches it. */
   overflow-y: auto;
   /* The menu is a surface of its own, not a window onto the panel: without
      this, a wheel that reaches either end of the list keeps going and slides
@@ -299,6 +298,18 @@ kbd {
   border-radius: var(--r-pop); box-shadow: var(--shadow-pop);
 }
 .example-options:focus-visible { outline: none; }
+/* Where a short window cuts the list, the cut edge fades: rows continue past
+   it rather than ending there. */
+.example-options.more-below { mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); }
+.example-options.more-above { mask-image: linear-gradient(to top, #000 calc(100% - 28px), transparent); }
+.example-options.more-above.more-below {
+  mask-image: linear-gradient(to bottom, transparent, #000 28px, #000 calc(100% - 28px), transparent);
+}
+.example-group {
+  padding: 7px 7px 3px; color: var(--muted);
+  font-size: var(--t-micro); letter-spacing: .09em; text-transform: uppercase;
+}
+[role="group"]:first-child > .example-group { padding-top: 3px; }
 .example-option {
   display: flex; align-items: center; gap: 6px; height: var(--example-row);
   padding: 0 7px; border-radius: var(--r); font-size: var(--t-small); cursor: pointer;

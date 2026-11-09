@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useDismiss } from "../hooks/useDismiss";
 import { fromBox } from "../../core/region";
-import { EXAMPLES } from "../../examples";
+import { EXAMPLES, exampleGroups, listedName } from "../../examples";
 import { displayTile } from "../../view/tensor/tiling";
 import { workspaceToLink, shareTarget, type ShareTarget } from "../../state/share";
 import { serializeWorkspace } from "../../state/workspace-document";
@@ -363,13 +363,21 @@ function Operations(): React.ReactElement {
 }
 
 /**
- * The example picker is a menu rather than a row of chips. Eight names wrapped
+ * The sample picker is a menu rather than a row of chips. Eight names wrapped
  * to three lines above the operation list and read as a control surface with
  * more weight than it has: the examples are a way in, not part of the answer.
  * It is drawn from the same parts as everything else here - a bordered trigger
  * that goes accent when open, a floating surface at the popover radius - so it
  * is a smaller version of the panel, not a native widget dropped into it.
+ *
+ * It sits above the editor, since what it does is fill the editor. The menu
+ * lists every sample at once under its group's heading, so no row is cut by
+ * the menu's edge; only a window too short for the whole list scrolls it.
  */
+const SAMPLE_GROUPS = exampleGroups();
+/** The samples in the order the menu lists them, which the arrows walk. */
+const SAMPLE_ORDER = SAMPLE_GROUPS.flatMap((group) => group.indices);
+
 function ExamplePicker(): React.ReactElement {
   const exampleIndex = useStore((s) => s.exampleIndex);
   const draftText = useStore((s) => s.draftText);
@@ -381,7 +389,7 @@ function ExamplePicker(): React.ReactElement {
   const [active, setActive] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const listRef = useRef<HTMLUListElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   // Two different questions, and the picker answers both at once. What is *in
   // the editor* names the trigger; what is actually *built* takes the accent.
@@ -393,19 +401,44 @@ function ExamplePicker(): React.ReactElement {
   useDismiss(open, [rootRef], () => setOpen(false));
 
   useEffect(() => {
-    if (open) listRef.current?.focus();
+    // Without scrolling: focus can land before the height cap does, and the
+    // full-height list would scroll the panel to show itself.
+    if (open) listRef.current?.focus({ preventScroll: true });
   }, [open]);
 
-  // The menu shows three and a half rows, so the keyboard can walk the
-  // highlight out of view. Follow it. `nearest` keeps a pointer-driven change
-  // from jumping the list under the cursor.
+  /* The whole list, unless the panel ends first: then the menu stops a
+     margin short of it and scrolls, faded at the edge it continues past. The
+     panel's edge rather than the window's, since the panel clips the menu. */
+  const [room, setRoom] = useState<number | null>(null);
+  const [more, setMore] = useState({ above: false, below: false });
+  const measure = () => {
+    const list = listRef.current;
+    if (!list) return;
+    setMore({ above: list.scrollTop > 1, below: list.scrollTop + list.clientHeight < list.scrollHeight - 1 });
+  };
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current) return;
+    const clip = triggerRef.current.closest(".side-panel-scroll")?.getBoundingClientRect().bottom ?? window.innerHeight;
+    setRoom(Math.max(120, Math.min(clip, window.innerHeight) - triggerRef.current.getBoundingClientRect().bottom - 16));
+  }, [open]);
+  useLayoutEffect(measure, [open, room]);
+
+  /* With a short window the keyboard can walk the highlight out of view.
+     Follow it, scrolling the menu only: `scrollIntoView` would also scroll
+     the panel and take the trigger off screen. Only as far as needed, so a
+     pointer-driven change does not jump the list under the cursor. */
   useEffect(() => {
-    if (!open) return;
-    listRef.current?.children[active]?.scrollIntoView({ block: "nearest" });
-  }, [open, active]);
+    const list = listRef.current;
+    const row = document.getElementById(`example-option-${active}`);
+    if (!open || !list || !row) return;
+    const top = row.offsetTop;
+    const bottom = top + row.offsetHeight;
+    if (top < list.scrollTop) list.scrollTop = top;
+    else if (bottom > list.scrollTop + list.clientHeight) list.scrollTop = bottom - list.clientHeight;
+  }, [open, active, room]);
 
   const show = () => {
-    setActive(staged >= 0 ? staged : 0);
+    setActive(staged >= 0 ? staged : SAMPLE_ORDER[0]);
     setOpen(true);
   };
 
@@ -418,14 +451,15 @@ function ExamplePicker(): React.ReactElement {
   };
 
   const onListKeyDown = (e: React.KeyboardEvent) => {
+    const n = SAMPLE_ORDER.length;
     const step = (delta: number) => {
       e.preventDefault();
-      setActive((i) => (i + delta + EXAMPLES.length) % EXAMPLES.length);
+      setActive((i) => SAMPLE_ORDER[(SAMPLE_ORDER.indexOf(i) + delta + n) % n]);
     };
     if (e.key === "ArrowDown") step(1);
     else if (e.key === "ArrowUp") step(-1);
-    else if (e.key === "Home") { e.preventDefault(); setActive(0); }
-    else if (e.key === "End") { e.preventDefault(); setActive(EXAMPLES.length - 1); }
+    else if (e.key === "Home") { e.preventDefault(); setActive(SAMPLE_ORDER[0]); }
+    else if (e.key === "End") { e.preventDefault(); setActive(SAMPLE_ORDER[n - 1]); }
     else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); choose(active, true); }
     else if (e.key === "Escape") {
       e.preventDefault();
@@ -436,7 +470,7 @@ function ExamplePicker(): React.ReactElement {
 
   return (
     <div className="example-picker" ref={rootRef}>
-      <span className="side-kicker" id="example-picker-label">try an example</span>
+      <span className="side-kicker" id="example-picker-label">sample graphs</span>
       <div className="example-menu">
         <button
           ref={triggerRef}
@@ -450,7 +484,7 @@ function ExamplePicker(): React.ReactElement {
               ? exampleIndex === staged
                 ? `${current.name} · running`
                 : `${current.name} · loaded, not run yet`
-              : "load one of the built-in graphs"
+              : "load one of the sample graphs into the editor"
           }
           onClick={() => (open ? setOpen(false) : show())}
           onKeyDown={(e) => {
@@ -471,33 +505,42 @@ function ExamplePicker(): React.ReactElement {
           <i aria-hidden="true">▾</i>
         </button>
         {open && (
-          <ul
+          <div
             id="example-options"
-            className="example-options"
+            className={`example-options${more.above ? " more-above" : ""}${more.below ? " more-below" : ""}`}
             role="listbox"
             tabIndex={-1}
             ref={listRef}
+            style={room === null ? undefined : { maxHeight: room }}
             aria-labelledby="example-picker-label"
             aria-activedescendant={`example-option-${active}`}
             onKeyDown={onListKeyDown}
+            onScroll={measure}
           >
-            {EXAMPLES.map((example, index) => (
-              <li
-                key={example.name}
-                id={`example-option-${index}`}
-                role="option"
-                // The widget's value is what it would run, not what is running.
-                aria-selected={staged === index}
-                className={`example-option${index === active ? " active" : ""}${
-                  exampleIndex === index ? " on" : ""
-                }${staged === index && exampleIndex !== index ? " staged" : ""}`}
-                onPointerEnter={() => setActive(index)}
-                onClick={() => choose(index, false)}
-              >
-                <span>{example.name}</span>
-              </li>
+            {SAMPLE_GROUPS.map((group) => (
+              <div key={group.title} role="group" aria-labelledby={`example-group-${group.title}`}>
+                <div className="example-group" id={`example-group-${group.title}`} role="presentation">
+                  {group.title}
+                </div>
+                {group.indices.map((index) => (
+                  <div
+                    key={EXAMPLES[index].name}
+                    id={`example-option-${index}`}
+                    role="option"
+                    // The widget's value is what it would run, not what is running.
+                    aria-selected={staged === index}
+                    className={`example-option${index === active ? " active" : ""}${
+                      exampleIndex === index ? " on" : ""
+                    }${staged === index && exampleIndex !== index ? " staged" : ""}`}
+                    onPointerEnter={() => setActive(index)}
+                    onClick={() => choose(index, false)}
+                  >
+                    <span>{listedName(EXAMPLES[index])}</span>
+                  </div>
+                ))}
+              </div>
             ))}
-          </ul>
+          </div>
         )}
       </div>
     </div>
@@ -515,14 +558,13 @@ export function SidePanel(): React.ReactElement {
         <header className="source-heading">
           <h2 className="panel-title">Graph source</h2>
         </header>
+        <ExamplePicker />
         <div className="source-workspace">
           <SourceEditor parametersActive={parametersActive} />
           {/* Keyed by the built text: the boxes belong to one build, and the
               next run replaces them with its own values. */}
           {parametersActive && <ParamControls key={builtText} />}
         </div>
-
-        <ExamplePicker />
 
         <div className="side-divider" />
         <section
