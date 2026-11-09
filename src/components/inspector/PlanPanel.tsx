@@ -754,6 +754,7 @@ function FamilySection({
         <span className="ins-title-actions">
           <button
             className="mini"
+            data-replay-keys
             onClick={replay.run}
             disabled={replay.pending || run.evaluating}
             title={`replay this family's tasks on the cards: what each one reads, and what it shares with task ${taskName(name, task.coord)}`}
@@ -918,7 +919,7 @@ function ReplayStatus({
   const last = playback.visited >= frames.length;
   return (
     <OnCanvas>
-      <div className="plan-replay-controls tc-slider" role="group" aria-label="replay controls">
+      <div className="plan-replay-controls tc-slider" role="group" aria-label="replay controls" data-replay-keys>
         <span className="replay-subject">replay · {subject}</span>
         <button
           className="mini"

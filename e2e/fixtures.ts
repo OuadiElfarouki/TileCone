@@ -15,6 +15,8 @@ export type Snapshot = {
   planTask: State["planTask"];
   resizingTensor: string | null;
   built: boolean;
+  /** Where a replay stands, without its frames. */
+  replayPlayback: { visited: number; paused: boolean } | null;
 };
 
 export async function snapshot(page: Page): Promise<Snapshot> {
@@ -25,6 +27,7 @@ export async function snapshot(page: Page): Promise<Snapshot> {
       viewCfgs: s.viewCfgs, nodeOffsets: s.nodeOffsets, history: s.workspaceHistory.length,
       parts: s.selection?.parts ?? [], planTiles: s.planTiles, planTask: s.planTask,
       resizingTensor: s.resizingTensor, built: s.resolved !== null,
+      replayPlayback: s.replayPlayback && { visited: s.replayPlayback.visited, paused: s.replayPlayback.paused },
     }));
   });
 }

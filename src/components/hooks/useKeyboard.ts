@@ -42,6 +42,26 @@ export function removalTarget(keyTile: number | null, tab: InspectorTab): number
  * to fit through this UI-local event rather than installing a second listener. */
 export const FIT_GRAPH_EVENT = "tilecone:fit-graph";
 
+/** The replay's timers live in `usePlanReplay`, which this listener asks to
+ * pause or resume through this event, as it asks GraphView to fit. */
+export const TOGGLE_REPLAY_EVENT = "tilecone:toggle-replay";
+
+/**
+ * Whether Space is the replay's rather than the focused element's. A focused
+ * button, field, checkbox or menu takes Space itself, as the platform has it
+ * do, except the replay's own controls and the button that starts it: those
+ * are where focus is left after pressing them, and Space there would
+ * otherwise press that button again - restarting the replay rather than
+ * pausing it.
+ */
+export function spaceIsReplays(el: EventTarget | null): boolean {
+  const t = el as HTMLElement | null;
+  if (!t?.closest) return true;
+  if (t.closest("[data-replay-keys]")) return true;
+  if (isTyping(t) || t.isContentEditable) return false;
+  return !t.closest('button, a[href], [role="button"], [role="checkbox"], [role="switch"], [role="listbox"], [role="menu"], [role="option"], [role="menuitem"], summary');
+}
+
 /**
  * Global selection keybindings. Arrow keys move the selection in the plane the
  * card is currently showing (its row/col axes), so what moves on screen is what
@@ -57,6 +77,15 @@ export function useKeyboard({
   closeShortcuts: () => void;
 }): void {
   useEffect(() => {
+    /* A button is pressed on Space's release, so a Space taken for the replay
+       is taken on both edges: otherwise a focused replay button would also be
+       pressed when the key comes up. */
+    let spaceTaken = false;
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key !== " " || !spaceTaken) return;
+      spaceTaken = false;
+      e.preventDefault();
+    };
     const onKey = (e: KeyboardEvent) => {
       const s = useStore.getState();
 
@@ -133,6 +162,19 @@ export function useKeyboard({
       if (panel) {
         e.preventDefault();
         return s.togglePanel(panel);
+      }
+
+      /* Space pauses or resumes the replay on screen. It is matched before the
+         typing guard because the scrubber is an input that has no use for
+         Space, and focus is left on it after a scrub. */
+      if (matchesShortcut(e, SHORTCUTS.replayPause) && spaceIsReplays(e.target)) {
+        const playback = s.replayPlayback;
+        if (s.inspectorTab === "plan" && playback && !playback.exiting) {
+          e.preventDefault();
+          spaceTaken = true;
+          if (!e.repeat) window.dispatchEvent(new Event(TOGGLE_REPLAY_EVENT));
+          return;
+        }
       }
 
       if (ownsWorkspaceKeys(e.target)) return;
@@ -302,6 +344,10 @@ export function useKeyboard({
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKeyUp);
+    };
   }, [closeShortcuts, shortcutsOpen, showShortcuts]);
 }

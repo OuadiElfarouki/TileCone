@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { useKeyboard, FIT_GRAPH_EVENT } from "../../../src/components/hooks/useKeyboard";
+import { useKeyboard, FIT_GRAPH_EVENT, spaceIsReplays, TOGGLE_REPLAY_EVENT } from "../../../src/components/hooks/useKeyboard";
+import { familyReplay } from "../../../src/core/plan/replay";
 import { useStore } from "../../../src/state/store";
 import { fromBox } from "../../../src/core/region";
 
@@ -147,6 +148,61 @@ describe("Escape and the reuse lens", () => {
     expect(useStore.getState().reuseLens).toBeNull();
     expect(useStore.getState().canvasTool).toBe("move");
     expect(event.preventDefault).toHaveBeenCalled();
+  });
+});
+
+/* Space pauses or resumes a replay. A focused control keeps Space for itself,
+   except the replay's own controls and its launcher, where focus is left
+   after pressing them. */
+describe("Space and the replay", () => {
+  const element = (tagName: string, matches: string[] = []) => ({
+    tagName, isContentEditable: false,
+    closest: (selector: string) => (matches.some((m) => selector.includes(m)) ? {} : null),
+  }) as unknown as HTMLElement;
+  const space = (el: HTMLElement, repeat = false) => ({
+    key: " ", target: el, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false,
+    repeat, defaultPrevented: false, preventDefault: vi.fn(),
+  }) as unknown as KeyboardEvent;
+  const toggles = () => dispatchEvent.mock.calls.filter(([e]) => e.type === TOGGLE_REPLAY_EVENT).length;
+
+  beforeEach(() => {
+    useStore.getState().setInspectorTab("plan");
+    useStore.getState().setPlanTileAt("Y", [2], [0]);
+    const s = useStore.getState();
+    s.setReplayPlayback({ replay: familyReplay(s.plan!, s.planTask!), plan: s.plan!, visited: 1, paused: false, exiting: false, opacity: 1 });
+  });
+  afterEach(() => {
+    useStore.getState().setReplayPlayback(null);
+    useStore.getState().setInspectorTab("dependencies");
+  });
+
+  it("asks the replay to toggle, claiming the key once per press", () => {
+    const event = space(element("DIV"));
+    onKey(event);
+    onKey(space(element("DIV"), true));
+    expect(toggles()).toBe(1);
+    expect(event.preventDefault).toHaveBeenCalled();
+  });
+
+  it("takes Space from the replay's controls and its scrubber", () => {
+    onKey(space(element("BUTTON", ["[data-replay-keys]", "button"])));
+    onKey(space(element("INPUT", ["[data-replay-keys]"])));
+    expect(toggles()).toBe(2);
+  });
+
+  it("leaves Space to other controls and fields, and does nothing with no replay", () => {
+    const button = space(element("BUTTON", ["button"]));
+    onKey(button);
+    onKey(space(element("TEXTAREA")));
+    expect(button.preventDefault).not.toHaveBeenCalled();
+    useStore.getState().setInspectorTab("dependencies");
+    onKey(space(element("DIV")));
+    expect(toggles()).toBe(0);
+  });
+
+  it("reads a target without an element's methods as the workspace", () => {
+    expect(spaceIsReplays(null)).toBe(true);
+    expect(spaceIsReplays(element("SUMMARY", ["summary"]))).toBe(false);
   });
 });
 

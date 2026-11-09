@@ -60,7 +60,10 @@ describe("producer paging in the Plan view", () => {
     expect(html).toContain("1–8 of 32");
     expect(html).toContain("previous");
     expect(html).toContain("next");
-    expect(html).not.toContain("show all");
+    // Paged rather than expandable; operand reuse has its own "show all", so look in the pager.
+    const pager = html.match(/<div class="plan-producer-pages">.*?<\/div>/)?.[0];
+    expect(pager).toBeDefined();
+    expect(pager).not.toContain("show all");
   });
 });
 

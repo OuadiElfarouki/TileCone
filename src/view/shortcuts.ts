@@ -79,6 +79,12 @@ export const SHORTCUTS = {
     action: "step the inspected task one tile; the stride-one axis carries in row-major order",
     keys: ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"],
   },
+  replayPause: {
+    id: "replay-pause",
+    label: "Space",
+    action: "pause or resume a replay",
+    keys: [" "],
+  },
   escape: {
     id: "escape",
     label: "Esc",
@@ -175,7 +181,7 @@ export const SHORTCUT_GROUPS = [
      leaves with. */
   {
     title: "Plan",
-    items: [SHORTCUTS.movePlanTask, SHORTCUTS.planBack],
+    items: [SHORTCUTS.movePlanTask, SHORTCUTS.planBack, SHORTCUTS.replayPause],
     note: "Applies in the Plan view, where the task is named.",
   },
   /* Layout keys are reached through the thing they move, not globally: they

@@ -5,6 +5,7 @@ import type { InspectorTab, ReplayPlayback } from "../../view/workspace";
 import { analysisWorkerAvailable, isAnalysisCancelled, replayInWorker } from "../../state/analysis-worker-client";
 import { sameTask } from "../../state/history";
 import { useStore } from "../../state/store";
+import { TOGGLE_REPLAY_EVENT } from "../hooks/useKeyboard";
 
 /** The tiling a plan was checked with, as the Worker request carries it. */
 const tilesOf = (plan: TilePlan): Record<string, number[]> =>
@@ -228,6 +229,19 @@ export function usePlanReplay({
   const clear = () => {
     if (own) fade();
   };
+
+  /* Space, through the global listener: pause a walk, or play on from where
+     it stands. The listener reads the latest controls, not the first. */
+  const keys = useRef({ own, play, pause });
+  keys.current = { own, play, pause };
+  useEffect(() => {
+    const onToggle = () => {
+      const { own: now, play: resume, pause: hold } = keys.current;
+      if (now) (now.paused ? resume : hold)();
+    };
+    window.addEventListener(TOGGLE_REPLAY_EVENT, onToggle);
+    return () => window.removeEventListener(TOGGLE_REPLAY_EVENT, onToggle);
+  }, []);
 
   return { run, depth, depthLimit, pending, error, playback: own, play, pause, seek, clear };
 }

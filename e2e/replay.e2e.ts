@@ -60,3 +60,40 @@ test("clearing the plan's tiling mid-replay retires it without an error", async 
   await act(page, "setPlanTileAt", "D2", [32], [0]);
   await expect(controls(page)).toHaveCount(0);
 });
+
+/* On the button that starts the replay, or on the transport's buttons after a
+   press, Space toggles the walk and does not press the button again, which
+   would restart the replay. */
+test("Space pauses and resumes a replay, from the button that started it", async ({ page }) => {
+  const replayButton = page.getByRole("button", { name: "replay", exact: true });
+  await replayButton.click();
+  await expect(controls(page).getByRole("button", { name: "pause" })).toBeVisible();
+  // It is disabled while the frames are prepared, which drops focus; a
+  // keyboard reader who tabs back to it is the case that would restart.
+  await replayButton.focus();
+  await expect(replayButton).toBeFocused();
+
+  await page.keyboard.press("Space");
+  await expect(controls(page).getByRole("button", { name: "play", exact: true })).toBeVisible();
+  const held = (await snapshot(page)).replayPlayback!;
+  expect(held.paused).toBe(true);
+  await page.waitForTimeout(400);
+  expect((await snapshot(page)).replayPlayback!.visited).toBe(held.visited);
+
+  await page.keyboard.press("Space");
+  await expect(controls(page).getByRole("button", { name: "pause" })).toBeVisible();
+  await expect.poll(async () => (await snapshot(page)).replayPlayback!.visited).toBeGreaterThan(held.visited);
+
+  // From a focused transport button, one press is one toggle.
+  const pause = controls(page).getByRole("button", { name: "pause" });
+  await pause.focus();
+  await page.keyboard.press("Space");
+  await expect(controls(page).getByRole("button", { name: "play", exact: true })).toBeVisible();
+  await controls(page).getByRole("button", { name: "play", exact: true }).focus();
+  const before = (await snapshot(page)).replayPlayback!.visited;
+  await page.keyboard.press("Space");
+  await expect(controls(page).getByRole("button", { name: "pause" })).toBeVisible();
+  await page.keyboard.press("Space");
+  await expect(controls(page).getByRole("button", { name: "play", exact: true })).toBeVisible();
+  expect((await snapshot(page)).replayPlayback!.visited).toBeGreaterThanOrEqual(before);
+});

@@ -60,6 +60,7 @@ import { useStore } from "../../../src/state/store";
 import { replayInWorker } from "../../../src/state/analysis-worker-client";
 import { familyReplay } from "../../../src/core/plan/replay";
 import { usePlanReplay } from "../../../src/components/inspector/usePlanReplay";
+import { TOGGLE_REPLAY_EVENT } from "../../../src/components/hooks/useKeyboard";
 
 /** Interval callbacks by id, so a test can step the playback and its fade. */
 const ticks = new Map<number, () => void>();
@@ -68,6 +69,8 @@ const interval = vi.fn((tick: () => void) => {
   return ticks.size;
 });
 const clear = vi.fn((id: number) => { ticks.delete(id); });
+/** Window listeners by event type: the hook hears Space through one. */
+const listeners = new Map<string, () => void>();
 const render = (tab: InspectorTab, commit = true) => {
   useStore.getState().setInspectorTab(tab);
   hooks.begin();
@@ -88,7 +91,12 @@ const flushResponse = async () => { await Promise.resolve(); await Promise.resol
 beforeEach(() => {
   vi.clearAllMocks();
   ticks.clear();
-  vi.stubGlobal("window", { setInterval: interval, clearInterval: clear });
+  listeners.clear();
+  vi.stubGlobal("window", {
+    setInterval: interval, clearInterval: clear,
+    addEventListener: (type: string, listener: () => void) => listeners.set(type, listener),
+    removeEventListener: (type: string) => listeners.delete(type),
+  });
   useStore.getState().applyDSL("X = Tensor(8)\nY = relu(X)\n");
   useStore.getState().setPlanTileAt("Y", [2], [0]);
 });
@@ -168,6 +176,21 @@ describe("the end of a replay", () => {
     step();
     expect(useStore.getState().replayPlayback).toMatchObject({ visited: frames, paused: true, exiting: false });
     expect(ticks.size).toBe(0);
+  });
+
+  /* Space reaches the hook as an event from the global listener; the hook
+     answers with whatever its latest render holds. */
+  it("pauses and resumes on Space where the walk stands", async () => {
+    const step = await started();
+    step();
+    render("plan");
+    listeners.get(TOGGLE_REPLAY_EVENT)!();
+    expect(useStore.getState().replayPlayback).toMatchObject({ visited: 2, paused: true });
+    expect(ticks.size).toBe(0);
+    render("plan");
+    listeners.get(TOGGLE_REPLAY_EVENT)!();
+    expect(useStore.getState().replayPlayback).toMatchObject({ visited: 2, paused: false });
+    expect(ticks.size).toBe(1);
   });
 
   it("clears a held replay by fading the whole trail together", async () => {
