@@ -4,6 +4,7 @@ import type { CompilerDiagnostic } from "../parse/compiler";
 import { validateSelection } from "../core/executor";
 import { Graph, ResolvedGraph } from "../core/graph";
 import { familyOf, tilePlan } from "../core/plan/plan";
+import { checkSteps } from "../core/plan/steps";
 import { fromBox } from "../core/region";
 import { EXAMPLES } from "../examples/index";
 import { BaseGraphLayout, readNodeKey } from "../view/graph/graph-scene";
@@ -29,7 +30,7 @@ export function loadResolvedGraph(
   | "entangled"
   | "perBox" | "focusedBox" | "pinnedBox" | "editBox" | "growth" | "viewCfgs" | "preview" | "graphPx"
   | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "nodeOffsets"
-  | "planTiles" | "planTask" | "plan" | "planSupply" | "keptPlans" | "planTrail" | "lineageFocus"
+  | "planTiles" | "planSteps" | "planTask" | "plan" | "planSupply" | "keptPlans" | "planTrail" | "lineageFocus"
   | "replayPlayback" | "reuseLens" | "replayDepth" | "placementCarry" | "resizingTensor"
 > {
   const viewCfgs = Object.create(null) as Record<string, ViewCfg>;
@@ -296,13 +297,17 @@ export function restoredWorkspaceState(
   const task = workspace.planTask ?? null;
   // A task that names no tile of the plan is refused rather than dropped: the
   // link's task is what its Plan view describes.
-  const checkedPlan = tilePlan(resolved, planTiles);
+  // Step declarations are refused like an invalid tile: one that does not fit
+  // the graph and the tiling refuses the whole restore.
+  const planSteps = idRecord(workspace.planSteps);
+  const checkedPlan = tilePlan(resolved, planTiles, planSteps);
+  checkSteps(checkedPlan);
   if (task) familyOf(checkedPlan, task);
   const restored = restoredPlan ?? planRestoreArtifact(resolved, {
     tiles: planTiles, task, kept: workspace.keptTilings ?? [],
   });
   const plan = {
-    planTiles, planTask: task,
+    planTiles, planSteps, planTask: task,
     plan: Object.keys(planTiles).length ? checkedPlan : null,
     planSupply: restored.supply,
   };

@@ -66,7 +66,7 @@ export function sameSavedWorkspace(a: State, b: State): boolean {
     a.showEntangled === b.showEntangled && a.tileScale === b.tileScale &&
     a.snapToGrid === b.snapToGrid && a.axisMode === b.axisMode &&
     a.viewCfgs === b.viewCfgs && a.nodeOffsets === b.nodeOffsets &&
-    a.planTiles === b.planTiles && a.planTask === b.planTask &&
+    a.planTiles === b.planTiles && a.planSteps === b.planSteps && a.planTask === b.planTask &&
     a.keptPlans === b.keptPlans && a.inspectorTab === b.inspectorTab &&
     a.hiddenBoxes === b.hiddenBoxes && a.analysisGroup === b.analysisGroup && a.pinnedBox === b.pinnedBox;
 }

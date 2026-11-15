@@ -590,6 +590,7 @@ export function identityLike(name: string): OpSpec {
     forward: (_s, inBox) => [fromBox(inBox.map((I) => ({ ...I })))],
     oracleDeps: (_s, outIndex) => [[outIndex.slice()]],
     readsOnce: true,
+    pointwise: true,
     flopsFor: zero,
     flopsPerElement: zero,
   };

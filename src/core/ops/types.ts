@@ -1,6 +1,7 @@
 import type { Kind } from "./kinds";
 import type { Box, Region } from "../region";
 import type { Tally } from "../tally";
+import type { IterationDomain } from "../iteration";
 import type { Sym } from "../shapes";
 import { DType, dtypeFamily, promoteDTypes } from "../dtypes";
 import { DEFAULT_LIMITS, type Limits } from "./limits";
@@ -308,6 +309,15 @@ export interface OpSpec {
   readsOnce?: true;
 
   /**
+   * Every output element is computed from the element of each input at its own
+   * position, after broadcasting: the elementwise operations, a cast, the
+   * identity family. Such an operation after a contraction is work on the
+   * finished result, which is how a plan recognises a task's epilogue
+   * (`core/plan/steps.ts`).
+   */
+  pointwise?: true;
+
+  /**
    * This operation's arithmetic is not known, so no total may span it.
    *
    * Different from returning zero, which is what a data-movement operation
@@ -335,6 +345,30 @@ export interface OpSpec {
    * which may still choose to copy.
    */
   layout?(ctx: OpCtx, input: Layout): Layout | "copy";
+
+  /**
+   * The operation's iteration domain (`core/iteration.ts`): its loop axes and
+   * how each operand and the output are addressed from them.
+   *
+   * Declared by operations whose arithmetic is a loop nest over terms - the
+   * contractions. It is what lets a plan divide a reduction into steps: a step
+   * is a box of the domain narrower than a reduced axis, which `backward`
+   * cannot state because it always takes the reduction whole.
+   *
+   * An operation that declares it must agree with its own hooks: `backward` of
+   * an output box is the projection of `iterationBoxOfOutput`, `coaccess` of an
+   * operand box the projection of `iterationBoxOfInput`, and `multiplicity`
+   * the fibre. `tests/corpus/iteration.test.ts` holds every declaring
+   * operation to that, and checks a narrower box against the terms themselves.
+   */
+  iteration?(ctx: OpCtx): IterationDomain;
+
+  /**
+   * FLOPs of the terms in one box of the iteration domain. Required with
+   * `iteration`. Over a box that spans the reduced axes it equals `flopsFor`
+   * of the box's output projection, and disjoint boxes add.
+   */
+  flopsForIteration?(iterBox: Box, ctx: OpCtx): number;
 
   /** Approximate FLOPs to compute the given output box. Data movement ops return 0. */
   flopsFor(outSlot: number, outBox: Box, ctx: OpCtx): number;

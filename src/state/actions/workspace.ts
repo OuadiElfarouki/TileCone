@@ -225,7 +225,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
         focusNode: null,
         compiling: false,
         ...recompute(source.resolved, prev.selection),
-        ...derivePlan(source.resolved, prev.plan.tiles, prev.plan.task, get()),
+        ...derivePlan(source.resolved, prev.plan.tiles, prev.plan.task, get(), prev.plan.steps),
       });
       return;
     }
@@ -243,7 +243,7 @@ export const workspaceActions = (set: SetState, get: GetState): Pick<
       analysisGroup: null,
       preview: null,
       ...recompute(resolved, prev.selection, { selection, perBox, entangled }),
-      ...derivePlan(resolved, prev.plan.tiles, prev.plan.task, get()),
+      ...derivePlan(resolved, prev.plan.tiles, prev.plan.task, get(), prev.plan.steps),
       /* One history holds tile edits and plan edits alike, so a step back can
          restore something the visible panel does not show. Undo then looks as
          if it did nothing and the change is found later by accident, so the

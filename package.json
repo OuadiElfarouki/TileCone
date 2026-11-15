@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "shoot": "node scripts/shoot.mjs"
   },
   "dependencies": {
     "dagre": "^0.8.5",

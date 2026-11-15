@@ -17,6 +17,7 @@ export const planActions = (set: SetState, get: GetState): Pick<
   | "backPlanTask"
   | "planTaskAt"
   | "setPlanTileAt"
+  | "setPlanSteps"
   | "tilePlanTensor"
   | "movePlanTask"
   | "keepPlan"
@@ -53,6 +54,21 @@ export const planActions = (set: SetState, get: GetState): Pick<
       workspaceHistory: recordWorkspace(state),
       ...derivePlan(resolved, tiles, task, state),
     });
+  },
+
+  setPlanSteps: (tensorId, steps) => {
+    const state = get();
+    const { resolved, planSteps, planTask } = state;
+    if (!resolved || !state.planTiles[tensorId]) return;
+    const declared = idRecord(planSteps);
+    if (steps) declared[tensorId] = steps;
+    else if (tensorId in declared) delete declared[tensorId];
+    else return;
+    const next = derivePlan(resolved, state.planTiles, planTask, state, declared);
+    // `derivePlan` drops what the graph does not support, and an unsupported
+    // declaration is then indistinguishable from none: nothing to record.
+    if (next.planSteps === planSteps || (steps && !next.planSteps[tensorId])) return;
+    set({ workspaceHistory: recordWorkspace(state), ...next });
   },
 
   selectPlanTask: (task) => {

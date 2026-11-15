@@ -3,7 +3,8 @@ import { AxisMode } from "../view/tensor/shape-label";
 import { isViewCfg, type ViewCfg } from "../view/tensor/tensor-view";
 import { nodeKey, readNodeKey } from "../view/graph/graph-scene";
 import { Direction, InspectorTab, MAX_NODE_OFFSET } from "../view/workspace";
-import type { TaskRef } from "../core/plan/plan";
+import type { DType } from "../core/dtypes";
+import type { StepSpec, TaskRef } from "../core/plan/plan";
 import { MAX_KEPT_PLANS } from "./plan";
 import type { State, WorkspaceRestore } from "./types";
 
@@ -56,6 +57,12 @@ export type WorkspaceLink = {
    * link cannot assert figures the graph does not produce.
    */
   kept?: Record<string, number[]>[];
+  /**
+   * Optional: how tiled tensors divide their reductions into steps, per tensor:
+   * `c` the chunk per reduced axis, `o` the loop order, `a` the accumulator
+   * dtype. Only declared fields are written, and only for tensors of `plan`.
+   */
+  steps?: Record<string, { c?: Record<string, number>; o?: string[]; a?: string }>;
   /** Optional: present only when the link was made in the Plan view. */
   tab?: "plan";
 };
@@ -203,6 +210,11 @@ export function parseWorkspaceLink(value: unknown): WorkspaceLink | null {
       !Array.isArray(raw.kept) || raw.kept.length > MAX_KEPT_PLANS || !raw.kept.every(isTiling)
     )) return null;
     if (raw.tab !== undefined && raw.tab !== "plan") return null;
+    if (raw.steps !== undefined) {
+      // Shape only: whether each declaration fits the graph is checked against
+      // the compiled program, where a misfit refuses the restore.
+      if (raw.plan === undefined || !isStepsLink(raw.steps)) return null;
+    }
     return {
       dsl: raw.dsl,
       dir,
@@ -216,6 +228,7 @@ export function parseWorkspaceLink(value: unknown): WorkspaceLink | null {
       ...(raw.plan ? { plan: raw.plan } : {}),
       ...(raw.task ? { task: raw.task } : {}),
       ...(raw.kept?.length ? { kept: raw.kept } : {}),
+      ...(raw.steps && Object.keys(raw.steps).length ? { steps: raw.steps } : {}),
       ...(raw.tab ? { tab: raw.tab } : {}),
     };
   } catch {
@@ -238,15 +251,43 @@ export function selectionToLink(
 /** The plan, the inspected task, the kept tilings and the Plan view, in link
  *  form. Each is left out when there is none, so a link without a plan reads
  *  exactly as one written before plans could be shared. */
+function isStepsLink(value: unknown): value is NonNullable<WorkspaceLink["steps"]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  return Object.entries(value).every(([id, spec]) => {
+    if (!id || !spec || typeof spec !== "object" || Array.isArray(spec)) return false;
+    const { c, o, a, ...rest } = spec as { c?: unknown; o?: unknown; a?: unknown };
+    if (Object.keys(rest).length) return false;
+    const chunkOk =
+      c === undefined ||
+      (!!c && typeof c === "object" && !Array.isArray(c) &&
+        Object.entries(c).every(([label, extent]) => !!label && Number.isSafeInteger(extent) && (extent as number) >= 1));
+    const orderOk = o === undefined || (Array.isArray(o) && o.every((label) => typeof label === "string" && !!label));
+    return chunkOk && orderOk && (a === undefined || typeof a === "string");
+  });
+}
+
 export function planToLink(state: {
   planTiles: Record<string, number[]>;
+  /** Absent where the caller has no step declarations to write. */
+  planSteps?: Record<string, StepSpec>;
   planTask: TaskRef | null;
   keptPlans: readonly { tiles: Record<string, number[]> }[];
   inspectorTab: InspectorTab;
-}): Pick<WorkspaceLink, "plan" | "task" | "kept" | "tab"> {
+}): Pick<WorkspaceLink, "plan" | "steps" | "task" | "kept" | "tab"> {
   const tiled = Object.keys(state.planTiles).length > 0;
+  const steps = Object.fromEntries(
+    Object.entries(state.planSteps ?? {}).flatMap(([id, spec]) => {
+      const entry = {
+        ...(spec.chunk && Object.keys(spec.chunk).length ? { c: { ...spec.chunk } } : {}),
+        ...(spec.order?.length ? { o: [...spec.order] } : {}),
+        ...(spec.accumulator ? { a: spec.accumulator } : {}),
+      };
+      return Object.keys(entry).length ? [[id, entry]] : [];
+    })
+  );
   return {
     ...(tiled ? { plan: { ...state.planTiles } } : {}),
+    ...(tiled && Object.keys(steps).length ? { steps } : {}),
     ...(tiled && state.planTask
       ? { task: { t: state.planTask.tensorId, at: [...state.planTask.coord] } }
       : {}),
@@ -280,6 +321,18 @@ export function linkToRestore(link: WorkspaceLink): WorkspaceRestore {
       ...(p.h !== undefined ? { hue: p.h } : {}),
     })) ?? null,
     planTiles: link.plan,
+    ...(link.steps
+      ? {
+          planSteps: Object.fromEntries(
+            Object.entries(link.steps).map(([id, { c, o, a }]) => [
+              id,
+              // The dtype is checked with the rest of the declaration, against
+              // the graph; a link can only say it is a string.
+              { ...(c ? { chunk: c } : {}), ...(o ? { order: o } : {}), ...(a ? { accumulator: a as DType } : {}) },
+            ])
+          ),
+        }
+      : {}),
     planTask: link.task ? { tensorId: link.task.t, coord: link.task.at } : null,
     keptTilings: link.kept,
     planView: link.tab === "plan",

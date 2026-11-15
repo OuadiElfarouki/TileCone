@@ -2,11 +2,12 @@
 
 import { producerNode, ResolvedGraph } from "../core/graph";
 import { PlanReport, taskSupplyOf } from "../core/plan/interfaces";
-import { TaskRef, tilePlan } from "../core/plan/plan";
+import { StepSpec, TaskRef, tilePlan } from "../core/plan/plan";
+import { stagingOf } from "../core/plan/steps";
 import { isTile } from "../core/plan/tile-family";
 import { defaultPlanTile } from "../view/tensor/seeds";
 import { idRecord, operationForTensor } from "../view/workspace";
-import { recordWorkspace, sameNumbers, sameTask, sameTiles } from "./history";
+import { recordWorkspace, sameNumbers, sameSteps, sameTask, sameTiles } from "./history";
 import { KeptPlan, State } from "./types";
 
 /**
@@ -17,6 +18,7 @@ export const MAX_KEPT_PLANS = 2;
 
 export const NO_PLAN = {
   planTiles: idRecord<number[]>(),
+  planSteps: idRecord<StepSpec>(),
   planTask: null,
   plan: null,
   planSupply: null,
@@ -56,8 +58,9 @@ export function derivePlan(
   resolved: ResolvedGraph | null,
   tiles: Record<string, number[]>,
   task: TaskRef | null,
-  previous?: Pick<State, "plan" | "planTiles">
-): Pick<State, "planTiles" | "planTask" | "plan" | "planSupply"> {
+  previous?: Pick<State, "plan" | "planTiles" | "planSteps">,
+  steps: Record<string, StepSpec> = previous?.planSteps ?? NO_PLAN.planSteps
+): Pick<State, "planTiles" | "planSteps" | "planTask" | "plan" | "planSupply"> {
   if (!resolved) return NO_PLAN;
   /* A plan that divides the same tensors of the same graph at the same extents
    * is the same plan, and the panel holds it by identity: the family report,
@@ -72,12 +75,14 @@ export function derivePlan(
   if (
     previous?.plan &&
     previous.plan.graph === resolved &&
-    sameTiles(previous.planTiles, tiles)
+    sameTiles(previous.planTiles, tiles) &&
+    sameSteps(previous.planSteps, steps)
   ) {
     const family = task ? previous.plan.families.get(task.tensorId) : undefined;
     const kept = task && family && isTile(family, task.coord) ? task : null;
     return {
       planTiles: previous.planTiles,
+      planSteps: previous.planSteps,
       planTask: kept,
       plan: previous.plan,
       planSupply: kept ? taskSupplyOf(previous.plan, kept) : null,
@@ -93,10 +98,31 @@ export function derivePlan(
     }
   }
   if (!Object.keys(valid).length) return NO_PLAN;
-  const plan = tilePlan(resolved, valid);
+  /* A step declaration names the loop axes of the contraction its tensor's
+     tasks perform, and which contraction that is depends on the tiling: fusing
+     an intermediate, or untiling the tensor, can leave a declaration naming
+     nothing. Such a declaration is dropped rather than refusing the tile edit
+     that outdated it, as an invalid tile is dropped above. */
+  const fitting = idRecord<StepSpec>();
+  for (const [tensorId, spec] of Object.entries(steps)) {
+    if (!valid[tensorId]) continue;
+    try {
+      stagingOf(tilePlan(resolved, valid, { [tensorId]: spec }), tensorId);
+      fitting[tensorId] = spec;
+    } catch {
+      // outdated by the tiling; dropped
+    }
+  }
+  // Keep the object the caller holds when nothing was dropped, so an unchanged
+  // declaration is the same value to anything comparing by identity.
+  const planSteps =
+    previous && sameSteps(previous.planSteps, fitting) ? previous.planSteps
+    : sameSteps(steps, fitting) ? steps
+    : fitting;
+  const plan = tilePlan(resolved, valid, planSteps);
   const family = task ? plan.families.get(task.tensorId) : undefined;
   const kept = task && family && isTile(family, task.coord) ? task : null;
-  return { planTiles: valid, planTask: kept, plan, planSupply: kept ? taskSupplyOf(plan, kept) : null };
+  return { planTiles: valid, planSteps, planTask: kept, plan, planSupply: kept ? taskSupplyOf(plan, kept) : null };
 }
 
 /**

@@ -11,11 +11,15 @@ scratchpad/
 screenshots/
 docs/design*
 
+
+# Claude
+.claude/*
+
 # Local design/audit artifacts. Canonical and historical docs are listed in
 # docs/README.md; these files are deliberately not repository documentation.
 docs/TileConeFUllPrototype.html
 docs/deisgn*
 docs/on_symbolics.md
 docs/repairs_sweep*.md
-docs/pre_shipping_review.md
-docs/UI_CONTRACTS.md
+docs/pre_shipping_*.md
+docs/*

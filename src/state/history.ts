@@ -1,7 +1,7 @@
 /** Workspace undo: snapshots of selection, layout and plan. */
 
 import { Graph, ResolvedGraph } from "../core/graph";
-import { TaskRef } from "../core/plan/plan";
+import { StepSpec, TaskRef } from "../core/plan/plan";
 import { BaseGraphLayout } from "../view/graph/graph-scene";
 import { NodeOffsets } from "../view/graph/node-layout";
 import { idRecord, type Selection } from "../view/workspace";
@@ -10,7 +10,11 @@ import { State } from "./types";
 import type { CompilerDiagnostic } from "../parse/compiler";
 
 /** What a plan edit changes: the tile extents per planned tensor, and the task inspected. */
-export type PlanEdit = { tiles: Record<string, number[]>; task: TaskRef | null };
+export type PlanEdit = {
+  tiles: Record<string, number[]>;
+  steps: Record<string, StepSpec>;
+  task: TaskRef | null;
+};
 
 export type WorkspaceSnapshot = {
   /** Display scale per resized card; a card absent here has the fitted size. */
@@ -49,8 +53,28 @@ export type WorkspaceSnapshot = {
 };
 export const WORKSPACE_HISTORY_LIMIT = 40;
 
-export function planEditOf(state: Pick<State, "planTiles" | "planTask">): PlanEdit {
-  return { tiles: state.planTiles, task: state.planTask };
+export function planEditOf(state: Pick<State, "planTiles" | "planSteps" | "planTask">): PlanEdit {
+  return { tiles: state.planTiles, steps: state.planSteps, task: state.planTask };
+}
+
+const sameSpec = (a: StepSpec, b: StepSpec): boolean => {
+  const chunkA = a.chunk ?? {};
+  const chunkB = b.chunk ?? {};
+  const labels = Object.keys(chunkA).sort();
+  return (
+    a.accumulator === b.accumulator &&
+    labels.length === Object.keys(chunkB).length &&
+    labels.every((label) => chunkA[label] === chunkB[label]) &&
+    (a.order ?? []).length === (b.order ?? []).length &&
+    (a.order ?? []).every((label, i) => label === b.order![i])
+  );
+};
+
+export function sameSteps(a: Record<string, StepSpec>, b: Record<string, StepSpec>): boolean {
+  if (a === b) return true;
+  const left = Object.keys(a).sort();
+  const right = Object.keys(b).sort();
+  return left.length === right.length && left.every((id, i) => id === right[i] && sameSpec(a[id], b[id]));
 }
 
 /** Whether two tilings divide the same tensors at the same extents. */
@@ -68,7 +92,7 @@ export function sameTiles(
 
 /** Whether two plan edits divide the same tensors the same way and inspect the same task. */
 export function samePlanEdit(a: PlanEdit, b: PlanEdit): boolean {
-  return sameTiles(a.tiles, b.tiles) && sameTask(a.task, b.task);
+  return sameTiles(a.tiles, b.tiles) && sameSteps(a.steps, b.steps) && sameTask(a.task, b.task);
 }
 
 export const sameNumbers = (a: readonly number[], b: readonly number[]): boolean =>
@@ -84,7 +108,7 @@ export function appendWorkspaceHistory(
   return [...history, snapshot].slice(-WORKSPACE_HISTORY_LIMIT);
 }
 
-type WorkspaceState = Pick<State, "workspaceHistory" | "selection" | "nodeOffsets" | "planTiles" | "planTask" | "viewCfgs">;
+type WorkspaceState = Pick<State, "workspaceHistory" | "selection" | "nodeOffsets" | "planTiles" | "planSteps" | "planTask" | "viewCfgs">;
 
 export function cardScalesOf(state: Pick<State, "viewCfgs">): Record<string, number> {
   return idRecord(Object.fromEntries(Object.entries(state.viewCfgs).flatMap(([id, cfg]) => cfg.scale === undefined ? [] : [[id, cfg.scale]])));

@@ -2,7 +2,7 @@ import { StoreApi } from "zustand";
 import { Entanglement } from "../core/entangle";
 import { Graph, ResolvedGraph } from "../core/graph";
 import { PlanReport, TaskSupply, Work } from "../core/plan/interfaces";
-import { TaskRef, TilePlan } from "../core/plan/plan";
+import { StepSpec, TaskRef, TilePlan } from "../core/plan/plan";
 import { PropResult } from "../core/propagate";
 import { Box, Region } from "../core/region";
 import { CompilerDiagnostic } from "../parse/compiler";
@@ -62,6 +62,8 @@ export type WorkspaceRestore = {
   parts: SelPart[] | null;
   /** Tile extents per planned tensor; absent restores nothing tiled. */
   planTiles?: Record<string, number[]>;
+  /** Step declarations per tiled tensor; each must fit the graph and `planTiles`. */
+  planSteps?: Record<string, StepSpec>;
   /** The inspected task, which must be a tile of `planTiles`. */
   planTask?: TaskRef | null;
   /**
@@ -309,6 +311,13 @@ export type State = {
    * the graph is replaced, like the selection.
    */
   planTiles: Record<string, number[]>;
+  /**
+   * How the tasks of a tiled tensor divide their reduction (`core/plan/steps`):
+   * a chunk per reduced axis, a loop order, an accumulator dtype. Only tensors
+   * with a declaration appear. `derivePlan` drops a declaration the tiling no
+   * longer supports, so every entry here fits `plan`.
+   */
+  planSteps: Record<string, StepSpec>;
   /** The task the Plan view describes. */
   planTask: TaskRef | null;
   /** Derived from `planTiles` against `resolved`; null when nothing is tiled. */
@@ -415,6 +424,9 @@ export type State = {
   updateReplayPlayback: (patch: Partial<ReplayPlayback>) => void;
   /** Tile a produced tensor with these extents, or stop tiling it with `null`. Undoable. */
   setPlanTile: (tensorId: string, tile: number[] | null) => void;
+  /** Declare how a tiled tensor's tasks divide their reduction, or clear the
+   * declaration with null. One the graph does not support changes nothing. */
+  setPlanSteps: (tensorId: string, steps: StepSpec | null) => void;
   /** Inspect one task, or none. Undoable. */
   selectPlanTask: (task: TaskRef | null) => void;
   /** Inspect a producer of the inspected task, remembering where it came from. */

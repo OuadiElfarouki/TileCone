@@ -1,5 +1,15 @@
 import { text } from "./kinds";
-import { Box, Region, coversAxisFully, empty, fromBox, iv, canonicalize } from "../region";
+import { Box, Region, coversAxisFully, empty, fromBox } from "../region";
+import {
+  type IterationDomain,
+  fibreOf,
+  iterationBoxOfInput,
+  iterationBoxOfOutput,
+  iterationVolume,
+  projectInput,
+  projectOutput,
+  spansReduced,
+} from "../iteration";
 import {
   Attrs,
   DependencyNoteDraft,
@@ -136,97 +146,55 @@ function einsumInferShapes(eq: string, inShapes: number[][]): number[][] {
 }
 
 /**
- * The region of one operand implied by an assignment of intervals to labels.
+ * The equation as an iteration domain: one loop axis per label, in the order
+ * the labels first appear across the operands. `backward`, `forward`,
+ * `coaccess`, `multiplicity` and the FLOP count below are all read off it, so
+ * they cannot disagree about what a label means. The oracles are not: they are
+ * derived from the definition, and are what the domain is checked against.
  *
- * Shared by `backward` and `coaccess`, which differ only in where the label
- * intervals come from: an output box for one, another operand's box for the
- * other. The diagonal handling below is the whole reason this is worth
- * factoring; a repeated label constrains its axes to *equal* indices, and
- * getting that right in two places independently is how they drift.
+ * Cached like the extents, on the parsed equation and the shapes array.
  */
-function operandRegion(
-  labs: readonly string[],
-  labelIv: ReadonlyMap<string, { lo: number; hi: number }>,
-  diagEnum: number
-): Region {
-  const base: Box = labs.map((L) => ({ ...labelIv.get(L)! }));
-  const counts = new Map<string, number>();
-  labs.forEach((L) => counts.set(L, (counts.get(L) ?? 0) + 1));
-  const repeated = [...counts.entries()].filter(([, c]) => c > 1).map(([L]) => L);
-  if (repeated.length === 0) return fromBox(base);
+const domainCache = new WeakMap<ParsedEquation, WeakMap<number[][], IterationDomain>>();
 
-  // Diagonal: the true set constrains repeated-label axes to equal indices.
-  // Enumerate diagonal positions when small; otherwise block the staircase.
-  let combos = 1;
-  for (const L of repeated) {
-    const I = labelIv.get(L)!;
-    combos *= Math.max(0, I.hi - I.lo);
+function domainOf(pe: ParsedEquation, inShapes: number[][]): IterationDomain {
+  let byShapes = domainCache.get(pe);
+  if (byShapes) {
+    const hit = byShapes.get(inShapes);
+    if (hit) return hit;
+  } else {
+    byShapes = new WeakMap();
+    domainCache.set(pe, byShapes);
   }
-  if (combos === 0) return empty(labs.length);
-  if (combos > diagEnum) {
-    // Too many diagonal positions to name individually, but the staircase is
-    // still worth keeping: chunk each repeated label's range into blocks and
-    // emit one box per combination of blocks. Each box is the sub-square a
-    // block spans, which contains that block's diagonal cells, so the union is
-    // a superset exactly as the single enclosing box was - and for a 300-wide
-    // diagonal it is a few hundred elements rather than 90,000.
-    const perLabel = Math.max(1, Math.floor(Math.pow(diagEnum, 1 / repeated.length)));
-    const blocks = repeated.map((L) => {
-      const I = labelIv.get(L)!;
-      const width = I.hi - I.lo;
-      const groups = Math.min(perLabel, width);
-      const size = Math.ceil(width / groups);
-      const out: { lo: number; hi: number }[] = [];
-      for (let start = I.lo; start < I.hi; start += size)
-        out.push(iv(start, Math.min(start + size, I.hi)));
-      return out;
-    });
-    const boxes: Box[] = [];
-    const walk = (li: number, assign: Map<string, { lo: number; hi: number }>) => {
-      if (li === repeated.length) {
-        boxes.push(labs.map((L, ax) => ({ ...(assign.get(L) ?? base[ax]) })));
-        return;
-      }
-      for (const block of blocks[li]) {
-        assign.set(repeated[li], block);
-        walk(li + 1, assign);
-      }
-      assign.delete(repeated[li]);
-    };
-    walk(0, new Map());
-    return canonicalize({ boxes, exact: false, reasons: ["diagonal einsum"] });
-  }
-  const boxes: Box[] = [];
-  const rec = (li: number, assign: Map<string, number>) => {
-    if (li === repeated.length) {
-      boxes.push(
-        labs.map((L, ax) =>
-          assign.has(L) ? iv(assign.get(L)!, assign.get(L)! + 1) : { ...base[ax] }
-        )
-      );
-      return;
-    }
-    const L = repeated[li];
-    const I = labelIv.get(L)!;
-    for (let v = I.lo; v < I.hi; v++) {
-      assign.set(L, v);
-      rec(li + 1, assign);
-    }
-    assign.delete(L);
-  };
-  rec(0, new Map());
-  return canonicalize({ boxes, exact: true, reasons: [] });
+  const ext = labelExtents(pe, inShapes);
+  const labels = [...ext.keys()];
+  const index = new Map(labels.map((L, i) => [L, i]));
+  const outSet = new Set(pe.output);
+  const domain: IterationDomain = Object.freeze({
+    axes: Object.freeze(
+      labels.map((L) =>
+        Object.freeze({
+          label: L,
+          extent: ext.get(L)!,
+          role: outSet.has(L) ? ("output" as const) : ("reduced" as const),
+        })
+      )
+    ),
+    inputs: Object.freeze(pe.operands.map((labs) => Object.freeze(labs.map((L) => index.get(L)!)))),
+    output: Object.freeze(pe.output.map((L) => index.get(L)!)),
+  });
+  byShapes.set(inShapes, domain);
+  return domain;
 }
+
+const einsumDomain = (eq: string, ctx: OpCtx): IterationDomain =>
+  domainOf(parseEquation(eq, ctx.inShapes.length), ctx.inShapes);
 
 /** @internal Exported for direct oracle-sized tests of diagonal semantics. */
 export function einsumBackward(eq: string, outBox: Box, ctx: OpCtx): Region[] {
   const diagEnum = limitsOf(ctx).diagEnum;
-  const pe = parseEquation(eq, ctx.inShapes.length);
-  const ext = labelExtents(pe, ctx.inShapes);
-  const labelIv = new Map<string, { lo: number; hi: number }>();
-  pe.output.forEach((L, ax) => labelIv.set(L, outBox[ax]));
-  for (const [L, e] of ext) if (!labelIv.has(L)) labelIv.set(L, iv(0, e));
-  return pe.operands.map((labs) => operandRegion(labs, labelIv, diagEnum));
+  const d = einsumDomain(eq, ctx);
+  const iterBox = iterationBoxOfOutput(d, outBox);
+  return d.inputs.map((_, slot) => projectInput(d, slot, iterBox, diagEnum));
 }
 
 /**
@@ -243,13 +211,12 @@ export function einsumBackward(eq: string, outBox: Box, ctx: OpCtx): Region[] {
  * diagonal handling and its fallback included.
  */
 function einsumMultiplicity(eq: string, outBox: Box, slot: number, ctx: OpCtx): Tally {
-  const pe = parseEquation(eq, ctx.inShapes.length);
-  const labs = pe.operands[slot];
-  let readers = 1;
-  pe.output.forEach((L, ax) => {
-    if (!labs.includes(L)) readers *= outBox[ax].hi - outBox[ax].lo;
-  });
-  return uniformTally(einsumBackward(eq, outBox, ctx)[slot], readers);
+  const d = einsumDomain(eq, ctx);
+  const iterBox = iterationBoxOfOutput(d, outBox);
+  return uniformTally(
+    projectInput(d, slot, iterBox, limitsOf(ctx).diagEnum),
+    fibreOf(d, slot, iterBox)
+  );
 }
 
 /**
@@ -273,28 +240,10 @@ function einsumCoaccess(
   otherSlot: number,
   ctx: OpCtx
 ): Region {
-  const diagEnum = limitsOf(ctx).diagEnum;
-  const pe = parseEquation(eq, ctx.inShapes.length);
-  const ext = labelExtents(pe, ctx.inShapes);
-  const labs = pe.operands[slot];
-
-  // A label repeated within the operand is read on its diagonal, so the values
-  // it can take are those its axes agree on.
-  const labelIv = new Map<string, { lo: number; hi: number }>();
-  labs.forEach((L, ax) => {
-    const prev = labelIv.get(L);
-    labelIv.set(
-      L,
-      prev
-        ? iv(Math.max(prev.lo, box[ax].lo), Math.min(prev.hi, box[ax].hi))
-        : { ...box[ax] }
-    );
-  });
-  for (const I of labelIv.values())
-    if (I.hi <= I.lo) return empty(pe.operands[otherSlot].length);
-  for (const [L, e] of ext) if (!labelIv.has(L)) labelIv.set(L, iv(0, e));
-
-  return operandRegion(pe.operands[otherSlot], labelIv, diagEnum);
+  const d = einsumDomain(eq, ctx);
+  const iterBox = iterationBoxOfInput(d, slot, box);
+  if (!iterBox) return empty(d.inputs[otherSlot].length);
+  return projectInput(d, otherSlot, iterBox, limitsOf(ctx).diagEnum);
 }
 
 /**
@@ -328,21 +277,11 @@ function einsumOracleTerms(eq: string, outIndex: number[], ctx: OpCtx): (number[
 }
 
 function einsumForward(eq: string, inSlot: number, inBox: Box, ctx: OpCtx): Region[] {
-  const pe = parseEquation(eq, ctx.inShapes.length);
-  const ext = labelExtents(pe, ctx.inShapes);
-  const labs = pe.operands[inSlot];
-  // Intersection of the box's intervals over each label's occurrences: elements off
-  // the diagonal of a repeated label are never read, so they influence nothing.
-  const lblIv = new Map<string, { lo: number; hi: number }>();
-  for (let ax = 0; ax < labs.length; ax++) {
-    const L = labs[ax];
-    const prev = lblIv.get(L);
-    const cur = inBox[ax];
-    lblIv.set(L, prev ? iv(Math.max(prev.lo, cur.lo), Math.min(prev.hi, cur.hi)) : { ...cur });
-  }
-  for (const I of lblIv.values()) if (I.hi <= I.lo) return [empty(pe.output.length)];
-  const outBox: Box = pe.output.map((L) => (lblIv.has(L) ? { ...lblIv.get(L)! } : iv(0, ext.get(L)!)));
-  return [fromBox(outBox)];
+  const d = einsumDomain(eq, ctx);
+  // Elements off the diagonal of a repeated label are never read, so they
+  // influence nothing.
+  const iterBox = iterationBoxOfInput(d, inSlot, inBox);
+  return [iterBox ? fromBox(projectOutput(d, iterBox)) : empty(d.output.length)];
 }
 
 function einsumOracleDeps(eq: string, outIndex: number[], ctx: OpCtx): number[][][] {
@@ -381,6 +320,26 @@ function einsumFlops(eq: string, outBox: Box, ctx: OpCtx): number {
   let vol = 1;
   for (const I of outBox) vol *= Math.max(0, I.hi - I.lo);
   return vol * einsumFlopsPerElement(eq, ctx);
+}
+
+/**
+ * The work of the terms in an iteration box. One term multiplies the operands
+ * together and, where the equation contracts anything, accumulates once: the
+ * count `einsumFlopsPerElement` states per output element, taken per term. The
+ * boxes of a split reduction therefore add up to the whole.
+ *
+ * A box spanning the reduced axes is charged through `einsumFlops` on its
+ * output box. The two products are the same integer, but past 2^53 the order
+ * of multiplication decides the last digit, and a whole reduction must report
+ * the figure `flopsFor` does.
+ */
+function einsumIterationFlops(eq: string, iterBox: Box, ctx: OpCtx): number {
+  const d = einsumDomain(eq, ctx);
+  if (spansReduced(d, iterBox)) return einsumFlops(eq, projectOutput(d, iterBox), ctx);
+  let positions = 1;
+  for (const axis of d.axes) if (axis.role === "reduced") positions *= axis.extent;
+  const perTerm = d.inputs.length - 1 + (positions > 1 ? 1 : 0);
+  return iterationVolume(iterBox) * perTerm;
 }
 
 /**
@@ -604,6 +563,8 @@ export const einsumOp: OpSpec = {
   oracleTerms: (_slot, outIndex, ctx) => einsumOracleTerms(eqOf(ctx.attrs), outIndex, ctx),
   flopsFor: (_slot, outBox, ctx) => einsumFlops(eqOf(ctx.attrs), outBox, ctx),
   flopsPerElement: (_slot, ctx) => einsumFlopsPerElement(eqOf(ctx.attrs), ctx),
+  iteration: (ctx) => einsumDomain(eqOf(ctx.attrs), ctx),
+  flopsForIteration: (iterBox, ctx) => einsumIterationFlops(eqOf(ctx.attrs), iterBox, ctx),
   dependencyNote: (ctx) => einsumDependencyNote(eqOf(ctx.attrs), ctx),
 };
 
@@ -669,6 +630,8 @@ function einsumSugar(
     oracleTerms: (_s, outIndex, ctx) => einsumOracleTerms(eqFor(ctx), outIndex, ctx),
     flopsFor: (_s, outBox, ctx) => einsumFlops(eqFor(ctx), outBox, ctx),
     flopsPerElement: (_slot, ctx) => einsumFlopsPerElement(eqFor(ctx), ctx),
+    iteration: (ctx) => einsumDomain(eqFor(ctx), ctx),
+    flopsForIteration: (iterBox, ctx) => einsumIterationFlops(eqFor(ctx), iterBox, ctx),
     dependencyNote: (ctx) => einsumDependencyNote(eqFor(ctx), ctx),
   };
 }

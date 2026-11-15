@@ -16,7 +16,25 @@ import { executeBoundedQuery } from "../executor";
 import type { ResolvedGraph } from "../graph";
 import type { BoundedCone } from "../propagate";
 import { fromBox, type Region } from "../region";
+import type { DType } from "../dtypes";
 import { isTile, PlanError, tileBox, TileFamily, tileFamily } from "./tile-family";
+
+/**
+ * How the tasks of one tiled tensor divide their reduction (`steps.ts`). Every
+ * field is optional, and a tensor with none computes each tile's reduction in
+ * one step.
+ */
+export type StepSpec = Readonly<{
+  /** Chunk extent per reduced loop axis, by the axis's label. An axis left out
+   * is taken whole. */
+  chunk?: Readonly<Record<string, number>>;
+  /** The reduced axes, outermost loop first. Left out: the order the operation
+   * declares them in. */
+  order?: readonly string[];
+  /** The dtype the running sum is held in. Left out: `f32` for a
+   * floating-point result, the result's own dtype otherwise. */
+  accumulator?: DType;
+}>;
 
 export type TilePlan = {
   readonly graph: ResolvedGraph;
@@ -24,6 +42,9 @@ export type TilePlan = {
   readonly families: ReadonlyMap<string, TileFamily>;
   /** Where every task stops: the tiled tensors and the graph inputs, sorted. */
   readonly frontier: readonly string[];
+  /** Step declarations per tiled tensor. `stagingOf` in `steps.ts` checks one
+   * against the graph when it is first used; `checkSteps` checks them all. */
+  readonly steps: ReadonlyMap<string, StepSpec>;
 };
 
 /** A task: tile `coord` of the family planned for `tensorId`. */
@@ -36,7 +57,8 @@ export type TaskRef = { readonly tensorId: string; readonly coord: readonly numb
  */
 export function tilePlan(
   graph: ResolvedGraph,
-  tiles: Readonly<Record<string, readonly number[]>>
+  tiles: Readonly<Record<string, readonly number[]>>,
+  steps: Readonly<Record<string, StepSpec>> = {}
 ): TilePlan {
   const families = new Map<string, TileFamily>();
   for (const tensorId of Object.keys(tiles).sort()) {
@@ -53,7 +75,16 @@ export function tilePlan(
     .filter((t) => !t.producer || families.has(t.id))
     .map((t) => t.id)
     .sort();
-  return { graph, families, frontier };
+  const declared = new Map<string, StepSpec>();
+  for (const tensorId of Object.keys(steps).sort()) {
+    if (!families.has(tensorId))
+      throw new PlanError(
+        "PLAN_UNPLANNED",
+        `steps are declared for "${tensorId}", which the plan does not tile`
+      );
+    declared.set(tensorId, steps[tensorId]);
+  }
+  return { graph, families, frontier, steps: declared };
 }
 
 /** The family a task belongs to, after checking that the task names one of its tiles. */

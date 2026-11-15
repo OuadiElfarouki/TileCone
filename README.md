@@ -385,6 +385,7 @@ which exposes the store to the page for setup and assertions; no other build car
 src/
   core/          headless engine
     region.ts    the box algebra everything rests on
+    iteration.ts an operation's loop axes, and the projections its relations are
     graph.ts     IR, validation, topological order, shape inference
     propagate.ts backward/forward walk, transitive or stopped at a frontier
     ops/         the operation registry; einsum carries the contractions
