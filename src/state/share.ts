@@ -324,7 +324,7 @@ export function linkToRestore(link: WorkspaceLink): WorkspaceRestore {
     ...(link.steps
       ? {
           planSteps: Object.fromEntries(
-            Object.entries(link.steps).map(([id, { c, o, a }]) => [
+            Object.entries(link.steps).filter(([, spec]) => Object.keys(spec).length).map(([id, { c, o, a }]) => [
               id,
               // The dtype is checked with the rest of the declaration, against
               // the graph; a link can only say it is a string.

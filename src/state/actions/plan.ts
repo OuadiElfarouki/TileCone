@@ -61,6 +61,10 @@ export const planActions = (set: SetState, get: GetState): Pick<
     const { resolved, planSteps, planTask } = state;
     if (!resolved || !state.planTiles[tensorId]) return;
     const declared = idRecord(planSteps);
+    // A declaration that declares nothing is none: it would otherwise sit in
+    // the state and take an undo step while changing no plan.
+    if (steps && !Object.keys(steps.chunk ?? {}).length && !steps.order?.length && !steps.accumulator)
+      steps = null;
     if (steps) declared[tensorId] = steps;
     else if (tensorId in declared) delete declared[tensorId];
     else return;

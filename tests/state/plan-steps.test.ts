@@ -38,9 +38,23 @@ describe("step declarations", () => {
     S().setPlanSteps("Y", { chunk: { m: 2 } });
     S().setPlanSteps("X", { chunk: { k: 2 } });
     S().setPlanSteps("Y", null);
+    // A declaration that declares nothing is none.
+    S().setPlanSteps("Y", {});
+    S().setPlanSteps("Y", { chunk: {}, order: [] });
     expect(S().planSteps).toBe(before.planSteps);
     expect(S().plan).toBe(before.plan);
     expect(S().workspaceHistory).toBe(before.workspaceHistory);
+  });
+
+  it("keep a valid declaration when an invalid one is offered over it", () => {
+    S().setPlanSteps("Y", { chunk: { k: 8 } });
+    const before = S();
+    S().setPlanSteps("Y", { chunk: { k: 99 } });
+    expect(S().planSteps).toBe(before.planSteps);
+    expect(S().workspaceHistory).toBe(before.workspaceHistory);
+    // An empty declaration over a valid one clears it.
+    S().setPlanSteps("Y", {});
+    expect(S().planSteps).toEqual({});
   });
 
   it("undo and clear as plan edits", () => {

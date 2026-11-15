@@ -188,7 +188,7 @@ function buildStaging(plan: TilePlan, tensorId: string): Internal {
   });
   const outDType = graph.tensors[found.output].dtype;
   const accumulator = declared?.accumulator ?? (dtypeFamily(outDType) === "float" ? "f32" : outDType);
-  if (!(accumulator in DTYPE_BYTES)) fail(`"${accumulator}" is not a dtype an accumulator can have`);
+  if (!Object.prototype.hasOwnProperty.call(DTYPE_BYTES, accumulator)) fail(`"${accumulator}" is not a dtype an accumulator can have`);
   else if (dtypeFamily(accumulator) !== dtypeFamily(outDType))
     fail(
       `the accumulator of "${tensorId}" is ${accumulator}, but ${name(found.output)} is ${outDType}: ` +
@@ -395,8 +395,16 @@ export type StepPayload = Readonly<{
 }>;
 
 export function stepPayload(plan: TilePlan, step: Step): StepPayload {
+  return payloadOf(plan, step.reads);
+}
+
+/** The same measure over any rows of reads: a task's whole demand, for one. */
+export function payloadOf(
+  plan: TilePlan,
+  reads: readonly { tensorId: string; region: Region }[]
+): StepPayload {
   const byTensor = new Map<string, Region[]>();
-  for (const read of step.reads)
+  for (const read of reads)
     byTensor.set(read.tensorId, [...(byTensor.get(read.tensorId) ?? []), read.region]);
   const tensors = [...byTensor.entries()]
     .sort(([a], [b]) => a.localeCompare(b))

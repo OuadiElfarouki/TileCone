@@ -70,6 +70,7 @@ src/
 │       ├── plan.ts         tile families checked against a graph, and each task's demand
 │       ├── interfaces.ts   producer/consumer joins, family demand, and what a plan costs
 │       ├── steps.ts        a task's reduction divided into steps, and what each step reads
+│       ├── sweep.ts        the plans within a stated budget that no other beats
 │       └── replay.ts       a family's tasks one by one, and what each shares with the inspected task
 ├── parse/
 │   ├── lexical.ts        identifier, string, and comment rules, shared with the highlighter
@@ -701,6 +702,26 @@ A **step** is a box of the contraction's iteration domain: the region of the con
 These figures hold for any kernel that runs the step; where a chunk is held, and whether a needed intermediate is kept or recomputed, are not modelled (`docs/STAGING.md`, the scope rule).
 
 `tests/core/plan/steps.test.ts` checks each staged fixture three ways. The steps and the epilogue together read exactly what the task reads; the steps' FLOPs sum to the contraction's over the tile, and with the rest of the task's work to the task's; the union of what steps need of a tensor is what the task computes of it. A plan declaring no steps has one step per task whose reads are the task's demand rows. And a brute-force oracle enumerates the contraction's terms inside each step's box (`oracleTerms`), follows them pointwise to the frontier (`computeOracle`), and requires the step's reads to equal that set.
+
+### Sweep
+
+`sweep.ts` lists plans under a budget the caller states: `stepBytes`, the bytes a task may hold of its operands at a time, and optionally `accumulatorBytes`. It is engine-only: no Worker job, store field or panel uses it yet. Nothing in it models how a kernel holds anything; a step's payload is what its terms read, and the test is a comparison of two numbers.
+
+`sweepPlans(graph, options)` searches sets of tiled tensors, and within each set every power-of-two tile extent per axis (and the full extent) of every tiled tensor. By default a set tiles every graph output and some of the computed intermediates that are not views: every combination for up to four of them, and otherwise none, each alone, and all. `options.tiled` gives the sets instead.
+
+For one tile extent, plan costs do not depend on chunks, so each takes the chunking with the fewest steps whose payload is within `stepBytes`; one with none is over the budget, as is one whose accumulator exceeds `accumulatorBytes`. A tensor without steps is one step per task, its payload the task's whole demand. Chunk extents are the powers of two below each reduced axis and the axis itself; past 256 chunkings the smallest chunks of each axis are left out, so the whole axis is always tried.
+
+A payload is the largest over every task of the family and every step of each, and an accumulator the largest over every task. No task stands for another in general: a border task of a padded operation reads less than an interior one, a tile over one part of a concatenation reads other tensors than a tile over another, and a step that reaches a fused operand reads more than the step before it. One case is measured on a single step: a contraction whose operands are all read directly, each a different tensor addressed by distinct loop axes. A step then reads one box of each operand whose size is the product of the step's interval lengths wherever it sits, and the first task's first step has the longest interval on every axis.
+
+The search does not evaluate every combination. With the set of tiled tensors fixed, a family's task count, FLOPs and bytes read depend only on its own tile extents, because every task stops at the same frontier whatever the other tilings are; a step's payload depends on its own tile and chunks. Each tiled tensor is therefore measured alone, task by task, and combinations are formed from the options that survive a prune: an option is dropped when another of the same tensor is no worse on task count, FLOPs, bytes read and payload and better on one of the three sums. Swapping it out improves a sum and worsens nothing, so no unbeaten combination contains it. Being better on payload alone does not drop an option, since a plan's payload is a maximum and another tensor can set it; that is what keeps plans tied on every figure. Candidates are ranked on recomputed FLOPs, bytes read plus written, task count and step payload, all lower-is-better, and the unbeaten ones are returned in that order, each evaluated whole by `planReport`, whose figures are the ones reported.
+
+The argument needs exact figures. Where a demand is over-approximated - a strided access past its enumeration limit, a wide diagonal, a barrier - the union of the tasks' regions is not the region of the whole, and the work a set does once stops being one number. A set with any figure that is not exact is not searched and is counted (`setsInexact`), so every row's figures are exact.
+
+Limits are stated in the result (`counts`): the sets searched of how many exist, sets not searched for inexact figures or because `maxPlans` (4096) was already reached, tile extents not measured for exceeding the task budget (`SWEEP_TASK_BUDGET`, 256 tasks per family), those over the budget, those whose chunkings were capped, combinations formed and not formed, and how many unbeaten candidates there were of which `maxRows` (64) are returned. Measured on the built-in examples with a 99 KiB step budget and a 16 KiB accumulator bound: the GEMM in about 0.6 s, the two-matmul experiment in about 3 s, and the attention layer in about 1.9 s with only its output tiled and a 64-task budget. With attention's default sets the combination cap leaves most combinations unformed.
+
+Without an accumulator bound the list is led by the one task that computes a whole output: it recomputes nothing, reads the least and is one task, and chunking brings its payload within any budget a single slice fits. Bounding the accumulator is what makes smaller tiles appear.
+
+`tests/core/plan/sweep.test.ts` compares the sweep with a brute force that makes none of the separability argument: it builds every plan of a small graph, evaluates each whole, takes the payload as the largest over every task and every step, and discards beaten plans last. The two must list the same plans with the same figures, tied plans included, on graphs that include a fused intermediate, an epilogue, a tensor without steps, a concatenation whose later tasks and later steps read more, and a tie. The brute force shares the extents tried and the largest-chunk rule with the sweep; the chunking cap, inexact sets, invalid sets and the limits have tests of their own.
 
 ## 8c. Read multiplicity
 
