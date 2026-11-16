@@ -33,6 +33,20 @@ export function PanelFrame({
   const dragRef = useRef(false);
   const rawWidthRef = useRef(width);
   const startWidthRef = useRef(width);
+  const [renderedWidth, setRenderedWidth] = useState(width);
+
+  // A narrow workspace can cap the inspector's drawn width without replacing
+  // the user's saved width. Read the actual frame for its separator's value
+  // and keyboard steps, so a capped panel responds on the first arrow press.
+  useLayoutEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    const update = () => setRenderedWidth(Math.round(frame.getBoundingClientRect().width));
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(frame);
+    return () => observer.disconnect();
+  }, []);
   /**
    * Whether releasing now would collapse the panel.
    *
@@ -140,10 +154,10 @@ export function PanelFrame({
             tabIndex={0}
             aria-label={`${label} panel width`}
             aria-orientation="vertical"
-            aria-valuenow={width}
+            aria-valuenow={renderedWidth}
             aria-valuemin={PANEL_MIN}
             aria-valuemax={PANEL_MAX}
-            aria-valuetext={`${width} pixels`}
+            aria-valuetext={`${renderedWidth} pixels`}
             title={`drag or use arrow keys to resize · release below ${PANEL_COLLAPSE_AT}px to collapse · double-click to collapse`}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
@@ -160,7 +174,8 @@ export function PanelFrame({
               event.stopPropagation();
               // Move the separator in the direction of the key. The right
               // panel grows when its inner edge moves left, hence the reversal.
-              setPanelWidth(side, width + (side === "left" ? movement : -movement));
+              const drawnWidth = frameRef.current?.getBoundingClientRect().width ?? width;
+              setPanelWidth(side, drawnWidth + (side === "left" ? movement : -movement));
             }}
           />
         </>

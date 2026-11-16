@@ -240,6 +240,31 @@ kbd {
   text-transform: uppercase;
 }
 
+/* At narrow desktop widths, three columns leave the graph narrower than its
+   controls. Stack the source above the graph instead of hiding a focused
+   editor or changing the user's saved collapse/width preferences. */
+@media (max-width: 1000px) {
+  .main {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: minmax(180px, 30vh) minmax(0, 1fr);
+  }
+  .main:has(> .panel-frame.left.collapsed) { grid-template-rows: 30px minmax(0, 1fr); }
+  .main > .panel-frame.left {
+    grid-column: 1; grid-row: 1; width: auto !important;
+    min-height: 0; border-bottom: 1px solid var(--line);
+  }
+  .main > .panel-frame.left .panel-resize { display: none; }
+  .main > .panel-frame.left .panel-rail span { writing-mode: horizontal-tb; }
+  .main > .panel-frame.left .source-editor { height: 120px; }
+  .main > .panel-frame.right {
+    grid-column: 2; grid-row: 1 / 3;
+    max-width: max(232px, min(40vw, calc(100vw - 300px)));
+  }
+  .main > .graph-canvas, .main > .canvas-empty { grid-column: 1; grid-row: 2; }
+  .hud-left, .grid-controls, .layout-controls { flex-wrap: wrap; max-width: 100%; }
+}
+
 /* ---------------- side panel ---------------- */
 .side-panel {
   display: flex; flex-direction: column; width: 100%; min-width: 0; height: 100%;
@@ -1178,7 +1203,6 @@ textarea.source.error-state { border-color: var(--err); }
   font-size: var(--t-body); margin-bottom: 3px;
 }
 .plan-list .box-range { width: auto; flex: 1 1 96px; }
-.plan-list .plan-tile-extents.wide { flex-basis: 18ch; min-width: 0; max-width: 100%; }
 
 /* A producer task is a link back to the regions that explain it: clicking makes
    it the inspected task. */

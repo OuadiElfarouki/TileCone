@@ -86,7 +86,7 @@ export function PlanSweep(): React.ReactElement {
           <button className="mini" onClick={clearSweep} title="stop the sweep">stop</button>
         ) : (
           <>
-            <span className="muted">sweep</span>
+            <span className="muted">sweep power-of-two tiles</span>
             {tiled > 0 && (
               <button
                 className="mini"

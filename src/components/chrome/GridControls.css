@@ -1,0 +1,9 @@
+.new-tile-grid { position: relative; font-size: var(--t-small); }
+.new-tile-grid > summary { cursor: pointer; white-space: nowrap; }
+.new-tile-grid-options {
+  position: absolute; bottom: calc(100% + 9px); right: 0;
+  width: 240px; max-width: calc(100vw - 40px); padding: 10px;
+  display: grid; gap: 7px;
+  border: 1px solid var(--line); border-radius: var(--r); background: var(--panel);
+}
+.new-tile-grid-density { display: flex; align-items: center; justify-content: space-between; gap: 8px; }

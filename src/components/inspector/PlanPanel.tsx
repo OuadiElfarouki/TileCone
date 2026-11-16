@@ -37,13 +37,13 @@ import { demandDetail, demandSummary } from "../../view/demand";
 import { describePlanChange, describeTiling, readOrder, WORK_ROWS, workCell, workCellTitle } from "../../view/plan-work";
 import { boxColor, rgbCss } from "../../view/palette";
 import { useDark, useStore } from "../../state/store";
-import { DraftField } from "../chrome/DraftField";
 import { useExplanation } from "../chrome/Explain";
 import { OnCanvas } from "../chrome/OnCanvas";
 import { OperandReuse } from "./operand-reuse";
 import type { PlanReplayControl } from "./usePlanReplay";
 import { PlanBudget, TaskStepsSection, TensorSteps } from "./PlanSteps";
 import { PlanSweep } from "./PlanSweep";
+import { AddPlanTensor, PlanTileAxes } from "./PlanTileControls";
 import type { ReplayPlayback } from "../../view/workspace";
 import { sameTiles } from "../../state/history";
 import { activePlanTrail, MAX_KEPT_PLANS } from "../../state/plan";
@@ -58,52 +58,9 @@ export const AUTO_PLAN_TASKS = 256;
 /** The dependency matrix is drawn when both sides have at most this many tiles. */
 export const MATRIX_MAX_SIDE = 64;
 
-/**
- * Parse tile extents written as `64 × 64`, `64x64`, `64, 64` or `64 64`.
- * Returns null unless there is one positive integer per axis.
- */
-/** @internal Pure parsing seam exported for tests. */
-export function parseTileExtents(text: string, rank: number): number[] | null {
-  if (rank === 0) return /^(?:scalar)?$/i.test(text.trim()) ? [] : null;
-  const fields = text.trim().split(/\s*[×x,]\s*|\s+/i).filter(Boolean);
-  if (fields.length !== rank || !fields.every((f) => /^\d+$/.test(f))) return null;
-  const extents = fields.map(Number);
-  return extents.every((e) => Number.isSafeInteger(e) && e >= 1) ? extents : null;
-}
-
-export const formatTileExtents = (tile: readonly number[]): string =>
-  tile.length ? tile.join(" × ") : "scalar";
-
 /** A task by tensor name and tile coordinate. The element slice goes beside it. */
 export const taskName = (name: string, coord: readonly number[]): string =>
   coord.length ? `${name} (${coord.join(", ")})` : name;
-
-function TileExtentsInput({
-  tensorId,
-  name,
-  shape,
-  tile,
-}: {
-  tensorId: string;
-  name: string;
-  shape: number[];
-  tile: number[];
-}): React.ReactElement {
-  const setPlanTile = useStore((s) => s.setPlanTile);
-  return (
-    <DraftField
-      value={formatTileExtents(tile)}
-      parse={(text) => parseTileExtents(text, shape.length)}
-      apply={(parsed) => {
-        if (parsed.some((e, axis) => e !== tile[axis])) setPlanTile(tensorId, parsed);
-      }}
-      label={`${name} tile extents`}
-      title="tile extents per axis; Enter or leaving the field applies, Escape abandons"
-      invalidTitle={`expected ${shape.length} positive whole number${shape.length === 1 ? "" : "s"}, one per axis`}
-      className={`box-range plan-tile-extents${tile.length > 2 ? " wide" : ""}`}
-    />
-  );
-}
 
 /** The plan's evaluation: every family and their total, computed once per tiling. */
 type PlanRun = {
@@ -399,6 +356,8 @@ function TiledTensors({ plan, run }: { plan: TilePlan | null; run: PlanRun }): R
       </div>
       {explain.panel}
       <PlanBudget />
+      <AddPlanTensor />
+      <p className="hint">Any positive whole-number tile extent; edge tasks are clipped.</p>
       {families.length === 0 ? (
         <p className="hint">Nothing is tiled yet. Graph inputs have no tasks and cannot be tiled.</p>
       ) : (
@@ -413,12 +372,7 @@ function TiledTensors({ plan, run }: { plan: TilePlan | null; run: PlanRun }): R
             return (
               <li key={family.tensorId}>
                 <code>{tensor.name}</code>
-                <TileExtentsInput
-                  tensorId={family.tensorId}
-                  name={tensor.name}
-                  shape={[...family.shape]}
-                  tile={[...family.tile]}
-                />
+                <PlanTileAxes tensor={tensor} tile={family.tile} />
                 <span className="muted">
                   {family.count} task{family.count === 1 ? "" : "s"}
                 </span>

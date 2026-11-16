@@ -522,31 +522,33 @@ export function GraphView(): React.ReactElement {
   /**
    * Hold the world still when the left panel opens, closes, or is dragged.
    *
-   * The scene is translated from this container's top-left corner, and the left
-   * panel *is* that corner: its width is the container's origin. Opening or
-   * closing it therefore slides the whole world by that width, for a gesture
-   * that was about the panel. Only the left panel can do this - the right one
-   * and the window move the far edge, which a top-left origin does not follow.
+   * The scene is translated from this container's top-left corner. On a wide
+   * workspace the source changes its left edge; in the stacked layout it
+   * changes its top edge. Measure that origin rather than assuming a panel's
+   * stored width is a horizontal displacement.
    *
    * The correction has to happen in the same commit as the width change, which
-   * is why it reads the panel's width from the store rather than measuring the
-   * container afterwards. A `ResizeObserver` fires after layout *and paint*, so
-   * compensating there drew the displaced scene for a frame and then pulled it
-   * back - the shift was still happening, just briefly. Here the width and the
-   * transform that cancels it are one render: React flushes a layout effect's
-   * state update before the browser paints, so the displaced position is never
-   * on screen at all.
+   * is why it measures in a layout effect on a panel edit. A ResizeObserver
+   * fires after layout and paint; React flushes the layout effect's correction
+   * before paint. Viewport-size updates also refresh the origin after a window
+   * resize, but only a changed panel signature compensates the camera.
    *
    * `movedRef` is untouched. Cancelling a shift is not a gesture, and a view
    * that was fitted is still showing everything afterwards.
    */
-  const leftInset = useStore((s) => (s.panelCollapsed.left ? PANEL_RAIL : s.panelW.left));
-  const leftInsetRef = useRef(leftInset);
+  const panelLayout = useStore((s) => `${s.panelCollapsed.left}:${s.panelW.left}:${s.panelCollapsed.right}:${s.panelW.right}`);
+  const panelOriginRef = useRef<{ signature: string; left: number; top: number } | null>(null);
   useLayoutEffect(() => {
-    const dx = leftInset - leftInsetRef.current;
-    leftInsetRef.current = leftInset;
-    if (dx !== 0) setTf((t) => ({ ...t, x: t.x - dx }));
-  }, [leftInset]);
+    const viewport = containerRef.current;
+    if (!viewport) return;
+    const { left, top } = viewport.getBoundingClientRect();
+    const previous = panelOriginRef.current;
+    panelOriginRef.current = { signature: panelLayout, left, top };
+    if (!previous || previous.signature === panelLayout) return;
+    const dx = left - previous.left;
+    const dy = top - previous.top;
+    if (dx !== 0 || dy !== 0) setTf((t) => ({ ...t, x: t.x - dx, y: t.y - dy }));
+  }, [panelLayout, viewport.width, viewport.height]);
 
   /**
    * Keep an untouched overview an overview when the room available changes.

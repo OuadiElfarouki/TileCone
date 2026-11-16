@@ -77,7 +77,12 @@ complete tile, including its whole reduction. Tiling a tensor is what writes it 
 reads tiled tensors and graph inputs, and computes any untiled tensor between them itself, so an
 untiled intermediate is fused into the tasks that read it and recomputed by each of them.
 
-Dragging on an untiled tensor divides it at the extents drawn; after that, clicking inspects the
+Under **Tiled tensors**, **tile tensor** lets you choose a produced tensor and enter a tile
+extent for each axis before making any canvas gesture. Existing tiles have independent, named
+axis fields: Enter or leaving a field applies, and Escape abandons the edit. Any positive whole
+number is accepted; a shorter edge task covers the remainder. Editing a tile ends an active replay.
+
+Dragging on an untiled tensor also divides it at the extents drawn; after that, clicking inspects the
 task under the pointer. The first click also tiles the tensors its operation reads, so a plan
 starts with one operation per task. **fuse** beside a tiled intermediate fuses it into its
 consumers, and **materialize** under "Computed in this task" writes it back. On a graph output the
@@ -158,6 +163,11 @@ its FLOPs, and the accumulator they build, complete after the last. The step sho
 the cards at full strength over the task's fainter whole demand. Work after the contraction - a
 bias, an activation, a cast - applies to the finished sum and is read once per task. A tensor
 whose tasks perform no contraction has one step per task, and says why. For tasks with multiple steps, **Computed over the whole task** expands the fused computations and their materialize controls.
+
+In Plan, **New tile grid** is a secondary default-density control for untiled tensors; it never
+changes existing plan tiles and disappears when all produced tensors are tiled. Dependencies
+retains the global grid-density slider. At window widths up to 1000 px, the source sits above
+the canvas beside the inspector, preserving panel preferences and editor focus.
 
 **Budget.** The **budget** line above the tiled tensors takes two byte counts you state: what a
 task may hold of its operands per step, and optionally what an accumulator may take. Figures they

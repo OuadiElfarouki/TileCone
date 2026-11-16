@@ -8,6 +8,7 @@ import {
   TILE_SCALE_NONE,
 } from "../../view/tensor/tiling";
 import { planesOf } from "../../view/tensor/seeds";
+import "./GridControls.css";
 
 /**
  * The lattice, the snap, and how axes read - the three settings that change the
@@ -23,9 +24,9 @@ export function GridControls(): React.ReactElement | null {
   const tileScale = useStore((s) => s.tileScale);
   const setTileScale = useStore((s) => s.setTileScale);
   const snapToGrid = useStore((s) => s.snapToGrid);
-  /* A plan tile is a quantity, so a plan drag always snaps. The toggle has
-     nothing to act on here and says so instead of appearing to work. */
+  /* Plan drags always snap; their exact extents are edited in the Plan panel. */
   const planView = useStore((s) => s.inspectorTab === "plan");
+  const planTiles = useStore((s) => s.planTiles);
   const setSnapToGrid = useStore((s) => s.setSnapToGrid);
   const axisMode = useStore((s) => s.axisMode);
   const setAxisMode = useStore((s) => s.setAxisMode);
@@ -45,44 +46,45 @@ export function GridControls(): React.ReactElement | null {
 
   const perElement = detail.stops[detail.index] === TILE_SCALE_NONE;
   const hasSemanticLabels = Object.values(resolved.tensors).some(hasSymbolicShape);
+  const hasUntiled = Object.entries(resolved.tensors).some(([id, tensor]) => tensor.producer && !planTiles[id]);
+
+  const density = <>
+    <span className="tile-settled" title={perElement
+      ? "one logical tile per element; dense boundaries may be omitted"
+      : "about this many tiles across each axis, with power-of-two default extents"}
+    >{detail.labels[detail.index]}</span>
+    <input
+      type="range"
+      min={0}
+      max={Math.max(0, detail.stops.length - 1)}
+      step={1}
+      value={detail.index}
+      onChange={(event) => setTileScale(detail.stops[Number(event.target.value)])}
+      aria-label={planView ? "new tile grid detail" : "tile grid detail"}
+      aria-valuetext={detail.labels[detail.index]}
+      title={`tile detail, all tensors - ${detail.labels.join(" · ")}`}
+    />
+  </>;
 
   return (
     <div className="grid-controls">
-      <span className="setup-kicker">grid</span>
-      <span
-        className="tile-settled"
-        title={
-          perElement
-            ? "one logical tile per element, on every tensor; boundaries are omitted where they are too dense to draw"
-            : "about this many tiles across every axis, each a power of two: an axis of one length is gridded alike on every card; each card's header shows its tile"
-        }
-      >
-        {detail.labels[detail.index]}
-      </span>
-      <input
-        type="range"
-        min={0}
-        max={Math.max(0, detail.stops.length - 1)}
-        step={1}
-        value={detail.index}
-        onChange={(event) => setTileScale(detail.stops[Number(event.target.value)])}
-        aria-label="tile grid detail"
-        aria-valuetext={detail.labels[detail.index]}
-        title={`tile detail, all tensors - ${detail.labels.join(" · ")}`}
-      />
-      <button
-        className={`mini toggle${snapToGrid && !planView ? " on" : ""}`}
-        aria-pressed={planView ? true : snapToGrid}
-        disabled={planView}
+      {planView ? hasUntiled && (
+        <details className="new-tile-grid">
+          <summary>New tile grid</summary>
+          <div className="new-tile-grid-options">
+            <div className="new-tile-grid-density">{density}</div>
+            <span className="muted">For untiled tensors. Existing plan tiles stay unchanged.</span>
+          </div>
+        </details>
+      ) : <><span className="setup-kicker">grid</span>{density}</>}
+      {!planView && <button
+        className={`mini toggle${snapToGrid ? " on" : ""}`}
+        aria-pressed={snapToGrid}
         onClick={() => setSnapToGrid(!snapToGrid)}
-        title={
-          planView
-            ? "the Plan view always snaps: a tile is a quantity, not a highlight"
-            : "snap a drawn box out to whole tiles; off cuts an exact element range"
-        }
+        title="snap a drawn box out to whole tiles; off cuts an exact element range"
       >
         snap
-      </button>
+      </button>}
       <button
         className={`mini toggle${axisMode === "symbolic" ? " on" : ""}`}
         aria-pressed={axisMode === "symbolic"}

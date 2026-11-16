@@ -4,7 +4,7 @@ import { planReport } from "../../../src/core/plan/interfaces";
 import { tileFamily } from "../../../src/core/plan/tile-family";
 import { box, fromBox } from "../../../src/core/region";
 import { useStore } from "../../../src/state/store";
-import { formatTileExtents, parseTileExtents } from "../../../src/components/inspector/PlanPanel";
+import { parseTileExtent, planAxisNames } from "../../../src/components/inspector/PlanTileControls";
 import { gridGeometry } from "../../../src/view/tensor/grid";
 import { TILE_SCALE_NONE } from "../../../src/view/tensor/tiling";
 import { defaultViewCfg } from "../../../src/view/tensor/tensor-view";
@@ -521,23 +521,25 @@ describe("what a gesture in the plan view does", () => {
   });
 });
 
-describe("tile extents as text", () => {
-  it("accepts the separators the panel prints and rejects the rest", () => {
-    expect(parseTileExtents("64 × 64", 2)).toEqual([64, 64]);
-    expect(parseTileExtents("64x64", 2)).toEqual([64, 64]);
-    expect(parseTileExtents("64, 32", 2)).toEqual([64, 32]);
-    expect(parseTileExtents(" 8 4 ", 2)).toEqual([8, 4]);
-    expect(parseTileExtents("64", 2)).toBeNull();
-    expect(parseTileExtents("64 × 0", 2)).toBeNull();
-    expect(parseTileExtents("64 × -4", 2)).toBeNull();
-    expect(parseTileExtents("64 × 1.5", 2)).toBeNull();
-    expect(parseTileExtents("", 0)).toEqual([]);
-    expect(parseTileExtents("scalar", 0)).toEqual([]);
-    expect(parseTileExtents("SCALAR", 0)).toEqual([]);
+describe("per-axis plan tile controls", () => {
+  it("accepts arbitrary positive safe integers on each axis", () => {
+    expect(parseTileExtent(" 27 ")).toBe(27);
+    expect(parseTileExtent("1")).toBe(1);
+    for (const bad of ["", "0", "-4", "3.5", "1e3", "9007199254740992", "24 x 40"]) {
+      expect(parseTileExtent(bad)).toBeNull();
+    }
   });
 
-  it("round-trips the displayed scalar extent", () => {
-    expect(parseTileExtents(formatTileExtents([]), 0)).toEqual([]);
+  it("names axes by source names or distinct symbolic extents", () => {
+    S().applyDSL(`M = 96\nK = 80\nN = 72\nA = Tensor(M, K)\nB = Tensor(K, N)\nY = matmul(A, B)`);
+    expect(planAxisNames(S().resolved!.tensors.Y)).toEqual(["M", "N"]);
+    S().applyDSL(`N = 32\nA = Tensor(N, N)\nY = relu(A)`);
+    expect(planAxisNames(S().resolved!.tensors.Y)).toEqual(["ax0", "ax1"]);
+    S().applyDSL(`A = Tensor(batch=8, seq=12)\nY = relu(A)`);
+    expect(planAxisNames(S().resolved!.tensors.Y)).toEqual(["batch", "seq"]);
+    const ambiguous = { ...S().resolved!.tensors.Y, resolved: [2, 3, 4],
+      axisNames: ["ax1", "foo", "foo"], symShape: [2, 3, 4], symProven: [true, true, true] };
+    expect(planAxisNames(ambiguous)).toEqual(["ax0", "ax1", "ax2"]);
   });
 
   it("defaults a tile to the displayed size on the visible axes and one elsewhere", () => {
@@ -555,7 +557,6 @@ R = relu(Q)
     expect(defaultPlanTile(S().resolved!, "R", S().tileScale).slice(0, 2)).toEqual([1, 1]);
   });
 });
-
 
 it("draws large producer sets as exact tile-aligned ranges", () => {
   S().applyDSL("X = Tensor(100000000)\nP = relu(X)\nY = sum(P, axis=0)\n");

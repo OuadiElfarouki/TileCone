@@ -1,0 +1,11 @@
+/* Each value describes one tensor axis, and wraps as a unit at narrow widths. */
+.plan-tile-axes { display: flex; flex: 1 0 100%; align-items: baseline; flex-wrap: wrap; gap: 4px 7px; }
+.plan-tile-axis { display: inline-flex; align-items: baseline; gap: 3px; min-width: 0; }
+.plan-tile-axis > span { color: var(--muted); font-size: var(--t-small); }
+.plan-list .plan-tile-axis .plan-tile-axis-field,
+.plan-tile-axis .plan-tile-axis-field { width: 7ch; flex: 0 0 7ch; padding: 1px 4px; text-align: right; }
+.plan-add-tensor { margin: 5px 0; font-size: var(--t-small); }
+.plan-add-tensor > summary { cursor: pointer; color: var(--accent); }
+.plan-add-tensor-select { display: flex; align-items: baseline; gap: 6px; margin-top: 4px; }
+.plan-add-tensor-select select { min-width: 0; max-width: 100%; }
+.plan-new-tile-form { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px; margin-top: 5px; }
