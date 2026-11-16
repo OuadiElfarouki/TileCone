@@ -649,7 +649,7 @@ distinct element per task, no reuse between tasks, each tiled tensor written onc
 says so beside them. They are not measured or predicted memory traffic. `recomputed` is relative to
 the operations' own cost formulas (§8), not to a minimum over every algorithm for the same result.
 
-The plan total measures `readDistinct` and `recomputed` over unions across families, so an intermediate that two families both compute is recomputed at the plan level although neither family recomputes it. `differenceFigure` keeps the direction a difference still has: an upper bound less an exact figure is an upper bound, and a difference whose subtrahend is inexact is only `approximate`. The report names the graph outputs the plan does not tile as `unwritten`, because a plan that never writes an output leaves that output's work out of its totals.
+The plan total measures `readDistinct` and `recomputed` over unions across families, so an intermediate that two families both compute is recomputed at the plan level although neither family recomputes it. `differenceFigure` keeps the direction a difference still has: an upper bound less an exact figure is an upper bound, an exact figure less an upper bound is a lower bound, and two bounds of the same direction leave it `approximate`. Recomputed work is never negative, but with over-approximated regions the widened union can cost more than the tasks' sum and the difference comes out below zero; such a figure is reported as `≥ 0` with its reasons, which is all that is known. The report names the graph outputs the plan does not tile as `unwritten`, because a plan that never writes an output leaves that output's work out of its totals.
 
 Each task costs one bounded query plus one intersection per producer tile it meets. A family with more tasks than the budget, 4096 by default, is declined with status `over-budget` and no figures, and the plan then has no total. A sum over part of a family or a plan is a lower bound on its total, and no figure in the app is reported as a lower bound. In the browser, the plan evaluation runs in the query Worker; only the finished report crosses back to React.
 
@@ -730,63 +730,90 @@ Without an accumulator bound the list is led by the one task that computes a who
 
 ### Closed forms
 
-`core/plan/closed-forms.ts` exposes `closedFormsOf(plan, tensorId)`. The initial
-supported class is a direct staged `einsum`, `matmul` or `linear` with distinct
-frontier operands, no diagonal access, no fused prologue/epilogue and no widened
-dtype. Unsupported mappings return `status: "unavailable"` with a reason. Operand
-and output axis aliases must be provably equal through `compareDims` with the
-graph's derived definitions; agreement at the current numeric binding is insufficient.
-Every operand and output axis must also be one the resolver proved (`symProven`):
-`symShape` writes an axis it has no expression for - a pooled or convolved one -
-as its current extent, which reads as a literal, and a law over it would hold at
-this binding alone. Two operands pooled from the same length agree on such an
-axis, so the alias check does not catch it; the form is unavailable and names
+`core/plan/closed-forms.ts` exposes `closedFormsOf(plan, tensorId)`. The initial supported class
+is a staged `einsum`, `matmul` or `linear` with distinct frontier operands, no diagonal access,
+no fused prologue and no widened dtype. A shape-preserving epilogue may contain unary
+elementwise operations, identity, contiguous and astype, and at most one binary add with a
+distinct frontier bias or residual operand. Every chain shape must be provably equal to the
+contraction output, every participating axis must have proven symbolic provenance, and shared
+chain intermediates are declined. Side dimensions must be provably one or equal to their aligned
+output dimensions; a dimension merely equal to one today is not classified as a broadcast.
+Views, shape expansion, n-ary/repeated adds and operands already read by the contraction remain
+unsupported. Unsupported mappings return `status: "unavailable"` with a reason. Operand and
+output axis aliases must be provably equal through `compareDims` with the graph's derived
+definitions; agreement at the current numeric binding is insufficient. Every operand and output
+axis must also be one the resolver proved (`symProven`): `symShape` writes an axis it has no
+expression for - a pooled or convolved one - as its current extent, which reads as a literal,
+and a law over it would hold at this binding alone. Two operands pooled from the same length
+agree on such an axis, so the alias check does not catch it; the form is unavailable and names
 the axis.
 
-Available forms describe task FLOPs/read bytes/output bytes/accumulator bytes,
-step FLOPs/per-operand bytes/payload, family task count and steps per task, and
-family totals: FLOPs, bytes read in all and per operand, bytes written and steps,
-each the sum over every task. The totals need no coordinates, because along an
-output axis the tile widths add up to the axis: an operand's bytes are its own
-extents times the number of tiles along each output axis it does not carry,
-since each of those tiles reads it again. For `C = A @ B` the bytes read are
-`2·M·K·ceil(N/tile[n]) + 2·K·N·ceil(M/tile[m])`, and the FLOPs do not depend on
-the tiling. The tests compare each total with `interfaceOf` at several bindings,
-tiles with and without tails, and a tile wider than its axis. They
-use the dimension algebra for symbolic extents, with structured minimum,
-subtraction and ceiling-division nodes for tails and counts. Tile, chunk and
-coordinate variables have separate namespaces from graph symbols. An output
-width is `min(tile, extent - taskCoord*tile)` and a reduced width is
-`min(chunk, extent - stepCoord*chunk)`. An undeclared chunk stays the symbolic
-full extent when graph parameters are rebound. The arithmetic coefficient follows
-the operation: one multiply per term for a binary contraction, plus accumulation
-only when the full reduction has more than one term, even when an individual
-chunk has width one. These are the declared operation's accounting formulas.
+Available forms describe task FLOPs/read bytes/output bytes/accumulator bytes, step FLOPs/per-
+operand bytes/payload, family task count and steps per task, and family totals: FLOPs, bytes
+read in all and per operand, bytes written and steps, each the sum over every task. The totals
+need no coordinates, because along an output axis the tile widths add up to the axis: an
+operand's bytes are its own extents times the number of tiles along each output axis it does not
+carry, since each of those tiles reads it again. For `C = A @ B` the bytes read are
+`2·M·K·ceil(N/tile[n]) + 2·K·N·ceil(M/tile[m])`, and the FLOPs do not depend on the tiling. The
+tests compare each total with `interfaceOf` at several bindings, tiles with and without tails,
+and a tile wider than its axis. They use the dimension algebra for symbolic extents, with
+structured minimum, subtraction and ceiling-division nodes for tails and counts. Tile, chunk and
+coordinate variables have separate namespaces from graph symbols. An output width is `min(tile,
+extent - taskCoord*tile)` and a reduced width is `min(chunk, extent - stepCoord*chunk)`. Every
+reduced axis has a chunk variable. An undeclared chunk defaults to the full rebound extent; an
+explicit binding can override it without rebuilding the law. Declared chunks retain their
+numeric defaults. Unknown binding keys are rejected. The arithmetic coefficient follows the
+operation: one multiply per term for a binary contraction, plus accumulation only when the full
+reduction has more than one term, even when an individual chunk has width one. These are the
+declared operation's accounting formulas.
 
-`evaluateClosedForm(forms, expression, bindings)` checks rebound extents, tile
-and chunk sizes, coordinate ranges and safe integer arithmetic. The same forms
-can be evaluated under other parameter bindings; changing the graph structure or
-dtypes requires deriving new forms. `formatClosedForm` prints the expression
-without changing the DSL's exact integer-division grammar. Tests compare the
-same forms across bindings with concrete task, step and payload APIs.
+`evaluateClosedForm(forms, expression, bindings)` checks rebound extents, tile and chunk sizes,
+coordinate ranges and safe integer arithmetic. The same forms can be evaluated under other
+parameter bindings; changing the graph structure or dtypes requires deriving new forms.
+`formatClosedForm` prints the expression without changing the DSL's exact integer-division
+grammar. Passing the forms as formatting context uses author-facing axis names while binding
+keys remain stable internal labels. `interior.task` and `interior.step` replace clipped widths
+with tile/chunk variables and list their full-tile/full-chunk applicability conditions. Their
+FLOP coefficient retains the full-reduction degeneracy guard under rebinding; constant products
+and sums are simplified without assuming today's reduction size. `interior.accumulating`
+additionally assumes the full reduction has more than one term and provides compact task/step
+FLOP forms: the binary contraction step reads `2 · tile[M] · tile[N] · chunk[K]`. The guarded
+forms remain valid when rebinding reduces the full axis to one; accumulating forms must not be
+used there. Tests compare the same forms across bindings with concrete task, step and payload
+APIs.
+
+An epilogue adds its registry per-element FLOP cost to task and family work, using the output
+tile/full volume. Side reads are charged once per task: carried output-axis widths multiply its
+storage width; family totals multiply carried extents and the tile counts of omitted/broadcast
+axes. Step forms and the contraction accumulator remain unchanged. Final output bytes use the
+final dtype, including a cast. The tests compare task, step and family formulas with concrete
+reports across tails and bindings, including a symbolic side dimension rebound from one to a
+larger value.
 
 ### Conditional time bound
 
-`core/plan/time-bound.ts` provides `planTimeBound(work, rates?)`. With both finite
-positive rates supplied, it returns a seconds `Figure`, scope
-`declared-work-and-traffic`, and machine-readable assumptions: the counted
-arithmetic is executed, all counted distinct reads and writes cross the supplied
-bandwidth boundary, and the rates are upper limits for those operations and
-transfers. Under that model seconds is at least
-`max(flops/flopsPerSecond, (readDistinct + written)/bytesPerSecond)`.
-This is not an unconditional physical runtime bound: plan traffic is logical,
-intermediates may remain in cache, and FLOP counts follow the declared computation.
+`core/plan/time-bound.ts` provides `planTimeBound(work, rates?)`. Each finite positive rate is
+independently useful: `terms.compute` uses `flopsPerSecond` and `terms.memory` uses
+`bytesPerSecond`. An absent rate gives a null term. The result carries scope `declared-work-and-
+traffic` and per-channel machine-readable assumptions: counted arithmetic is executed, counted
+distinct reads and writes cross the specified bandwidth boundary, and the supplied rates are
+upper limits for those operations and transfers. Under that model each known term is a lower
+bound; `seconds` is the maximum known term. This is not an unconditional physical runtime bound:
+traffic is logical, intermediates may remain in cache, and FLOPs follow the declared
+computation.
 
-Exact or lower source counts establish a lower result. Upper, approximate or
-unknown source counts, or unsafe byte addition, produce unknown seconds. Missing
-either rate returns `null`; an invalid supplied rate throws `RangeError`. No
-hardware rates are inferred from the preset. This is an engine API; rate controls
-and presentation belong to the UI work.
+Exact or lower source counts establish a term. Upper, approximate or unknown counts, unsafe byte
+addition, or a non-finite quotient produce an unknown term. An unknown term does not discard a
+known bound from the other channel. Both known terms give `completeness: "complete"` and a
+`limiting` label of compute, memory or tied, meaning the largest modeled lower term, not a
+proven hardware bottleneck. A missing or unknown channel makes completeness partial and limiting
+undetermined. With no rates the API returns null; invalid supplied rates throw
+`PlanError("PLAN_BUDGET")`.
+
+`terms.memorySummed` separately reports `(read + written)/bytesPerSecond`, tagged `summed-
+logical-reads-and-writes`. It retains its arithmetic figure status and never enters the lower
+bound. Distinct and summed traffic describe different accounting scenarios, not a runtime
+bracket. Preset rates remain unset; rate controls and presentation belong to UI work.
 
 ## 8c. Read multiplicity
 

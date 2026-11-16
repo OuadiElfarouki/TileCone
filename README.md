@@ -308,21 +308,24 @@ Every figure carries its own status, shown beside it:
 | `~` | approximate in an unknown direction: a ratio of bounds, or a sampled estimate |
 | `unknown` | no number, e.g. a FLOP total across a barrier |
 
-The headless plan API also provides exact closed forms for direct contractions
-(`core/plan/closed-forms.ts`), including edge tiles and final chunks, and family
-totals such as the bytes a GEMM reads, `2·M·K·ceil(N/BN) + 2·K·N·ceil(M/BM)`.
-Unsupported fused mappings, and extents that have no expression across bindings,
-return a reason. These formulas and the optional time bound are not
-shown in the panels yet.
+The headless plan API also provides exact closed forms for contractions with supported pointwise
+epilogues (`core/plan/closed-forms.ts`), including edge tiles and final chunks, and family
+totals such as the bytes a GEMM reads, `2·M·K·ceil(N/BN) + 2·K·N·ceil(M/BM)`. The API includes
+readable interior laws, author-facing axis labels and overridable chunk variables with full-axis
+defaults. Shape-preserving unary operations, casts and one bias/residual add are supported after
+the contraction. Unsupported mappings and extents that have no expression across bindings return
+a reason. These formulas and the optional time bound are not shown in the panels yet.
 
-`planTimeBound(work, rates)` in `core/plan/time-bound.ts` computes
-`max(FLOPs / flopsPerSecond, (readDistinct + written) / bytesPerSecond)`.
-It is conditional: the counted arithmetic must be executed, all counted logical
-traffic must cross the boundary described by the bandwidth, and both rates must
-be ceilings for that work. It is not an unconditional GPU runtime prediction;
-cache-served intermediates need not cross a device-memory boundary. Missing rates
-return no bound; figures that cannot establish it return `unknown`. Preset rates
-remain unset.
+`planTimeBound(work, rates)` in `core/plan/time-bound.ts` computes `max(FLOPs / flopsPerSecond,
+(readDistinct + written) / bytesPerSecond)`. It is conditional: the counted arithmetic must be
+executed, all counted logical traffic must cross the boundary described by the bandwidth, and
+supplied rates must be ceilings for the corresponding work. It is not an unconditional GPU
+runtime prediction; cache-served intermediates need not cross a device-memory boundary. Each
+rate can establish its own term. The API reports both terms and their limiting modeled lower
+term when both are known; otherwise it marks the result partial. Only absent rates on both
+channels remove the result. An unusable term is `unknown` and does not discard a known bound
+from the other channel. Summed traffic is reported separately as a scenario, not a runtime upper
+bound. Preset rates remain unset.
 
 ## Headless API
 

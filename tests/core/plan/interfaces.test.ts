@@ -666,3 +666,24 @@ it("keeps definite producer counts separate from widened demands", () => {
   expect(supply.producers.map((p) => p.definite)).toEqual([true, false, false, false]);
   expect(supply.producers.map((p) => p.witnesses.length)).toEqual([2, 1, 1, 1]);
 });
+
+describe("recomputed work under over-approximated regions", () => {
+  it("is reported as at least zero, never as a negative amount", () => {
+    // A strided slice past its enumeration limit widens what each task of Y
+    // computes of H. The widened union then costs more than the tasks' sum, and
+    // the difference of the two upper bounds comes out negative.
+    const graph = compileDSL(`X = Tensor(2048, dtype=float16)
+H = relu(X)
+S = H[::2]
+Y = relu(S)
+`).resolved;
+    for (const tile of [512, 256]) {
+      const total = planReport(tilePlan(graph, { Y: [tile] })).total!;
+      expect(total.recomputed).toMatchObject({ value: 0, status: "lower" });
+      expect(total.recomputed.reasons.length).toBeGreaterThan(0);
+    }
+    // An exact plan keeps its exact figure, zero included.
+    const exact = compileDSL(`A = Tensor(8, 8, dtype=float16)\nB = Tensor(8, 8, dtype=float16)\nC = matmul(A, B)\n`).resolved;
+    expect(planReport(tilePlan(exact, { C: [4, 4] })).total!.recomputed).toMatchObject({ value: 0, status: "exact" });
+  });
+});

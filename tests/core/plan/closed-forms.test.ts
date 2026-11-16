@@ -72,10 +72,67 @@ describe("closed forms", () => {
       [`A = Tensor(4, 4, 3)\nB = Tensor(3, 5)\nC = einsum("iik,kj->ij", A, B)`, { C: [2, 2] }],
       [`A = Tensor(4, 4)\nC = matmul(A, A)`, { C: [2, 2] }],
       [`A = Tensor(4, 4)\nB = Tensor(4, 4)\nP = relu(A)\nC = matmul(P, B)`, { C: [2, 2] }],
-      [`A = Tensor(4, 4)\nB = Tensor(4, 4)\nP = matmul(A, B)\nC = relu(P)`, { C: [2, 2] }],
     ] as const;
     for (const [src, tiles] of cases) expect(closedFormsOf(tilePlan(compileDSL(src).resolved, tiles), "C").status).toBe("unavailable");
   });
+  it.each(["Tensor(N, dtype=float16)", "Tensor(M, N, dtype=float16)", "Tensor(dtype=float16)", "Tensor(1, N, dtype=float16)"])("matches a fused add, relu and cast with side %s", (side) => {
+    const source = (m: number, n: number, k: number) => `M = ${m}\nN = ${n}\nK = ${k}\nA = Tensor(M, K, dtype=float16)\nB = Tensor(K, N, dtype=float16)\nBias = ${side}\nP = matmul(A, B)\nQ = add(P, Bias)\nR = relu(Q)\nC = astype(R, float32)`;
+    const build = (m: number, n: number, k: number) => tilePlan(compileDSL(source(m, n, k)).resolved, { C: [3, 4] }, { C: { chunk: { k: 1 } } });
+    const f = available(closedFormsOf(build(5, 1, 5), "C"));
+    for (const [m, n, k] of [[5, 1, 5], [8, 7, 3], [4, 6, 1]]) {
+      const plan = build(m, n, k);
+      const family = plan.families.get("C")!;
+      const report = interfaceOf(plan, "C");
+      if (report.status !== "evaluated") throw new Error("family not evaluated");
+      const bindings = { ...f.defaults, params: { M: m, N: n, K: k } };
+      const at = (expr: Parameters<typeof evaluateClosedForm>[1]) => evaluateClosedForm(f, expr, bindings);
+      expect(at(f.family.flops)).toBe(report.work.flops.value);
+      expect(at(f.family.readBytes)).toBe(report.work.read.value);
+      expect(at(f.family.writtenBytes)).toBe(report.work.written.value);
+      let sideBytes = 0;
+      for (let i = 0; i < family.grid[0]; i++) for (let j = 0; j < family.grid[1]; j++) {
+        const supply = taskSupplyOf(plan, { tensorId: "C", coord: [i, j] });
+        sideBytes += payloadOf(plan, supply.demand.filter((d) => d.tensorId === "Bias")).bytes.value!;
+      }
+      expect(at(f.family.operandBytes.find((operand) => operand.tensorId === "Bias")!.bytes)).toBe(sideBytes);
+      for (let i = 0; i < family.grid[0]; i++) for (let j = 0; j < family.grid[1]; j++) {
+        const task = { tensorId: "C", coord: [i, j] };
+        const steps = taskSteps(plan, task);
+        if (!("staging" in steps)) throw new Error(steps.reason);
+        const supply = taskSupplyOf(plan, task);
+        const atTask = (expr: Parameters<typeof evaluateClosedForm>[1]) => evaluateClosedForm(f, expr, { ...bindings, taskCoord: { m: i, n: j } });
+        expect(atTask(f.task.flops)).toBe(supply.flops.value);
+        expect(atTask(f.task.readBytes)).toBe(payloadOf(plan, supply.demand).bytes.value);
+        expect(atTask(f.task.outputBytes)).toBe(steps.accumulator.elements * 4);
+        expect(atTask(f.task.accumulatorBytes)).toBe(steps.accumulator.bytes.value);
+        if ((i + 1) * 3 <= m && (j + 1) * 4 <= n) {
+          expect(atTask(f.interior.task.flops)).toBe(supply.flops.value);
+          if (k > 1) expect(atTask(f.interior.accumulating.taskFlops)).toBe(supply.flops.value);
+          expect(atTask(f.interior.task.readBytes)).toBe(payloadOf(plan, supply.demand).bytes.value);
+        }
+        expect(atTask(f.step.flops)).toBe(stepOf(plan, steps, 0).flops.value);
+        expect(atTask(f.step.payload)).toBe(stepPayload(plan, stepOf(plan, steps, 0)).bytes.value);
+      }
+    }
+  });
+
+  it("declines unsupported epilogue operands and views", () => {
+    const prefix = `M = 4\nN = 1\nK = 4\nQ = 1\nA = Tensor(M, K)\nB = Tensor(K, N)\nBias = Tensor(Q)\nP = matmul(A, B)\n`;
+    const examples = [
+      `${prefix}C = add(P, Bias)`, // Q only happens to be one
+      `${prefix}R = add(P, A)\nC = relu(R)`, // contraction input or shape expansion
+      `A = Tensor(4, 4)\nB = Tensor(4, 4)\nBias = Tensor(4)\nP = matmul(A, B)\nR = add(P, Bias)\nC = add(R, Bias)`,
+      `A = Tensor(4, 4)\nB = Tensor(4, 4)\nP = matmul(A, B)\nC = add(P, A)`,
+      `A = Tensor(4, 4)\nB = Tensor(4, 1)\nBias = Tensor(4, 4)\nP = matmul(A, B)\nC = add(P, Bias)`,
+      `A = Tensor(4, 4)\nB = Tensor(4, 4)\nP = matmul(A, B)\nR = relu(P)\nUnused = relu(P)\nC = relu(R)`,
+      `A = Tensor(4, 4)\nB = Tensor(4, 4)\nP = matmul(A, B)\nC = permute_dims(P, [1, 0])`,
+    ];
+    for (const source of examples) {
+      const plan = tilePlan(compileDSL(source).resolved, { C: [2, 1] });
+      expect(closedFormsOf(plan, "C").status).toBe("unavailable");
+    }
+  });
+
   it("refuses aliases equal only at the current binding", () => {
     const g = compileDSL(`M = 4\nN = 4\nA = Tensor(3, M)\nB = Tensor(N, 5)\nC = matmul(A, B)`).resolved;
     expect(closedFormsOf(tilePlan(g, { C: [2, 2] }), "C").status).toBe("unavailable");
@@ -121,10 +178,46 @@ describe("closed forms", () => {
       expect(evaluateClosedForm(f, f.step.payload, bindings)).toBe(stepPayload(plan, step).bytes.value);
     }
   });
-  it("rejects unknown variables and overrides of full-axis chunks", () => {
+  it("rejects unknown variables and accepts overrides of full-axis chunks", () => {
     const f = available(closedFormsOf(tilePlan(graph(5, 7, 5), { C: [3, 4] }), "C"));
-    expect(() => evaluateClosedForm(f, f.stepCount, { ...f.defaults, chunk: { k: 2 } })).toThrow();
+    expect(evaluateClosedForm(f, f.stepCount, { ...f.defaults, chunk: { k: 2 } })).toBe(3);
+    expect(() => evaluateClosedForm(f, f.stepCount, { ...f.defaults, chunk: { typo: 2 } })).toThrow();
     expect(() => evaluateClosedForm(f, f.taskCount, { ...f.defaults, taskCoord: { typo: 0 } })).toThrow();
+  });
+
+  it("reuses an undeclared chunk law across rebinding and explicit overrides", () => {
+    const f = available(closedFormsOf(tilePlan(graph(5, 7, 5), { C: [3, 4] }), "C"));
+    for (const [m, n, k, chunk] of [[5, 7, 5, 2], [8, 3, 3, 3], [4, 6, 1, 1]]) {
+      for (const override of [false, true]) {
+        const plan = tilePlan(graph(m, n, k), { C: [3, 4] }, override ? { C: { chunk: { k: chunk } } } : {});
+        const task = { tensorId: "C", coord: [0, 0] };
+        const steps = taskSteps(plan, task);
+        if (!("staging" in steps)) throw new Error(steps.reason);
+        const bindings = { ...f.defaults, params: { M: m, N: n, K: k }, ...(override ? { chunk: { k: chunk } } : {}) };
+        expect(evaluateClosedForm(f, f.stepCount, bindings)).toBe(steps.staging.steps);
+        expect(evaluateClosedForm(f, f.step.flops, bindings)).toBe(stepOf(plan, steps, 0).flops.value);
+        if (m >= 3 && n >= 4) expect(evaluateClosedForm(f, f.interior.step.flops, bindings)).toBe(stepOf(plan, steps, 0).flops.value);
+      }
+    }
+  });
+
+  it("prints concise interior laws with author names and explicit conditions", () => {
+    const g = compileDSL(`M = 6\nN = 8\nK = 4\nA = Tensor(row=M, reduction=K, dtype=float16)\nB = Tensor(reduction=K, column=N, dtype=float16)\nC = matmul(A, B)`).resolved;
+    const f = available(closedFormsOf(tilePlan(g, { C: [3, 4] }, { C: { chunk: { k: 2 } } }), "C"));
+    expect(f.axes.map((axis) => axis.displayName)).toEqual(["row", "reduction", "column"]);
+    expect(f.interior.conditions).toEqual(["every output tile is full", "every reduction chunk is full"]);
+    const interior = formatClosedForm(f.interior.step.flops, f);
+    expect(interior).toContain("tile[row]");
+    expect(interior).toContain("chunk[reduction]");
+    expect(interior).not.toContain("taskCoord");
+    expect(interior).not.toContain("stepCoord");
+    expect(formatClosedForm(f.step.flops, f)).toContain("taskCoord[row]");
+    expect(f.interior.accumulating.conditions).toContain("full reduction has more than one term");
+    expect(formatClosedForm(f.interior.accumulating.stepFlops, f)).toBe("2 · tile[row] · chunk[reduction] · tile[column]");
+    expect(evaluateClosedForm(f, f.interior.accumulating.stepFlops, f.defaults)).toBe(evaluateClosedForm(f, f.step.flops, f.defaults));
+    const degenerate = { ...f.defaults, params: { M: 6, N: 8, K: 1 }, chunk: { k: 1 } };
+    expect(evaluateClosedForm(f, f.interior.step.flops, degenerate)).toBe(12);
+    expect(evaluateClosedForm(f, f.interior.step.flops, f.defaults)).toBe(evaluateClosedForm(f, f.step.flops, f.defaults));
   });
 
   it("groups compound symbolic extents in printed laws", () => {
@@ -165,8 +258,8 @@ describe("closed forms", () => {
       }
     }
     // The law itself: A is read once per column of tiles, B once per row of tiles.
-    expect(formatClosedForm(f.family.readBytes)).toBe("(2) · (M) · (K) · (ceil(N / tile[n])) + (2) · (K) · (N) · (ceil(M / tile[m]))");
-    expect(formatClosedForm(f.family.flops)).toBe("(1 + min(1, (K − 1))) · (M) · (K) · (N)");
+    expect(formatClosedForm(f.family.readBytes)).toBe("2 · M · K · ceil(N / tile[n]) + 2 · K · N · ceil(M / tile[m])");
+    expect(formatClosedForm(f.family.flops)).toBe("(1 + min(1, (K − 1))) · M · K · N");
   });
 
   it("gives family totals for a batched contraction whose operands carry different output axes", () => {

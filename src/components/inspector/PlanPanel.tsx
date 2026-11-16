@@ -347,9 +347,9 @@ function PlanTotals({ report }: { report: PlanReport | null }): React.ReactEleme
           No FLOP total: some task computes an operation whose arithmetic is not modelled. The byte
           figures still hold.
         </p>
-      ) : figures.some((f) => f.status === "upper" || f.status === "approximate") ? (
+      ) : figures.some((f) => f.status === "upper" || f.status === "lower" || f.status === "approximate") ? (
         <p className="hint overlap">
-          Some reads are widened: ≤ is “no more than”, ~ moved in an unknown direction.
+          Some figures are bounded: ≤ is “no more than”, ≥ is “at least”, ~ moved in an unknown direction.
         </p>
       ) : null}
     </>

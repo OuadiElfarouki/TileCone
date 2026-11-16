@@ -405,11 +405,20 @@ function workOf(
     plan.graph,
     new Map([...sums.computed].map(([id, region]) => [id, { region: canonicalize(region) }]))
   ).flops;
+  // Work done more than once is never negative. With over-approximated regions
+  // both sides are upper bounds and their difference can come out below zero,
+  // which states nothing: the union of widened regions can exceed their sum's
+  // true share. What is then known is only that the figure is at least zero.
+  const difference = differenceFigure(sums.flops, once);
+  const recomputed =
+    difference.value !== null && difference.value < 0 && difference.status !== "exact"
+      ? figure(0, "lower", difference.reasons)
+      : difference;
   return {
     tasks: sums.tasks,
     dependencies: sums.dependencies,
     flops: sums.flops,
-    recomputed: differenceFigure(sums.flops, once),
+    recomputed,
     read: sums.read,
     readDistinct: sums.readDistinct,
     written: sums.written,
