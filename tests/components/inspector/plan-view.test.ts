@@ -566,3 +566,52 @@ it("draws large producer sets as exact tile-aligned ranges", () => {
   expect(paint.tiles).toEqual([{ box: [{ lo: 0, hi: 100000000 }], definite: true }]);
   expect(paint.lattice).toMatchObject({ rows: 1, cols: 1 });
 });
+
+describe("a step on the cards", () => {
+  beforeEach(() => {
+    S().applyDSL(CHAIN);
+    S().setPlanTile("C", [8, 8]);
+    S().setPlanTile("Y", [8, 4]);
+    S().setPlanSteps("Y", { chunk: { k: 4 } });
+    S().selectPlanTask({ tensorId: "Y", coord: [1, 0] });
+  });
+
+  const paint = (tensorId: string, withStep: boolean) =>
+    buildPlanPaint({
+      tensorId, rowAxis: 0, colAxis: 1, dark: false, plan: S().plan, supply: S().planSupply,
+      step: withStep ? S().planStep?.reach.get(tensorId) ?? null : null,
+      stepping: withStep,
+    }).layers;
+
+  it("is drawn at needs strength, outlined, over a demand that steps back", () => {
+    S().setPlanStep(1);
+    const plain = paint("C", false);
+    const stepped = paint("C", true);
+    // The whole demand is the first layer either way, and fainter while stepping.
+    expect(stepped[0].region).toEqual(plain[0].region);
+    expect(stepped[0].alpha).toBeLessThan(plain[0].alpha);
+    expect(stepped[0].alpha).toBeGreaterThan(0);
+    const step = stepped.find((layer) => layer.outline && layer.region.boxes[0][1].lo === 4)!;
+    expect(step.region.boxes).toEqual([[{ lo: 8, hi: 16 }, { lo: 4, hi: 8 }]]);
+    expect(step.alpha).toBe(plain[0].alpha);
+    expect(step.color).toEqual(plain[0].color);
+    expect(stepped.length).toBe(plain.length + 1);
+  });
+
+  it("steps the demand back on a card the step does not reach, and adds nothing to it", () => {
+    S().setPlanStep(1);
+    // Y holds the task's own tile; the step reads nothing there.
+    const plain = paint("Y", false);
+    const stepped = paint("Y", true);
+    expect(stepped.length).toBe(plain.length);
+  });
+
+  it("waits while a family replay has the cards", () => {
+    S().setPlanStep(1);
+    const replaying = buildPlanPaint({
+      tensorId: "C", rowAxis: 0, colAxis: 1, dark: false, plan: S().plan, supply: S().planSupply,
+      step: S().planStep!.reach.get("C"), stepping: true, recede: 1,
+    }).layers;
+    expect(replaying.length).toBe(paint("C", false).length);
+  });
+});

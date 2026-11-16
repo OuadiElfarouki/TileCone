@@ -31,7 +31,7 @@ export function loadResolvedGraph(
   | "entangled"
   | "perBox" | "focusedBox" | "pinnedBox" | "editBox" | "growth" | "viewCfgs" | "preview" | "graphPx"
   | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "nodeOffsets"
-  | "planTiles" | "planSteps" | "sweep" | "planTask" | "plan" | "planSupply" | "keptPlans" | "planTrail" | "lineageFocus"
+  | "planTiles" | "planSteps" | "sweep" | "planTask" | "plan" | "planSupply" | "keptPlans" | "planTrail" | "lineageFocus" | "planStep"
   | "replayPlayback" | "reuseLens" | "replayDepth" | "placementCarry" | "resizingTensor"
 > {
   const viewCfgs = Object.create(null) as Record<string, ViewCfg>;
@@ -73,6 +73,7 @@ export function loadResolvedGraph(
     keptPlans: [],
     planTrail: null,
     lineageFocus: null,
+    planStep: null,
     placementCarry: false,
     resizingTensor: null,
   };

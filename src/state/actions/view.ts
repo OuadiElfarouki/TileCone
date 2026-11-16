@@ -4,6 +4,8 @@ import { Direction, idRecord, viewAnchorIndex } from "../../view/workspace";
 import { revealHidden } from "../selection-edit";
 import { GetState, SetState, State } from "../types";
 import { cardCanResize } from "../../view/tensor/card-size";
+import { stepOf, taskSteps } from "../../core/plan/steps";
+import { canonicalize, unionOf, type Region } from "../../core/region";
 
 /** View settings: directions, theme, per-tensor views, detail, snapping, the
  *  canvas tool, the inspector view, playback. */
@@ -23,6 +25,7 @@ export const viewActions = (set: SetState, get: GetState): Pick<
   | "setReplayPlayback"
   | "setReuseLens"
   | "setLineageFocus"
+  | "setPlanStep"
   | "setReplayDepth"
   | "updateReplayPlayback"
   | "setTileScale"
@@ -110,6 +113,24 @@ export const viewActions = (set: SetState, get: GetState): Pick<
   setReuseLens: (reuseLens) => set({ reuseLens }),
 
   setLineageFocus: (lineageFocus) => set({ lineageFocus }),
+
+  setPlanStep: (index) => {
+    const { plan, planTask, planStep } = get();
+    if (index === null || !plan || !planTask) {
+      if (planStep) set({ planStep: null });
+      return;
+    }
+    if (planStep && planStep.plan === plan && planStep.task === planTask && planStep.index === index) return;
+    const steps = taskSteps(plan, planTask);
+    if (!("staging" in steps) || !Number.isInteger(index) || index < 0 || index >= steps.staging.steps) return;
+    const step = stepOf(plan, steps, index);
+    // One region per tensor: what the step reads there, or needs of it.
+    const parts = new Map<string, Region[]>();
+    for (const { tensorId, region } of [...step.reads, ...step.needs])
+      parts.set(tensorId, [...(parts.get(tensorId) ?? []), region]);
+    const reach = new Map([...parts].map(([tensorId, regions]) => [tensorId, canonicalize(unionOf(regions))]));
+    set({ planStep: { plan, task: planTask, index, reach } });
+  },
 
   setReplayDepth: (tensorId, depth) =>
     set((state) => ({

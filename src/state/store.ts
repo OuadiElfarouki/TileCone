@@ -63,6 +63,7 @@ export const useStore = create<State>((set, get) => {
   keptPlans: [],
   planTrail: null,
   lineageFocus: null,
+  planStep: null,
   entangled: null,
   selection: null,
   workspaceHistory: [],

@@ -149,7 +149,30 @@ Share links include the current tiling, inspected task, kept tilings and Plan vi
 figures are recomputed when the link is opened. Producer details are paged, with total counts
 shown even for large sets.
 
-Split reductions, working sets and execution order are not modelled.
+**Steps.** A task whose tile is the result of a contraction sums over the contraction's reduced
+axes, and a plan can divide them. Under each tiled tensor a **chunk** field takes how many elements
+of a reduced axis one step reduces (`all` for the whole axis); the row then shows the steps per
+task, and the largest step and accumulator over the tensor's tasks. For the inspected task, the
+**Steps** section walks the steps: what one reads from each tensor, the untiled tensors it needs,
+its FLOPs, and the accumulator they build, complete after the last. The step shown is painted on
+the cards at full strength over the task's fainter whole demand. Work after the contraction - a
+bias, an activation, a cast - applies to the finished sum and is read once per task. A tensor
+whose tasks perform no contraction has one step per task, and says why.
+
+**Budget.** The **budget** line above the tiled tensors takes two byte counts you state: what a
+task may hold of its operands per step, and optionally what an accumulator may take. Figures they
+bound are marked `within` or `over`. "Within" is by payload: padding and alignment are not counted.
+Nothing models where a kernel holds anything; the default per-step budget is the 99 KiB of shared
+memory a block may allocate on the RTX PRO 6000 Blackwell, which is unverified.
+
+**Plans within the budget** lists, on request, the plans no other plan beats on recomputed FLOPs,
+bytes moved, task count and largest step, trying power-of-two tile extents and the largest chunks
+that fit. **these tensors** keeps which tensors are tiled; **every fusion choice** also tries
+fusing and materializing intermediates. **use** makes a row the current plan and undoes like any
+plan edit. Under the rows the sweep states what it did not look at. Without an accumulator limit
+it is led by one task computing a whole output.
+
+A reduction split across tasks, working sets and execution order are not modelled.
 
 ## Writing a graph
 

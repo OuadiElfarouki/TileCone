@@ -163,6 +163,16 @@ function TensorCardView({
   });
   const plan = useStore((s) => s.plan);
   const planSupply = useStore((s) => s.planSupply);
+  /** The step of the inspected task being shown, while it is still that task
+   * of that plan: what it reaches on this tensor, and whether one is shown. */
+  const stepping = useStore((s) =>
+    s.inspectorTab === "plan" && !!s.planStep && s.planStep.plan === s.plan && s.planStep.task === s.planTask
+  );
+  const stepRegion = useStore((s) =>
+    s.inspectorTab === "plan" && s.planStep && s.planStep.plan === s.plan && s.planStep.task === s.planTask
+      ? s.planStep.reach.get(tensor.id) ?? null
+      : null
+  );
   /** The tasks of this tensor a lineage row in the Plan view points at. */
   const lineage = useStore((s) =>
     s.inspectorTab === "plan" && s.lineageFocus?.tensorId === tensor.id ? s.lineageFocus : null
@@ -281,6 +291,8 @@ function TensorCardView({
         proposed: tensor.producer ? planProposal : null,
         pointer: planPointer,
         recede: replayPlayback?.opacity ?? 0,
+        step: stepRegion,
+        stepping,
       });
       layers = planned.layers;
       paint = planned.paint;
@@ -396,6 +408,8 @@ function TensorCardView({
     interactive,
     grownRegion,
     lineage,
+    stepRegion,
+    stepping,
   ]);
 
   useEffect(() => {

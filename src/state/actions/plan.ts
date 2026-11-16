@@ -8,6 +8,7 @@ import { activePlanTrail, derivePlan, inspectTask, MAX_KEPT_PLANS, tileContainin
 import { revealHidden } from "../selection-edit";
 import { GetState, SetState, State } from "../types";
 import { isBudget, sameBudget } from "../../core/plan/presets";
+import { DEFAULT_MAX_WORK } from "../../core/plan/sweep";
 import { sweepArtifact } from "../../worker/analysis-jobs";
 import { analysisWorkerAvailable, cancelSweep, isAnalysisCancelled, sweepInWorker } from "../analysis-worker-client";
 
@@ -105,22 +106,26 @@ export const planActions = (set: SetState, get: GetState): Pick<
     const { resolved, planTiles, planBudget, workerGraphId } = get();
     if (!resolved) return;
     const tiled = Object.keys(planTiles).sort();
+    // One set of tiled tensors is the whole search for the current scope: if
+    // the work limit ends it, nothing is listed. It gets five times the default,
+    // which the default would have spread over several sets.
+    const current = scope === "current" && tiled.length > 0;
     const options = {
       budget: planBudget,
-      ...(scope === "current" && tiled.length ? { tiled: [tiled] } : {}),
+      ...(current ? { tiled: [tiled], maxWork: 5 * DEFAULT_MAX_WORK } : {}),
     };
     const epoch = ++sweepEpoch;
     set({ sweep: { status: "running", scope } });
     // The graph and the budget the result answers for: a replacement of either
     // while the sweep ran makes it an answer to a question no longer asked.
-    const current = () => epoch === sweepEpoch && get().resolved === resolved && get().planBudget === planBudget;
+    const stillAsked = () => epoch === sweepEpoch && get().resolved === resolved && get().planBudget === planBudget;
     try {
       const result = analysisWorkerAvailable()
         ? await sweepInWorker({ graphId: workerGraphId, graph: resolved, options })
         : sweepArtifact(resolved, options);
-      if (current()) set({ sweep: { status: "done", scope, budget: planBudget, result } });
+      if (stillAsked()) set({ sweep: { status: "done", scope, budget: planBudget, result } });
     } catch (error) {
-      if (!current()) return;
+      if (!stillAsked()) return;
       if (isAnalysisCancelled(error)) {
         set({ sweep: { status: "idle" } });
         return;

@@ -41,6 +41,8 @@ import { useExplanation } from "../chrome/Explain";
 import { OnCanvas } from "../chrome/OnCanvas";
 import { OperandReuse } from "./operand-reuse";
 import type { PlanReplayControl } from "./usePlanReplay";
+import { PlanBudget, TaskStepsSection, TensorSteps } from "./PlanSteps";
+import { PlanSweep } from "./PlanSweep";
 import type { ReplayPlayback } from "../../view/workspace";
 import { sameTiles } from "../../state/history";
 import { activePlanTrail, MAX_KEPT_PLANS } from "../../state/plan";
@@ -395,6 +397,7 @@ function TiledTensors({ plan, run }: { plan: TilePlan | null; run: PlanRun }): R
         </span>
       </div>
       {explain.panel}
+      <PlanBudget />
       {families.length === 0 ? (
         <p className="hint">Nothing is tiled yet. Graph inputs have no tasks and cannot be tiled.</p>
       ) : (
@@ -434,6 +437,7 @@ function TiledTensors({ plan, run }: { plan: TilePlan | null; run: PlanRun }): R
                 {report?.status === "over-budget" && (
                   <span className="plan-work muted">over the budget of {report.budget} tasks</span>
                 )}
+                {plan && <TensorSteps plan={plan} tensorId={family.tensorId} />}
               </li>
             );
           })}
@@ -1067,6 +1071,7 @@ export function PlanPanel({ replay }: { replay: PlanReplayControl }): React.Reac
   return (
     <div className="ins-tabpanel" role="region" id="ins-panel-plan" aria-labelledby="view-plan">
       <TiledTensors plan={plan} run={run} />
+      <PlanSweep />
       {plan && task && family && tensor && node && supply ? (
         <>
           <div className="ins-section">
@@ -1121,6 +1126,7 @@ export function PlanPanel({ replay }: { replay: PlanReplayControl }): React.Reac
               ))
             )}
           </section>
+          <TaskStepsSection plan={plan} task={task} />
           {supply.computes.length > 0 && <ComputedSection plan={plan} computes={supply.computes} />}
           <LineageSection plan={plan} task={task} onFollow={follow} />
           {reads && (

@@ -1198,6 +1198,83 @@ textarea.source.error-state { border-color: var(--err); }
 .plan-need { margin: 3px 0 2px; font-size: var(--t-body); }
 .plan-op { margin: 2px 0; font-size: var(--t-body); }
 .plan-fan { flex: 1 0 100%; font-size: var(--t-micro); }
+
+/* The budget: two typed byte counts on one line, above the tensors they bound. */
+.plan-budget {
+  display: grid; grid-template-columns: max-content max-content 76px; gap: 2px 6px; align-items: baseline;
+  margin: 2px 0 6px; font-size: var(--t-body);
+}
+/* The key sits beside the first row and spans both, so the two limits read as
+   one budget with two parts. */
+.plan-budget-key { grid-row: 1 / span 2; font: 600 var(--t-small)/1.5 var(--mono); color: var(--muted); }
+.plan-budget label { display: contents; }
+.plan-budget .plan-budget-field { width: 100%; text-align: right; }
+
+/* A tiled tensor's steps, on their own line under its row. */
+.plan-steps {
+  flex: 1 0 100%; display: flex; align-items: baseline; gap: 4px 6px; flex-wrap: wrap;
+  padding-left: 10px; border-left: 2px solid var(--line); font-size: var(--t-small);
+  /* Space before the next tensor's row, so each block ends where its border does. */
+  margin-bottom: 5px;
+}
+.plan-chunk { display: inline-flex; align-items: baseline; gap: 4px; }
+.plan-list .plan-chunk-field { width: 46px; flex: 0 0 auto; text-align: right; }
+.plan-steps-figures { flex: 1 0 100%; display: flex; flex-direction: column; gap: 1px; }
+.plan-steps-figures > span { display: inline-flex; align-items: baseline; gap: 5px; white-space: nowrap; }
+
+/* Which side of the stated budget a figure is on. A word, so it reads without
+   colour; the colour repeats it. */
+.verdict { font: var(--t-micro)/1.5 var(--mono); padding: 0 4px; border-radius: var(--r); border: 1px solid currentColor; }
+.verdict.within { color: var(--muted); }
+.verdict.over { color: var(--err); }
+
+.plan-step-nav { display: flex; align-items: center; gap: 4px; margin: 4px 0 2px; }
+/* Accent, as the grid slider is: the browser's default blue would read as the
+   needs fill the cards use for the step. */
+.plan-step-nav input[type="range"] { flex: 1 1 auto; min-width: 0; accent-color: var(--accent); }
+.plan-step-where { margin: 2px 0; font-size: var(--t-body); font-variant-numeric: tabular-nums; }
+/* Slices listed in a sentence break between slices, never inside one. */
+.plan-steps-slices code { white-space: nowrap; }
+
+/* The sweep's rows: a plan in words, then its figures in aligned columns. */
+/* One grid for the whole table, with each figure row a subgrid of it: rows
+   sized separately would size their columns by their own content, and the
+   figures would drift from their headers and from each other. */
+.plan-sweep {
+  display: grid; grid-template-columns: repeat(4, minmax(max-content, 1fr)) max-content; column-gap: 6px;
+  margin-top: 4px; font-size: var(--t-body);
+}
+.plan-sweep-row {
+  grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: baseline;
+  font-variant-numeric: tabular-nums;
+}
+/* The plan line spans the columns and wraps inside them; without inline-size
+   containment its unwrapped width would size the figure columns. */
+.plan-sweep-plan { grid-column: 1 / -1; contain: inline-size; }
+/* At the narrowest panels the five columns do not fit at body size; the
+   figures step down one size rather than overflow and clip the use button. */
+.plan-sweep-wrap { container-type: inline-size; }
+@container (max-width: 240px) {
+  .plan-sweep { column-gap: 4px; font-size: var(--t-small); }
+}
+.plan-sweep-row > span { text-align: right; white-space: nowrap; }
+.plan-sweep-row.head > span { font: var(--t-micro)/1.5 var(--mono); color: var(--muted); }
+.plan-sweep-plan {
+  display: flex; flex-wrap: wrap; gap: 0 10px; margin-top: 5px; padding-top: 4px;
+  border-top: 1px dashed var(--line); font-size: var(--t-small);
+}
+.plan-sweep-plan code { font-weight: 600; }
+.plan-sweep-plan.current, .plan-sweep-row.current { color: var(--ink); }
+.plan-sweep-plan.current { border-top-style: solid; border-top-color: var(--accent); }
+.plan-sweep-caveat { margin-top: 2px; }
+.plan-sweep-actions { display: flex; align-items: baseline; gap: 5px; flex-wrap: wrap; margin: 3px 0; font-size: var(--t-body); }
+.plan-sweep-acc { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* Short facts about the inspected task, a term and its value per row. */
+.plan-facts { display: grid; grid-template-columns: max-content 1fr; gap: 2px 8px; margin: 2px 0 4px; font-size: var(--t-body); }
+.plan-facts dt { color: var(--muted); }
+.plan-facts dd { margin: 0; min-width: 0; }
+.plan-facts .plan-slice { margin: 1px 0 0; }
 /* A tiled tensor's work under its row, and the whole plan below them all. The
    total always shows every row, so two plans read one after the other line up. */
 .plan-work { flex: 1 0 100%; font-size: var(--t-micro); }

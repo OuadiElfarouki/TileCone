@@ -363,6 +363,13 @@ export type State = {
    */
   lineageFocus: { tensorId: string; coordinates: Region; definite: Region } | null;
   /**
+   * The step of the inspected task the Plan view is showing, with what it reads
+   * and needs on each tensor. The cards paint it over the task's whole demand.
+   * It describes one task of one plan, so it holds both and is ignored once
+   * either is no longer the current one. Transient view state.
+   */
+  planStep: { plan: TilePlan; task: TaskRef; index: number; reach: ReadonlyMap<string, Region> } | null;
+  /**
    * Plans kept for comparison with the current one, oldest first, at most
    * `MAX_KEPT_PLANS`. Each holds the totals it was evaluated to; the graph
    * cannot change under them, since replacing it clears them. Not workspace
@@ -467,6 +474,9 @@ export type State = {
   /** Return to the `index`th task of the trail, dropping the ones after it. */
   backPlanTask: (index: number) => void;
   setLineageFocus: (focus: { tensorId: string; coordinates: Region; definite: Region } | null) => void;
+  /** Show a step of the inspected task on the cards, or none. A step the task
+   * does not have changes nothing. */
+  setPlanStep: (index: number | null) => void;
   /**
    * Inspect the task whose tile contains `element`. A produced tensor the plan
    * does not tile yet is tiled at `defaultTile` first; a graph input has no

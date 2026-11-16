@@ -56,12 +56,12 @@
  * not zero the rows are unbeaten among the combinations kept, not among all.
  */
 
-import { graphOutputs, nodeById, type ResolvedGraph } from "../graph";
+import { graphOutputs, type ResolvedGraph } from "../graph";
 import { type Figure, viewLayouts } from "../metrics";
 import type { BoundedCone } from "../propagate";
 import { planReport, taskSupplyFrom, type Work } from "./interfaces";
 import { type StepSpec, type TaskRef, taskDemand, tilePlan } from "./plan";
-import { payloadOf, type Staged, stagingOf, stepOf, stepPayload, taskSteps } from "./steps";
+import { payloadOf, type Staged, stagingOf, stepOf, stepPayload, stepsPositionFree, taskSteps } from "./steps";
 import { PlanError, tiles as tilesOf } from "./tile-family";
 
 export type Budget = Readonly<{
@@ -360,11 +360,7 @@ function measure(
     // every axis - a tail is shorter - so it is the largest, and it alone is
     // measured. Anything else between a read and the contraction, a tensor in
     // two slots or a diagonal makes position matter, and every step is measured.
-    const operands = nodeById(graph, staging.node)!.inputs;
-    const positionFree =
-      new Set(operands).size === operands.length &&
-      operands.every((id) => !graph.tensors[id].producer || plan.families.has(id)) &&
-      staging.domain.inputs.every((access) => new Set(access).size === access.length);
+    const positionFree = stepsPositionFree(plan, staging);
     const probed = positionFree ? [0] : tasks.map((_, i) => i);
 
     const specOf = (chunks: number[]): StepSpec | null =>

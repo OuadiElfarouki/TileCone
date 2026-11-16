@@ -49,7 +49,7 @@ import type { OpCtx, OpSpec } from "../ops/types";
 import type { BoundedCone, Crossing } from "../propagate";
 import { type Box, canonicalize, count, isEmpty, iv, type Region, sameBox, sortRegion, unionOf } from "../region";
 import { familyOf, type StepSpec, type TaskRef, taskDemand, type TilePlan } from "./plan";
-import { PlanError, tileBox } from "./tile-family";
+import { PlanError, tileBox, tiles as tilesOf } from "./tile-family";
 
 /** One reduced loop axis of a staged tensor, as the plan divides it. */
 export type ReducedAxis = Readonly<{
@@ -413,4 +413,89 @@ export function payloadOf(
       return { tensorId, region, bytes: byteFigure(plan.graph.tensors[tensorId], count(region), region) };
     });
   return { tensors, bytes: sumFigures(tensors.map((t) => t.bytes)) };
+}
+
+/**
+ * Whether a step's payload is the same wherever the step sits, given its
+ * interval lengths. True where every operand of the contraction is read
+ * directly, each a different tensor addressed by distinct loop axes: a step
+ * then reads one box of each, whose size is the product of the step's interval
+ * lengths. The first task's first step has the longest interval on every axis -
+ * a tail is shorter - so it is the largest of the family. Anything between a
+ * read and the contraction, a tensor in two slots or a diagonal makes position
+ * matter.
+ */
+export function stepsPositionFree(plan: TilePlan, staging: Staged): boolean {
+  const operands = nodeById(plan.graph, staging.node)!.inputs;
+  return (
+    new Set(operands).size === operands.length &&
+    operands.every((id) => !isComputedInTask(plan, id)) &&
+    staging.domain.inputs.every((access) => new Set(access).size === access.length)
+  );
+}
+
+/** The largest step of a family and its largest accumulator, or why they were
+ * not measured. A tensor without steps is one step per task: the whole demand. */
+export type FamilyPayload =
+  | Readonly<{ status: "measured"; staged: boolean; stepsPerTask: number; stepBytes: Figure; accumulatorBytes: Figure | null }>
+  | Readonly<{ status: "unmeasured"; staged: boolean; stepsPerTask: number; reason: string }>;
+
+/** Task and step evaluations `familyPayload` spends before declining. */
+export const FAMILY_PAYLOAD_WORK = 512;
+
+const largest = (figures: readonly Figure[]): Figure => {
+  if (figures.some((f) => f.value === null)) return figure(0, "unknown", figures.flatMap((f) => f.reasons));
+  const value = Math.max(0, ...figures.map((f) => f.value!));
+  // The largest of exact figures is exact; one upper bound among them makes it
+  // an upper bound, since the true largest cannot exceed the largest bound.
+  const exact = figures.every((f) => f.status === "exact");
+  return figure(value, exact ? "exact" : "upper", figures.flatMap((f) => f.reasons));
+};
+
+/**
+ * Measure a family's largest step over every task and step, within `work`
+ * evaluations. Where position cannot matter (`stepsPositionFree`) one step is
+ * measured; otherwise every one is, and a family needing more than `work` is
+ * declined with the count, never sampled.
+ */
+export function familyPayload(plan: TilePlan, tensorId: string, work = FAMILY_PAYLOAD_WORK): FamilyPayload {
+  const { staging } = internalOf(plan, tensorId);
+  const family = familyOf(plan, { tensorId, coord: plan.families.get(tensorId)!.grid.map(() => 0) });
+  const tasks = function* (): Generator<TaskRef> {
+    for (const coord of tilesOf(family)) yield { tensorId, coord };
+  };
+  if (!staging.staged) {
+    if (family.count > work)
+      return { status: "unmeasured", staged: false, stepsPerTask: 1, reason: `${family.count} tasks to measure` };
+    const each = [...tasks()].map((task) => payloadOf(plan, taskDemand(plan, task).crossings).bytes);
+    return { status: "measured", staged: false, stepsPerTask: 1, stepBytes: largest(each), accumulatorBytes: null };
+  }
+  const stepsPerTask = staging.steps;
+  if (stepsPositionFree(plan, staging)) {
+    const first = taskSteps(plan, { tensorId, coord: family.grid.map(() => 0) });
+    if (!("staging" in first)) throw new Error(`"${tensorId}" lost its steps`);
+    return {
+      status: "measured",
+      staged: true,
+      stepsPerTask,
+      stepBytes: stepPayload(plan, stepOf(plan, first, 0)).bytes,
+      accumulatorBytes: first.accumulator.bytes,
+    };
+  }
+  if (family.count * stepsPerTask > work)
+    return {
+      status: "unmeasured",
+      staged: true,
+      stepsPerTask,
+      reason: `${family.count} tasks of ${stepsPerTask} step${stepsPerTask === 1 ? "" : "s"} to measure`,
+    };
+  const payloads: Figure[] = [];
+  const accumulators: Figure[] = [];
+  for (const task of tasks()) {
+    const steps = taskSteps(plan, task);
+    if (!("staging" in steps)) throw new Error(`"${tensorId}" lost its steps`);
+    accumulators.push(steps.accumulator.bytes);
+    for (const step of stepsOf(plan, steps)) payloads.push(stepPayload(plan, step).bytes);
+  }
+  return { status: "measured", staged: true, stepsPerTask, stepBytes: largest(payloads), accumulatorBytes: largest(accumulators) };
 }

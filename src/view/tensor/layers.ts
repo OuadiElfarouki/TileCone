@@ -40,6 +40,9 @@ export function stripeAngleDeg(boxIndex: number): number {
 const CONE_ALPHA = 0.72;
 /** The inspected task's demand while a replay plays over it: a reference, not the subject. */
 const RECEDED_ALPHA = 0.14;
+/** How far a task's whole demand steps back while one of its steps is shown:
+ * far enough for the step to read first, not so far the demand is lost. */
+const STEPPING_RECEDE = 0.75;
 const previewAlpha = (depth: number) =>
   (0.22 * CONE_ALPHA) / (1 + 0.35 * Math.max(0, depth - 1));
 
@@ -372,6 +375,8 @@ export function buildPlanPaint({
   proposed,
   pointer,
   recede = 0,
+  step = null,
+  stepping = false,
 }: {
   tensorId: string;
   rowAxis: number;
@@ -387,6 +392,15 @@ export function buildPlanPaint({
    * so the plan returns as the replay fades.
    */
   recede?: number;
+  /**
+   * What the step being shown reads or needs on this tensor. Drawn at full
+   * needs strength with an outline, over the task's whole demand, which steps
+   * back (`stepping`) on every card so that the part held at a time is the
+   * strongest thing on each: same hue and fill as the demand it is part of.
+   */
+  step?: Region | null;
+  /** Whether a step is being shown at all, on this card or another. */
+  stepping?: boolean;
   /** Extents a click would divide this tensor at, while the plan does not tile it. */
   proposed?: number[] | null;
   /** The tile under the pointer, or the band being dragged out. */
@@ -408,10 +422,13 @@ export function buildPlanPaint({
     layers.push({
       region,
       color: hue,
-      alpha: CONE_ALPHA + (RECEDED_ALPHA - CONE_ALPHA) * recede,
+      alpha: CONE_ALPHA + (RECEDED_ALPHA - CONE_ALPHA) * Math.max(recede, stepping ? STEPPING_RECEDE : 0),
       hatch: !region.exact,
     });
   }
+  // Under a family replay the run is the subject, and the step waits.
+  if (step && recede === 0)
+    layers.push({ region: step, color: hue, alpha: CONE_ALPHA, hatch: !step.exact, outline: true });
   if (family && supply?.task.tensorId === tensorId)
     layers.push({
       region: fromBox(tileBox(family, supply.task.coord)),

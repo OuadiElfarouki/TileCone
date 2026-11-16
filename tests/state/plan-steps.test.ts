@@ -133,4 +133,63 @@ describe("step declarations", () => {
     const { plan: _plan, task: _task, ...bare } = workspaceToLink(S());
     expect(decodeWorkspace(`#s=${encodeWorkspace({ ...bare, steps: { Y: { c: { k: 8 } } } } as never)}`)).toBeNull();
   });
+
+  describe("the step shown on the cards", () => {
+    const boxes = (tensorId: string) => S().planStep!.reach.get(tensorId)!.boxes;
+
+    beforeEach(() => {
+      S().setPlanSteps("Y", { chunk: { k: 8 } });
+      S().selectPlanTask({ tensorId: "Y", coord: [1, 0] });
+    });
+
+    it("holds what one step reads on each tensor", () => {
+      expect(S().planStep).toBeNull();
+      S().setPlanStep(2);
+      expect(S().planStep).toMatchObject({ index: 2, plan: S().plan, task: S().planTask });
+      // Rows 8:16 of Y's tile, the third chunk of k.
+      expect(boxes("H")).toEqual([[{ lo: 8, hi: 16 }, { lo: 16, hi: 24 }]]);
+      expect(boxes("W2")).toEqual([[{ lo: 16, hi: 24 }, { lo: 0, hi: 4 }]]);
+      expect([...S().planStep!.reach.keys()].sort()).toEqual(["H", "W2"]);
+    });
+
+    it("includes the untiled tensors a step needs, and what is read through them", () => {
+      S().setPlanTile("H", null);
+      S().selectPlanTask({ tensorId: "Y", coord: [1, 0] });
+      S().setPlanStep(0);
+      expect([...S().planStep!.reach.keys()].sort()).toEqual(["H", "W1", "W2", "X"]);
+      expect(boxes("H")).toEqual([[{ lo: 8, hi: 16 }, { lo: 0, hi: 8 }]]);
+      expect(boxes("X")).toEqual([[{ lo: 8, hi: 16 }, { lo: 0, hi: 8 }]]);
+    });
+
+    it("ignores a step the task does not have, and clears on request", () => {
+      S().setPlanStep(1);
+      const shown = S().planStep;
+      for (const bad of [-1, 4, 1.5, NaN]) S().setPlanStep(bad);
+      expect(S().planStep).toBe(shown);
+      S().setPlanStep(1);
+      expect(S().planStep).toBe(shown);
+      S().setPlanStep(null);
+      expect(S().planStep).toBeNull();
+      // A task taken in one step still has that step.
+      S().selectPlanTask({ tensorId: "H", coord: [0, 0] });
+      S().setPlanStep(0);
+      expect(S().planStep?.index).toBe(0);
+      S().setPlanStep(1);
+      expect(S().planStep?.index).toBe(0);
+    });
+
+    it("belongs to one task of one plan: a new chunk or task leaves it describing neither", () => {
+      S().setPlanStep(2);
+      const shown = S().planStep!;
+      S().setPlanSteps("Y", { chunk: { k: 16 } });
+      expect(shown.plan).not.toBe(S().plan);
+      S().undoWorkspace();
+      S().setPlanStep(2);
+      S().selectPlanTask({ tensorId: "Y", coord: [0, 0] });
+      expect(S().planStep!.task).not.toBe(S().planTask);
+      // A new graph drops it outright.
+      S().applyDSL(`${MLP}# edited\n`);
+      expect(S().planStep).toBeNull();
+    });
+  });
 });

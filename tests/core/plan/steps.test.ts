@@ -22,6 +22,8 @@ import { tilePlan, taskDemand, type TilePlan, type TaskRef, type StepSpec } from
 import { supplyOf } from "../../../src/core/plan/interfaces";
 import { PlanError } from "../../../src/core/plan/tile-family";
 import {
+  familyPayload,
+  payloadOf,
   checkSteps,
   stagingOf,
   stepOf,
@@ -447,5 +449,60 @@ P = softmax(X, axis=-1)
     const plan = tilePlan(g, { C: [3, 2] });
     expect(() => taskSteps(plan, { tensorId: "C", coord: [0, 0] }, taskDemand(plan, { tensorId: "C", coord: [1, 0] }))).toThrow(/another task/);
     expect(code(() => stepOf(tilePlan(g, { C: [3, 2] }), staged(tilePlan(g, { C: [3, 2] }), { tensorId: "C", coord: [0, 0] }), 1))).toBe("PLAN_STEPS");
+  });
+});
+
+describe("a family's largest step", () => {
+  /** The largest payload over every task and every step, and the largest
+   * accumulator, with no shortcut. */
+  const brute = (plan: TilePlan, tensorId: string) => {
+    let stepBytes = 0;
+    let accumulatorBytes = 0;
+    const family = plan.families.get(tensorId)!;
+    for (const coord of points(fromBox(family.grid.map((n) => ({ lo: 0, hi: n }))))) {
+      const task = { tensorId, coord };
+      const steps = taskSteps(plan, task);
+      if (!("staging" in steps)) {
+        stepBytes = Math.max(stepBytes, payloadOf(plan, taskDemand(plan, task).crossings).bytes.value!);
+        continue;
+      }
+      accumulatorBytes = Math.max(accumulatorBytes, steps.accumulator.bytes.value!);
+      for (const step of stepsOf(plan, steps)) stepBytes = Math.max(stepBytes, stepPayload(plan, step).bytes.value!);
+    }
+    return { stepBytes, accumulatorBytes };
+  };
+
+  const cases: [string, string, Record<string, number[]>, Record<string, StepSpec>, string][] = [
+    ["operands read directly, ragged", SMALL.ragged, { C: [3, 2] }, { C: { chunk: { k: 4 } } }, "C"],
+    ["a fused contraction", SMALL.mlp, { Y: [3, 3] }, { Y: { chunk: { k: 3 } } }, "Y"],
+    ["one computed tensor in both slots", SMALL.sharedComputed, { C: [3, 2] }, { C: { chunk: { k: 4 } } }, "C"],
+    ["a diagonal operand", SMALL.diagonal, { C: [2, 2] }, { C: { chunk: { k: 3 } } }, "C"],
+    ["an epilogue", SMALL.epilogue, { Y: [4, 3] }, { Y: { chunk: { k: 3 } } }, "Y"],
+  ];
+  for (const [name, src, tiles, specs, tensorId] of cases)
+    it(`${name}: is the largest over every task and step`, () => {
+      const plan = tilePlan(graphOf(src), tiles, specs);
+      const payload = familyPayload(plan, tensorId);
+      expect(payload.status).toBe("measured");
+      if (payload.status !== "measured") return;
+      const truth = brute(plan, tensorId);
+      expect(payload.stepBytes).toMatchObject({ value: truth.stepBytes, status: "exact" });
+      expect(payload.accumulatorBytes).toMatchObject({ value: truth.accumulatorBytes, status: "exact" });
+      expect(payload.stepsPerTask).toBe((stagingOf(plan, tensorId) as Staged).steps);
+    });
+
+  it("is the largest whole demand for a tensor without steps", () => {
+    const g = graphOf(`X = Tensor(4, 6, dtype=float16)\nP = softmax(X, axis=-1)\n`);
+    const plan = tilePlan(g, { P: [2, 3] });
+    expect(familyPayload(plan, "P")).toMatchObject({ status: "measured", staged: false, stepsPerTask: 1, accumulatorBytes: null });
+    expect(familyPayload(plan, "P")).toMatchObject({ stepBytes: { value: brute(plan, "P").stepBytes } });
+  });
+
+  it("declines with the count where position matters and there is too much to measure, and never samples", () => {
+    const plan = tilePlan(graphOf(SMALL.mlp), { Y: [1, 1] }, { Y: { chunk: { k: 1 } } });
+    expect(familyPayload(plan, "Y", 16)).toEqual({ status: "unmeasured", staged: true, stepsPerTask: 8, reason: "36 tasks of 8 steps to measure" });
+    // Operands read directly cost one step whatever the family's size.
+    const direct = tilePlan(graphOf(SMALL.ragged), { C: [1, 1] }, { C: { chunk: { k: 1 } } });
+    expect(familyPayload(direct, "C", 1).status).toBe("measured");
   });
 });
