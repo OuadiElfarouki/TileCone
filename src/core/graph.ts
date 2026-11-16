@@ -28,6 +28,15 @@ export type Tensor = {
    * this is always full length and always evaluates to `resolved`.
    */
   symShape?: Shape;
+  /**
+   * Per axis, whether `symShape` holds an expression (or a literal the source
+   * wrote) that gives the extent for every binding, rather than the number the
+   * extent happens to be now. `symShape` is for display and writes an axis it
+   * has no expression for as its current extent - a convolution's or a pool's
+   * spatial axis - which reads the same as a literal. Anything that reasons
+   * across bindings must ask this first. Populated by resolution.
+   */
+  symProven?: boolean[];
   /** Display-only: distinguishes a learned parameter from an activation. */
   role?: "activation" | "weight";
   producer?: { nodeId: string; slot: number }; // absent => graph input
@@ -56,7 +65,7 @@ export type Graph = {
   derived?: Record<string, Sym>;
 };
 
-export type ResolvedTensor = Tensor & { resolved: number[]; symShape: Shape };
+export type ResolvedTensor = Tensor & { resolved: number[]; symShape: Shape; symProven: boolean[] };
 
 export type ResolvedGraph = Omit<Graph, "tensors"> & {
   tensors: Record<string, ResolvedTensor>;
@@ -282,6 +291,12 @@ class FormalShapes {
 
   get(id: string): Shape {
     return this.shapes.get(id)!;
+  }
+
+  /** Per axis of a tensor, whether its extent has an expression free of
+   * unknowns: one that holds for every binding, not only this one. */
+  proven(id: string): boolean[] {
+    return this.get(id).map((sym) => !dimSymbols(sym).some((name) => this.unknowns.has(name)));
   }
 
   /** An expression as the author can read it: an unknown shows its extent. */
@@ -905,7 +920,7 @@ export function resolveGraph(source: Graph): ResolvedGraph {
   for (const [id, tensor] of Object.entries(g.tensors)) {
     const { resolved, symShape } = tensor;
     if (!resolved || !symShape) throw new Error(`Unresolved tensor after inference: ${id}`);
-    tensors[id] = { ...tensor, resolved, symShape };
+    tensors[id] = { ...tensor, resolved, symShape, symProven: formal.proven(id) };
   }
 
   return {

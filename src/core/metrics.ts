@@ -33,14 +33,15 @@ export type TensorReadout = {
  * What is known about a figure, in the same vocabulary regions already use.
  *
  * A number on its own cannot say which direction it is wrong in, and these
- * figures are wrong in three different directions:
+ * figures carry different guarantees:
  *
  * - `exact` is a count.
  * - `upper` is "no more than this". Every byte figure measured over a widened
  *   region is one: a superset contributes bytes that are not really needed, and
  *   a region is never a subset of the truth, so the figure is never understated.
- * - `approximate` is a number that moved in an unknown direction. Only ratios
- *   are this: widening a region raises the numerator *and* the denominator, so
+ * - `lower` is "at least this".
+ * - `approximate` is a number that moved in an unknown direction. Ratios and
+ *   sums of opposing bounds are this: widening raises numerator and denominator, so
  *   an intensity can land either side of the truth. Printing `≤` on one would
  *   claim a direction it does not have.
  * - `unknown` has no number at all. A barrier contributes zero FLOPs while the
@@ -49,22 +50,20 @@ export type TensorReadout = {
  *   than a partial total, because a partial total is exactly the thing a reader
  *   would take for the answer.
  */
-export type FigureStatus = "exact" | "upper" | "approximate" | "unknown";
+export type FigureStatus = "exact" | "upper" | "lower" | "approximate" | "unknown";
 
 export type Figure =
-  | { value: number; status: "exact" | "upper" | "approximate"; reasons: string[] }
+  | { value: number; status: "exact" | "upper" | "lower" | "approximate"; reasons: string[] }
   | { value: null; status: "unknown"; reasons: string[] };
 
-/** Worst-case ordering: a sum is only as good as its weakest contribution. */
-const STATUS_ORDER: Record<FigureStatus, number> = {
-  exact: 0,
-  upper: 1,
-  approximate: 2,
-  unknown: 3,
+/** Combine directions for a sum; opposing bounds have no known direction. */
+const sumStatus = (a: FigureStatus, b: FigureStatus): FigureStatus => {
+  if (a === "unknown" || b === "unknown") return "unknown";
+  if (a === "approximate" || b === "approximate") return "approximate";
+  if (a === "exact") return b;
+  if (b === "exact") return a;
+  return a === b ? a : "approximate";
 };
-
-const worst = (a: FigureStatus, b: FigureStatus): FigureStatus =>
-  STATUS_ORDER[a] >= STATUS_ORDER[b] ? a : b;
 
 export function figure(value: number, status: FigureStatus, reasons: readonly string[] = []): Figure {
   const sorted = [...new Set(reasons)].sort();
@@ -75,7 +74,7 @@ export function figure(value: number, status: FigureStatus, reasons: readonly st
 
 /** Sum two figures, keeping the weaker claim of the two. */
 export function addFigures(a: Figure, b: Figure): Figure {
-  const status = worst(a.status, b.status);
+  const status = sumStatus(a.status, b.status);
   const reasons = [...a.reasons, ...b.reasons];
   if (status === "unknown" || a.value === null || b.value === null)
     return figure(0, "unknown", reasons);
@@ -100,24 +99,17 @@ export function ratioFigure(numerator: Figure, denominator: Figure): Figure {
   const reasons = [...numerator.reasons, ...denominator.reasons];
   if (numerator.value === null || denominator.value === null)
     return figure(0, "unknown", reasons);
-  if (denominator.value === 0) return figure(0, numerator.status, reasons);
+  if (denominator.value === 0) return figure(0, numerator.status === "lower" ? "approximate" : numerator.status, reasons);
   const inexact = numerator.status !== "exact" || denominator.status !== "exact";
   return figure(numerator.value / denominator.value, inexact ? "approximate" : "exact", reasons);
 }
 
-/**
- * `a - b`, keeping whatever direction the difference still has.
- *
- * Overstating `a` overstates the difference, so an upper bound less an exact
- * figure is still an upper bound. Overstating `b` understates it, and no figure
- * here is a lower bound, so a difference whose subtrahend is inexact is only
- * approximate.
- */
+/** `a - b`: subtracting a bound reverses its direction. */
 export function differenceFigure(a: Figure, b: Figure): Figure {
   const reasons = [...a.reasons, ...b.reasons];
   if (a.value === null || b.value === null) return figure(0, "unknown", reasons);
-  const status = b.status !== "exact" ? "approximate" : a.status;
-  return figure(a.value - b.value, status, reasons);
+  const reversed = b.status === "upper" ? "lower" : b.status === "lower" ? "upper" : b.status;
+  return figure(a.value - b.value, sumStatus(a.status, reversed), reasons);
 }
 
 export type AggregateReadout = {

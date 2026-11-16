@@ -19,6 +19,7 @@ export function formatBytes(n: number): string {
 export const FIGURE_MARK: Record<FigureStatus, string> = {
   exact: "",
   upper: "≤ ",
+  lower: "≥ ",
   approximate: "~ ",
   unknown: "",
 };

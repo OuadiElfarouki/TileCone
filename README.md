@@ -304,8 +304,25 @@ Every figure carries its own status, shown beside it:
 |---|---|
 | a plain number | exact |
 | `≤` | an upper bound, from an over-approximated region |
+| `≥` | a lower bound under its stated assumptions |
 | `~` | approximate in an unknown direction: a ratio of bounds, or a sampled estimate |
 | `unknown` | no number, e.g. a FLOP total across a barrier |
+
+The headless plan API also provides exact closed forms for direct contractions
+(`core/plan/closed-forms.ts`), including edge tiles and final chunks, and family
+totals such as the bytes a GEMM reads, `2·M·K·ceil(N/BN) + 2·K·N·ceil(M/BM)`.
+Unsupported fused mappings, and extents that have no expression across bindings,
+return a reason. These formulas and the optional time bound are not
+shown in the panels yet.
+
+`planTimeBound(work, rates)` in `core/plan/time-bound.ts` computes
+`max(FLOPs / flopsPerSecond, (readDistinct + written) / bytesPerSecond)`.
+It is conditional: the counted arithmetic must be executed, all counted logical
+traffic must cross the boundary described by the bandwidth, and both rates must
+be ceilings for that work. It is not an unconditional GPU runtime prediction;
+cache-served intermediates need not cross a device-memory boundary. Missing rates
+return no bound; figures that cannot establish it return `unknown`. Preset rates
+remain unset.
 
 ## Headless API
 

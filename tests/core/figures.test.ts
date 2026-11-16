@@ -11,7 +11,8 @@
 
 import { describe, expect, it } from "vitest";
 import { compileDSL } from "../../src/parse/compiler";
-import { computeMetrics, addFigures, figure, ratioFigure, sumFigures } from "../../src/core/metrics";
+import { computeMetrics, addFigures, differenceFigure, figure, ratioFigure, sumFigures } from "../../src/core/metrics";
+import { formatFigure } from "../../src/view/format";
 import { propagateBackward } from "../../src/core/propagate";
 import { box, fromBox } from "../../src/core/region";
 import { resolveGraph } from "../../src/core/graph";
@@ -45,6 +46,22 @@ describe("the figure algebra", () => {
   /* Not a looser bound: an unknown quantity added to a known one gives a sum
      nobody can place, so the total loses its number rather than keeping the
      half that happened to be measurable. */
+  it("combines bound directions for sums and differences", () => {
+    const exact = figure(10, "exact"), lower = figure(5, "lower"), upper = figure(3, "upper");
+    expect(addFigures(lower, lower).status).toBe("lower");
+    expect(addFigures(lower, upper).status).toBe("approximate");
+    expect(addFigures(lower, figure(1, "approximate")).status).toBe("approximate");
+    expect(differenceFigure(exact, upper).status).toBe("lower");
+    expect(differenceFigure(exact, lower).status).toBe("upper");
+    expect(differenceFigure(lower, upper).status).toBe("lower");
+    expect(differenceFigure(upper, lower).status).toBe("upper");
+    expect(differenceFigure(lower, lower).status).toBe("approximate");
+    expect(differenceFigure(upper, upper).status).toBe("approximate");
+    expect(differenceFigure(exact, figure(0, "unknown")).value).toBeNull();
+    expect(ratioFigure(lower, figure(0, "exact")).status).toBe("approximate");
+    expect(formatFigure(lower, String)).toBe("≥ 5");
+  });
+
   it("loses the number entirely when an unknown is summed in", () => {
     const sum = addFigures(figure(10, "exact"), figure(0, "unknown", ["unknown work in Resize"]));
     expect(sum.value).toBeNull();

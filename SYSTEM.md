@@ -551,7 +551,11 @@ Nothing here is taken on trust. `resolveGraph` evaluates every proposed symbol a
 parameters and keeps it only if it comes out at the extent inference actually produced; anything
 else falls back to the literal. `Tensor.symShape` is therefore always full length and always
 evaluates to `resolved`, so a wrong mapping degrades to a number rather than asserting a shape the
-graph does not have.
+graph does not have. A fallen-back axis reads the same as a literal the source wrote, so a resolved
+tensor also carries `symProven`, one flag per axis: true where the extent has an expression free of
+unknowns, which holds for every binding, and false where `symShape` shows only the number the extent
+is now. It is taken from the formal shapes the equality checks use, where such an axis is an opaque
+symbol, and anything that reasons across bindings reads it before trusting `symShape`.
 
 Axis names travel the same path as shapes and dtypes. A declaration names its axes, and each
 operation decides what survives it: an einsum label carries a name across a contraction, a
@@ -570,10 +574,11 @@ Every figure in `AggregateReadout` is a `Figure` - `{ value, status, reasons }` 
 
 - `exact` is a count.
 - `upper` is "no more than this". A byte figure measured over a widened region is one: a superset contributes bytes that are not really needed, and a region is never a subset of the truth, so the figure is never understated.
-- `approximate` is a number that moved in an unknown direction. Only ratios are this. Widening a region raises an intensity's numerator *and* its denominator, so the quotient can land either side of the truth, and `≤` would claim a side it does not have.
+- `lower` is “at least this”, used by the conditional time model below and printed as `≥`.
+- `approximate` is a number that moved in an unknown direction. Ratios and sums of opposing bounds can have this status. Widening a region raises an intensity's numerator *and* its denominator, so the quotient can land either side of the truth, and `≤` would claim a side it does not have.
 - `unknown` has no number at all, and `value` is `null` rather than a partial total. A barrier contributes zero FLOPs while the operations around it contribute upper bounds, so their sum is neither a ceiling nor a floor. It used to be printed with `≤`, which was wrong rather than merely incomplete.
 
-Statuses combine through `addFigures` and `ratioFigure`, which keep the weaker claim: a sum containing an unknown loses its number, and a ratio of an unknown quantity is not a looser ratio but no ratio. Each figure is qualified only by the regions it actually summed, so a widened weight no longer puts `≤` on an output-byte count that is exact. `exact` and `reasons` remain on the readout, derived from the figures rather than tracked beside them, for callers that want the one-line answer.
+Statuses combine through `addFigures`, `differenceFigure` and `ratioFigure`: exact terms preserve a bound, like bounds add in their direction, opposing bounds add to an approximate figure, and subtraction reverses the subtracted bound. In addition, a sum containing an unknown loses its number, and a ratio of an unknown quantity is not a looser ratio but no ratio. Each figure is qualified only by the regions it actually summed, so a widened weight no longer puts `≤` on an output-byte count that is exact. `exact` and `reasons` remain on the readout, derived from the figures rather than tracked beside them, for callers that want the one-line answer.
 
 The inspector writes what each figure has earned - nothing on a count, `≤`, `~`, or the word `unknown` - and says beside it that only the arithmetic is missing while the byte figures still hold.
 
@@ -722,6 +727,66 @@ Limits are stated in the result (`counts`): sets searched of how many exist, set
 Without an accumulator bound the list is led by the one task that computes a whole output: it recomputes nothing, reads the least and is one task, and chunking brings its payload within any budget a single slice fits. Bounding the accumulator is what makes smaller tiles appear.
 
 `tests/core/plan/sweep.test.ts` compares the sweep with a brute force that makes none of the separability argument: it builds every plan of a small graph, evaluates each whole, takes the payload as the largest over every task and every step, and discards beaten plans last. The two must list the same plans with the same figures, tied plans included, on graphs that include a fused intermediate, an epilogue, a tensor without steps, a concatenation whose later tasks and later steps read more, and a tie. The brute force shares the extents tried and the largest-chunk rule with the sweep; the chunking cap, inexact sets, invalid sets and the limits have tests of their own.
+
+### Closed forms
+
+`core/plan/closed-forms.ts` exposes `closedFormsOf(plan, tensorId)`. The initial
+supported class is a direct staged `einsum`, `matmul` or `linear` with distinct
+frontier operands, no diagonal access, no fused prologue/epilogue and no widened
+dtype. Unsupported mappings return `status: "unavailable"` with a reason. Operand
+and output axis aliases must be provably equal through `compareDims` with the
+graph's derived definitions; agreement at the current numeric binding is insufficient.
+Every operand and output axis must also be one the resolver proved (`symProven`):
+`symShape` writes an axis it has no expression for - a pooled or convolved one -
+as its current extent, which reads as a literal, and a law over it would hold at
+this binding alone. Two operands pooled from the same length agree on such an
+axis, so the alias check does not catch it; the form is unavailable and names
+the axis.
+
+Available forms describe task FLOPs/read bytes/output bytes/accumulator bytes,
+step FLOPs/per-operand bytes/payload, family task count and steps per task, and
+family totals: FLOPs, bytes read in all and per operand, bytes written and steps,
+each the sum over every task. The totals need no coordinates, because along an
+output axis the tile widths add up to the axis: an operand's bytes are its own
+extents times the number of tiles along each output axis it does not carry,
+since each of those tiles reads it again. For `C = A @ B` the bytes read are
+`2·M·K·ceil(N/tile[n]) + 2·K·N·ceil(M/tile[m])`, and the FLOPs do not depend on
+the tiling. The tests compare each total with `interfaceOf` at several bindings,
+tiles with and without tails, and a tile wider than its axis. They
+use the dimension algebra for symbolic extents, with structured minimum,
+subtraction and ceiling-division nodes for tails and counts. Tile, chunk and
+coordinate variables have separate namespaces from graph symbols. An output
+width is `min(tile, extent - taskCoord*tile)` and a reduced width is
+`min(chunk, extent - stepCoord*chunk)`. An undeclared chunk stays the symbolic
+full extent when graph parameters are rebound. The arithmetic coefficient follows
+the operation: one multiply per term for a binary contraction, plus accumulation
+only when the full reduction has more than one term, even when an individual
+chunk has width one. These are the declared operation's accounting formulas.
+
+`evaluateClosedForm(forms, expression, bindings)` checks rebound extents, tile
+and chunk sizes, coordinate ranges and safe integer arithmetic. The same forms
+can be evaluated under other parameter bindings; changing the graph structure or
+dtypes requires deriving new forms. `formatClosedForm` prints the expression
+without changing the DSL's exact integer-division grammar. Tests compare the
+same forms across bindings with concrete task, step and payload APIs.
+
+### Conditional time bound
+
+`core/plan/time-bound.ts` provides `planTimeBound(work, rates?)`. With both finite
+positive rates supplied, it returns a seconds `Figure`, scope
+`declared-work-and-traffic`, and machine-readable assumptions: the counted
+arithmetic is executed, all counted distinct reads and writes cross the supplied
+bandwidth boundary, and the rates are upper limits for those operations and
+transfers. Under that model seconds is at least
+`max(flops/flopsPerSecond, (readDistinct + written)/bytesPerSecond)`.
+This is not an unconditional physical runtime bound: plan traffic is logical,
+intermediates may remain in cache, and FLOP counts follow the declared computation.
+
+Exact or lower source counts establish a lower result. Upper, approximate or
+unknown source counts, or unsafe byte addition, produce unknown seconds. Missing
+either rate returns `null`; an invalid supplied rate throws `RangeError`. No
+hardware rates are inferred from the preset. This is an engine API; rate controls
+and presentation belong to the UI work.
 
 ## 8c. Read multiplicity
 
