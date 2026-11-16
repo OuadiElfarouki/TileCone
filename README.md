@@ -157,11 +157,11 @@ task, and the largest step and accumulator over the tensor's tasks. For the insp
 its FLOPs, and the accumulator they build, complete after the last. The step shown is painted on
 the cards at full strength over the task's fainter whole demand. Work after the contraction - a
 bias, an activation, a cast - applies to the finished sum and is read once per task. A tensor
-whose tasks perform no contraction has one step per task, and says why.
+whose tasks perform no contraction has one step per task, and says why. For tasks with multiple steps, **Computed over the whole task** expands the fused computations and their materialize controls.
 
 **Budget.** The **budget** line above the tiled tensors takes two byte counts you state: what a
 task may hold of its operands per step, and optionally what an accumulator may take. Figures they
-bound are marked `within` or `over`. "Within" is by payload: padding and alignment are not counted.
+bound are marked `within` or `over`. Editable limits preserve the exact byte count when you leave a field. "Within" is by payload: padding and alignment are not counted.
 Nothing models where a kernel holds anything; the default per-step budget is the 99 KiB of shared
 memory a block may allocate on the RTX PRO 6000 Blackwell, which is unverified.
 
@@ -169,7 +169,7 @@ memory a block may allocate on the RTX PRO 6000 Blackwell, which is unverified.
 bytes moved, task count and largest step, trying power-of-two tile extents and the largest chunks
 that fit. **these tensors** keeps which tensors are tiled; **every fusion choice** also tries
 fusing and materializing intermediates. **use** makes a row the current plan and undoes like any
-plan edit. Under the rows the sweep states what it did not look at. Without an accumulator limit
+plan edit. A row reads `current` only when its tiling, chunks, reduction order and accumulator dtype match the current plan. Under the rows the sweep states what it did not look at; rows chosen from a capped chunk search are marked because untried chunkings may improve them. Without an accumulator limit
 it is led by one task computing a whole output.
 
 A reduction split across tasks, working sets and execution order are not modelled.

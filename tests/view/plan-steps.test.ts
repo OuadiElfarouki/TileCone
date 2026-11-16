@@ -3,7 +3,7 @@ import { compileDSL } from "../../src/parse/compiler";
 import { tilePlan } from "../../src/core/plan/plan";
 import { stagingOf, type Staged } from "../../src/core/plan/steps";
 import { formatBytes } from "../../src/view/format";
-import { budgetVerdict, parseBytes, parseChunk, reducedAxisNames, withChunk } from "../../src/view/plan-steps";
+import { budgetVerdict, formatBudgetBytes, parseBudgetBytes, parseBytes, parseChunk, reducedAxisNames, withChunk } from "../../src/view/plan-steps";
 
 const names = (src: string, tensorId: string, tile: number[]) => {
   const plan = tilePlan(compileDSL(src).resolved, { [tensorId]: tile });
@@ -58,6 +58,16 @@ describe("a byte count as typed", () => {
 
   it("reads back what the panel prints", () => {
     for (const n of [512, 4096, 16384, 99 * 1024, 3 << 20]) expect(parseBytes(formatBytes(n))).toBe(n);
+  });
+
+  it("keeps arbitrary budget counts exact when edited or left unchanged", () => {
+    for (const n of [99999, 100001, 123456789, 512, 99 * 1024, 1.5, 1e21]) {
+      expect(parseBudgetBytes(formatBudgetBytes(n), n)).toBe(n);
+    }
+    expect(formatBudgetBytes(99999)).toBe("99999 B");
+    expect(formatBudgetBytes(99 * 1024)).toBe("99.0 KB");
+    expect(parseBudgetBytes("1.5 MB", 99999)).toBe(1.5 * 1024 * 1024);
+    expect(parseBudgetBytes("invalid", 99999)).toBeNull();
   });
 });
 

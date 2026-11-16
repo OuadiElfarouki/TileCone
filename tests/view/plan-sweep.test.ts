@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { compileDSL } from "../../src/parse/compiler";
 import { sweepPlans, type Sweep } from "../../src/core/plan/sweep";
+import { tilePlan } from "../../src/core/plan/plan";
 import { rowIsCurrent, sweepCaveats, sweepSummary } from "../../src/view/plan-sweep";
 
 const counts = (over: Partial<Sweep["counts"]> = {}): Sweep["counts"] => ({
@@ -33,6 +34,12 @@ describe("what a sweep left out", () => {
   it("counts sets against the total without going negative", () => {
     expect(sweepCaveats(counts({ fusionSets: 2, fusionSetsTotal: 2 }))).toEqual([]);
   });
+
+  it("warns about capped searches even when all accepted extents were resolved", () => {
+    expect(sweepCaveats(counts({ chunkingsCapped: 1, cappedUnresolved: 0 }))).toEqual([
+      expect.stringContaining("fewer steps or a smaller step payload may exist among untried chunkings"),
+    ]);
+  });
 });
 
 describe("a sweep's summary and rows", () => {
@@ -46,13 +53,30 @@ describe("a sweep's summary and rows", () => {
     expect(sweepSummary(all)).toContain(`${all.rows.length} plans unbeaten`);
   });
 
-  it("recognises the row that is the current plan by tiling and chunks", () => {
+  it("recognises effective tiling and steps including accumulator defaults", () => {
     const row = sweep.rows[0];
-    expect(rowIsCurrent(row, row.tiles, row.steps)).toBe(true);
-    expect(rowIsCurrent(row, { ...row.tiles, C: [1, 1] }, row.steps)).toBe(false);
-    expect(rowIsCurrent(row, row.tiles, { C: { chunk: { k: 1 } } })).toBe(Boolean(row.steps.C?.chunk?.k === 1));
-    expect(rowIsCurrent(row, {}, {})).toBe(false);
-    // An accumulator or order declaration does not make it a different tiling.
-    expect(rowIsCurrent(row, row.tiles, Object.fromEntries(Object.entries(row.steps).map(([id, s]) => [id, { ...s, accumulator: "f32" as const }])))).toBe(Object.keys(row.steps).length > 0);
+    const rowPlan = tilePlan(graph, row.tiles, row.steps);
+    const current = (tiles = row.tiles, steps = row.steps) => rowIsCurrent(row, tilePlan(graph, tiles, steps), rowPlan);
+    expect(current()).toBe(true);
+    expect(current({}, {})).toBe(false);
+    expect(current(row.tiles, { C: { ...row.steps.C, accumulator: "f16" } })).toBe(false);
+    expect(current(row.tiles, { C: { ...row.steps.C, accumulator: "f32", order: ["k"] } })).toBe(true);
+  });
+
+  it("normalizes whole chunks and distinguishes reduced-axis order", () => {
+    const g = compileDSL('A = Tensor(2, 3, 4, dtype=float16)\nB = Tensor(3, 4, 5, dtype=float16)\nC = einsum("ijk,jkl->il", A, B)').resolved;
+    const row = { tiles: { C: [1, 2] }, steps: {} };
+    const plan = tilePlan(g, row.tiles, row.steps);
+    expect(rowIsCurrent(row, tilePlan(g, row.tiles, { C: { chunk: { j: 3, k: 4 }, order: ["j", "k"], accumulator: "f32" } }), plan)).toBe(true);
+    expect(rowIsCurrent(row, tilePlan(g, row.tiles, { C: { order: ["k", "j"] } }), plan)).toBe(false);
+    expect(rowIsCurrent(row, tilePlan(g, row.tiles, { C: { chunk: { j: 1 } } }), plan)).toBe(false);
+  });
+
+  it("handles unstaged tensors and invalid declarations without crashing", () => {
+    const g = compileDSL('A = Tensor(4, 4)\nB = relu(A)').resolved;
+    const row = { tiles: { B: [2, 2] }, steps: {} };
+    const plan = tilePlan(g, row.tiles);
+    expect(rowIsCurrent(row, tilePlan(g, row.tiles, { B: {} }), plan)).toBe(true);
+    expect(rowIsCurrent(row, tilePlan(g, row.tiles, { B: { accumulator: "f32" } }), plan)).toBe(false);
   });
 });

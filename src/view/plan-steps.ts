@@ -7,6 +7,7 @@ import { nodeById } from "../core/graph";
 import type { StepSpec, TilePlan } from "../core/plan/plan";
 import type { Staged } from "../core/plan/steps";
 import type { Budget } from "../core/plan/sweep";
+import { formatBytes } from "./format";
 
 /**
  * What the author would call each reduced axis of a contraction, parallel to
@@ -71,6 +72,18 @@ export function withChunk(spec: StepSpec | undefined, label: string, chunk: numb
 }
 
 const UNITS: Record<string, number> = { b: 1, kb: 1024, kib: 1024, mb: 1 << 20, mib: 1 << 20, gb: 1 << 30, gib: 1 << 30 };
+
+/** Editable budgets must survive a focus/blur round trip without rounding. */
+export function formatBudgetBytes(bytes: number): string {
+  const compact = formatBytes(bytes);
+  return parseBytes(compact) === bytes ? compact : `${bytes} B`;
+}
+
+/** Keep an unchanged restored value even when it is outside the input parser's
+ * whole-byte range. New entries still follow the ordinary byte-count rules. */
+export function parseBudgetBytes(text: string, current: number): number | null {
+  return text.trim() === formatBudgetBytes(current) ? current : parseBytes(text);
+}
 
 /**
  * A byte count as typed: `99 KB`, `99KiB`, `1.5 MB`, `4096`, `4096 B`. Units

@@ -10,7 +10,7 @@ import {
   type Staging,
 } from "../../core/plan/steps";
 import { formatBytes, formatFigure, fmt } from "../../view/format";
-import { budgetVerdict, parseBytes, parseChunk, reducedAxisNames, withChunk, type Verdict } from "../../view/plan-steps";
+import { budgetVerdict, formatBudgetBytes, parseBudgetBytes, parseBytes, parseChunk, reducedAxisNames, withChunk, type Verdict } from "../../view/plan-steps";
 import { useStore } from "../../state/store";
 import { DraftField } from "../chrome/DraftField";
 import { useExplanation } from "../chrome/Explain";
@@ -64,8 +64,8 @@ export function PlanBudget(): React.ReactElement {
       <label>
         <span className="muted">step</span>
         <DraftField
-          value={formatBytes(budget.stepBytes)}
-          parse={parseBytes}
+          value={formatBudgetBytes(budget.stepBytes)}
+          parse={(text) => parseBudgetBytes(text, budget.stepBytes)}
           apply={(stepBytes) => setPlanBudget({ ...budget, stepBytes })}
           label="bytes a task may hold of its operands per step"
           title="bytes a task may hold of its operands at a time: what one step of its contraction reads. Typed as 99 KB, 1.5 MB or a byte count"
@@ -76,8 +76,9 @@ export function PlanBudget(): React.ReactElement {
       <label>
         <span className="muted">accumulator</span>
         <DraftField
-          value={budget.accumulatorBytes === undefined ? "no limit" : formatBytes(budget.accumulatorBytes)}
-          parse={(text) => (/^\s*(|none|no limit)\s*$/i.test(text) ? ("none" as const) : parseBytes(text))}
+          value={budget.accumulatorBytes === undefined ? "no limit" : formatBudgetBytes(budget.accumulatorBytes)}
+          parse={(text) => (/^\s*(|none|no limit)\s*$/i.test(text) ? ("none" as const) :
+            budget.accumulatorBytes === undefined ? parseBytes(text) : parseBudgetBytes(text, budget.accumulatorBytes))}
           apply={(parsed) =>
             setPlanBudget(parsed === "none" ? { stepBytes: budget.stepBytes } : { ...budget, accumulatorBytes: parsed })
           }

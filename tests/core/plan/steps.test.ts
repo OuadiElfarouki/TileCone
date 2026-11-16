@@ -498,6 +498,35 @@ describe("a family's largest step", () => {
     expect(familyPayload(plan, "P")).toMatchObject({ stepBytes: { value: brute(plan, "P").stepBytes } });
   });
 
+  it("measures an empty unstaged family as zero and rejects unplanned tensors", () => {
+    const plan = tilePlan(graphOf("X = Tensor(4, 6)\nY = X[0:0, :]\n"), { Y: [2, 3] });
+    expect(plan.families.get("Y")!.count).toBe(0);
+    expect(familyPayload(plan, "Y")).toEqual({
+      status: "measured", staged: false, stepsPerTask: 1,
+      stepBytes: { value: 0, status: "exact", reasons: [] }, accumulatorBytes: null,
+    });
+    expect(code(() => familyPayload(plan, "X"))).toBe("PLAN_UNPLANNED");
+  });
+
+  it("measures an empty staged family as zero", () => {
+    const graph = graphOf("X = Tensor(4, 6)\nA = X[0:0, :]\nB = Tensor(6, 3)\nY = matmul(A, B)\n");
+    const plan = tilePlan(graph, { Y: [2, 2] }, { Y: { chunk: { k: 2 } } });
+    expect(plan.families.get("Y")!.count).toBe(0);
+    expect(familyPayload(plan, "Y")).toEqual({
+      status: "measured", staged: true, stepsPerTask: 3,
+      stepBytes: { value: 0, status: "exact", reasons: [] },
+      accumulatorBytes: { value: 0, status: "exact", reasons: [] },
+    });
+  });
+
+  it("still measures a scalar family's one task", () => {
+    const plan = tilePlan(graphOf("X = Tensor()\nY = relu(X)\n"), { Y: [] });
+    expect(plan.families.get("Y")!.count).toBe(1);
+    expect(familyPayload(plan, "Y")).toMatchObject({
+      status: "measured", staged: false, stepBytes: { value: 4, status: "exact" },
+    });
+  });
+
   it("declines with the count where position matters and there is too much to measure, and never samples", () => {
     const plan = tilePlan(graphOf(SMALL.mlp), { Y: [1, 1] }, { Y: { chunk: { k: 1 } } });
     expect(familyPayload(plan, "Y", 16)).toEqual({ status: "unmeasured", staged: true, stepsPerTask: 8, reason: "36 tasks of 8 steps to measure" });

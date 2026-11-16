@@ -28,6 +28,7 @@ import {
   type Work,
 } from "../../core/plan/interfaces";
 import type { TaskRef, TilePlan } from "../../core/plan/plan";
+import { stagingOf } from "../../core/plan/steps";
 import { coordinatePage, tileBox, tileOrdinal, tiles, type TileFamily } from "../../core/plan/tile-family";
 import { taskLineage, type FamilyReplay, type LineageRow } from "../../core/plan/replay";
 import { count, formatBoxIndices, unionOf } from "../../core/region";
@@ -99,7 +100,7 @@ function TileExtentsInput({
       label={`${name} tile extents`}
       title="tile extents per axis; Enter or leaving the field applies, Escape abandons"
       invalidTitle={`expected ${shape.length} positive whole number${shape.length === 1 ? "" : "s"}, one per axis`}
-      className="box-range"
+      className={`box-range plan-tile-extents${tile.length > 2 ? " wide" : ""}`}
     />
   );
 }
@@ -833,18 +834,13 @@ function FamilySection({
  * The untiled tensors a task computes on the way to its tile. Tiling one here
  * writes it to memory instead, and the task reads it from its producer tasks.
  */
-function ComputedSection({ plan, computes }: { plan: TilePlan; computes: Computed[] }): React.ReactElement {
+function ComputedSection({ plan, computes, stepped }: { plan: TilePlan; computes: Computed[]; stepped: boolean }): React.ReactElement {
   const tilePlanTensor = useStore((s) => s.tilePlanTensor);
   const explain = useExplanation(
     "computed in this task",
     <>Not tiled, so this task computes them itself rather than reading them. Materializing one writes it to memory in tasks of its own, and this task reads it.</>
   );
-  return (
-    <section className="ins-section">
-      <div className="ins-title with-action">
-        Computed in this task
-        {explain.button}
-      </div>
+  const contents = <>
       {explain.panel}
       {computes.map(({ tensorId, region }) => {
         const tensor = plan.graph.tensors[tensorId];
@@ -868,6 +864,17 @@ function ComputedSection({ plan, computes }: { plan: TilePlan; computes: Compute
           </div>
         );
       })}
+    </>;
+  return stepped ? (
+    <details className="ins-section plan-computed">
+      <summary className="ins-title">Computed over the whole task</summary>
+      <div className="plan-computed-explain">{explain.button}</div>
+      {contents}
+    </details>
+  ) : (
+    <section className="ins-section">
+      <div className="ins-title with-action">Computed in this task{explain.button}</div>
+      {contents}
     </section>
   );
 }
@@ -1067,6 +1074,7 @@ export function PlanPanel({ replay }: { replay: PlanReplayControl }): React.Reac
   const family = plan && task ? plan.families.get(task.tensorId) : undefined;
   const tensor = task ? resolved.tensors[task.tensorId] : undefined;
   const node = task ? producerNode(resolved, task.tensorId) : undefined;
+  const staging = plan && task ? stagingOf(plan, task.tensorId) : null;
 
   return (
     <div className="ins-tabpanel" role="region" id="ins-panel-plan" aria-labelledby="view-plan">
@@ -1127,7 +1135,7 @@ export function PlanPanel({ replay }: { replay: PlanReplayControl }): React.Reac
             )}
           </section>
           <TaskStepsSection plan={plan} task={task} />
-          {supply.computes.length > 0 && <ComputedSection plan={plan} computes={supply.computes} />}
+          {supply.computes.length > 0 && <ComputedSection plan={plan} computes={supply.computes} stepped={!!staging?.staged && staging.steps > 1} />}
           <LineageSection plan={plan} task={task} onFollow={follow} />
           {reads && (
             <OperandReuse

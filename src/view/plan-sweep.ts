@@ -2,7 +2,8 @@
  * How a sweep's rows and limits are worded in the Plan view. Pure.
  */
 
-import type { StepSpec } from "../core/plan/plan";
+import type { TilePlan } from "../core/plan/plan";
+import { stagingOf } from "../core/plan/steps";
 import type { Sweep, SweepRow } from "../core/plan/sweep";
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
@@ -35,6 +36,8 @@ export function sweepCaveats(counts: Sweep["counts"]): string[] {
     out.push(`${plural(counts.overSteps, "tile extent")} left out: too many steps to measure, so within the budget or not is not known.`);
   if (counts.cappedUnresolved)
     out.push(`${plural(counts.cappedUnresolved, "tile extent")} left out: only a chunking the search did not try fits.`);
+  if (counts.chunkingsCapped)
+    out.push(`${plural(counts.chunkingsCapped, "tile extent")} had a capped chunk search: fewer steps or a smaller step payload may exist among untried chunkings.`);
   return out;
 }
 
@@ -46,29 +49,26 @@ export function sweepSummary(sweep: Sweep): string {
   return `${shown} unbeaten · ${plural(counts.measured, "tile extent")} measured over ${sets} · ${plural(counts.overBudget, "extent")} over the budget`;
 }
 
-const sameChunks = (a: StepSpec | undefined, b: StepSpec | undefined): boolean => {
-  const left = a?.chunk ?? {};
-  const right = b?.chunk ?? {};
-  const labels = Object.keys(left);
-  return labels.length === Object.keys(right).length && labels.every((label) => left[label] === right[label]);
-};
-
-/** Whether a row is the plan already current: the same tensors tiled at the
- * same extents with the same chunks. */
+/** Compare effective steps, including defaults, without measuring either plan. */
 export function rowIsCurrent(
-  row: Pick<SweepRow, "tiles" | "steps">,
-  tiles: Readonly<Record<string, readonly number[]>>,
-  steps: Readonly<Record<string, StepSpec>>
+  row: Pick<SweepRow, "tiles">,
+  current: TilePlan,
+  rowPlan: TilePlan
 ): boolean {
   const ids = Object.keys(row.tiles);
-  return (
-    ids.length === Object.keys(tiles).length &&
-    ids.every(
-      (id) =>
-        tiles[id] !== undefined &&
-        tiles[id].length === row.tiles[id].length &&
-        tiles[id].every((extent, axis) => extent === row.tiles[id][axis]) &&
-        sameChunks(row.steps[id], steps[id])
-    )
-  );
+  if (ids.length !== current.families.size) return false;
+  return ids.every((id) => {
+    const tile = current.families.get(id)?.tile;
+    if (!tile || tile.length !== row.tiles[id].length || tile.some((extent, axis) => extent !== row.tiles[id][axis])) return false;
+    try {
+      const a = stagingOf(current, id);
+      const b = stagingOf(rowPlan, id);
+      if (!a.staged || !b.staged) return !a.staged && !b.staged;
+      return a.accumulator === b.accumulator && a.reduced.length === b.reduced.length &&
+        a.reduced.every((axis, i) => axis.label === b.reduced[i].label && axis.chunk === b.reduced[i].chunk);
+    } catch {
+      // Invalid declarations on an unstaged tensor cannot match an installable row.
+      return false;
+    }
+  });
 }

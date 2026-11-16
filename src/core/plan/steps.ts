@@ -460,7 +460,17 @@ const largest = (figures: readonly Figure[]): Figure => {
  */
 export function familyPayload(plan: TilePlan, tensorId: string, work = FAMILY_PAYLOAD_WORK): FamilyPayload {
   const { staging } = internalOf(plan, tensorId);
-  const family = familyOf(plan, { tensorId, coord: plan.families.get(tensorId)!.grid.map(() => 0) });
+  const family = plan.families.get(tensorId)!; // internalOf checks that the tensor is planned.
+  if (family.count === 0) {
+    const zero = figure(0, "exact");
+    return {
+      status: "measured",
+      staged: staging.staged,
+      stepsPerTask: staging.staged ? staging.steps : 1,
+      stepBytes: zero,
+      accumulatorBytes: staging.staged ? zero : null,
+    };
+  }
   const tasks = function* (): Generator<TaskRef> {
     for (const coord of tilesOf(family)) yield { tensorId, coord };
   };

@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import type { ResolvedGraph } from "../../core/graph";
-import { tilePlan } from "../../core/plan/plan";
+import { tilePlan, type TilePlan } from "../../core/plan/plan";
 import { stagingOf } from "../../core/plan/steps";
 import type { SweepRow } from "../../core/plan/sweep";
 import { fmt, formatBytes, formatFigure } from "../../view/format";
@@ -11,8 +11,7 @@ import { useExplanation } from "../chrome/Explain";
 
 /** A row's plan in words: each tiled tensor with its extents, and its chunks
  * by the names the source gave the reduced axes. */
-function describeRow(graph: ResolvedGraph, row: SweepRow): { name: string; tile: string; chunks: string }[] {
-  const plan = tilePlan(graph, row.tiles, row.steps);
+function describeRow(graph: ResolvedGraph, row: SweepRow, plan: TilePlan): { name: string; tile: string; chunks: string }[] {
   return Object.keys(row.tiles)
     .map((id) => {
       const staging = stagingOf(plan, id);
@@ -46,9 +45,17 @@ export function PlanSweep(): React.ReactElement {
   const tiled = Object.keys(planTiles).length;
 
   const rows = useMemo(
-    () => (sweep.status === "done" ? sweep.result.rows.map((row) => ({ row, parts: describeRow(resolved, row) })) : []),
+    () => (sweep.status === "done" ? sweep.result.rows.map((row) => {
+      const plan = tilePlan(resolved, row.tiles, row.steps);
+      return { row, plan, parts: describeRow(resolved, row, plan) };
+    }) : []),
     [sweep, resolved]
   );
+  const currentRows = useMemo(() => {
+    if (rows.length === 0) return [];
+    const plan = tilePlan(resolved, planTiles, planSteps);
+    return rows.map(({ row, plan: rowPlan }) => rowIsCurrent(row, plan, rowPlan));
+  }, [resolved, planTiles, planSteps, rows]);
   const explain = useExplanation(
     "the sweep",
     <>
@@ -126,7 +133,7 @@ export function PlanSweep(): React.ReactElement {
                   <span role="columnheader" aria-label="use" />
                 </div>
                 {rows.map(({ row, parts }, index) => {
-                  const current = rowIsCurrent(row, planTiles, planSteps);
+                  const current = currentRows[index];
                   const moved = row.total.read.value! + row.total.written.value!;
                   return (
                     <React.Fragment key={index}>
@@ -140,6 +147,11 @@ export function PlanSweep(): React.ReactElement {
                         {row.accumulatorBytes !== null && (
                           <span className="plan-sweep-acc muted" title="the largest accumulator among the plan's tasks">
                             acc {formatBytes(row.accumulatorBytes)}
+                          </span>
+                        )}
+                        {Object.values(row.perTensor).some((tensor) => tensor.chunkingCapped) && (
+                          <span className="muted" title="untried chunkings may have fewer steps or a smaller step payload">
+                            capped chunk search
                           </span>
                         )}
                       </div>
@@ -168,10 +180,10 @@ export function PlanSweep(): React.ReactElement {
               </div>
             </div>
           )}
-          {rows.length > 0 && tiled > 0 && !rows.some(({ row }) => rowIsCurrent(row, planTiles, planSteps)) && (
+          {rows.length > 0 && tiled > 0 && !currentRows.some(Boolean) && (
             <p className="hint">
-              The current plan is not among them: it is over the budget, outside the extents the sweep
-              tries, or another plan is no worse on every figure.
+              The current plan is not among these rows. It may be over the budget, outside what the sweep
+              tried, or beaten by another plan; search limits may also leave it out.
             </p>
           )}
           <p className="hint">{sweepSummary(sweep.result)}.</p>
