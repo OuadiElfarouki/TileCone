@@ -10,6 +10,7 @@ import { selectionActions } from "./actions/selection";
 import { viewActions } from "./actions/view";
 import { workspaceActions } from "./actions/workspace";
 import { NO_PLAN } from "./plan";
+import { DEFAULT_BUDGET } from "../core/plan/presets";
 import { State } from "./types";
 
 function initialTheme(): Theme {
@@ -57,6 +58,8 @@ export const useStore = create<State>((set, get) => {
   reuseLens: null,
   replayDepth: idRecord<number>(),
   ...NO_PLAN,
+  planBudget: DEFAULT_BUDGET,
+  sweep: { status: "idle" },
   keptPlans: [],
   planTrail: null,
   lineageFocus: null,

@@ -120,6 +120,11 @@ export function taskSupplyOf(plan: TilePlan, task: TaskRef): TaskSupply {
 }
 
 /** What one task reads, which producer tasks supply it, and what it computes. */
+/** `taskSupplyOf` for a caller that already holds the task's demand cone. */
+export function taskSupplyFrom(plan: TilePlan, task: TaskRef, cone: BoundedCone): TaskSupply {
+  return summarizeDemand(plan, task, cone);
+}
+
 export function supplyOf(plan: TilePlan, task: TaskRef): Supply {
   return joinDemand(plan, task, taskDemand(plan, task));
 }

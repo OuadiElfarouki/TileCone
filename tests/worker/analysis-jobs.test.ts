@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hydrateResolvedGraph } from "../../src/core/graph";
-import { compileArtifact, layoutArtifact, planArtifact, planRestoreArtifact, replayArtifact } from "../../src/worker/analysis-jobs";
+import { compileArtifact, layoutArtifact, planArtifact, planRestoreArtifact, replayArtifact, sweepArtifact } from "../../src/worker/analysis-jobs";
 import { box } from "../../src/core/region";
 
 const CHAIN = `A = Tensor(256, 256, dtype=float16)
@@ -105,5 +105,25 @@ describe("warnings across the Worker boundary", () => {
     expect(warnings[0]).toMatchObject({ severity: "warning", code: "SEM_SYMBOLIC_SHAPE" });
     expect(warnings[0].span.start.line).toBe(5);
     expect(structuredClone(result.artifact.resolved).warnings).toHaveLength(1);
+  });
+});
+
+describe("the sweep job", () => {
+  const SOURCE = `A = Tensor(6, 8, dtype=float16)
+B = Tensor(8, 4, dtype=float16)
+C = matmul(A, B)
+`;
+
+  it("answers from the graph data a Worker is sent, with a result that survives the trip back", () => {
+    const compiled = compileArtifact(SOURCE);
+    if (!compiled.ok) throw new Error("the source did not compile");
+    const options = { budget: { stepBytes: 48, accumulatorBytes: 32 } };
+    // What crosses to the Worker is the plain graph data, and what crosses back
+    // is cloned: neither may depend on a method or a shared object.
+    const sent = structuredClone(compiled.artifact.resolved);
+    const result = structuredClone(sweepArtifact(sent, structuredClone(options)));
+    expect(result).toEqual(sweepArtifact(compiled.resolved, options));
+    expect(result.rows.length).toBeGreaterThan(0);
+    for (const row of result.rows) expect(row.stepBytes).toBeLessThanOrEqual(48);
   });
 });

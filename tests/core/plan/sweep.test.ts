@@ -11,8 +11,9 @@
  *
  * What the brute force shares with the sweep: the tile and chunk extents tried
  * (`extentOptions`) and the rule that a tile takes its largest chunk within
- * the budget. Its graphs have one reduced axis each; the chunking cap and the
- * sets that are not exact have tests of their own below.
+ * the budget. Its graphs have one reduced axis each and no views; the rule
+ * between chunkings of several axes, the chunking cap, the limits and the sets
+ * that are not exact have tests of their own below.
  */
 
 import { describe, expect, it } from "vitest";
@@ -168,7 +169,8 @@ describe("the sweep lists what brute force lists", () => {
       const graph = graphOf(src);
       const brute = bruteForce(graph, budget);
       const sweep = sweepPlans(graph, { budget, maxRows: 10_000, maxPlans: 1_000_000 });
-      expect(sweep.counts.combinationsSkipped).toBe(0);
+      expect(sweep.counts.combinationsDropped).toBe(0);
+      expect(sweep.counts.setsSkipped + sweep.counts.setsInexact + sweep.counts.overSteps).toBe(0);
       expect(sweep.counts.fusionSets).toBe(sweep.counts.fusionSetsTotal);
       expect(sweep.rows.length).toBe(sweep.counts.unbeaten);
       expect(brute.length).toBeGreaterThan(0);
@@ -224,7 +226,7 @@ C = matmul(A, B)
 
   it("reports the row's steps and accumulator", () => {
     const row = sweepPlans(graph, { budget: { stepBytes: 2048, ...bounds }, ...limits }).rows.find(square)!;
-    expect(row.perTensor.C).toEqual({ stepsPerTask: 4, stepBytes: 2048, accumulatorBytes: 1024 });
+    expect(row.perTensor.C).toEqual({ stepsPerTask: 4, stepBytes: 2048, accumulatorBytes: 1024, chunkingCapped: false });
     expect(row.accumulatorBytes).toBe(1024);
   });
 
@@ -233,8 +235,24 @@ C = matmul(A, B)
     expect(sweep.counts.overTasks).toBeGreaterThan(0);
     // H and Y each keep several options, and one combination is all that is allowed.
     const capped = sweepPlans(graphOf(MLP), { budget: { stepBytes: 40 }, maxPlans: 1 });
-    expect(capped.counts.combined).toBe(1);
-    expect(capped.counts.combinationsSkipped).toBeGreaterThan(0);
+    expect(capped.counts.combinationsDropped).toBeGreaterThan(0);
+    expect(capped.rows.length).toBeLessThanOrEqual(2); // one kept per set
+  });
+
+  it("bounds high-rank candidate enumeration even when tiles exceed the task budget", () => {
+    // 5^12 choices would allocate hundreds of millions of arrays eagerly.
+    // The first choice exceeds the task budget, and must still spend its visit.
+    const highRank = graphOf(`X = Tensor(${Array(12).fill(16).join(", ")})\nY = relu(X)\n`);
+    const sweep = sweepPlans(highRank, { budget: { stepBytes: 1e15 }, maxWork: 1, taskBudget: 1 });
+    expect(sweep.rows).toEqual([]);
+    expect(sweep.counts.setsSkipped).toBe(1);
+    expect(sweep.counts.fusionSets).toBe(0);
+  });
+
+  it("enumerates a scalar's one empty tile", () => {
+    const sweep = sweepPlans(graphOf("X = Tensor()\nY = relu(X)\n"), { budget: { stepBytes: 64 } });
+    expect(sweep.rows).toHaveLength(1);
+    expect(sweep.rows[0].tiles).toEqual({ Y: [] });
   });
 
   it("without an accumulator bound, lists the one task that computes everything", () => {
@@ -258,6 +276,9 @@ C = matmul(A, B)
       expect(codeOf({ budget: { stepBytes: 64, accumulatorBytes: n } })).toBe("PLAN_BUDGET");
       expect(codeOf({ budget: { stepBytes: 64 }, taskBudget: n })).toBe("PLAN_BUDGET");
     }
+    for (const n of [1.5, 0])
+      for (const limit of ["maxPlans", "maxRows", "taskBudget", "stepWork", "maxWork"] as const)
+        expect(codeOf({ budget: { stepBytes: 64 }, [limit]: n })).toBe("PLAN_BUDGET");
   });
 });
 
@@ -279,6 +300,54 @@ describe("what is measured", () => {
     // One byte less and the halves no longer fit.
     const tighter = sweepPlans(graphOf(CONCAT_STEP), { budget: { stepBytes: 47 }, tiled: [["C"]], maxRows: 10_000 });
     expect(tighter.rows.find((r) => r.tiles.C[0] === 2 && r.tiles.C[1] === 2)!.steps.C).toEqual({ chunk: { k: 2 } });
+  });
+
+  it("takes the smallest payload among the chunkings with the fewest steps", () => {
+    // Halving k or halving l is two steps either way. Halving l reads 84 bytes
+    // per step, halving k 56.
+    const graph = graphOf(`A = Tensor(8, 4, dtype=float16)
+B = Tensor(4, 4, dtype=float16)
+C = Tensor(4, 1, dtype=float16)
+Y = einsum("ik,kl,lj->ij", A, B, C)
+`);
+    const sweep = sweepPlans(graph, { budget: { stepBytes: 84 }, tiled: [["Y"]], maxRows: 10_000 });
+    const row = sweep.rows.find((r) => r.tiles.Y[0] === 8 && r.tiles.Y[1] === 1)!;
+    expect(row.steps.Y).toEqual({ chunk: { k: 2 } });
+    expect(row.perTensor.Y).toMatchObject({ stepsPerTask: 2, stepBytes: 56, chunkingCapped: false });
+  });
+
+  it("does not call an extent over the budget when only a left-out chunking fits", () => {
+    const graph = graphOf(`A = Tensor(1, 64, 64, dtype=float16)
+B = Tensor(64, 64, 64, dtype=float16)
+C = Tensor(64, 1, dtype=float16)
+Y = einsum("abc,bcd,de->ae", A, B, C)
+`);
+    // One element of b and c with two of d reads exactly 10 bytes; the capped
+    // search leaves chunk 1 of b and c out.
+    const sweep = sweepPlans(graph, { budget: { stepBytes: 10 }, tiled: [["Y"]] });
+    expect(sweep.rows).toEqual([]);
+    expect(sweep.counts).toMatchObject({ chunkingsCapped: 1, cappedUnresolved: 1, overBudget: 0 });
+    // Below the smallest payload of any chunking it is over the budget.
+    const under = sweepPlans(graph, { budget: { stepBytes: 5 }, tiled: [["Y"]] });
+    expect(under.counts).toMatchObject({ cappedUnresolved: 0, overBudget: 1 });
+  });
+
+  it("counts an extent whose steps are too many to measure, apart from over the budget", () => {
+    // S is fused, so position matters and every step of every task is measured.
+    const sweep = sweepPlans(graphOf(CONCAT_STEP), { budget: { stepBytes: 24 }, tiled: [["C"]], stepWork: 2 });
+    expect(sweep.counts.overSteps).toBeGreaterThan(0);
+    const free = sweepPlans(graphOf(CONCAT_STEP), { budget: { stepBytes: 24 }, tiled: [["C"]] });
+    expect(free.counts.overSteps).toBe(0);
+    expect(free.rows.length).toBeGreaterThan(sweep.rows.length);
+  });
+
+  it("marks a row whose chunking came from a capped search", () => {
+    const graph = graphOf(`A = Tensor(2, 64, 64, 64, dtype=float16)
+B = Tensor(64, 64, 64, 2, dtype=float16)
+C = einsum("abcd,bcde->ae", A, B)
+`);
+    const sweep = sweepPlans(graph, { budget: { stepBytes: 1e12 }, tiled: [["C"]] });
+    for (const row of sweep.rows) expect(row.perTensor.C.chunkingCapped).toBe(true);
   });
 
   it("keeps the whole axis among the chunkings when there are too many to try", () => {
@@ -326,10 +395,17 @@ describe("the sets of tiled tensors", () => {
     expect(twice.counts).toEqual(once.counts);
   });
 
-  it("past the plan limit are counted as not searched", () => {
-    const sweep = sweepPlans(graphOf(MLP), { budget: { stepBytes: 40 }, maxPlans: 1 });
-    expect(sweep.counts.fusionSets + sweep.counts.setsSkipped).toBe(2);
-    expect(sweep.counts.setsSkipped).toBe(1);
+  it("not reached within the work limit are counted as not searched", () => {
+    const none = sweepPlans(graphOf(MLP), { budget: { stepBytes: 40 }, maxWork: 1 });
+    expect(none.counts).toMatchObject({ fusionSets: 0, setsSkipped: 2, measured: 0 });
+    expect(none.rows).toEqual([]);
+    // Enough for the first set and not the second: only the first is counted.
+    const all = sweepPlans(graphOf(MLP), { budget: { stepBytes: 40 } });
+    let some = none;
+    for (let maxWork = 2; some.counts.fusionSets === 0; maxWork *= 2)
+      some = sweepPlans(graphOf(MLP), { budget: { stepBytes: 40 }, maxWork });
+    if (some.counts.setsSkipped === 1) expect(some.counts.measured).toBeLessThan(all.counts.measured);
+    expect(some.counts.fusionSets + some.counts.setsSkipped).toBe(2);
   });
 
   it("can be given, and are otherwise every fusion of a few intermediates", () => {

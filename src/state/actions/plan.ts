@@ -7,6 +7,13 @@ import { recordWorkspace, sameNumbers, sameTask, sameTiles } from "../history";
 import { activePlanTrail, derivePlan, inspectTask, MAX_KEPT_PLANS, tileContaining } from "../plan";
 import { revealHidden } from "../selection-edit";
 import { GetState, SetState, State } from "../types";
+import { isBudget, sameBudget } from "../../core/plan/presets";
+import { sweepArtifact } from "../../worker/analysis-jobs";
+import { analysisWorkerAvailable, cancelSweep, isAnalysisCancelled, sweepInWorker } from "../analysis-worker-client";
+
+/** Counts sweeps asked for, so a result arriving after a later request, a
+ * cleared sweep or a new budget is recognised and dropped. */
+let sweepEpoch = 0;
 
 /** The declared tiling and the inspected task. */
 export const planActions = (set: SetState, get: GetState): Pick<
@@ -18,6 +25,10 @@ export const planActions = (set: SetState, get: GetState): Pick<
   | "planTaskAt"
   | "setPlanTileAt"
   | "setPlanSteps"
+  | "setPlanBudget"
+  | "runSweep"
+  | "clearSweep"
+  | "installSweepRow"
   | "tilePlanTensor"
   | "movePlanTask"
   | "keepPlan"
@@ -73,6 +84,65 @@ export const planActions = (set: SetState, get: GetState): Pick<
     // declaration is then indistinguishable from none: nothing to record.
     if (next.planSteps === planSteps || (steps && !next.planSteps[tensorId])) return;
     set({ workspaceHistory: recordWorkspace(state), ...next });
+  },
+
+  setPlanBudget: (budget) => {
+    const current = get().planBudget;
+    if (!isBudget(budget) || sameBudget(budget, current)) return;
+    // A sweep's rows are the plans within the budget it ran under.
+    sweepEpoch++;
+    cancelSweep();
+    set({
+      planBudget: {
+        stepBytes: budget.stepBytes,
+        ...(budget.accumulatorBytes === undefined ? {} : { accumulatorBytes: budget.accumulatorBytes }),
+      },
+      sweep: { status: "idle" },
+    });
+  },
+
+  runSweep: async (scope) => {
+    const { resolved, planTiles, planBudget, workerGraphId } = get();
+    if (!resolved) return;
+    const tiled = Object.keys(planTiles).sort();
+    const options = {
+      budget: planBudget,
+      ...(scope === "current" && tiled.length ? { tiled: [tiled] } : {}),
+    };
+    const epoch = ++sweepEpoch;
+    set({ sweep: { status: "running", scope } });
+    // The graph and the budget the result answers for: a replacement of either
+    // while the sweep ran makes it an answer to a question no longer asked.
+    const current = () => epoch === sweepEpoch && get().resolved === resolved && get().planBudget === planBudget;
+    try {
+      const result = analysisWorkerAvailable()
+        ? await sweepInWorker({ graphId: workerGraphId, graph: resolved, options })
+        : sweepArtifact(resolved, options);
+      if (current()) set({ sweep: { status: "done", scope, budget: planBudget, result } });
+    } catch (error) {
+      if (!current()) return;
+      if (isAnalysisCancelled(error)) {
+        set({ sweep: { status: "idle" } });
+        return;
+      }
+      set({ sweep: { status: "failed", scope, message: error instanceof Error ? error.message : String(error) } });
+    }
+  },
+
+  clearSweep: () => {
+    sweepEpoch++;
+    cancelSweep();
+    if (get().sweep.status !== "idle") set({ sweep: { status: "idle" } });
+  },
+
+  installSweepRow: (index) => {
+    const state = get();
+    const { resolved, sweep } = state;
+    const row = sweep.status === "done" ? sweep.result.rows[index] : undefined;
+    if (!resolved || !row) return;
+    const next = derivePlan(resolved, idRecord(row.tiles), state.planTask, state, idRecord(row.steps));
+    if (next.planTiles === state.planTiles && next.planSteps === state.planSteps) return;
+    set({ workspaceHistory: recordWorkspace(state), ...next, inspectorTab: "plan" });
   },
 
   selectPlanTask: (task) => {

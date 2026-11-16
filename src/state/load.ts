@@ -5,6 +5,7 @@ import { validateSelection } from "../core/executor";
 import { Graph, ResolvedGraph } from "../core/graph";
 import { familyOf, tilePlan } from "../core/plan/plan";
 import { checkSteps } from "../core/plan/steps";
+import { DEFAULT_BUDGET, isBudget } from "../core/plan/presets";
 import { fromBox } from "../core/region";
 import { EXAMPLES } from "../examples/index";
 import { BaseGraphLayout, readNodeKey } from "../view/graph/graph-scene";
@@ -30,7 +31,7 @@ export function loadResolvedGraph(
   | "entangled"
   | "perBox" | "focusedBox" | "pinnedBox" | "editBox" | "growth" | "viewCfgs" | "preview" | "graphPx"
   | "hiddenBoxes" | "analysisGroup" | "workspaceHistory" | "nodeOffsets"
-  | "planTiles" | "planSteps" | "planTask" | "plan" | "planSupply" | "keptPlans" | "planTrail" | "lineageFocus"
+  | "planTiles" | "planSteps" | "sweep" | "planTask" | "plan" | "planSupply" | "keptPlans" | "planTrail" | "lineageFocus"
   | "replayPlayback" | "reuseLens" | "replayDepth" | "placementCarry" | "resizingTensor"
 > {
   const viewCfgs = Object.create(null) as Record<string, ViewCfg>;
@@ -67,6 +68,8 @@ export function loadResolvedGraph(
     // A plan names tensors and tile coordinates in one graph, as the selection
     // does, and a kept plan's totals were measured on this graph alone.
     ...NO_PLAN,
+    // A sweep's rows are plans of the graph it ran on.
+    sweep: { status: "idle" },
     keptPlans: [],
     planTrail: null,
     lineageFocus: null,
@@ -201,7 +204,7 @@ export function installedDSLState(
  */
 export function experimentWorkspace(
   text: string,
-  state: Pick<State, "direction" | "showEntangled" | "tileScale" | "snapToGrid" | "axisMode">
+  state: Pick<State, "direction" | "showEntangled" | "tileScale" | "snapToGrid" | "axisMode" | "planBudget">
 ): WorkspaceRestore | null {
   const example = EXAMPLES.find((candidate) => candidate.dsl === text);
   const experiment = example?.experiment;
@@ -214,6 +217,7 @@ export function experimentWorkspace(
     tileScale: state.tileScale,
     snapToGrid: state.snapToGrid,
     axisMode: state.axisMode,
+    planBudget: state.planBudget,
     parts: selection
       ? [{ tensorId: selection.tensor, box: selection.box.map(([lo, hi]) => ({ lo, hi })) }]
       : null,
@@ -299,6 +303,8 @@ export function restoredWorkspaceState(
   // link's task is what its Plan view describes.
   // Step declarations are refused like an invalid tile: one that does not fit
   // the graph and the tiling refuses the whole restore.
+  const planBudget = workspace.planBudget ?? DEFAULT_BUDGET;
+  if (!isBudget(planBudget)) throw new Error("invalid budget");
   const planSteps = idRecord(workspace.planSteps);
   const checkedPlan = tilePlan(resolved, planTiles, planSteps);
   checkSteps(checkedPlan);
@@ -308,6 +314,7 @@ export function restoredWorkspaceState(
   });
   const plan = {
     planTiles, planSteps, planTask: task,
+    planBudget,
     plan: Object.keys(planTiles).length ? checkedPlan : null,
     planSupply: restored.supply,
   };

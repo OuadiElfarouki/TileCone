@@ -5,6 +5,8 @@ import { nodeKey, readNodeKey } from "../view/graph/graph-scene";
 import { Direction, InspectorTab, MAX_NODE_OFFSET } from "../view/workspace";
 import type { DType } from "../core/dtypes";
 import type { StepSpec, TaskRef } from "../core/plan/plan";
+import { DEFAULT_BUDGET, sameBudget } from "../core/plan/presets";
+import type { Budget } from "../core/plan/sweep";
 import { MAX_KEPT_PLANS } from "./plan";
 import type { State, WorkspaceRestore } from "./types";
 
@@ -63,6 +65,12 @@ export type WorkspaceLink = {
    * dtype. Only declared fields are written, and only for tensors of `plan`.
    */
   steps?: Record<string, { c?: Record<string, number>; o?: string[]; a?: string }>;
+  /**
+   * Optional: the stated budget, `s` bytes per step and `a` bytes per
+   * accumulator. Written only when it is not the default preset's, so a link
+   * made at the default reads as one written before budgets existed.
+   */
+  budget?: { s: number; a?: number };
   /** Optional: present only when the link was made in the Plan view. */
   tab?: "plan";
 };
@@ -210,6 +218,13 @@ export function parseWorkspaceLink(value: unknown): WorkspaceLink | null {
       !Array.isArray(raw.kept) || raw.kept.length > MAX_KEPT_PLANS || !raw.kept.every(isTiling)
     )) return null;
     if (raw.tab !== undefined && raw.tab !== "plan") return null;
+    if (raw.budget !== undefined) {
+      const b = raw.budget as { s?: unknown; a?: unknown } | null;
+      const positive = (n: unknown) => typeof n === "number" && Number.isFinite(n) && n >= 1;
+      if (!b || typeof b !== "object" || Array.isArray(b) || !positive(b.s) ||
+          (b.a !== undefined && !positive(b.a)) || Object.keys(b).some((key) => key !== "s" && key !== "a"))
+        return null;
+    }
     if (raw.steps !== undefined) {
       // Shape only: whether each declaration fits the graph is checked against
       // the compiled program, where a misfit refuses the restore.
@@ -229,6 +244,7 @@ export function parseWorkspaceLink(value: unknown): WorkspaceLink | null {
       ...(raw.task ? { task: raw.task } : {}),
       ...(raw.kept?.length ? { kept: raw.kept } : {}),
       ...(raw.steps && Object.keys(raw.steps).length ? { steps: raw.steps } : {}),
+      ...(raw.budget ? { budget: raw.budget } : {}),
       ...(raw.tab ? { tab: raw.tab } : {}),
     };
   } catch {
@@ -270,10 +286,12 @@ export function planToLink(state: {
   planTiles: Record<string, number[]>;
   /** Absent where the caller has no step declarations to write. */
   planSteps?: Record<string, StepSpec>;
+  /** Absent where the caller has no budget to write. */
+  planBudget?: Budget;
   planTask: TaskRef | null;
   keptPlans: readonly { tiles: Record<string, number[]> }[];
   inspectorTab: InspectorTab;
-}): Pick<WorkspaceLink, "plan" | "steps" | "task" | "kept" | "tab"> {
+}): Pick<WorkspaceLink, "plan" | "steps" | "budget" | "task" | "kept" | "tab"> {
   const tiled = Object.keys(state.planTiles).length > 0;
   const steps = Object.fromEntries(
     Object.entries(state.planSteps ?? {}).flatMap(([id, spec]) => {
@@ -288,6 +306,14 @@ export function planToLink(state: {
   return {
     ...(tiled ? { plan: { ...state.planTiles } } : {}),
     ...(tiled && Object.keys(steps).length ? { steps } : {}),
+    ...(state.planBudget && !sameBudget(state.planBudget, DEFAULT_BUDGET)
+      ? {
+          budget: {
+            s: state.planBudget.stepBytes,
+            ...(state.planBudget.accumulatorBytes === undefined ? {} : { a: state.planBudget.accumulatorBytes }),
+          },
+        }
+      : {}),
     ...(tiled && state.planTask
       ? { task: { t: state.planTask.tensorId, at: [...state.planTask.coord] } }
       : {}),
@@ -332,6 +358,9 @@ export function linkToRestore(link: WorkspaceLink): WorkspaceRestore {
             ])
           ),
         }
+      : {}),
+    ...(link.budget
+      ? { planBudget: { stepBytes: link.budget.s, ...(link.budget.a === undefined ? {} : { accumulatorBytes: link.budget.a }) } }
       : {}),
     planTask: link.task ? { tensorId: link.task.t, coord: link.task.at } : null,
     keptTilings: link.kept,

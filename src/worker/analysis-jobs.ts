@@ -7,6 +7,7 @@ import {
 import { planReport, taskSupplyOf, type PlanReport } from "../core/plan/interfaces";
 import { familyOf, tilePlan, type TaskRef } from "../core/plan/plan";
 import { familyReplay, type FamilyReplay } from "../core/plan/replay";
+import { type Sweep, type SweepOptions, sweepPlans } from "../core/plan/sweep";
 import { tryCompileDSL, type CompilerDiagnostic } from "../parse/compiler";
 import type { CompileArtifact, PlanRestoreArtifact, PlanRestoreRequest } from "./analysis-protocol";
 import { tensorCardSize, type CardShapeView } from "../view/tensor/card-size";
@@ -79,4 +80,10 @@ export function replayArtifact(
 ): FamilyReplay {
   const resolved = "shapesOf" in graph ? graph : hydrateResolvedGraph(graph);
   return familyReplay(tilePlan(resolved, tiles), task, { depth });
+}
+
+/** The plans within a budget that no other beats (`core/plan/sweep.ts`). */
+export function sweepArtifact(graph: ResolvedGraph | ResolvedGraphData, options: SweepOptions): Sweep {
+  const resolved = "shapesOf" in graph ? graph : hydrateResolvedGraph(graph);
+  return sweepPlans(resolved, options);
 }

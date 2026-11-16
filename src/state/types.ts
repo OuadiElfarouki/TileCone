@@ -3,6 +3,7 @@ import { Entanglement } from "../core/entangle";
 import { Graph, ResolvedGraph } from "../core/graph";
 import { PlanReport, TaskSupply, Work } from "../core/plan/interfaces";
 import { StepSpec, TaskRef, TilePlan } from "../core/plan/plan";
+import type { Budget, Sweep } from "../core/plan/sweep";
 import { PropResult } from "../core/propagate";
 import { Box, Region } from "../core/region";
 import { CompilerDiagnostic } from "../parse/compiler";
@@ -36,6 +37,13 @@ export type FocusRequest =
   | { kind: "tensor"; id: string }
   | { kind: "op"; id: string; frame?: "operands" };
 
+export type SweepScope = "current" | "all";
+export type SweepState =
+  | { status: "idle" }
+  | { status: "running"; scope: SweepScope }
+  | { status: "done"; scope: SweepScope; budget: Budget; result: Sweep }
+  | { status: "failed"; scope: SweepScope; message: string };
+
 export type KeptPlan = {
   id: number;
   tiles: Record<string, number[]>;
@@ -64,6 +72,8 @@ export type WorkspaceRestore = {
   planTiles?: Record<string, number[]>;
   /** Step declarations per tiled tensor; each must fit the graph and `planTiles`. */
   planSteps?: Record<string, StepSpec>;
+  /** The stated budget; absent restores the default preset's. */
+  planBudget?: Budget;
   /** The inspected task, which must be a tile of `planTiles`. */
   planTask?: TaskRef | null;
   /**
@@ -318,6 +328,20 @@ export type State = {
    * longer supports, so every entry here fits `plan`.
    */
   planSteps: Record<string, StepSpec>;
+  /**
+   * The budget the engineer states (`core/plan/sweep`): bytes a task may hold
+   * of its operands per step, and optionally bytes an accumulator may take. It
+   * describes a machine, not a graph, so a graph replacement keeps it; a link
+   * carries it, and one without it restores the default preset's.
+   */
+  planBudget: Budget;
+  /**
+   * The last sweep asked for. Transient: never saved or shared, and reset by a
+   * graph replacement or a budget change, since its rows are plans of one graph
+   * within one budget. `current` sweeps the set of tensors the plan tiles;
+   * `all` the sets `sweepPlans` searches by default.
+   */
+  sweep: SweepState;
   /** The task the Plan view describes. */
   planTask: TaskRef | null;
   /** Derived from `planTiles` against `resolved`; null when nothing is tiled. */
@@ -427,6 +451,15 @@ export type State = {
   /** Declare how a tiled tensor's tasks divide their reduction, or clear the
    * declaration with null. One the graph does not support changes nothing. */
   setPlanSteps: (tensorId: string, steps: StepSpec | null) => void;
+  /** State the budget. One that is not positive, finite numbers changes nothing. */
+  setPlanBudget: (budget: Budget) => void;
+  /** Sweep the plans within the budget, in the Worker where there is one. */
+  runSweep: (scope: SweepScope) => Promise<void>;
+  /** Drop the sweep's result, ending one that is running. */
+  clearSweep: () => void;
+  /** Make a sweep row the current tiling and step declarations: a plan edit,
+   * undone like one. */
+  installSweepRow: (index: number) => void;
   /** Inspect one task, or none. Undoable. */
   selectPlanTask: (task: TaskRef | null) => void;
   /** Inspect a producer of the inspected task, remembering where it came from. */

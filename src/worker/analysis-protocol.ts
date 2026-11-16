@@ -2,6 +2,7 @@ import type { Graph, ResolvedGraphData } from "../core/graph";
 import type { PlanReport, TaskSupply } from "../core/plan/interfaces";
 import type { TaskRef } from "../core/plan/plan";
 import type { FamilyReplay } from "../core/plan/replay";
+import type { Sweep, SweepOptions } from "../core/plan/sweep";
 import type { CompilerDiagnostic } from "../parse/compiler";
 import type { BaseGraphLayout } from "../view/graph/graph-scene";
 import type { CardShapeView } from "../view/tensor/card-size";
@@ -58,6 +59,13 @@ export type AnalysisRequest =
       task: TaskRef;
       /** Levels of the plan's tasks to follow upstream; see `familyReplay`. */
       depth: number;
+    }
+  | {
+      id: number;
+      kind: "sweep";
+      graphId: number | null;
+      graph?: ResolvedGraphData;
+      options: SweepOptions;
     };
 
 export type AnalysisResponse =
@@ -67,4 +75,5 @@ export type AnalysisResponse =
   | { id: number; kind: "layout"; result: BaseGraphLayout }
   | { id: number; kind: "plan"; result: PlanReport }
   | { id: number; kind: "replay"; result: FamilyReplay }
+  | { id: number; kind: "sweep"; result: Sweep }
   | { id: number; kind: "error"; message: string };

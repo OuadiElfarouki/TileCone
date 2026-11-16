@@ -6,6 +6,7 @@ import {
 import type { PlanReport } from "../core/plan/interfaces";
 import type { TaskRef } from "../core/plan/plan";
 import type { FamilyReplay } from "../core/plan/replay";
+import type { Sweep, SweepOptions } from "../core/plan/sweep";
 import type { BaseGraphLayout } from "../view/graph/graph-scene";
 import type { CardShapeView } from "../view/tensor/card-size";
 import type {
@@ -33,7 +34,8 @@ type AnalysisRequestBody =
   | Omit<Extract<AnalysisRequest, { kind: "restore" }>, "id">
   | Omit<Extract<AnalysisRequest, { kind: "layout" }>, "id">
   | Omit<Extract<AnalysisRequest, { kind: "plan" }>, "id">
-  | Omit<Extract<AnalysisRequest, { kind: "replay" }>, "id">;
+  | Omit<Extract<AnalysisRequest, { kind: "replay" }>, "id">
+  | Omit<Extract<AnalysisRequest, { kind: "sweep" }>, "id">;
 
 function createLane(createWorker: () => Worker): WorkerLane {
   return { createWorker, worker: null, pending: new Map(), graphIds: new Set() };
@@ -67,6 +69,13 @@ class AnalysisCancelledError extends Error {
 export function isAnalysisCancelled(error: unknown): boolean {
   return error instanceof Error && error.name === "AnalysisCancelledError";
 }
+
+// A sweep runs for seconds. On the query lane it would be cancelled by every
+// plan evaluation a tile edit starts, and would hold those up in turn, so it
+// has a lane of its own: latest sweep wins, and a new graph ends it.
+const sweepLane = createLane(() => new Worker(new URL("../worker/analysis.worker.ts", import.meta.url), {
+  type: "module", name: "tilecone-sweep",
+}));
 
 function discardLane(lane: WorkerLane, error: Error): void {
   const current = lane.worker;
@@ -120,6 +129,7 @@ function cancelPending(lane: WorkerLane, task: string): void {
 function registerQueryGraph(graphId: number, graph: ResolvedGraphData): void {
   discardLane(layoutLane, new AnalysisCancelledError("the compiled graph changed"));
   discardLane(queryLane, new AnalysisCancelledError("the compiled graph changed"));
+  discardLane(sweepLane, new AnalysisCancelledError("the compiled graph changed"));
   const id = nextRequestId++;
   try {
     workerFor(queryLane).postMessage({
@@ -243,4 +253,25 @@ export async function replayInWorker(args: {
   });
   if (response.kind !== "replay") throw new Error("analysis worker returned the wrong response");
   return response.result;
+}
+
+/** Sweep the plans within a budget. A later sweep supersedes this one. */
+export async function sweepInWorker(args: {
+  graphId: number | null;
+  graph: ResolvedGraph;
+  options: SweepOptions;
+}): Promise<Sweep> {
+  cancelPending(sweepLane, "plan sweep");
+  const response = await send(sweepLane, {
+    kind: "sweep",
+    ...graphForLane(sweepLane, args.graphId, args.graph),
+    options: args.options,
+  });
+  if (response.kind !== "sweep") throw new Error("analysis worker returned the wrong response");
+  return response.result;
+}
+
+/** End a running sweep; its promise rejects as cancelled. */
+export function cancelSweep(): void {
+  cancelPending(sweepLane, "plan sweep");
 }

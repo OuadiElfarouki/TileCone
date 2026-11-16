@@ -1,5 +1,5 @@
 import { hydrateResolvedGraph, type ResolvedGraph } from "../core/graph";
-import { compileArtifact, layoutArtifact, planArtifact, planRestoreArtifact, replayArtifact } from "./analysis-jobs";
+import { compileArtifact, layoutArtifact, planArtifact, planRestoreArtifact, replayArtifact, sweepArtifact } from "./analysis-jobs";
 import type { AnalysisRequest, AnalysisResponse } from "./analysis-protocol";
 
 type WorkerHost = {
@@ -51,6 +51,8 @@ host.onmessage = ({ data }) => {
         kind: "plan",
         result: planArtifact(graph, data.tiles),
       });
+    } else if (data.kind === "sweep") {
+      host.postMessage({ id: data.id, kind: "sweep", result: sweepArtifact(graph, data.options) });
     } else {
       host.postMessage({
         id: data.id,
